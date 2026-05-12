@@ -65,22 +65,25 @@ export const ENGINES: Record<Engine, EngineMeta> = {
       "OpenAI's flagship with web search. Second opinion framed the way an OpenAI-tier answer engine would.",
   },
   qwen: {
-    label: "Qwen 3 (Coming soon)",
+    label: "Qwen Max",
     cost: 1,
-    available: false,
-    blurb: "Alibaba's frontier model. Wires up when DASHSCOPE / Qwen API keys are configured.",
+    available: true,
+    blurb:
+      "Alibaba's flagship model via DashScope. Cost-efficient second opinion on Chinese / cross-language sites.",
   },
   kimi: {
-    label: "Kimi K2 (Coming soon)",
+    label: "Kimi K2",
     cost: 1,
-    available: false,
-    blurb: "Moonshot AI's flagship. Wires up when MOONSHOT API keys are configured.",
+    available: true,
+    blurb:
+      "Moonshot AI's flagship via OpenAI-compatible API. Strong long-context reasoning over your full homepage.",
   },
   gemini: {
-    label: "Gemini 2.5 Pro (Coming soon)",
+    label: "Gemini 2.5 Pro",
     cost: 1,
-    available: false,
-    blurb: "Google's flagship with Search grounding. Wires up when GEMINI_API_KEY is configured.",
+    available: true,
+    blurb:
+      "Google's flagship with live Search grounding. Frames your site the way Google AI Overviews would.",
   },
 };
 

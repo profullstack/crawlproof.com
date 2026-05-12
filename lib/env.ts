@@ -19,8 +19,14 @@ export const env = {
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",
-  // Paid engines: Claude Opus 4.7 (1 credit) + OpenAI GPT-5 (2 credits).
+  // Paid engines (1 credit each).
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+  qwenApiKey: process.env.QWEN_API_KEY ?? "",
+  qwenApiUrl:
+    process.env.QWEN_API_URL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  kimiApiKey: process.env.KIMI_API_KEY ?? "",
+  kimiApiUrl: process.env.KIMI_API_URL ?? "https://api.moonshot.ai/v1",
   required,
 };

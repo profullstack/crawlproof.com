@@ -4,6 +4,9 @@ import { createClient } from "@supabase/supabase-js";
 import { runAudit } from "../lib/audit/engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
 import { openaiAudit } from "../lib/audit/openai-engine";
+import { geminiAudit } from "../lib/audit/gemini-engine";
+import { qwenAudit } from "../lib/audit/qwen-engine";
+import { kimiAudit } from "../lib/audit/kimi-engine";
 import { toMarkdown } from "../lib/audit/markdown";
 import { Resend } from "resend";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
@@ -51,7 +54,8 @@ async function processJob(job: Job) {
     //   'rule'   — local rule-based crawler (default for anonymous/free)
     //   'claude' — Claude Opus 4.7 + web tools (1 credit)
     //   'openai' — OpenAI GPT-5 + web search (1 credit)
-    const engine = (audit.engine as "rule" | "claude" | "openai") ?? "rule";
+    const engine =
+      (audit.engine as "rule" | "claude" | "openai" | "gemini" | "qwen" | "kimi") ?? "rule";
     console.log(`[worker] audit ${auditId} engine=${engine}`);
 
     let score: number;
@@ -67,14 +71,17 @@ async function processJob(job: Job) {
     }>;
     let markdown: string;
 
-    if (engine === "claude") {
-      const r = await claudeAudit(audit.target_url);
-      score = r.score;
-      summary = r.summary;
-      findings = r.findings;
-      markdown = r.markdown;
-    } else if (engine === "openai") {
-      const r = await openaiAudit(audit.target_url);
+    const llmEngines = {
+      claude: claudeAudit,
+      openai: openaiAudit,
+      gemini: geminiAudit,
+      qwen: qwenAudit,
+      kimi: kimiAudit,
+    } as const;
+
+    if (engine in llmEngines) {
+      const fn = llmEngines[engine as keyof typeof llmEngines];
+      const r = await fn(audit.target_url);
       score = r.score;
       summary = r.summary;
       findings = r.findings;
