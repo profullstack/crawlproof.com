@@ -3,14 +3,12 @@ import { env } from "./env";
 
 // CoinPay HTTP client.
 //
-// I do not have your CoinPay API reference. The functions below model a
-// standard crypto-checkout flow:
-//   POST /v1/checkouts → { id, hostedUrl }
-//   webhook: x-coinpay-signature = HMAC-SHA256(body, webhook_secret)
+// Webhook signature format (Stripe-style):
 //
-// When you have the real spec, adjust the path + payload + signature scheme
-// in createCheckout / verifyWebhookSignature — nothing else in the codebase
-// references CoinPay directly.
+//   X-CoinPay-Signature: t=<unix-timestamp>,v1=<hex hmac-sha256>
+//
+// where v1 = HMAC-SHA256(`${t}.${rawBody}`, COINPAY_WEBHOOK_SECRET).
+// Multiple `v1=` parts are allowed during secret rotation — any match is OK.
 
 export type CreateCheckoutInput = {
   packId: string;
@@ -21,13 +19,12 @@ export type CreateCheckoutInput = {
   successUrl: string;
   cancelUrl: string;
   webhookUrl: string;
-  // Echoed back in the webhook payload.
   metadata?: Record<string, string>;
 };
 
 export type CreateCheckoutResult = {
-  paymentId: string; // CoinPay's id, stored in credit_purchases.coinpay_payment_id
-  hostedUrl: string; // where to send the user to pay
+  paymentId: string;
+  hostedUrl: string;
 };
 
 export async function createCheckout(
@@ -78,17 +75,46 @@ export async function createCheckout(
   return { paymentId, hostedUrl };
 }
 
-// Webhook signature verification. CoinPay should send the raw body and a
-// signature header. We default to HMAC-SHA256 hex over the raw body using
-// COINPAY_WEBHOOK_SECRET — adjust if the real scheme differs.
-export function verifyWebhookSignature(rawBody: string, signature: string | null): boolean {
-  if (!env.coinpayWebhookSecret || !signature) return false;
+// Parse the Stripe-style `t=...,v1=...` header into its parts.
+function parseSignatureHeader(header: string): { t: string; v1: string[] } | null {
+  const t: string[] = [];
+  const v1: string[] = [];
+  for (const part of header.split(",")) {
+    const [k, v] = part.split("=", 2);
+    if (!k || v === undefined) continue;
+    if (k.trim() === "t") t.push(v.trim());
+    else if (k.trim() === "v1") v1.push(v.trim());
+  }
+  if (t.length !== 1 || v1.length === 0) return null;
+  return { t: t[0], v1 };
+}
+
+// Reject signatures older than this window to limit replay attacks.
+const TOLERANCE_SECONDS = 5 * 60;
+
+export function verifyWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  options: { now?: number; tolerance?: number } = {},
+): boolean {
+  if (!env.coinpayWebhookSecret || !signatureHeader) return false;
+  const parsed = parseSignatureHeader(signatureHeader);
+  if (!parsed) return false;
+
+  const ts = Number.parseInt(parsed.t, 10);
+  if (!Number.isFinite(ts)) return false;
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const tolerance = options.tolerance ?? TOLERANCE_SECONDS;
+  if (Math.abs(now - ts) > tolerance) return false;
+
   const expected = crypto
     .createHmac("sha256", env.coinpayWebhookSecret)
-    .update(rawBody)
+    .update(`${parsed.t}.${rawBody}`)
     .digest("hex");
-  const a = Buffer.from(signature, "utf8");
-  const b = Buffer.from(expected, "utf8");
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+  const expectedBuf = Buffer.from(expected, "utf8");
+  return parsed.v1.some((candidate) => {
+    const candBuf = Buffer.from(candidate, "utf8");
+    if (candBuf.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(candBuf, expectedBuf);
+  });
 }

@@ -6,18 +6,49 @@ export const runtime = "nodejs";
 
 // CoinPay webhook receiver.
 //
-// Expected payload shape (adjust to match real CoinPay events):
+// Verified with HMAC-SHA256 over `${timestamp}.${rawBody}` using
+// COINPAY_WEBHOOK_SECRET — header format is the Stripe-style
+//   X-CoinPay-Signature: t=<unix>,v1=<hex>
+//
+// Expected payload envelope:
 //   {
-//     "event": "payment.completed" | "payment.failed" | "payment.expired" | ...,
-//     "payment_id": "...",
-//     "amount_cents": 1000,
-//     "currency": "USD",
-//     "metadata": { "purchase_id": "...", "owner_id": "...", "credits": "10" }
+//     id: "evt_...",
+//     type: "payment.completed" | "payment.failed" | ...,
+//     data: { payment_id, status, amount_usd, currency, ... },
+//     created_at: ISO8601,
+//     business_id: "<merchant id>"
 //   }
 //
-// Signature is verified via HMAC-SHA256 over the raw body with
-// COINPAY_WEBHOOK_SECRET. Returns 200 on processed and 200 on duplicate so
-// CoinPay won't retry forever. Returns 401 only on signature failure.
+// We respond 200 to any signed event we don't process so CoinPay doesn't
+// retry. Signature failures return 401.
+
+type CoinPayEvent = {
+  id?: string;
+  type?: string;
+  created_at?: string;
+  business_id?: string;
+  data?: {
+    payment_id?: string;
+    status?: string;
+    amount_usd?: string;
+    amount_crypto?: string;
+    currency?: string;
+    tx_hash?: string;
+    confirmations?: number;
+    [k: string]: unknown;
+  };
+};
+
+const COMPLETE_EVENTS = new Set([
+  "payment.completed",
+  "payment.confirmed",
+  "payment.paid",
+  "payment.succeeded",
+]);
+const COMPLETE_STATUSES = new Set(["completed", "confirmed", "paid", "succeeded"]);
+
+const FAIL_EVENTS = new Set(["payment.failed", "payment.expired", "payment.cancelled"]);
+const FAIL_STATUSES = new Set(["failed", "expired", "cancelled", "canceled"]);
 
 export async function POST(req: Request) {
   const raw = await req.text();
@@ -30,27 +61,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "bad_signature" }, { status: 401 });
   }
 
-  let payload: {
-    event?: string;
-    payment_id?: string;
-    metadata?: Record<string, string>;
-  };
+  let payload: CoinPayEvent;
   try {
     payload = JSON.parse(raw);
   } catch {
     return NextResponse.json({ ok: false, error: "bad_json" }, { status: 400 });
   }
 
-  const paymentId = payload.payment_id;
+  const eventType = (payload.type ?? "").toLowerCase();
+
+  // Test pings (e.g. type: "test.webhook") — ack and move on.
+  if (eventType === "test.webhook" || eventType === "ping") {
+    return NextResponse.json({ ok: true, test: true });
+  }
+
+  const paymentId = payload.data?.payment_id;
+  const status = (payload.data?.status ?? "").toLowerCase();
   if (!paymentId) {
-    return NextResponse.json({ ok: false, error: "missing_payment_id" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "missing_payment_id" },
+      { status: 400 },
+    );
   }
 
   const svc = serviceClient();
-  const event = (payload.event ?? "").toLowerCase();
+  const isComplete = COMPLETE_EVENTS.has(eventType) || COMPLETE_STATUSES.has(status);
+  const isFail = FAIL_EVENTS.has(eventType) || FAIL_STATUSES.has(status);
 
-  if (event === "payment.completed" || event === "payment.succeeded" || event === "completed") {
-    // Idempotent — function does nothing if already complete.
+  if (isComplete) {
     const { error } = await svc.rpc("credit_purchase_complete", {
       p_payment_id: paymentId,
       p_event: payload as unknown as object,
@@ -62,7 +100,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  if (event === "payment.failed" || event === "payment.expired" || event === "failed") {
+  if (isFail) {
     await svc
       .from("credit_purchases")
       .update({ status: "failed", coinpay_event: payload as unknown as object })
@@ -70,7 +108,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Unknown but signed event — log and ack so it isn't retried.
-  console.log("[coinpay] ignored event", event, paymentId);
-  return NextResponse.json({ ok: true, ignored: event });
+  // Other signed events (e.g. payment.pending) — ack without state change.
+  console.log("[coinpay] ignored event", eventType, status, paymentId);
+  return NextResponse.json({ ok: true, ignored: eventType });
 }

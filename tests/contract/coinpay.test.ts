@@ -1,49 +1,68 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import crypto from "node:crypto";
 
-// Pinned secret for predictable signatures across tests.
 const SECRET = "stub_webhook_secret";
 process.env.COINPAY_WEBHOOK_SECRET = SECRET;
 
 import { createCheckout, verifyWebhookSignature } from "@/lib/coinpay";
 
-function sign(body: string, secret = SECRET) {
-  return crypto.createHmac("sha256", secret).update(body).digest("hex");
+function sign(body: string, ts: number, secret = SECRET): string {
+  const sig = crypto
+    .createHmac("sha256", secret)
+    .update(`${ts}.${body}`)
+    .digest("hex");
+  return `t=${ts},v1=${sig}`;
 }
 
-describe("verifyWebhookSignature", () => {
-  it("accepts a valid HMAC-SHA256 hex signature", () => {
-    const body = `{"event":"payment.completed","payment_id":"abc"}`;
-    expect(verifyWebhookSignature(body, sign(body))).toBe(true);
+describe("verifyWebhookSignature (CoinPay/Stripe-style t=…,v1=…)", () => {
+  const now = 1_770_000_000;
+  const body = `{"event":"payment.completed","data":{"payment_id":"abc"}}`;
+
+  it("accepts a valid timestamp + HMAC pair", () => {
+    expect(verifyWebhookSignature(body, sign(body, now), { now })).toBe(true);
   });
 
-  it("rejects a signature signed with a different secret", () => {
-    const body = `{"event":"payment.completed","payment_id":"abc"}`;
-    expect(verifyWebhookSignature(body, sign(body, "WRONG"))).toBe(false);
+  it("rejects a signature signed with the wrong secret", () => {
+    expect(
+      verifyWebhookSignature(body, sign(body, now, "WRONG"), { now }),
+    ).toBe(false);
   });
 
-  it("rejects a signature for a different body", () => {
-    const body = `{"event":"payment.completed","payment_id":"abc"}`;
-    const tampered = `{"event":"payment.completed","payment_id":"xyz"}`;
-    expect(verifyWebhookSignature(body, sign(tampered))).toBe(false);
+  it("rejects a signature for a tampered body", () => {
+    const tampered = `{"event":"payment.completed","data":{"payment_id":"xyz"}}`;
+    expect(verifyWebhookSignature(body, sign(tampered, now), { now })).toBe(false);
   });
 
-  it("rejects missing / empty signature", () => {
-    expect(verifyWebhookSignature("{}", null)).toBe(false);
-    expect(verifyWebhookSignature("{}", "")).toBe(false);
+  it("rejects a stale timestamp (outside the 5-minute window)", () => {
+    const sigAt = now - 10 * 60; // 10 minutes ago
+    expect(verifyWebhookSignature(body, sign(body, sigAt), { now })).toBe(false);
   });
 
-  it("rejects length-mismatched signatures without throwing", () => {
-    expect(() => verifyWebhookSignature("{}", "deadbeef")).not.toThrow();
-    expect(verifyWebhookSignature("{}", "deadbeef")).toBe(false);
+  it("accepts a fresh timestamp within tolerance", () => {
+    const sigAt = now - 60; // 1 minute ago
+    expect(verifyWebhookSignature(body, sign(body, sigAt), { now })).toBe(true);
   });
 
-  it("uses constant-time comparison (no early return on byte differ)", () => {
-    // Different hash from the real one but same length. Should still return
-    // false — not throw, not error — so signature checks behave consistently.
-    const body = "{}";
-    const fake = "0".repeat(sign(body).length);
-    expect(verifyWebhookSignature(body, fake)).toBe(false);
+  it("supports multiple v1= parts (secret rotation)", () => {
+    const goodSig = crypto
+      .createHmac("sha256", SECRET)
+      .update(`${now}.${body}`)
+      .digest("hex");
+    const bogus = "0".repeat(goodSig.length);
+    const header = `t=${now},v1=${bogus},v1=${goodSig}`;
+    expect(verifyWebhookSignature(body, header, { now })).toBe(true);
+  });
+
+  it("rejects missing / empty / malformed headers", () => {
+    expect(verifyWebhookSignature(body, null, { now })).toBe(false);
+    expect(verifyWebhookSignature(body, "", { now })).toBe(false);
+    expect(verifyWebhookSignature(body, "deadbeef", { now })).toBe(false);
+    expect(verifyWebhookSignature(body, `t=${now}`, { now })).toBe(false);
+    expect(verifyWebhookSignature(body, `v1=abc`, { now })).toBe(false);
+  });
+
+  it("uses constant-time comparison (length-mismatched sig returns false)", () => {
+    expect(verifyWebhookSignature(body, `t=${now},v1=deadbeef`, { now })).toBe(false);
   });
 });
 
@@ -59,12 +78,12 @@ describe("createCheckout", () => {
   });
 
   it("POSTs to /v1/checkouts with merchant + amount + metadata", async () => {
-    const fetchMock = vi.fn(async (url, init: RequestInit | undefined) => {
-      return new Response(
+    const fetchMock = vi.fn(async () =>
+      new Response(
         JSON.stringify({ id: "cp_pay_test", hosted_url: "https://pay/x" }),
         { status: 200, headers: { "content-type": "application/json" } },
-      );
-    });
+      ),
+    );
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
     const r = await createCheckout({
@@ -81,7 +100,8 @@ describe("createCheckout", () => {
 
     expect(r).toEqual({ paymentId: "cp_pay_test", hostedUrl: "https://pay/x" });
     expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0];
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = call;
     expect(String(url)).toMatch(/\/v1\/checkouts$/);
     const headers = init?.headers as Record<string, string>;
     expect(headers.authorization).toMatch(/^Bearer /);
@@ -99,8 +119,8 @@ describe("createCheckout", () => {
   });
 
   it("throws when CoinPay returns non-2xx", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response("server error", { status: 500 }),
+    globalThis.fetch = vi.fn(
+      async () => new Response("server error", { status: 500 }),
     ) as unknown as typeof globalThis.fetch;
 
     await expect(
