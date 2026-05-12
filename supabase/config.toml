@@ -1,0 +1,43 @@
+# Supabase project config for crawlproof.com (project ref: ywcizjsgrcmhgyplldac).
+#
+# `supabase config push --linked` uploads everything under [auth.*] (Site URL,
+# redirect allow list, email templates) to the linked project. Anything not
+# listed here remains as-set in the Supabase dashboard.
+
+project_id = "ywcizjsgrcmhgyplldac"
+
+[auth]
+# Canonical public URL. Anything else lands in the redirect allow list below.
+site_url = "https://crawlproof.com"
+additional_redirect_urls = ["https://crawlproof.com/**", "http://localhost:3000/**"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+
+[auth.email.template.confirmation]
+subject = "Confirm your CrawlProof account"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.recovery]
+subject = "Reset your CrawlProof password"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.email.template.magic_link]
+subject = "Your CrawlProof sign-in link"
+content_path = "./supabase/templates/magic-link.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new CrawlProof email"
+content_path = "./supabase/templates/email-change.html"
+
+[auth.email.template.invite]
+subject = "You're invited to CrawlProof"
+content_path = "./supabase/templates/invite.html"
+
+# Google OAuth is configured directly in the Supabase dashboard (client_id +
+# client_secret live there, not in the repo). Not declaring it here means
+# `config push` won't touch its settings.
