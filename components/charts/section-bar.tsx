@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -18,7 +19,20 @@ export type SectionRow = {
   fail: number;
 };
 
+function useIsNarrow(breakpoint = 640): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const sync = () => setNarrow(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, [breakpoint]);
+  return narrow;
+}
+
 export function SectionBar({ rows }: { rows: SectionRow[] }) {
+  const narrow = useIsNarrow();
   if (rows.length === 0) {
     return (
       <div className="card flex h-64 items-center justify-center p-4 text-sm text-[var(--color-muted)]">
@@ -34,7 +48,7 @@ export function SectionBar({ rows }: { rows: SectionRow[] }) {
           <BarChart
             data={rows}
             layout="vertical"
-            margin={{ top: 4, right: 16, bottom: 4, left: 8 }}
+            margin={{ top: 4, right: 12, bottom: 4, left: 4 }}
             stackOffset="expand"
           >
             <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" horizontal={false} />
@@ -42,9 +56,12 @@ export function SectionBar({ rows }: { rows: SectionRow[] }) {
             <YAxis
               dataKey="section"
               type="category"
-              width={170}
+              width={narrow ? 96 : 170}
               stroke="var(--color-muted)"
-              tick={{ fontSize: 11 }}
+              tick={{ fontSize: narrow ? 10 : 11 }}
+              tickFormatter={(value: string) =>
+                narrow && value.length > 14 ? `${value.slice(0, 13)}…` : value
+              }
             />
             <Tooltip
               contentStyle={{

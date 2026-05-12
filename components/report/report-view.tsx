@@ -31,12 +31,12 @@ export function ReportView({
   }>;
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[16rem_1fr]">
+    <div className="grid gap-6 lg:grid-cols-[16rem_1fr] lg:gap-8">
       <aside className="lg:sticky lg:top-20 lg:self-start">
-        <div className="card p-4 text-sm">
-          <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+        <details className="card p-4 text-sm lg:!block" open>
+          <summary className="cursor-pointer list-none text-xs uppercase tracking-wider text-[var(--color-muted)] lg:cursor-default [&::-webkit-details-marker]:hidden">
             Sections
-          </div>
+          </summary>
           <nav className="mt-3 flex flex-col gap-1">
             {SECTIONS.map((s, i) => (
               <a key={s} href={`#section-${i + 1}`} className="rounded px-2 py-1 hover:bg-[var(--color-bg)]">
@@ -44,24 +44,24 @@ export function ReportView({
               </a>
             ))}
           </nav>
-        </div>
+        </details>
       </aside>
 
       <article className="space-y-10">
-        <header className="card p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+        <header className="card p-4 sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
                 AEO audit
               </p>
-              <h1 className="mt-1 text-3xl font-extrabold break-all">{audit.target_url}</h1>
+              <h1 className="mt-1 text-2xl font-extrabold break-all sm:text-3xl">{audit.target_url}</h1>
               <p className="mt-2 text-sm text-[var(--color-muted)]">
                 {audit.completed_at
                   ? `Completed ${new Date(audit.completed_at).toLocaleString()}`
                   : `Started ${new Date(audit.created_at).toLocaleString()}`}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 sm:flex-shrink-0">
               <ScoreDial score={audit.score} status={audit.status} />
               {ownerActions}
             </div>
