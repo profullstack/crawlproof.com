@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { env } from "@/lib/env";
+import { env } from "../env";
 import type { AuditResult, Finding } from "./types";
 import { SECTIONS, DATA_POINTS } from "./prompt";
 
