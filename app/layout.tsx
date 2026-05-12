@@ -30,6 +30,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           data-domain="crawlproof.com"
           strategy="afterInteractive"
         />
+        {/* Robauto.ai — A.I. Growth Engine Pixel */}
+        <Script id="robauto-pixel" strategy="afterInteractive">
+          {`(function(){
+  var pid="5b1ee9c4-5877-43cd-91e8-01406011bf83";
+  var ep="https://hkeytqaukllckucnhzey.supabase.co/functions/v1/track";
+  var d=JSON.stringify({path:location.pathname,url:location.href,referer:document.referrer});
+  if(navigator.sendBeacon){navigator.sendBeacon(ep+"?pid="+pid,d)}
+  else{var x=new XMLHttpRequest();x.open("POST",ep+"?pid="+pid);x.setRequestHeader("Content-Type","application/json");x.send(d)}
+})();`}
+        </Script>
       </body>
     </html>
   );
