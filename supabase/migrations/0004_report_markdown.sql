@@ -3,6 +3,9 @@
 alter table public.audits add column if not exists report_markdown text;
 
 -- Refresh the public RPC to include the markdown.
+-- The return signature changes (new column), so CREATE OR REPLACE is rejected
+-- by Postgres — drop first.
+drop function if exists public.get_public_audit(text);
 create or replace function public.get_public_audit(token text)
 returns table (
   id uuid,

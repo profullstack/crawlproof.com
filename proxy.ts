@@ -4,6 +4,16 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 type Cookie = { name: string; value: string; options?: CookieOptions };
 
 export async function proxy(request: NextRequest) {
+  // 308 redirect www.crawlproof.com -> crawlproof.com (preserves method + body).
+  const host = request.headers.get("host") ?? "";
+  if (host.toLowerCase().startsWith("www.")) {
+    const target = request.nextUrl.clone();
+    target.host = host.slice(4);
+    target.protocol = "https";
+    target.port = "";
+    return NextResponse.redirect(target, 308);
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient<any>(

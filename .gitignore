@@ -14,3 +14,4 @@ worker/dist
 playwright-cache
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+supabase/.temp/
