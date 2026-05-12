@@ -71,8 +71,8 @@ export async function createCheckout(
     body: JSON.stringify({
       business_id: env.coinpayMerchantId,
       amount_usd: Number((input.amountCents / 100).toFixed(2)),
-      currency: "usdc_pol", // low-fee default; customer can pick a different chain on the hosted page
-      payment_method: "both", // shows crypto + Stripe tabs on the hosted checkout
+      currency: "usdc_pol", // low-fee default; customer picks chain on the hosted page
+      payment_method: "crypto", // card requires Stripe Connect onboarding — we don't support it
       description: descriptionParts.join(" · "),
       redirect_url: input.successUrl,
     }),

@@ -112,7 +112,7 @@ describe("createCheckout", () => {
     const body = JSON.parse(String(init?.body));
     expect(body.business_id).toBeTruthy();
     expect(body.amount_usd).toBe(10);
-    expect(body.payment_method).toBe("both");
+    expect(body.payment_method).toBe("crypto");
     expect(body.redirect_url).toMatch(/crawlproof\.com\/ok$/);
     expect(body.description).toMatch(/purchase=pur_abc/);
   });
