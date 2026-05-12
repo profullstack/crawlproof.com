@@ -12,7 +12,7 @@ CrawlProof runs an AEO audit on any URL and produces a structured report of what
 - **Stripe** (subscriptions)
 - **Resend** (transactional email)
 - **Playwright** (rendered-vs-static check + PDF export) — runs in an external worker
-- Worker on **Fly.io** / Railway; Next.js on **Vercel**
+- Both services deploy to **Railway** (Next.js app + worker, two services in the same project)
 
 ## Repo layout
 
@@ -28,7 +28,10 @@ lib/
   shareToken.ts     URL-safe token generator
   env.ts            Typed env access
 supabase/migrations Postgres schema, RLS, cron
-worker/             External Playwright worker (Docker, Fly.io)
+worker/             External Playwright + pandoc worker (Docker)
+Dockerfile          Next.js production image (Railway)
+railway.json        Railway service config — Next.js app
+railway.worker.json Railway service config — worker (set as "Config File Path")
 ```
 
 ## Local setup
@@ -66,27 +69,50 @@ worker/             External Playwright worker (Docker, Fly.io)
    npm run worker
    ```
 
-## Deploy
+## Deploy (Railway)
 
-### Next.js → Vercel
-Set every env var above in the Vercel project. The bundled `vercel.json` registers an hourly cron at `/api/cron/scheduled-audits` which Vercel signs with `Authorization: Bearer $CRON_SECRET`.
+Both services live in a single Railway project. Connect this repo to Railway, then create two services from the same repo:
 
-### Worker → Fly.io
-The worker needs Playwright, so it cannot run on Vercel. From `worker/`:
-```bash
-fly launch --copy-config --no-deploy
-fly secrets set \
-  NEXT_PUBLIC_SUPABASE_URL=... \
-  SUPABASE_SERVICE_ROLE_KEY=... \
-  NEXT_PUBLIC_SITE_URL=https://crawlproof.com \
-  WORKER_SHARED_SECRET=... \
-  RESEND_API_KEY=... RESEND_FROM=...
-fly deploy
+### Service 1: `crawlproof-app` (Next.js)
+
+- **Root Directory:** `/` (repo root)
+- **Config File Path:** `railway.json` (default; uses the root `Dockerfile`)
+- **Env vars** (everything from `.env.example`):
+  - `NEXT_PUBLIC_SITE_URL` — your Railway domain or custom domain
+  - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+  - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`
+  - `RESEND_API_KEY`, `RESEND_FROM`
+  - `WORKER_URL` — the worker service's internal URL (see below)
+  - `WORKER_SHARED_SECRET`, `CRON_SECRET`
+
+Railway sets `PORT` automatically; the Dockerfile listens on it.
+
+### Service 2: `crawlproof-worker` (Playwright + pandoc)
+
+- **Root Directory:** `/` (repo root — required so the Dockerfile can `COPY lib/`)
+- **Config File Path:** `railway.worker.json` (uses `worker/Dockerfile`)
+- **Env vars:**
+  - `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+  - `NEXT_PUBLIC_SITE_URL` — same as app, used for share-link emails
+  - `WORKER_SHARED_SECRET` — must match the app's value
+  - `RESEND_API_KEY`, `RESEND_FROM` (optional)
+
+In the app service, set `WORKER_URL` to the worker's Railway private URL — Railway provides `http://${{crawlproof-worker.RAILWAY_PRIVATE_DOMAIN}}:${{crawlproof-worker.PORT}}` via variable references.
+
+### Cron — handled by Supabase pg_cron
+
+`supabase/migrations/0003_cron.sql` already schedules an hourly call to `/api/cron/scheduled-audits` via `pg_cron` + `pg_net`. Run once on the Supabase database:
+
+```sql
+alter database postgres set app.site_url = 'https://crawlproof.com';
+alter database postgres set app.cron_secret = '<your CRON_SECRET>';
 ```
-Set `WORKER_URL` in Vercel to the Fly app URL (e.g. `https://crawlproof-worker.fly.dev`).
+
+This is host-agnostic and replaces Vercel cron entirely.
 
 ### Stripe webhook
-Point a webhook at `https://crawlproof.com/api/stripe/webhook` for the events:
+
+Point a Stripe webhook at `https://<your-railway-domain>/api/stripe/webhook` for:
 - `checkout.session.completed`
 - `customer.subscription.created`
 - `customer.subscription.updated`
