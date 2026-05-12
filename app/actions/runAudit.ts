@@ -12,11 +12,21 @@ import {
   isAllowedTargetUrl,
   refundCredit,
 } from "@/lib/rateLimit";
-import { engineAvailable, engineCost, ENGINES, type Engine } from "@/lib/credits";
+import {
+  dedupeEngines,
+  engineAvailable,
+  ENGINES,
+  selectionCost,
+  type Engine,
+} from "@/lib/credits";
 import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
 
-type Ok = { ok: true; id: string; token: string };
+type ScanOk = {
+  ok: true;
+  audits: { id: string; engine: Engine; token: string }[];
+  creditsSpent: number;
+};
 type Err = { ok: false; error: string };
 
 async function notifyWorker(auditId: string, pdfEmail?: string) {
@@ -32,21 +42,27 @@ async function notifyWorker(auditId: string, pdfEmail?: string) {
   }
 }
 
-function normalizeEngine(input: string | undefined, signedIn: boolean): Engine {
-  if (!signedIn) return "rule";
-  const known: Engine[] = ["rule", "claude", "openai", "qwen", "kimi", "gemini"];
-  if (input && (known as string[]).includes(input)) return input as Engine;
-  return "rule";
+const ALL_ENGINES: Engine[] = ["rule", "claude", "openai", "gemini", "qwen", "kimi", "deepseek"];
+
+function normalizeEngines(input: unknown, signedIn: boolean): Engine[] {
+  if (!signedIn) return ["rule"];
+  if (!Array.isArray(input) || input.length === 0) return ["rule"];
+  const cleaned = dedupeEngines(
+    input.filter((e): e is Engine =>
+      typeof e === "string" && (ALL_ENGINES as string[]).includes(e),
+    ),
+  );
+  return cleaned.length === 0 ? ["rule"] : cleaned;
 }
 
-// Anonymous + signed-in entry from the homepage hero form.
-// - Anonymous → rule engine, 3 / day / IP.
-// - Signed-in → rule (free quota 10/day/URL), claude (1 credit), openai (2 credits).
+// Anonymous + signed-in entry from the homepage hero form. Anonymous always
+// runs the rule engine; signed-in users get the per-target free quota for
+// 'rule' and spend 1 credit each for paid engines.
 export async function startAuditFromForm(input: {
   url: string;
   email?: string;
-  engine?: Engine;
-}): Promise<Ok | Err> {
+  engines?: Engine[];
+}): Promise<({ ok: true; id: string; token: string } & { engines: Engine[] }) | Err> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
   const target = check.url;
@@ -63,23 +79,17 @@ export async function startAuditFromForm(input: {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const engine = normalizeEngine(input.engine, !!user);
-  if (!engineAvailable(engine)) {
-    return {
-      ok: false,
-      error: `${ENGINES[engine].label} isn't wired up yet. Pick another engine.`,
-    };
+  const engines = normalizeEngines(input.engines, !!user);
+  const unavailable = engines.find((e) => !engineAvailable(e));
+  if (unavailable) {
+    return { ok: false, error: `${ENGINES[unavailable].label} isn't wired up yet.` };
   }
-  const cost = engineCost(engine);
-  let creditsSpent = 0;
+  const cost = selectionCost(engines);
 
   if (!user) {
     const anon = await checkAnonymousLimit(ipH);
     if (!anon.ok) {
-      return {
-        ok: false,
-        error: "Daily free audit limit reached for this IP. Sign up to use credits.",
-      };
+      return { ok: false, error: "Daily free audit limit reached for this IP. Sign up to use credits." };
     }
     if (!(await checkPerTargetLimit(target, null))) {
       return { ok: false, error: "This URL was just audited. Try again in a few minutes." };
@@ -88,28 +98,24 @@ export async function startAuditFromForm(input: {
     if (!(await checkPerTargetLimit(target, user.id))) {
       return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
     }
-    // Free 10/day manual quota only applies to the rule engine.
-    if (engine === "rule") {
+    if (cost > 0) {
+      const ok = await consumeCredit(user.id, cost);
+      if (!ok.ok) {
+        return { ok: false, error: `Need ${cost} credits for ${engines.length} engine${engines.length === 1 ? "" : "s"}; not enough balance. Buy credits in Billing.` };
+      }
+    } else {
+      // Free rule engine: check 10/day-per-URL quota.
       const quota = await checkFreeManualQuota(user.id, target);
       if (!quota.free) {
-        return {
-          ok: false,
-          error: `Free quota (${quota.cap}/day on this URL) used. Pick Claude or OpenAI to use credits.`,
-        };
+        return { ok: false, error: `Free quota (${quota.cap}/day on this URL) used. Pick a paid engine.` };
       }
-    } else if (cost > 0) {
-      const credit = await consumeCredit(user.id, cost);
-      if (!credit.ok) {
-        return {
-          ok: false,
-          error: `${ENGINES[engine].label} costs ${cost} credit${cost === 1 ? "" : "s"} — not enough balance. Buy credits in Billing.`,
-        };
-      }
-      creditsSpent = cost;
     }
   }
 
   const svc = serviceClient();
+  // For the hero form we only create ONE audit (the form is single-engine
+  // for anonymous; signed-in users use the project page for multi-engine).
+  const firstEngine = engines[0];
   const token = newShareToken();
   const { data: row, error } = await svc
     .from("audits")
@@ -119,12 +125,12 @@ export async function startAuditFromForm(input: {
       status: "queued",
       share_token: token,
       triggered_by: "manual",
-      engine,
+      engine: firstEngine,
     })
     .select("id, share_token")
     .single();
   if (error || !row) {
-    if (creditsSpent > 0 && user) await refundCredit(user.id, creditsSpent);
+    if (cost > 0 && user) await refundCredit(user.id, cost);
     return { ok: false, error: error?.message ?? "Failed to create audit." };
   }
 
@@ -133,24 +139,21 @@ export async function startAuditFromForm(input: {
     ip_hash: ipH,
     kind: "audit_run",
     audit_id: row.id,
-    meta: {
-      from: "hero_form",
-      email: input.email ?? null,
-      engine,
-      credits_spent: creditsSpent,
-    },
+    meta: { from: "hero_form", email: input.email ?? null, engine: firstEngine, credits_spent: cost },
   });
 
   await notifyWorker(row.id, input.email);
-  return { ok: true, id: row.id, token: row.share_token! };
+  return { ok: true, id: row.id, token: row.share_token!, engines: [firstEngine] };
 }
 
-// Re-run from a project page (signed-in only). Engine and cost decided here.
-export async function runAuditForProject(input: {
+// Multi-engine project scan. UI passes engines = ["claude","gemini"] etc.,
+// confirmation already happened client-side; we deduct sum(engineCost(e))
+// in a single atomic call, then queue one audit row per engine.
+export async function runScanForProject(input: {
   projectId: string;
   url: string;
-  engine?: Engine;
-}): Promise<{ ok: true; id: string } | Err> {
+  engines: Engine[];
+}): Promise<ScanOk | Err> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
   const target = check.url;
@@ -165,56 +168,79 @@ export async function runAuditForProject(input: {
     return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
   }
 
-  const engine = normalizeEngine(input.engine, true);
-  const cost = engineCost(engine);
-  let creditsSpent = 0;
+  const engines = normalizeEngines(input.engines, true);
+  const unavailable = engines.find((e) => !engineAvailable(e));
+  if (unavailable) {
+    return { ok: false, error: `${ENGINES[unavailable].label} isn't wired up yet.` };
+  }
 
-  if (engine === "rule") {
+  const paidEngines = engines.filter((e) => ENGINES[e].cost > 0);
+  const hasRule = engines.includes("rule");
+  const cost = selectionCost(engines);
+
+  // Rule engine: free quota check (only if rule is among the picks).
+  if (hasRule) {
     const quota = await checkFreeManualQuota(user.id, target);
     if (!quota.free) {
-      return {
-        ok: false,
-        error: `Free quota (${quota.cap}/day on this URL) used. Pick Claude or OpenAI to use credits.`,
-      };
+      return { ok: false, error: `Free quota (${quota.cap}/day on this URL) used. Deselect 'Rule-based' or wait for the daily reset.` };
     }
-  } else if (cost > 0) {
-    const credit = await consumeCredit(user.id, cost);
-    if (!credit.ok) {
-      return {
-        ok: false,
-        error: `${ENGINES[engine].label} costs ${cost} credit${cost === 1 ? "" : "s"} — not enough balance. Buy credits in Billing.`,
-      };
+  }
+
+  // Atomic multi-credit deduction up front. If anything below fails we
+  // refund the lot.
+  if (cost > 0) {
+    const ok = await consumeCredit(user.id, cost);
+    if (!ok.ok) {
+      return { ok: false, error: `Need ${cost} credit${cost === 1 ? "" : "s"} for ${engines.length} engine${engines.length === 1 ? "" : "s"}; not enough balance.` };
     }
-    creditsSpent = cost;
   }
 
   const svc = serviceClient();
-  const token = newShareToken();
-  const { data: row, error } = await svc
+  const inserts = engines.map((e) => ({
+    target_url: target,
+    project_id: input.projectId,
+    owner_id: user.id,
+    status: "queued",
+    share_token: newShareToken(),
+    triggered_by: "manual",
+    engine: e,
+  }));
+  const { data: rows, error } = await svc
     .from("audits")
-    .insert({
-      target_url: target,
-      project_id: input.projectId,
-      owner_id: user.id,
-      status: "queued",
-      share_token: token,
-      triggered_by: "manual",
-      engine,
-    })
-    .select("id")
-    .single();
-  if (error || !row) {
-    if (creditsSpent > 0) await refundCredit(user.id, creditsSpent);
-    return { ok: false, error: error?.message ?? "Failed." };
+    .insert(inserts)
+    .select("id, share_token, engine");
+  if (error || !rows) {
+    if (cost > 0) await refundCredit(user.id, cost);
+    return { ok: false, error: error?.message ?? "Failed to create audits." };
   }
 
-  await svc.from("usage_events").insert({
-    owner_id: user.id,
-    kind: "audit_run",
-    audit_id: row.id,
-    meta: { from: "project", engine, credits_spent: creditsSpent },
-  });
+  // Per-engine usage events + worker notify (fire-and-forget).
+  await Promise.all(
+    rows.map((r) =>
+      svc.from("usage_events").insert({
+        owner_id: user.id,
+        kind: "audit_run",
+        audit_id: r.id,
+        meta: {
+          from: "project",
+          engine: r.engine,
+          credits_spent: ENGINES[r.engine as Engine].cost,
+        },
+      }),
+    ),
+  );
+  for (const r of rows) await notifyWorker(r.id);
 
-  await notifyWorker(row.id);
-  return { ok: true, id: row.id };
+  // Suppress unused-warning on paidEngines (it's documentation for now).
+  void paidEngines;
+
+  return {
+    ok: true,
+    creditsSpent: cost,
+    audits: rows.map((r) => ({
+      id: r.id,
+      engine: r.engine as Engine,
+      token: r.share_token!,
+    })),
+  };
 }

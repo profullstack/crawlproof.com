@@ -19,16 +19,14 @@ export const env = {
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",
-  // Paid engines (1 credit each).
+  // Paid engines — 1 credit each. All four non-Anthropic providers go
+  // through the OpenAI-compatible adapter; base URLs are baked-in defaults
+  // so the only env var per provider is the API key.
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
-  qwenApiKey: process.env.QWEN_API_KEY ?? "",
-  qwenApiUrl:
-    process.env.QWEN_API_URL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-  kimiApiKey: process.env.KIMI_API_KEY ?? "",
-  kimiApiUrl: process.env.KIMI_API_URL ?? "https://api.moonshot.ai/v1",
+  dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? "",   // Qwen
+  moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
-  deepseekApiUrl: process.env.DEEPSEEK_API_URL ?? "https://api.deepseek.com/v1",
   required,
 };

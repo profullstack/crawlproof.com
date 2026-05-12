@@ -109,6 +109,22 @@ export function engineAvailable(engine: Engine): boolean {
   return ENGINES[engine].available;
 }
 
+export function selectionCost(engines: Engine[]): number {
+  return engines.reduce((sum, e) => sum + (ENGINES[e]?.cost ?? 0), 0);
+}
+
+export function dedupeEngines(engines: Engine[]): Engine[] {
+  const seen = new Set<Engine>();
+  const out: Engine[] = [];
+  for (const e of engines) {
+    if (ENGINES[e] && !seen.has(e)) {
+      seen.add(e);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
 export function discountPct(pack: CreditPack): number {
   const rack = pack.credits * 100;
   if (pack.amountCents >= rack) return 0;

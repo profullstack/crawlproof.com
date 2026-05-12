@@ -4,10 +4,9 @@ import type { ClaudeAuditResult } from "./claude-engine";
 
 export async function kimiAudit(targetUrl: string): Promise<ClaudeAuditResult> {
   return oaCompatAudit(targetUrl, {
-    apiKey: env.kimiApiKey,
-    baseURL: env.kimiApiUrl,
-    // 128k context — fits our pre-fetched homepage + linked pages.
-    model: "moonshot-v1-128k",
+    apiKey: env.moonshotApiKey,
+    baseURL: "https://api.moonshot.ai/v1",
+    model: "kimi-k2-turbo-preview",
     providerLabel: "Kimi",
   });
 }

@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
-import { RunAuditButton } from "@/components/run-audit-button";
+import { EnginesPanel } from "@/components/engines-panel";
 import { ScheduleToggle } from "@/components/schedule-toggle";
+import type { Engine } from "@/lib/credits";
 import { ScoreTrend } from "@/components/charts/score-trend";
 import { StatusPie } from "@/components/charts/status-pie";
 import { SectionBar, type SectionRow } from "@/components/charts/section-bar";
@@ -100,7 +101,6 @@ export default async function ProjectPage({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <RunAuditButton projectId={project.id} url={project.url} />
         <ScheduleToggle projectId={project.id} current={project.schedule} />
         {last && prev && (
           <Link href={`/audits/${last.id}?diff=${prev.id}`} className="btn">
@@ -109,6 +109,12 @@ export default async function ProjectPage({
         )}
         <FreeQuotaPill ownerId={project.owner_id} url={project.url} />
       </div>
+
+      <EnginesPanel
+        projectId={project.id}
+        url={project.url}
+        defaultEngines={(project.engines ?? ["rule"]) as Engine[]}
+      />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Metric

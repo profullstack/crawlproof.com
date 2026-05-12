@@ -106,8 +106,27 @@ function parseSignatureHeader(header: string): { t: string; v1: string[] } | nul
 // Reject signatures older than this window to limit replay attacks.
 const TOLERANCE_SECONDS = 5 * 60;
 
-function hmac(secret: string, message: string): string {
+function hmac(secret: string | Buffer, message: string): string {
   return crypto.createHmac("sha256", secret).update(message).digest("hex");
+}
+
+// CoinPay's webhook secret is "whsecret_<64 hex chars>" — the hex is a 32-byte
+// key. We don't know which form they HMAC with, so we try them all.
+function secretCandidates(raw: string): Array<[string, string | Buffer]> {
+  const candidates: Array<[string, string | Buffer]> = [];
+  candidates.push(["raw_utf8", raw]);
+  const m = raw.match(/^whsecret_([0-9a-f]+)$/i);
+  if (m) {
+    candidates.push(["hex_string", m[1]]);
+    if (m[1].length % 2 === 0) {
+      try {
+        candidates.push(["hex_decoded", Buffer.from(m[1], "hex")]);
+      } catch {
+        /* skip */
+      }
+    }
+  }
+  return candidates;
 }
 
 function eqTimingSafe(a: string, b: string): boolean {
@@ -150,24 +169,36 @@ export function verifyWebhookSignature(
   }
 
   const variants = candidateMessages(parsed.t, rawBody);
-  for (const [label, message] of variants) {
-    const expected = hmac(env.coinpayWebhookSecret, message);
-    if (parsed.v1.some((cand) => eqTimingSafe(cand, expected))) {
-      if (label !== "t.body") {
-        console.warn(`[coinpay] verify OK via non-standard signing variant: ${label}`);
+  const secrets = secretCandidates(env.coinpayWebhookSecret);
+
+  for (const [sLabel, secret] of secrets) {
+    for (const [mLabel, message] of variants) {
+      const expected = hmac(secret, message);
+      if (parsed.v1.some((cand) => eqTimingSafe(cand, expected))) {
+        if (sLabel !== "raw_utf8" || mLabel !== "t.body") {
+          console.warn(
+            `[coinpay] verify OK via secret=${sLabel}, signing=${mLabel}`,
+          );
+        }
+        return true;
       }
-      return true;
     }
   }
 
-  // None matched — log enough to compare against the sender, no secret leak.
+  // None matched — log enough to compare with the sender. No secret leak.
   console.warn("[coinpay] verify FAIL", {
     bodyLen: rawBody.length,
     ts: parsed.t,
     v1_tail: parsed.v1.map((s) => s.slice(-8)),
-    expected_tail_t_body: hmac(env.coinpayWebhookSecret, `${parsed.t}.${rawBody}`).slice(-8),
-    expected_tail_body: hmac(env.coinpayWebhookSecret, rawBody).slice(-8),
     secret_len: env.coinpayWebhookSecret.length,
+    tails: Object.fromEntries(
+      secrets.flatMap(([sLabel, secret]) =>
+        variants.map(([mLabel, message]) => [
+          `${sLabel}:${mLabel}`,
+          hmac(secret, message).slice(-8),
+        ]),
+      ),
+    ),
   });
   return false;
 }

@@ -4,9 +4,9 @@ import type { ClaudeAuditResult } from "./claude-engine";
 
 export async function qwenAudit(targetUrl: string): Promise<ClaudeAuditResult> {
   return oaCompatAudit(targetUrl, {
-    apiKey: env.qwenApiKey,
-    baseURL: env.qwenApiUrl,
-    model: "qwen-max",
+    apiKey: env.dashscopeApiKey,
+    baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    model: "qwen-plus",
     providerLabel: "Qwen",
   });
 }
