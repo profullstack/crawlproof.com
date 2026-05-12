@@ -77,10 +77,13 @@ describe("createCheckout", () => {
     vi.restoreAllMocks();
   });
 
-  it("POSTs to /v1/checkouts with merchant + amount + metadata", async () => {
+  it("POSTs to /api/payments/create with business_id + amount_usd + redirect_url", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
-        JSON.stringify({ id: "cp_pay_test", hosted_url: "https://pay/x" }),
+        JSON.stringify({
+          success: true,
+          payment: { id: "payment-456", payment_address: "0xabc", status: "pending" },
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
     );
@@ -98,24 +101,20 @@ describe("createCheckout", () => {
       metadata: { purchase_id: "pur_abc" },
     });
 
-    expect(r).toEqual({ paymentId: "cp_pay_test", hostedUrl: "https://pay/x" });
+    expect(r.paymentId).toBe("payment-456");
+    expect(r.hostedUrl).toMatch(/\/pay\/payment-456$/);
     expect(fetchMock).toHaveBeenCalledOnce();
     const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const [url, init] = call;
-    expect(String(url)).toMatch(/\/v1\/checkouts$/);
+    expect(String(url)).toMatch(/\/api\/payments\/create$/);
     const headers = init?.headers as Record<string, string>;
     expect(headers.authorization).toMatch(/^Bearer /);
-    expect(headers["x-merchant-id"]).toBeTruthy();
     const body = JSON.parse(String(init?.body));
-    expect(body.amount_cents).toBe(1000);
-    expect(body.currency).toBe("USD");
-    expect(body.webhook_url).toMatch(/coinpay\/webhook$/);
-    expect(body.metadata).toMatchObject({
-      pack_id: "pack-10",
-      credits: "10",
-      owner_id: "user_123",
-      purchase_id: "pur_abc",
-    });
+    expect(body.business_id).toBeTruthy();
+    expect(body.amount_usd).toBe(10);
+    expect(body.payment_method).toBe("both");
+    expect(body.redirect_url).toMatch(/crawlproof\.com\/ok$/);
+    expect(body.description).toMatch(/purchase=pur_abc/);
   });
 
   it("throws a helpful error when CoinPay returns HTML (wrong endpoint)", async () => {
@@ -137,7 +136,7 @@ describe("createCheckout", () => {
         cancelUrl: "https://x",
         webhookUrl: "https://x",
       }),
-    ).rejects.toThrow(/got HTML — endpoint likely wrong/);
+    ).rejects.toThrow(/got HTML — endpoint wrong/);
   });
 
   it("throws when CoinPay returns non-2xx", async () => {
@@ -158,10 +157,10 @@ describe("createCheckout", () => {
     ).rejects.toThrow(/CoinPay createCheckout failed/);
   });
 
-  it("throws when the response is missing id/hostedUrl", async () => {
+  it("throws when the response is missing payment.id", async () => {
     globalThis.fetch = vi.fn(
       async () =>
-        new Response(JSON.stringify({ unrelated: true }), {
+        new Response(JSON.stringify({ success: true, payment: {} }), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -177,6 +176,6 @@ describe("createCheckout", () => {
         cancelUrl: "https://x",
         webhookUrl: "https://x",
       }),
-    ).rejects.toThrow(/missing id\/hostedUrl/);
+    ).rejects.toThrow(/missing payment\.id/);
   });
 });

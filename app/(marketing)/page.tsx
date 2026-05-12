@@ -42,7 +42,7 @@ export default function HomePage() {
           <HeroAuditForm />
         </div>
         <p className="mt-3 text-xs text-[var(--color-muted)]">
-          3 free audits per day from this IP. No card required.
+          10 free audits per day from this IP. No card required.
         </p>
       </section>
 

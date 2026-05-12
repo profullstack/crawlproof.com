@@ -82,7 +82,7 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-center text-xs text-[var(--color-muted)]">
-        Sign-ups include 3 free credits. Anonymous visitors get 3 free scans per day per IP.
+        Sign-ups include 3 free credits. Anonymous visitors get 10 free scans per day per IP.
       </p>
     </main>
   );

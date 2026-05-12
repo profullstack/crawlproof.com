@@ -27,66 +27,87 @@ export type CreateCheckoutResult = {
   hostedUrl: string;
 };
 
+type CoinPayPayment = {
+  id?: string;
+  payment_address?: string;
+  stripe_checkout_url?: string;
+  status?: string;
+};
+
+type CoinPayResponse = {
+  success?: boolean;
+  payment?: CoinPayPayment;
+  error?: string;
+};
+
 export async function createCheckout(
   input: CreateCheckoutInput,
 ): Promise<CreateCheckoutResult> {
-  if (!env.coinpayApiKey || !env.coinpayApiUrl) {
-    throw new Error("CoinPay is not configured (COINPAY_API_URL or COINPAY_API_KEY missing).");
+  if (!env.coinpayApiKey || !env.coinpayApiUrl || !env.coinpayMerchantId) {
+    throw new Error("CoinPay is not configured (COINPAY_API_URL/KEY/MERCHANT_ID).");
   }
-  const res = await fetch(`${env.coinpayApiUrl.replace(/\/$/, "")}/v1/checkouts`, {
+
+  // CoinPay API surface (per docs at https://coinpayportal.com/docs):
+  //   POST {COINPAY_API_URL}/api/payments/create   — create the payment
+  //   GET  {COINPAY_API_URL}/pay/{payment_id}      — customer-facing hosted page
+  // payment_method "both" gives the customer crypto + Stripe Checkout tabs.
+  // metadata.purchase_id is encoded in `description` since the API doesn't
+  // document a separate metadata passthrough — we match webhooks by payment_id.
+  const base = env.coinpayApiUrl.replace(/\/$/, "");
+  const apiUrl = `${base}/api/payments/create`;
+  const descriptionParts = [
+    `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
+  ];
+  if (input.metadata?.purchase_id) {
+    descriptionParts.push(`purchase=${input.metadata.purchase_id}`);
+  }
+
+  const res = await fetch(apiUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${env.coinpayApiKey}`,
-      "x-merchant-id": env.coinpayMerchantId,
     },
     body: JSON.stringify({
-      merchant_id: env.coinpayMerchantId,
-      amount_cents: input.amountCents,
-      currency: "USD",
-      description: `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
-      customer_email: input.ownerEmail ?? undefined,
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
-      webhook_url: input.webhookUrl,
-      metadata: {
-        pack_id: input.packId,
-        credits: String(input.credits),
-        owner_id: input.ownerId,
-        ...input.metadata,
-      },
+      business_id: env.coinpayMerchantId,
+      amount_usd: Number((input.amountCents / 100).toFixed(2)),
+      currency: "usdc_pol", // low-fee default; customer can pick a different chain on the hosted page
+      payment_method: "both", // shows crypto + Stripe tabs on the hosted checkout
+      description: descriptionParts.join(" · "),
+      redirect_url: input.successUrl,
     }),
   });
+
   const contentType = res.headers.get("content-type") ?? "";
   const isJson = contentType.includes("application/json");
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     const hint =
       !isJson && body.trim().startsWith("<")
-        ? " (got HTML — endpoint likely wrong; check COINPAY_API_URL and the checkout path)"
+        ? " (got HTML — endpoint wrong; check COINPAY_API_URL)"
         : "";
     throw new Error(
-      `CoinPay createCheckout failed: ${res.status} ${res.statusText}${hint}. ` +
-        `Tried ${env.coinpayApiUrl.replace(/\/$/, "")}/v1/checkouts.`,
+      `CoinPay createCheckout failed: ${res.status} ${res.statusText}${hint}. Tried ${apiUrl}. ${body.slice(0, 200)}`,
     );
   }
   if (!isJson) {
     throw new Error(
-      `CoinPay returned non-JSON (${contentType}). The checkout endpoint may not exist at the configured URL — check COINPAY_API_URL.`,
+      `CoinPay returned non-JSON (${contentType}). Check COINPAY_API_URL.`,
     );
   }
-  const json = (await res.json()) as {
-    id?: string;
-    payment_id?: string;
-    hosted_url?: string;
-    url?: string;
-  };
-  const paymentId = json.id ?? json.payment_id;
-  const hostedUrl = json.hosted_url ?? json.url;
-  if (!paymentId || !hostedUrl) {
-    throw new Error("CoinPay response missing id/hostedUrl.");
+
+  const json = (await res.json()) as CoinPayResponse;
+  const payment = json.payment;
+  if (!payment?.id) {
+    throw new Error(
+      `CoinPay response missing payment.id: ${JSON.stringify(json).slice(0, 200)}`,
+    );
   }
-  return { paymentId, hostedUrl };
+
+  // Customer-facing checkout — combines crypto QR + Stripe tabs (since
+  // payment_method=both).
+  const hostedUrl = `${base}/pay/${payment.id}`;
+  return { paymentId: payment.id, hostedUrl };
 }
 
 // Parse the Stripe-style `t=...,v1=...` header into its parts.
