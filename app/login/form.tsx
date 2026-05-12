@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithPassword, startGoogleOAuth } from "@/app/actions/auth";
@@ -71,6 +72,14 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
         <button type="submit" className="btn btn-primary w-full" disabled={pending}>
           {pending ? "Signing in…" : "Sign in"}
         </button>
+        <div className="pt-1 text-right">
+          <Link
+            href="/forgot-password"
+            className="text-xs text-[var(--color-muted)] underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
       </form>
     </div>
   );

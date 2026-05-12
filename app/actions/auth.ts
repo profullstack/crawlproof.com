@@ -45,6 +45,31 @@ export async function signUpWithPassword(input: {
   return { ok: true, needsConfirmation: !data.session };
 }
 
+// Request a password-reset email. Supabase fires the (branded) recovery
+// template; the link drops the user on /auth/callback which exchanges the
+// code for a session and then redirects to /auth/reset.
+export async function requestPasswordReset(input: {
+  email: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const { error } = await supabase.auth.resetPasswordForEmail(input.email, {
+    redirectTo: `${siteOrigin()}/auth/callback?next=${encodeURIComponent("/auth/reset")}`,
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+// Set a new password for the currently-signed-in user — called from the
+// /auth/reset form after the recovery callback has set a session cookie.
+export async function updatePassword(input: {
+  password: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const { error } = await supabase.auth.updateUser({ password: input.password });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 // Start a Google OAuth flow. Returns the URL the client should redirect to.
 // Supabase handles the round-trip; our /auth/callback route exchanges the
 // code for a session cookie.
