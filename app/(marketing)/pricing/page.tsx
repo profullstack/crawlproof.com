@@ -12,6 +12,29 @@ export default function PricingPage() {
         No subscription, no expiry. Scheduled scans (weekly) deduct 1 credit
         each time they run.
       </p>
+      <div className="mx-auto mt-8 grid max-w-3xl gap-4 md:grid-cols-2">
+        <div className="card p-5">
+          <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Free scan
+          </div>
+          <h2 className="mt-1 text-lg font-bold">Rule-based AEO check</h2>
+          <p className="mt-2 text-sm text-[var(--color-muted)]">
+            Deterministic engine — fetches your site, parses HTML / JSON-LD /
+            robots, generates a structured report. 3 free scans per IP per day.
+          </p>
+        </div>
+        <div className="card p-5 ring-2 ring-[var(--color-accent)]">
+          <div className="text-xs uppercase tracking-wider text-[var(--color-accent)]">
+            Paid scan · 1 credit
+          </div>
+          <h2 className="mt-1 text-lg font-bold">Claude Opus 4.7 audit</h2>
+          <p className="mt-2 text-sm text-[var(--color-muted)]">
+            The same model used by ChatGPT-tier answer engines runs your audit
+            with adaptive thinking + web research. Site-specific
+            recommendations, deeper positioning analysis, prettier report.
+          </p>
+        </div>
+      </div>
 
       <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {CREDIT_PACKS.map((p) => (

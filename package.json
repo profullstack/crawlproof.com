@@ -12,6 +12,7 @@
     "worker:build": "tsc -p worker/tsconfig.json"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.2",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.46.1",
     "cheerio": "^1.0.0",

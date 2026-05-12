@@ -1,6 +1,7 @@
 import http from "node:http";
 import { createClient } from "@supabase/supabase-js";
 import { runAudit } from "../lib/audit/engine";
+import { claudeAudit } from "../lib/audit/claude-engine";
 import { toMarkdown } from "../lib/audit/markdown";
 import { Resend } from "resend";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
@@ -41,10 +42,41 @@ async function processJob(job: Job) {
     .eq("id", auditId);
 
   try {
-    const result = await runAudit(audit.target_url);
+    // Paid scans (signed-in users, credit spent) get Claude Opus 4.7 with
+    // adaptive thinking + web_search/web_fetch tools. Free scans (anonymous)
+    // get the rule-based engine.
+    const usePaid = !!audit.owner_id && !!process.env.ANTHROPIC_API_KEY;
+    console.log(`[worker] audit ${auditId} engine=${usePaid ? "claude-opus-4-7" : "rule-based"}`);
+
+    let score: number;
+    let summary: unknown;
+    let findings: Array<{
+      section: string;
+      check_key: string;
+      status: string;
+      title: string;
+      detail?: string;
+      evidence?: Record<string, unknown>;
+      priority: number;
+    }>;
+    let markdown: string;
+
+    if (usePaid) {
+      const r = await claudeAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = r.markdown;
+    } else {
+      const r = await runAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = toMarkdown({ targetUrl: audit.target_url, score: r.score, result: r });
+    }
 
     // Insert findings.
-    const rows = result.findings.map((f) => ({
+    const rows = findings.map((f) => ({
       audit_id: auditId,
       section: f.section,
       check_key: f.check_key,
@@ -59,26 +91,19 @@ async function processJob(job: Job) {
       if (insErr) console.error("[worker] findings insert", insErr);
     }
 
-    // Render the canonical Markdown report.
-    const markdown = toMarkdown({
-      targetUrl: audit.target_url,
-      score: result.score,
-      result,
-    });
-
     // Mark complete.
     await supabase
       .from("audits")
       .update({
         status: "complete",
-        score: result.score,
-        summary: result.summary,
+        score,
+        summary,
         report_markdown: markdown,
         completed_at: new Date().toISOString(),
       })
       .eq("id", auditId);
 
-    console.log(`[worker] audit ${auditId} complete, score=${result.score}`);
+    console.log(`[worker] audit ${auditId} complete, score=${score}`);
 
     // Optionally render PDF + email it.
     if (job.pdfEmail && resend) {
@@ -92,7 +117,7 @@ async function processJob(job: Job) {
           bodyHtml,
           meta: {
             target: audit.target_url,
-            score: result.score,
+            score: score,
             generatedAt: new Date().toISOString(),
           },
         });
@@ -104,7 +129,7 @@ async function processJob(job: Job) {
           subject: `Your AEO audit for ${audit.target_url}`,
           html: `<p>Your audit is ready.</p>
             <p><a href="${reportUrl}">View interactive report</a></p>
-            <p>Score: ${result.score}/100</p>`,
+            <p>Score: ${score}/100</p>`,
           attachments: [{ filename, content: pdf.toString("base64") }],
         });
         console.log(`[worker] emailed PDF to ${job.pdfEmail}`);

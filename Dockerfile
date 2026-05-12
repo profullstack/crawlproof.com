@@ -32,10 +32,11 @@ RUN apt-get update \
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
-ENV WORKER_PORT=8080
+# Railway sets PORT (often 8080); worker uses a separate in-container port.
+ENV WORKER_PORT=9080
 ENV HOSTNAME=0.0.0.0
 # Worker -> app talks over loopback inside the container.
-ENV WORKER_URL=http://127.0.0.1:8080
+ENV WORKER_URL=http://127.0.0.1:9080
 
 # Standalone Next.js output (output: 'standalone' in next.config.ts).
 COPY --from=builder /app/.next/standalone ./
