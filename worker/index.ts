@@ -1,4 +1,5 @@
 import http from "node:http";
+import WebSocket from "ws";
 import { createClient } from "@supabase/supabase-js";
 import { runAudit } from "../lib/audit/engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
@@ -15,8 +16,11 @@ const sharedSecret = process.env.WORKER_SHARED_SECRET ?? "";
 const port = Number(process.env.WORKER_PORT ?? process.env.PORT ?? 8080);
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
+// Playwright base image ships Node 20 — supabase-js v2 needs a WebSocket
+// transport on Node <22, even though we never subscribe to realtime.
 const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { autoRefreshToken: false, persistSession: false },
+  realtime: { transport: WebSocket as unknown as typeof globalThis.WebSocket },
 });
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
