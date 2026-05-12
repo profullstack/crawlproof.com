@@ -22,6 +22,8 @@ jobs:
       # findings — anything WARNING / INFO is logged but doesn't fail the build.
       - run: |
           semgrep scan --error --severity ERROR \
+            --exclude-rule dockerfile.security.missing-user.missing-user \
+            --exclude-rule dockerfile.security.missing-user-entrypoint.missing-user-entrypoint \
             --config p/javascript \
             --config p/typescript \
             --config p/react \

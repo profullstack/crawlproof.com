@@ -7,6 +7,7 @@ import { openaiAudit } from "../lib/audit/openai-engine";
 import { geminiAudit } from "../lib/audit/gemini-engine";
 import { qwenAudit } from "../lib/audit/qwen-engine";
 import { kimiAudit } from "../lib/audit/kimi-engine";
+import { deepseekAudit } from "../lib/audit/deepseek-engine";
 import { toMarkdown } from "../lib/audit/markdown";
 import { Resend } from "resend";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
@@ -55,7 +56,14 @@ async function processJob(job: Job) {
     //   'claude' — Claude Opus 4.7 + web tools (1 credit)
     //   'openai' — OpenAI GPT-5 + web search (1 credit)
     const engine =
-      (audit.engine as "rule" | "claude" | "openai" | "gemini" | "qwen" | "kimi") ?? "rule";
+      (audit.engine as
+        | "rule"
+        | "claude"
+        | "openai"
+        | "gemini"
+        | "qwen"
+        | "kimi"
+        | "deepseek") ?? "rule";
     console.log(`[worker] audit ${auditId} engine=${engine}`);
 
     let score: number;
@@ -77,6 +85,7 @@ async function processJob(job: Job) {
       gemini: geminiAudit,
       qwen: qwenAudit,
       kimi: kimiAudit,
+      deepseek: deepseekAudit,
     } as const;
 
     if (engine in llmEngines) {

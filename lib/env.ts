@@ -28,5 +28,7 @@ export const env = {
     process.env.QWEN_API_URL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
   kimiApiKey: process.env.KIMI_API_KEY ?? "",
   kimiApiUrl: process.env.KIMI_API_URL ?? "https://api.moonshot.ai/v1",
+  deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
+  deepseekApiUrl: process.env.DEEPSEEK_API_URL ?? "https://api.deepseek.com/v1",
   required,
 };

@@ -30,8 +30,15 @@ export function perScanCents(pack: CreditPack): number {
   return Math.round(pack.amountCents / pack.credits);
 }
 
-// ----- Engines (rule, Claude, OpenAI, Qwen, Kimi, Gemini) -----------------
-export type Engine = "rule" | "claude" | "openai" | "qwen" | "kimi" | "gemini";
+// ----- Engines (rule + 6 LLM providers) -----------------------------------
+export type Engine =
+  | "rule"
+  | "claude"
+  | "openai"
+  | "qwen"
+  | "kimi"
+  | "gemini"
+  | "deepseek";
 
 export type EngineMeta = {
   label: string;
@@ -84,6 +91,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Google's flagship with live Search grounding. Frames your site the way Google AI Overviews would.",
+  },
+  deepseek: {
+    label: "DeepSeek V3",
+    cost: 1,
+    available: true,
+    blurb:
+      "Cost-efficient open-weight model. Strong reasoning, OpenAI-compatible API — quick, lightweight second opinion.",
   },
 };
 
