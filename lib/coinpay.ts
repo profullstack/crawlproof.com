@@ -57,9 +57,23 @@ export async function createCheckout(
       },
     }),
   });
+  const contentType = res.headers.get("content-type") ?? "";
+  const isJson = contentType.includes("application/json");
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`CoinPay createCheckout failed: ${res.status} ${text}`);
+    const body = await res.text().catch(() => "");
+    const hint =
+      !isJson && body.trim().startsWith("<")
+        ? " (got HTML — endpoint likely wrong; check COINPAY_API_URL and the checkout path)"
+        : "";
+    throw new Error(
+      `CoinPay createCheckout failed: ${res.status} ${res.statusText}${hint}. ` +
+        `Tried ${env.coinpayApiUrl.replace(/\/$/, "")}/v1/checkouts.`,
+    );
+  }
+  if (!isJson) {
+    throw new Error(
+      `CoinPay returned non-JSON (${contentType}). The checkout endpoint may not exist at the configured URL — check COINPAY_API_URL.`,
+    );
   }
   const json = (await res.json()) as {
     id?: string;

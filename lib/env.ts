@@ -19,7 +19,8 @@ export const env = {
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",
-  // Optional: enable LLM-rewritten recommendations on PDF.
+  // Paid engines: Claude Opus 4.7 (1 credit) + OpenAI GPT-5 (2 credits).
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   required,
 };

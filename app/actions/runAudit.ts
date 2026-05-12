@@ -12,6 +12,7 @@ import {
   isAllowedTargetUrl,
   refundCredit,
 } from "@/lib/rateLimit";
+import { engineAvailable, engineCost, ENGINES, type Engine } from "@/lib/credits";
 import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
 
@@ -19,7 +20,7 @@ type Ok = { ok: true; id: string; token: string };
 type Err = { ok: false; error: string };
 
 async function notifyWorker(auditId: string, pdfEmail?: string) {
-  if (!env.workerUrl) return; // worker not configured; sweep will pick it up
+  if (!env.workerUrl) return;
   try {
     await fetch(`${env.workerUrl}/enqueue`, {
       method: "POST",
@@ -31,12 +32,20 @@ async function notifyWorker(auditId: string, pdfEmail?: string) {
   }
 }
 
+function normalizeEngine(input: string | undefined, signedIn: boolean): Engine {
+  if (!signedIn) return "rule";
+  const known: Engine[] = ["rule", "claude", "openai", "qwen", "kimi", "gemini"];
+  if (input && (known as string[]).includes(input)) return input as Engine;
+  return "rule";
+}
+
 // Anonymous + signed-in entry from the homepage hero form.
-// Anonymous users get 3 free scans per day per IP. Signed-in users spend
-// 1 credit per scan from their balance.
+// - Anonymous → rule engine, 3 / day / IP.
+// - Signed-in → rule (free quota 10/day/URL), claude (1 credit), openai (2 credits).
 export async function startAuditFromForm(input: {
   url: string;
   email?: string;
+  engine?: Engine;
 }): Promise<Ok | Err> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
@@ -54,7 +63,15 @@ export async function startAuditFromForm(input: {
     data: { user },
   } = await supabase.auth.getUser();
 
-  let creditSpent = false;
+  const engine = normalizeEngine(input.engine, !!user);
+  if (!engineAvailable(engine)) {
+    return {
+      ok: false,
+      error: `${ENGINES[engine].label} isn't wired up yet. Pick another engine.`,
+    };
+  }
+  const cost = engineCost(engine);
+  let creditsSpent = 0;
 
   if (!user) {
     const anon = await checkAnonymousLimit(ipH);
@@ -71,17 +88,24 @@ export async function startAuditFromForm(input: {
     if (!(await checkPerTargetLimit(target, user.id))) {
       return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
     }
-    // Free 10/day manual scans per target before credits kick in.
-    const quota = await checkFreeManualQuota(user.id, target);
-    if (!quota.free) {
-      const credit = await consumeCredit(user.id);
+    // Free 10/day manual quota only applies to the rule engine.
+    if (engine === "rule") {
+      const quota = await checkFreeManualQuota(user.id, target);
+      if (!quota.free) {
+        return {
+          ok: false,
+          error: `Free quota (${quota.cap}/day on this URL) used. Pick Claude or OpenAI to use credits.`,
+        };
+      }
+    } else if (cost > 0) {
+      const credit = await consumeCredit(user.id, cost);
       if (!credit.ok) {
         return {
           ok: false,
-          error: `Free quota (${quota.cap}/day on this URL) used and no credits left. Buy credits in Billing.`,
+          error: `${ENGINES[engine].label} costs ${cost} credit${cost === 1 ? "" : "s"} — not enough balance. Buy credits in Billing.`,
         };
       }
-      creditSpent = true;
+      creditsSpent = cost;
     }
   }
 
@@ -95,11 +119,12 @@ export async function startAuditFromForm(input: {
       status: "queued",
       share_token: token,
       triggered_by: "manual",
+      engine,
     })
     .select("id, share_token")
     .single();
   if (error || !row) {
-    if (creditSpent && user) await refundCredit(user.id);
+    if (creditsSpent > 0 && user) await refundCredit(user.id, creditsSpent);
     return { ok: false, error: error?.message ?? "Failed to create audit." };
   }
 
@@ -111,20 +136,20 @@ export async function startAuditFromForm(input: {
     meta: {
       from: "hero_form",
       email: input.email ?? null,
-      credit_spent: creditSpent,
-      free: user ? !creditSpent : true,
+      engine,
+      credits_spent: creditsSpent,
     },
   });
 
   await notifyWorker(row.id, input.email);
-
   return { ok: true, id: row.id, token: row.share_token! };
 }
 
-// Re-run from a project page (signed-in only). Costs 1 credit.
+// Re-run from a project page (signed-in only). Engine and cost decided here.
 export async function runAuditForProject(input: {
   projectId: string;
   url: string;
+  engine?: Engine;
 }): Promise<{ ok: true; id: string } | Err> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
@@ -140,17 +165,27 @@ export async function runAuditForProject(input: {
     return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
   }
 
-  let creditSpent = false;
-  const quota = await checkFreeManualQuota(user.id, target);
-  if (!quota.free) {
-    const credit = await consumeCredit(user.id);
+  const engine = normalizeEngine(input.engine, true);
+  const cost = engineCost(engine);
+  let creditsSpent = 0;
+
+  if (engine === "rule") {
+    const quota = await checkFreeManualQuota(user.id, target);
+    if (!quota.free) {
+      return {
+        ok: false,
+        error: `Free quota (${quota.cap}/day on this URL) used. Pick Claude or OpenAI to use credits.`,
+      };
+    }
+  } else if (cost > 0) {
+    const credit = await consumeCredit(user.id, cost);
     if (!credit.ok) {
       return {
         ok: false,
-        error: `Free quota (${quota.cap}/day on this URL) used and no credits left. Buy credits in Billing.`,
+        error: `${ENGINES[engine].label} costs ${cost} credit${cost === 1 ? "" : "s"} — not enough balance. Buy credits in Billing.`,
       };
     }
-    creditSpent = true;
+    creditsSpent = cost;
   }
 
   const svc = serviceClient();
@@ -164,11 +199,12 @@ export async function runAuditForProject(input: {
       status: "queued",
       share_token: token,
       triggered_by: "manual",
+      engine,
     })
     .select("id")
     .single();
   if (error || !row) {
-    if (creditSpent) await refundCredit(user.id);
+    if (creditsSpent > 0) await refundCredit(user.id, creditsSpent);
     return { ok: false, error: error?.message ?? "Failed." };
   }
 
@@ -176,7 +212,7 @@ export async function runAuditForProject(input: {
     owner_id: user.id,
     kind: "audit_run",
     audit_id: row.id,
-    meta: { from: "project", credit_spent: creditSpent, free: !creditSpent },
+    meta: { from: "project", engine, credits_spent: creditsSpent },
   });
 
   await notifyWorker(row.id);

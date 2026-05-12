@@ -118,6 +118,28 @@ describe("createCheckout", () => {
     });
   });
 
+  it("throws a helpful error when CoinPay returns HTML (wrong endpoint)", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response("<!DOCTYPE html><h1>404 Not Found</h1>", {
+          status: 404,
+          headers: { "content-type": "text/html" },
+        }),
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(
+      createCheckout({
+        packId: "pack-1",
+        credits: 1,
+        amountCents: 100,
+        ownerId: "u",
+        successUrl: "https://x",
+        cancelUrl: "https://x",
+        webhookUrl: "https://x",
+      }),
+    ).rejects.toThrow(/got HTML — endpoint likely wrong/);
+  });
+
   it("throws when CoinPay returns non-2xx", async () => {
     globalThis.fetch = vi.fn(
       async () => new Response("server error", { status: 500 }),
@@ -138,7 +160,11 @@ describe("createCheckout", () => {
 
   it("throws when the response is missing id/hostedUrl", async () => {
     globalThis.fetch = vi.fn(
-      async () => new Response(JSON.stringify({ unrelated: true }), { status: 200 }),
+      async () =>
+        new Response(JSON.stringify({ unrelated: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     ) as unknown as typeof globalThis.fetch;
 
     await expect(

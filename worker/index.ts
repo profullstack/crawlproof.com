@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import { createClient } from "@supabase/supabase-js";
 import { runAudit } from "../lib/audit/engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
+import { openaiAudit } from "../lib/audit/openai-engine";
 import { toMarkdown } from "../lib/audit/markdown";
 import { Resend } from "resend";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
@@ -32,7 +33,7 @@ async function processJob(job: Job) {
 
   const { data: audit, error } = await supabase
     .from("audits")
-    .select("id, target_url, owner_id")
+    .select("id, target_url, owner_id, engine")
     .eq("id", auditId)
     .maybeSingle();
   if (error || !audit) {
@@ -46,11 +47,12 @@ async function processJob(job: Job) {
     .eq("id", auditId);
 
   try {
-    // Paid scans (signed-in users, credit spent) get Claude Opus 4.7 with
-    // adaptive thinking + web_search/web_fetch tools. Free scans (anonymous)
-    // get the rule-based engine.
-    const usePaid = !!audit.owner_id && !!process.env.ANTHROPIC_API_KEY;
-    console.log(`[worker] audit ${auditId} engine=${usePaid ? "claude-opus-4-7" : "rule-based"}`);
+    // Engine dispatch:
+    //   'rule'   — local rule-based crawler (default for anonymous/free)
+    //   'claude' — Claude Opus 4.7 + web tools (1 credit)
+    //   'openai' — OpenAI GPT-5 + web search (1 credit)
+    const engine = (audit.engine as "rule" | "claude" | "openai") ?? "rule";
+    console.log(`[worker] audit ${auditId} engine=${engine}`);
 
     let score: number;
     let summary: unknown;
@@ -65,8 +67,14 @@ async function processJob(job: Job) {
     }>;
     let markdown: string;
 
-    if (usePaid) {
+    if (engine === "claude") {
       const r = await claudeAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = r.markdown;
+    } else if (engine === "openai") {
+      const r = await openaiAudit(audit.target_url);
       score = r.score;
       summary = r.summary;
       findings = r.findings;

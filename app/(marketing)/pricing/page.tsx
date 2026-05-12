@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CREDIT_PACKS, discountPct, dollars, perScanCents } from "@/lib/credits";
+import { CREDIT_PACKS, ENGINES, discountPct, dollars, perScanCents } from "@/lib/credits";
 
 export const metadata = { title: "Pricing" };
 
@@ -12,28 +12,32 @@ export default function PricingPage() {
         No subscription, no expiry. Scheduled scans (weekly) deduct 1 credit
         each time they run.
       </p>
-      <div className="mx-auto mt-8 grid max-w-3xl gap-4 md:grid-cols-2">
-        <div className="card p-5">
-          <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-            Free scan
-          </div>
-          <h2 className="mt-1 text-lg font-bold">Rule-based AEO check</h2>
-          <p className="mt-2 text-sm text-[var(--color-muted)]">
-            Deterministic engine — fetches your site, parses HTML / JSON-LD /
-            robots, generates a structured report. 3 free scans per IP per day.
-          </p>
-        </div>
-        <div className="card p-5 ring-2 ring-[var(--color-accent)]">
-          <div className="text-xs uppercase tracking-wider text-[var(--color-accent)]">
-            Paid scan · 1 credit
-          </div>
-          <h2 className="mt-1 text-lg font-bold">Claude Opus 4.7 audit</h2>
-          <p className="mt-2 text-sm text-[var(--color-muted)]">
-            The same model used by ChatGPT-tier answer engines runs your audit
-            with adaptive thinking + web research. Site-specific
-            recommendations, deeper positioning analysis, prettier report.
-          </p>
-        </div>
+      <div className="mx-auto mt-8 grid max-w-6xl gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {(Object.keys(ENGINES) as Array<keyof typeof ENGINES>).map((k) => {
+          const m = ENGINES[k];
+          const tag =
+            m.cost === 0
+              ? "Free scan · 0 credits"
+              : `Paid scan · ${m.cost} credit${m.cost === 1 ? "" : "s"}`;
+          const accent = m.popular;
+          return (
+            <div
+              key={k}
+              className={`card p-5 ${accent ? "ring-2 ring-[var(--color-accent)]" : ""} ${m.available ? "" : "opacity-60"}`}
+            >
+              <div
+                className={`text-xs uppercase tracking-wider ${accent ? "text-[var(--color-accent)]" : "text-[var(--color-muted)]"}`}
+              >
+                {tag}
+              </div>
+              <h2 className="mt-1 text-lg font-bold">{m.label}</h2>
+              <p className="mt-2 text-sm text-[var(--color-muted)]">{m.blurb}</p>
+              {!m.available && (
+                <span className="badge badge-warn mt-3 inline-block">Coming soon</span>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
