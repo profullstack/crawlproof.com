@@ -12,6 +12,7 @@ export function SiteFooter() {
           <div className="font-semibold text-[var(--color-fg)]">Product</div>
           <ul className="mt-2 space-y-1">
             <li><Link href="/pricing">Pricing</Link></li>
+            <li><Link href="/recent">Recent scans</Link></li>
             <li><Link href="/blog">Blog</Link></li>
           </ul>
         </div>
