@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    name: test + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install (root)
+        run: npm ci --no-audit --no-fund
+
+      - name: Install (worker)
+        run: cd worker && npm install --no-audit --no-fund
+
+      - name: Typecheck (root)
+        run: npm run typecheck
+
+      - name: Typecheck (worker)
+        run: cd worker && npx tsc --noEmit
+
+      - name: Tests
+        run: npm test

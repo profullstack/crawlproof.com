@@ -1,0 +1,59 @@
+# GitHub CodeQL analysis.
+#
+# CodeQL is FREE for public repositories. On private repos it requires
+# GitHub Advanced Security (~$49/user/month) — the `init` and `analyze`
+# steps run fine but the SARIF upload step will fail with HTTP 403.
+#
+# This workflow is therefore gated to public repos only. When/if you flip
+# crawlproof.com to public on GitHub, this job runs automatically on every
+# PR with no further config needed.
+#
+# Until then, see .github/workflows/security.yml — Semgrep + npm audit +
+# gitleaks cover the same surface for free on a private repo.
+
+name: codeql
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  schedule:
+    - cron: "21 4 * * 1"
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    # Auto-skips on private repos; CodeQL is free on public ones.
+    if: ${{ github.event.repository.visibility == 'public' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # `javascript-typescript` analyzes .ts, .tsx, .js, .jsx with one DB.
+        language: [javascript-typescript]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # 'security-and-quality' is the broadest preset — includes both
+          # security queries and code-quality queries (vs the default
+          # 'security-extended' which is security-only).
+          queries: security-and-quality
+
+      - name: Build (autobuild for JS/TS — no-op compile)
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
