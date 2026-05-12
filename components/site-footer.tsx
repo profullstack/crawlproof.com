@@ -3,7 +3,7 @@ import Link from "next/link";
 export function SiteFooter() {
   return (
     <footer className="mt-24 border-t border-[var(--color-border)]">
-      <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-6 py-10 text-sm text-[var(--color-muted)] md:grid-cols-4">
+      <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 sm:px-6 py-10 text-sm text-[var(--color-muted)] md:grid-cols-4">
         <div>
           <div className="font-semibold text-[var(--color-fg)]">CrawlProof</div>
           <p className="mt-2">See your site the way AI crawlers do.</p>
@@ -31,7 +31,7 @@ export function SiteFooter() {
           </ul>
         </div>
       </div>
-      <div className="mx-auto max-w-6xl px-6 pb-8 text-xs text-[var(--color-muted)]">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 pb-8 text-xs text-[var(--color-muted)]">
         © {new Date().getFullYear()} CrawlProof
       </div>
     </footer>

@@ -16,7 +16,7 @@ export default async function SignupPage({
   if (data.user) redirect(sp.redirect ?? "/dashboard");
 
   return (
-    <main className="mx-auto max-w-md px-6 py-16">
+    <main className="mx-auto max-w-md px-4 py-12 sm:px-6 sm:py-16">
       <Link href="/" className="text-sm text-[var(--color-muted)]">
         ← Back
       </Link>

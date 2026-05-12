@@ -2,7 +2,7 @@ export const metadata = { title: "About CrawlProofBot" };
 
 export default function BotPage() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
+    <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
       <h1 className="text-4xl font-extrabold">CrawlProofBot</h1>
       <p className="mt-4 text-[var(--color-muted)]">
         CrawlProofBot is the user agent CrawlProof uses to fetch pages when a customer asks us

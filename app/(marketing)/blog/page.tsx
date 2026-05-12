@@ -5,7 +5,7 @@ export const metadata = { title: "Blog" };
 
 export default function BlogIndex() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
+    <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
       <h1 className="text-4xl font-extrabold">Blog</h1>
       <p className="mt-2 text-[var(--color-muted)]">
         Notes on AEO, AI crawlers, and how to make sites legible to LLMs.

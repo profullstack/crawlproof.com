@@ -27,11 +27,11 @@ export default function HomePage() {
       <SoftwareApplicationJsonLd />
       <FaqJsonLd faqs={faqs} />
 
-      <section className="mx-auto max-w-4xl px-6 pb-16 pt-20 text-center">
+      <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-12 pt-12 sm:pb-16 sm:pt-20 text-center">
         <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
           AEO audit · ChatGPT · Claude · Perplexity · Google AI Overviews
         </p>
-        <h1 className="text-balance text-5xl font-extrabold leading-tight md:text-6xl">
+        <h1 className="text-balance text-4xl font-extrabold leading-tight sm:text-5xl md:text-6xl">
           See your site the way AI crawlers do.
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-lg text-[var(--color-muted)]">
@@ -46,7 +46,7 @@ export default function HomePage() {
         </p>
       </section>
 
-      <section className="mx-auto max-w-6xl px-6 pb-16">
+      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
         <h2 className="mb-8 text-center text-2xl font-bold">What we check</h2>
         <div className="grid gap-4 md:grid-cols-3">
           <FeatureCard
@@ -76,8 +76,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-4xl px-6 pb-16">
-        <div className="card p-8">
+      <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-16">
+        <div className="card p-6 sm:p-8">
           <h2 className="text-2xl font-bold">Built to pass its own audit.</h2>
           <p className="mt-2 text-[var(--color-muted)]">
             CrawlProof.com itself scores 100/100. Server-rendered, schema-rich, robots-clean,
@@ -86,7 +86,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="faq" className="mx-auto max-w-3xl px-6 pb-24">
+      <section id="faq" className="mx-auto max-w-3xl px-4 sm:px-6 pb-24">
         <h2 className="mb-8 text-center text-2xl font-bold">FAQ</h2>
         <div className="space-y-3">
           {faqs.map((f) => (

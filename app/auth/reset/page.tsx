@@ -16,7 +16,7 @@ export default async function ResetPasswordPage() {
   }
 
   return (
-    <main className="mx-auto max-w-md px-6 py-16">
+    <main className="mx-auto max-w-md px-4 py-12 sm:px-6 sm:py-16">
       <h1 className="text-3xl font-bold">Set a new password</h1>
       <p className="mt-2 text-[var(--color-muted)]">
         Choose a password for <strong>{user.email}</strong>. You&apos;ll be

@@ -5,7 +5,7 @@ export const metadata = { title: "Pricing" };
 
 export default function PricingPage() {
   return (
-    <main className="mx-auto max-w-6xl px-6 py-16">
+    <main className="mx-auto max-w-6xl px-4 sm:px-6 py-16">
       <h1 className="text-center text-4xl font-extrabold">Pay per scan</h1>
       <p className="mx-auto mt-2 max-w-2xl text-center text-[var(--color-muted)]">
         <strong>1 credit = 1 scan = $1.</strong> Pay with crypto via CoinPay.

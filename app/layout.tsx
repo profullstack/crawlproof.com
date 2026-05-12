@@ -1,6 +1,15 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import "./globals.css";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  // iOS Safari shows the address bar in this color when the PWA is installed.
+  themeColor: "#0b0d10",
+  colorScheme: "dark",
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
@@ -17,6 +26,12 @@ export const metadata: Metadata = {
     siteName: "CrawlProof",
   },
   twitter: { card: "summary_large_image", title: "CrawlProof" },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "CrawlProof",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

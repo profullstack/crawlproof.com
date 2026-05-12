@@ -1,0 +1,15 @@
+{
+  "name": "CrawlProof",
+  "short_name": "CrawlProof",
+  "description": "See your site the way AI crawlers do.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "icons": [
+    { "src": "/icon", "sizes": "32x32", "type": "image/png" },
+    { "src": "/icon", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

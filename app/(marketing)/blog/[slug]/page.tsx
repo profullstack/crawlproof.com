@@ -26,7 +26,7 @@ export default async function BlogPost({
   if (!post) notFound();
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
+    <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{

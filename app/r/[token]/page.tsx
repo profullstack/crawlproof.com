@@ -191,7 +191,7 @@ export default async function PublicReportPage({
     <>
       {seo && <ReportJsonLd url={canonicalUrl} audit={seo} />}
       <SiteHeader />
-      <main className="mx-auto max-w-6xl px-6 py-10">
+      <main className="mx-auto max-w-6xl px-4 sm:px-6 py-10">
         {audit.status !== "complete" && audit.status !== "failed" && (
           <div className="mb-6">
             <LivePoller id={audit.id} />

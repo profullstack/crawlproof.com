@@ -5,7 +5,7 @@ export const metadata = { title: "Forgot password" };
 
 export default function ForgotPasswordPage() {
   return (
-    <main className="mx-auto max-w-md px-6 py-16">
+    <main className="mx-auto max-w-md px-4 py-12 sm:px-6 sm:py-16">
       <Link href="/login" className="text-sm text-[var(--color-muted)]">
         ← Back to sign in
       </Link>
