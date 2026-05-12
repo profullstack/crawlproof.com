@@ -1,43 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { signInWithPassword, startGoogleOAuth } from "@/app/actions/auth";
 
 export function LoginForm({ redirectTo }: { redirectTo?: string }) {
-  const supabase = createClient();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [pending, start] = useTransition();
 
-  async function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setBusy(false);
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    router.push(redirectTo ?? "/dashboard");
-    router.refresh();
+    start(async () => {
+      const res = await signInWithPassword({ email, password });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      router.push(redirectTo ?? "/dashboard");
+      router.refresh();
+    });
   }
 
-  async function onGoogle() {
-    const next = redirectTo ?? "/dashboard";
-    const callback = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: callback },
+  function onGoogle() {
+    setError(null);
+    start(async () => {
+      const res = await startGoogleOAuth({ redirectTo });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      window.location.href = res.url;
     });
   }
 
   return (
     <div className="mt-6 space-y-4">
-      <button type="button" className="btn w-full" onClick={onGoogle}>
+      <button type="button" className="btn w-full" onClick={onGoogle} disabled={pending}>
         Continue with Google
       </button>
       <div className="flex items-center gap-3 text-sm text-[var(--color-muted)]">
@@ -66,8 +68,8 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
           autoComplete="current-password"
         />
         {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
-        <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-          {busy ? "Signing in…" : "Sign in"}
+        <button type="submit" className="btn btn-primary w-full" disabled={pending}>
+          {pending ? "Signing in…" : "Sign in"}
         </button>
       </form>
     </div>

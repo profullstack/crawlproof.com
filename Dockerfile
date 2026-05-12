@@ -7,6 +7,17 @@
 FROM node:20-bullseye AS builder
 WORKDIR /app
 
+# Build-time args for NEXT_PUBLIC_* values — Next.js inlines these into the
+# client bundle at build time, so they must be present when `next build` runs.
+# Railway exposes service env vars to the build whenever they're declared as
+# ARG below.
+ARG NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
+ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+
 # App + worker deps share lib/audit, so install both.
 COPY package.json package-lock.json* ./
 RUN npm install --no-audit --no-fund
