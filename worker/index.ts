@@ -37,13 +37,16 @@ async function processJob(job: Job) {
 
   const { data: audit, error } = await supabase
     .from("audits")
-    .select("id, target_url, owner_id, engine")
+    .select("id, target_url, owner_id, engine, pdf_email")
     .eq("id", auditId)
     .maybeSingle();
   if (error || !audit) {
     console.error("[worker] audit not found", auditId, error);
     return;
   }
+  // Fall back to the persisted column when the HTTP enqueue payload didn't
+  // carry one (e.g. the sweep loop, or older enqueue bodies).
+  const pdfEmail = job.pdfEmail ?? (audit.pdf_email as string | null) ?? undefined;
 
   await supabase
     .from("audits")
@@ -134,35 +137,50 @@ async function processJob(job: Job) {
     console.log(`[worker] audit ${auditId} complete, score=${score}`);
 
     // Optionally render PDF + email it.
-    if (job.pdfEmail && resend) {
-      try {
-        const token = (await getShareToken(auditId)) ?? "";
-        const reportUrl = `${siteUrl}/r/${token}`;
-        // Pandoc-rendered Markdown → standalone HTML doc → Playwright PDF.
-        const bodyHtml = await markdownToHtml(markdown);
-        const html = htmlDocument({
-          title: `AEO Audit — ${new URL(audit.target_url).hostname}`,
-          bodyHtml,
-          meta: {
-            target: audit.target_url,
-            score: score,
-            generatedAt: new Date().toISOString(),
-          },
-        });
-        const pdf = await renderPdfFromHtml(html);
-        const filename = `crawlproof-${new URL(audit.target_url).hostname}-${auditId.slice(0, 8)}.pdf`;
-        await resend.emails.send({
-          from: process.env.RESEND_FROM ?? "CrawlProof <reports@crawlproof.com>",
-          to: job.pdfEmail,
-          subject: `Your AEO audit for ${audit.target_url}`,
-          html: `<p>Your audit is ready.</p>
-            <p><a href="${reportUrl}">View interactive report</a></p>
-            <p>Score: ${score}/100</p>`,
-          attachments: [{ filename, content: pdf.toString("base64") }],
-        });
-        console.log(`[worker] emailed PDF to ${job.pdfEmail}`);
-      } catch (err) {
-        console.error("[worker] PDF/email failed", err);
+    if (pdfEmail) {
+      if (!resend) {
+        console.warn(
+          `[worker] audit ${auditId}: pdfEmail=${pdfEmail} requested but RESEND_API_KEY is not set; skipping`,
+        );
+      } else {
+        try {
+          const token = (await getShareToken(auditId)) ?? "";
+          const reportUrl = `${siteUrl}/r/${token}`;
+          // Pandoc-rendered Markdown → standalone HTML doc → Playwright PDF.
+          const bodyHtml = await markdownToHtml(markdown);
+          const html = htmlDocument({
+            title: `AEO Audit — ${new URL(audit.target_url).hostname}`,
+            bodyHtml,
+            meta: {
+              target: audit.target_url,
+              score: score,
+              generatedAt: new Date().toISOString(),
+            },
+          });
+          const pdf = await renderPdfFromHtml(html);
+          const filename = `crawlproof-${new URL(audit.target_url).hostname}-${auditId.slice(0, 8)}.pdf`;
+          const sendRes = await resend.emails.send({
+            from: process.env.RESEND_FROM ?? "CrawlProof <reports@crawlproof.com>",
+            to: pdfEmail,
+            subject: `Your AEO audit for ${audit.target_url}`,
+            html: `<p>Your audit is ready.</p>
+              <p><a href="${reportUrl}">View interactive report</a></p>
+              <p>Score: ${score}/100</p>`,
+            attachments: [{ filename, content: pdf.toString("base64") }],
+          });
+          if (sendRes.error) {
+            console.error(
+              `[worker] audit ${auditId}: resend rejected send to ${pdfEmail}`,
+              sendRes.error,
+            );
+          } else {
+            console.log(
+              `[worker] emailed PDF to ${pdfEmail} (id=${sendRes.data?.id ?? "?"})`,
+            );
+          }
+        } catch (err) {
+          console.error("[worker] PDF/email failed", err);
+        }
       }
     }
   } catch (err) {

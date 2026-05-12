@@ -126,6 +126,7 @@ export async function startAuditFromForm(input: {
       share_token: token,
       triggered_by: "manual",
       engine: firstEngine,
+      pdf_email: input.email ?? null,
     })
     .select("id, share_token")
     .single();
