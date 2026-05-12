@@ -4,10 +4,10 @@ import type { Finding } from "./types";
 const RECS: Record<string, { title: string; how: string }> = {
   "homepage.h1": {
     title: "Add a single, focused H1 to the homepage",
-    how: "One <h1> per page. Write it as 'We help <audience> <do thing>.' so an LLM can quote it verbatim.",
+    how: "One `<h1>` per page. Write it as 'We help [audience] [do thing].' so an LLM can quote it verbatim.",
   },
   "homepage.title": {
-    title: "Set a meaningful <title>",
+    title: "Set a meaningful `<title>`",
     how: "50–60 chars. Lead with the brand or product, then the value prop: 'CrawlProof — AEO audits for AI crawlers.'",
   },
   "homepage.description": {
@@ -16,7 +16,7 @@ const RECS: Record<string, { title: string; how: string }> = {
   },
   "homepage.canonical": {
     title: "Add a canonical link",
-    how: "<link rel='canonical' href='https://yoursite.com/'> on every page to prevent dup-content drift.",
+    how: "`<link rel=\"canonical\" href=\"https://yoursite.com/\">` on every page to prevent dup-content drift.",
   },
   "homepage.og": {
     title: "Complete Open Graph tags",
@@ -68,7 +68,7 @@ const RECS: Record<string, { title: string; how: string }> = {
   },
   "sitemap.empty": {
     title: "Populate your sitemap with canonical URLs",
-    how: "The sitemap must list <loc> entries — empty sitemaps are worse than none.",
+    how: "The sitemap must list `<loc>` entries — empty sitemaps are worse than none.",
   },
   "llms_txt": {
     title: "Add /llms.txt",

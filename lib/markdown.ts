@@ -23,7 +23,17 @@ async function pandocConvert(md: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
       "pandoc",
-      ["--from=gfm", "--to=html5", "--standalone=false", "--no-highlight", "--wrap=none"],
+      [
+        // gfm-raw_html escapes any literal HTML tags in the source (e.g.
+        // `<title>` inside finding strings) instead of passing them through
+        // — otherwise browsers interpret a stray `<title>` inside <body> as
+        // a head element and silently swallow everything after it.
+        "--from=gfm-raw_html",
+        "--to=html5",
+        "--standalone=false",
+        "--no-highlight",
+        "--wrap=none",
+      ],
       { stdio: ["pipe", "pipe", "pipe"] },
     );
     let out = "";

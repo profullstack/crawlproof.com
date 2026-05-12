@@ -36,7 +36,7 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       check_key: "homepage.h1",
       status: "fail",
       title: "Missing H1",
-      detail: "No <h1> element found. LLMs use the H1 as the strongest signal of what the page is about.",
+      detail: "No `<h1>` element found. LLMs use the H1 as the strongest signal of what the page is about.",
       priority: 1,
     });
   } else if (h1s.length > 1) {
@@ -45,7 +45,7 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       check_key: "homepage.h1",
       status: "warn",
       title: "Multiple H1s found",
-      detail: `${h1s.length} <h1> tags. Prefer one focused H1 per page.`,
+      detail: `${h1s.length} \`<h1>\` tags. Prefer one focused H1 per page.`,
       evidence: { h1s },
       priority: 3,
     });
@@ -68,8 +68,8 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       section: "Homepage Audit",
       check_key: "homepage.title",
       status: "fail",
-      title: "Missing <title>",
-      detail: "The <title> tag is required for search and answer engines.",
+      title: "Missing `<title>`",
+      detail: "The `<title>` tag is required for search and answer engines.",
       priority: 1,
     });
   } else if (title.length < 15) {
@@ -77,7 +77,7 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       section: "Homepage Audit",
       check_key: "homepage.title",
       status: "warn",
-      title: "Very short <title>",
+      title: "Very short `<title>`",
       detail: `Title is only ${title.length} chars.`,
       evidence: { title },
       priority: 3,
@@ -87,7 +87,7 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       section: "Homepage Audit",
       check_key: "homepage.title",
       status: "pass",
-      title: "<title> present",
+      title: "`<title>` present",
       evidence: { title },
       priority: 5,
     });
@@ -101,7 +101,7 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       check_key: "homepage.description",
       status: "warn",
       title: "Missing meta description",
-      detail: "Add a <meta name='description'> to control the snippet AI/SERP show.",
+      detail: "Add a `<meta name=\"description\">` to control the snippet AI/SERP show.",
       priority: 2,
     });
   } else {
@@ -122,7 +122,7 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
     check_key: "homepage.canonical",
     status: canonical ? "pass" : "warn",
     title: canonical ? "Canonical present" : "Missing canonical link",
-    detail: canonical ?? "Add <link rel='canonical' href='https://your-domain'> to prevent dup-content confusion.",
+    detail: canonical ?? "Add `<link rel=\"canonical\" href=\"https://your-domain\">` to prevent dup-content confusion.",
     evidence: canonical ? { canonical } : undefined,
     priority: canonical ? 5 : 3,
   });
