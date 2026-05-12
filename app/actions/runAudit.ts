@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import {
   checkAnonymousLimit,
+  checkFreeManualQuota,
   checkPerTargetLimit,
   consumeCredit,
   hashIp,
@@ -70,11 +71,18 @@ export async function startAuditFromForm(input: {
     if (!(await checkPerTargetLimit(target, user.id))) {
       return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
     }
-    const credit = await consumeCredit(user.id);
-    if (!credit.ok) {
-      return { ok: false, error: "Out of scan credits. Buy more from Billing." };
+    // Free 10/day manual scans per target before credits kick in.
+    const quota = await checkFreeManualQuota(user.id, target);
+    if (!quota.free) {
+      const credit = await consumeCredit(user.id);
+      if (!credit.ok) {
+        return {
+          ok: false,
+          error: `Free quota (${quota.cap}/day on this URL) used and no credits left. Buy credits in Billing.`,
+        };
+      }
+      creditSpent = true;
     }
-    creditSpent = true;
   }
 
   const svc = serviceClient();
@@ -86,6 +94,7 @@ export async function startAuditFromForm(input: {
       owner_id: user?.id ?? null,
       status: "queued",
       share_token: token,
+      triggered_by: "manual",
     })
     .select("id, share_token")
     .single();
@@ -99,7 +108,12 @@ export async function startAuditFromForm(input: {
     ip_hash: ipH,
     kind: "audit_run",
     audit_id: row.id,
-    meta: { from: "hero_form", email: input.email ?? null, credit_spent: creditSpent },
+    meta: {
+      from: "hero_form",
+      email: input.email ?? null,
+      credit_spent: creditSpent,
+      free: user ? !creditSpent : true,
+    },
   });
 
   await notifyWorker(row.id, input.email);
@@ -126,9 +140,17 @@ export async function runAuditForProject(input: {
     return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
   }
 
-  const credit = await consumeCredit(user.id);
-  if (!credit.ok) {
-    return { ok: false, error: "Out of scan credits. Buy more from Billing." };
+  let creditSpent = false;
+  const quota = await checkFreeManualQuota(user.id, target);
+  if (!quota.free) {
+    const credit = await consumeCredit(user.id);
+    if (!credit.ok) {
+      return {
+        ok: false,
+        error: `Free quota (${quota.cap}/day on this URL) used and no credits left. Buy credits in Billing.`,
+      };
+    }
+    creditSpent = true;
   }
 
   const svc = serviceClient();
@@ -141,11 +163,12 @@ export async function runAuditForProject(input: {
       owner_id: user.id,
       status: "queued",
       share_token: token,
+      triggered_by: "manual",
     })
     .select("id")
     .single();
   if (error || !row) {
-    await refundCredit(user.id);
+    if (creditSpent) await refundCredit(user.id);
     return { ok: false, error: error?.message ?? "Failed." };
   }
 
@@ -153,7 +176,7 @@ export async function runAuditForProject(input: {
     owner_id: user.id,
     kind: "audit_run",
     audit_id: row.id,
-    meta: { from: "project", credit_spent: true },
+    meta: { from: "project", credit_spent: creditSpent, free: !creditSpent },
   });
 
   await notifyWorker(row.id);

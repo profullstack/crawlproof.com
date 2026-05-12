@@ -54,6 +54,7 @@ export async function POST(req: Request) {
         owner_id: p.owner_id,
         status: "queued",
         share_token: token,
+        triggered_by: "scheduled",
       })
       .select("id")
       .single();
