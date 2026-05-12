@@ -5,6 +5,7 @@ import { SiteFooter } from "@/components/site-footer";
 import { ReportView, type AuditRow } from "@/components/report/report-view";
 import { MarkdownView } from "@/components/report/markdown-view";
 import { ViewTabs } from "@/components/report/view-tabs";
+import { PerformancePreview } from "@/components/report/performance-preview";
 import { LivePoller } from "@/components/report/live-poller";
 import { CopyLink } from "@/components/copy-link";
 import { serviceClient } from "@/lib/supabase/service";
@@ -213,6 +214,7 @@ export default async function PublicReportPage({
                 ownerActions={ownerActions}
               />
             }
+            performanceView={<PerformancePreview />}
           />
         ) : (
           <ReportView
