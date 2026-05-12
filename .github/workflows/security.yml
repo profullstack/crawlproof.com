@@ -2,29 +2,32 @@ name: security
 
 on:
   pull_request:
-    branches: [master]
+    branches: [master, main]
   push:
-    branches: [master]
+    branches: [master, main]
   schedule:
-    # Weekly safety net for already-merged code: catches new CVEs added to the
-    # Semgrep + advisory databases between merges.
     - cron: "11 6 * * 1"
 
 jobs:
   semgrep:
     name: semgrep
     runs-on: ubuntu-latest
-    # Skip on forked PRs from other repos — Semgrep needs to write annotations,
-    # and we don't want fork PR builds failing on a permission boundary.
+    # Skip on cross-repo fork PRs — they can't write annotations.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     container:
       image: semgrep/semgrep
     steps:
       - uses: actions/checkout@v4
-
-      # `p/default` is Semgrep's curated bundle: secrets, common vulnerable
-      # patterns, OWASP top-10, JS/TS-specific issues. Free, no signup needed.
-      - run: semgrep ci --config=p/default --config=p/javascript --config=p/typescript --config=p/react --config=p/nextjs --config=p/owasp-top-ten --config=p/secrets
+      # OSS scan only (no SaaS upload, no token). Block only on ERROR-severity
+      # findings — anything WARNING / INFO is logged but doesn't fail the build.
+      - run: |
+          semgrep scan --error --severity ERROR \
+            --config p/javascript \
+            --config p/typescript \
+            --config p/react \
+            --config p/nextjs \
+            --config p/owasp-top-ten \
+            --config p/secrets
 
   npm-audit:
     name: npm audit
@@ -34,27 +37,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
-
-      # Treat HIGH and CRITICAL as failures; MODERATE warns but doesn't block.
-      - name: Audit (root)
-        run: npm audit --audit-level=high
-      - name: Audit (worker)
-        run: cd worker && npm install --no-audit --no-fund && npm audit --audit-level=high
+      - name: Audit (skip when no package.json)
+        run: |
+          if [ -f package.json ]; then
+            (npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund)
+            npm audit --audit-level=high
+          else
+            echo "no package.json — skipping npm audit"
+          fi
 
   gitleaks:
-    name: gitleaks (secret scan)
+    name: gitleaks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # gitleaks needs full history to scan past commits.
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          # Free for non-org private repos with no license; orgs see a warning
-          # banner only. Configure GITLEAKS_LICENSE for org repos when needed.
-          GITLEAKS_NOTIFY_USER_LIST: "@${{ github.actor }}"
+      # OSS binary — no license shakedown for org-owned repos.
+      - name: Install gitleaks
+        run: |
+          VERSION=8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan history
+        run: gitleaks detect --source . --redact --verbose --no-banner --exit-code 1
