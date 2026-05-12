@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { BuyCreditsButton } from "./buy-credits-button";
-import { CREDIT_PACKS, dollars } from "@/lib/credits";
+import { CREDIT_PACKS, discountPct, dollars, perScanCents } from "@/lib/credits";
 
 export const metadata = { title: "Billing" };
 
@@ -62,22 +62,37 @@ export default async function BillingPage({
       <section>
         <h2 className="mb-3 text-lg font-semibold">Buy more credits</h2>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {CREDIT_PACKS.map((p) => (
-            <div
-              key={p.id}
-              className={`card p-5 ${p.popular ? "ring-2 ring-[var(--color-accent)]" : ""}`}
-            >
-              <div className="flex items-baseline justify-between">
-                <div className="font-semibold">{p.label}</div>
-                {p.popular && <span className="badge badge-pass">Popular</span>}
+          {CREDIT_PACKS.map((p) => {
+            const off = discountPct(p);
+            return (
+              <div
+                key={p.id}
+                className={`card p-5 ${p.popular ? "ring-2 ring-[var(--color-accent)]" : ""}`}
+              >
+                <div className="flex items-baseline justify-between">
+                  <div className="font-semibold">{p.label}</div>
+                  {p.popular ? (
+                    <span className="badge badge-pass">Popular</span>
+                  ) : off > 0 ? (
+                    <span className="badge badge-warn">{off}% off</span>
+                  ) : null}
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold">{dollars(p.amountCents)}</span>
+                  {off > 0 && (
+                    <span className="text-xs text-[var(--color-muted)] line-through">
+                      {dollars(p.credits * 100)}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-[var(--color-muted)]">
+                  {p.credits} scan{p.credits === 1 ? "" : "s"} ·{" "}
+                  <span className="font-mono">{dollars(perScanCents(p))}/scan</span>
+                </div>
+                <BuyCreditsButton packId={p.id} />
               </div>
-              <div className="mt-2 text-2xl font-extrabold">{dollars(p.amountCents)}</div>
-              <div className="text-xs text-[var(--color-muted)]">
-                {p.credits} scan{p.credits === 1 ? "" : "s"}
-              </div>
-              <BuyCreditsButton packId={p.id} />
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CREDIT_PACKS, dollars } from "@/lib/credits";
+import { CREDIT_PACKS, discountPct, dollars, perScanCents } from "@/lib/credits";
 
 export const metadata = { title: "Pricing" };
 
@@ -37,29 +37,44 @@ export default function PricingPage() {
       </div>
 
       <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {CREDIT_PACKS.map((p) => (
-          <div
-            key={p.id}
-            className={`card p-6 ${p.popular ? "ring-2 ring-[var(--color-accent)]" : ""}`}
-          >
-            <div className="flex items-baseline justify-between">
-              <h2 className="text-xl font-bold">{p.label}</h2>
-              {p.popular && <span className="badge badge-pass">Popular</span>}
-            </div>
-            <div className="mt-3">
-              <span className="text-3xl font-extrabold">{dollars(p.amountCents)}</span>
-            </div>
-            <div className="mt-1 text-sm text-[var(--color-muted)]">
-              {p.credits} scan{p.credits === 1 ? "" : "s"}
-            </div>
-            <Link
-              href="/settings/billing"
-              className={`btn mt-6 w-full ${p.popular ? "btn-primary" : ""}`}
+        {CREDIT_PACKS.map((p) => {
+          const off = discountPct(p);
+          return (
+            <div
+              key={p.id}
+              className={`card p-6 ${p.popular ? "ring-2 ring-[var(--color-accent)]" : ""}`}
             >
-              Buy
-            </Link>
-          </div>
-        ))}
+              <div className="flex items-baseline justify-between">
+                <h2 className="text-xl font-bold">{p.label}</h2>
+                {p.popular ? (
+                  <span className="badge badge-pass">Popular</span>
+                ) : off > 0 ? (
+                  <span className="badge badge-warn">{off}% off</span>
+                ) : null}
+              </div>
+              <div className="mt-3 flex items-baseline gap-2">
+                <span className="text-3xl font-extrabold">{dollars(p.amountCents)}</span>
+                {off > 0 && (
+                  <span className="text-sm text-[var(--color-muted)] line-through">
+                    {dollars(p.credits * 100)}
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 text-sm text-[var(--color-muted)]">
+                {p.credits} scan{p.credits === 1 ? "" : "s"} ·{" "}
+                <span className="font-mono text-xs">
+                  {dollars(perScanCents(p))}/scan
+                </span>
+              </div>
+              <Link
+                href="/settings/billing"
+                className={`btn mt-6 w-full ${p.popular ? "btn-primary" : ""}`}
+              >
+                Buy
+              </Link>
+            </div>
+          );
+        })}
       </div>
 
       <p className="mt-8 text-center text-xs text-[var(--color-muted)]">

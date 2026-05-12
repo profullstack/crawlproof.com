@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { CREDIT_PACKS, dollars, findPack } from "@/lib/credits";
+import {
+  CREDIT_PACKS,
+  discountPct,
+  dollars,
+  findPack,
+  perScanCents,
+} from "@/lib/credits";
 
 describe("credit packs catalog", () => {
   it("has at least one pack and every pack is well-formed", () => {
@@ -26,5 +32,32 @@ describe("credit packs catalog", () => {
     expect(dollars(100)).toBe("$1");
     expect(dollars(5000)).toBe("$50");
     expect(dollars(10000)).toBe("$100");
+  });
+
+  it("dollars keeps decimals for non-whole-dollar amounts", () => {
+    expect(dollars(3750)).toBe("$37.50");
+    expect(dollars(7000)).toBe("$70");
+  });
+
+  it("discountPct is 0 for the rack-rate starter", () => {
+    const starter = findPack("pack-1")!;
+    expect(discountPct(starter)).toBe(0);
+    expect(perScanCents(starter)).toBe(100);
+  });
+
+  it("discount increases monotonically with pack size", () => {
+    const ordered = [...CREDIT_PACKS].sort((a, b) => a.credits - b.credits);
+    let last = -1;
+    for (const p of ordered) {
+      const d = discountPct(p);
+      expect(d).toBeGreaterThanOrEqual(last);
+      last = d;
+    }
+  });
+
+  it("100-pack ships the big-bag 30% discount", () => {
+    const big = findPack("pack-100")!;
+    expect(discountPct(big)).toBe(30);
+    expect(perScanCents(big)).toBe(70);
   });
 });
