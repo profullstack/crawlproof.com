@@ -42,14 +42,6 @@ export default async function AuditPage({
 
   const findings = (findingsData ?? []) as unknown as Finding[];
 
-  // Optional plan check for PDF.
-  const { data: prof } = await supabase
-    .from("profiles")
-    .select("plan")
-    .eq("id", user!.id)
-    .maybeSingle();
-  const plan = prof?.plan ?? "free";
-
   // Diff branch
   if (diff) {
     const { data: other } = await supabase
@@ -84,7 +76,7 @@ export default async function AuditPage({
       {audit.share_token && (
         <CopyLink url={`${env.siteUrl}/r/${audit.share_token}`} />
       )}
-      <PdfButton auditId={audit.id} disabled={plan !== "pro"} />
+      <PdfButton auditId={audit.id} />
     </div>
   );
 

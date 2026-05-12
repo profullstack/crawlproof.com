@@ -11,7 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, email, plan")
+    .select("display_name, email, credits_balance")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -27,7 +27,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/projects/new">New project</Link>
             <Link href="/settings">Settings</Link>
-            <span className="badge">{profile?.plan ?? "free"}</span>
+            <Link
+              href="/settings/billing"
+              className="badge badge-pass font-mono"
+              title="Scan credits — click to buy more"
+            >
+              {profile?.credits_balance ?? 0} credits
+            </Link>
             <form action="/auth/signout" method="POST">
               <button type="submit" className="text-sm hover:text-[var(--color-fg)]">
                 Sign out

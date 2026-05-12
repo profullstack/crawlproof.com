@@ -5,10 +5,11 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import {
   checkAnonymousLimit,
-  checkMonthlyLimit,
   checkPerTargetLimit,
+  consumeCredit,
   hashIp,
   isAllowedTargetUrl,
+  refundCredit,
 } from "@/lib/rateLimit";
 import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
@@ -30,6 +31,8 @@ async function notifyWorker(auditId: string, pdfEmail?: string) {
 }
 
 // Anonymous + signed-in entry from the homepage hero form.
+// Anonymous users get 3 free scans per day per IP. Signed-in users spend
+// 1 credit per scan from their balance.
 export async function startAuditFromForm(input: {
   url: string;
   email?: string;
@@ -39,7 +42,10 @@ export async function startAuditFromForm(input: {
   const target = check.url;
 
   const hdrs = await headers();
-  const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() || hdrs.get("x-real-ip") || "unknown";
+  const ip =
+    hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    hdrs.get("x-real-ip") ||
+    "unknown";
   const ipH = hashIp(ip);
 
   const supabase = await createClient();
@@ -47,28 +53,28 @@ export async function startAuditFromForm(input: {
     data: { user },
   } = await supabase.auth.getUser();
 
+  let creditSpent = false;
+
   if (!user) {
     const anon = await checkAnonymousLimit(ipH);
     if (!anon.ok) {
-      return { ok: false, error: "Daily free audit limit reached for this IP. Sign up for more." };
+      return {
+        ok: false,
+        error: "Daily free audit limit reached for this IP. Sign up to use credits.",
+      };
     }
     if (!(await checkPerTargetLimit(target, null))) {
       return { ok: false, error: "This URL was just audited. Try again in a few minutes." };
     }
   } else {
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("plan")
-      .eq("id", user.id)
-      .maybeSingle();
-    const plan = (prof?.plan ?? "free") as "free" | "pro" | "team";
-    const m = await checkMonthlyLimit(user.id, plan);
-    if (!m.ok) {
-      return { ok: false, error: `Monthly limit reached (${m.used}/${m.cap}).` };
-    }
     if (!(await checkPerTargetLimit(target, user.id))) {
       return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
     }
+    const credit = await consumeCredit(user.id);
+    if (!credit.ok) {
+      return { ok: false, error: "Out of scan credits. Buy more from Billing." };
+    }
+    creditSpent = true;
   }
 
   const svc = serviceClient();
@@ -83,14 +89,17 @@ export async function startAuditFromForm(input: {
     })
     .select("id, share_token")
     .single();
-  if (error || !row) return { ok: false, error: error?.message ?? "Failed to create audit." };
+  if (error || !row) {
+    if (creditSpent && user) await refundCredit(user.id);
+    return { ok: false, error: error?.message ?? "Failed to create audit." };
+  }
 
   await svc.from("usage_events").insert({
     owner_id: user?.id ?? null,
     ip_hash: ipH,
     kind: "audit_run",
     audit_id: row.id,
-    meta: { from: "hero_form", email: input.email ?? null },
+    meta: { from: "hero_form", email: input.email ?? null, credit_spent: creditSpent },
   });
 
   await notifyWorker(row.id, input.email);
@@ -98,7 +107,7 @@ export async function startAuditFromForm(input: {
   return { ok: true, id: row.id, token: row.share_token! };
 }
 
-// Re-run from a project page (signed-in only).
+// Re-run from a project page (signed-in only). Costs 1 credit.
 export async function runAuditForProject(input: {
   projectId: string;
   url: string;
@@ -113,16 +122,13 @@ export async function runAuditForProject(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const { data: prof } = await supabase
-    .from("profiles")
-    .select("plan")
-    .eq("id", user.id)
-    .maybeSingle();
-  const plan = (prof?.plan ?? "free") as "free" | "pro" | "team";
-  const m = await checkMonthlyLimit(user.id, plan);
-  if (!m.ok) return { ok: false, error: `Monthly limit reached (${m.used}/${m.cap}).` };
   if (!(await checkPerTargetLimit(target, user.id))) {
     return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
+  }
+
+  const credit = await consumeCredit(user.id);
+  if (!credit.ok) {
+    return { ok: false, error: "Out of scan credits. Buy more from Billing." };
   }
 
   const svc = serviceClient();
@@ -138,13 +144,16 @@ export async function runAuditForProject(input: {
     })
     .select("id")
     .single();
-  if (error || !row) return { ok: false, error: error?.message ?? "Failed." };
+  if (error || !row) {
+    await refundCredit(user.id);
+    return { ok: false, error: error?.message ?? "Failed." };
+  }
 
   await svc.from("usage_events").insert({
     owner_id: user.id,
     kind: "audit_run",
     audit_id: row.id,
-    meta: { from: "project" },
+    meta: { from: "project", credit_spent: true },
   });
 
   await notifyWorker(row.id);

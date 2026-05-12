@@ -15,18 +15,10 @@ export async function GET(
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data: prof } = await supabase
-    .from("profiles")
-    .select("plan")
-    .eq("id", user.id)
-    .maybeSingle();
-  if ((prof?.plan ?? "free") === "free") {
-    return NextResponse.json({ error: "PDF export is a Pro feature." }, { status: 402 });
-  }
-
+  // PDF export is included with every scan — the credit already paid for it.
   const { data: audit } = await supabase
     .from("audits")
-    .select("share_token, owner_id, status, report_markdown, target_url")
+    .select("share_token, owner_id, status, report_markdown, target_url, score")
     .eq("id", id)
     .maybeSingle();
   if (!audit || audit.owner_id !== user.id) {
@@ -49,7 +41,9 @@ export async function GET(
     headers: { "content-type": "application/json", "x-worker-secret": env.workerSecret },
     body: JSON.stringify({
       markdown: audit.report_markdown,
-      title: `CrawlProof — ${new URL(audit.target_url).hostname}`,
+      title: `AEO Audit — ${new URL(audit.target_url).hostname}`,
+      target: audit.target_url,
+      score: audit.score,
     }),
   });
   if (!workerRes.ok) {

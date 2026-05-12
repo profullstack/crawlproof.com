@@ -9,7 +9,9 @@ import { markdownToHtml, htmlDocument } from "../lib/markdown";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const sharedSecret = process.env.WORKER_SHARED_SECRET ?? "";
-const port = Number(process.env.PORT ?? 8080);
+// WORKER_PORT is for in-container loopback (Next.js POSTs jobs to /enqueue).
+// Fall back to PORT only when the worker runs as a separate Railway service.
+const port = Number(process.env.WORKER_PORT ?? process.env.PORT ?? 8080);
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
 const supabase = createClient(supabaseUrl, supabaseKey, {
@@ -86,8 +88,13 @@ async function processJob(job: Job) {
         // Pandoc-rendered Markdown → standalone HTML doc → Playwright PDF.
         const bodyHtml = await markdownToHtml(markdown);
         const html = htmlDocument({
-          title: `CrawlProof — ${new URL(audit.target_url).hostname}`,
+          title: `AEO Audit — ${new URL(audit.target_url).hostname}`,
           bodyHtml,
+          meta: {
+            target: audit.target_url,
+            score: result.score,
+            generatedAt: new Date().toISOString(),
+          },
         });
         const pdf = await renderPdfFromHtml(html);
         const filename = `crawlproof-${new URL(audit.target_url).hostname}-${auditId.slice(0, 8)}.pdf`;
@@ -147,6 +154,8 @@ const server = http.createServer(async (req, res) => {
           token?: string;
           markdown?: string;
           title?: string;
+          target?: string;
+          score?: number;
         };
         let pdf: Buffer;
         if (payload.markdown) {
@@ -154,6 +163,11 @@ const server = http.createServer(async (req, res) => {
           const html = htmlDocument({
             title: payload.title ?? "CrawlProof audit",
             bodyHtml,
+            meta: {
+              target: payload.target,
+              score: payload.score,
+              generatedAt: new Date().toISOString(),
+            },
           });
           pdf = await renderPdfFromHtml(html);
         } else if (payload.token) {
@@ -220,7 +234,11 @@ async function sweep() {
 
 setInterval(() => sweep().catch(() => {}), 60_000);
 
-server.listen(port, () => {
-  console.log(`[worker] listening on :${port}`);
+// Bind to loopback by default so the worker isn't reachable from the public
+// internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to
+// run as a separate Railway service.
+const bindHost = process.env.WORKER_BIND ?? "127.0.0.1";
+server.listen(port, bindHost, () => {
+  console.log(`[worker] listening on ${bindHost}:${port}`);
   sweep().catch(() => {});
 });
