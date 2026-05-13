@@ -1,30 +1,22 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { ScoreBadge } from "@/components/score-badge";
 import { EnginesPanel } from "@/components/engines-panel";
-import { ScheduleToggle } from "@/components/schedule-toggle";
-import { ProjectStatusControls } from "@/components/project-status-controls";
-import { RunNowButton } from "@/components/run-now-button";
-import type { ProjectStatus } from "@/app/actions/projects";
+import { ProjectShell } from "@/components/project-shell";
+import { ScoreBadge } from "@/components/score-badge";
 import type { Engine } from "@/lib/credits";
-import { ScoreTrend } from "@/components/charts/score-trend";
-import { StatusPie } from "@/components/charts/status-pie";
-import { SectionBar, type SectionRow } from "@/components/charts/section-bar";
-import { PriorityBar } from "@/components/charts/priority-bar";
+import type { ProjectStatus } from "@/app/actions/projects";
 
 type AuditRow = {
   id: string;
-  target_url: string;
   status: string;
   score: number | null;
-  summary: { pass?: number; warn?: number; fail?: number; unknown?: number } | null;
   created_at: string;
   engine: string;
   scan_run_id: string | null;
 };
 
-export default async function ProjectPage({
+export default async function ProjectOverviewPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -40,220 +32,132 @@ export default async function ProjectPage({
 
   const { data: audits } = await supabase
     .from("audits")
-    .select("id,target_url,status,score,summary,created_at,engine,scan_run_id")
+    .select("id, status, score, created_at, engine, scan_run_id")
     .eq("project_id", id)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(50);
 
-  const completed = ((audits ?? []) as AuditRow[]).filter(
-    (a) => a.status === "complete" && a.score !== null,
-  );
+  const rows = (audits ?? []) as AuditRow[];
+  const completed = rows.filter((a) => a.status === "complete" && a.score !== null);
   const last = completed[0];
   const prev = completed[1];
-
-  // Score trend (oldest -> newest for the line chart)
-  const trend = [...completed]
-    .reverse()
-    .map((a) => ({ date: a.created_at, score: a.score! }));
-
-  // Latest run status counts
-  const statusCounts = {
-    pass: last?.summary?.pass ?? 0,
-    warn: last?.summary?.warn ?? 0,
-    fail: last?.summary?.fail ?? 0,
-    unknown: last?.summary?.unknown ?? 0,
-  };
-
-  // Section breakdown + priority distribution from the most recent run.
-  let sectionRows: SectionRow[] = [];
-  const priorityCounts = { p1: 0, p2: 0, p3: 0, p4: 0, p5: 0 };
-  if (last) {
-    const { data: findings } = await supabase
-      .from("audit_findings")
-      .select("section,status,priority")
-      .eq("audit_id", last.id);
-    const map = new Map<string, SectionRow>();
-    for (const f of findings ?? []) {
-      const row =
-        map.get(f.section as string) ??
-        { section: f.section as string, pass: 0, warn: 0, fail: 0 };
-      const s = f.status as "pass" | "warn" | "fail" | "unknown";
-      if (s === "pass") row.pass++;
-      else if (s === "warn") row.warn++;
-      else if (s === "fail") row.fail++;
-      map.set(f.section as string, row);
-      if (s !== "pass") {
-        const p = Math.min(5, Math.max(1, (f.priority as number) ?? 3));
-        priorityCounts[`p${p}` as keyof typeof priorityCounts]++;
-      }
-    }
-    sectionRows = Array.from(map.values());
-  }
 
   const trendDelta =
     last && prev && last.score !== null && prev.score !== null
       ? last.score - prev.score
       : null;
 
-  return (
-    <div className="space-y-8">
-      <div>
-        <Link href="/dashboard" className="text-sm text-[var(--color-muted)]">
-          ← Dashboard
-        </Link>
-        <h1 className="mt-3 text-3xl font-bold">{project.name}</h1>
-        <p className="mt-1 break-all text-[var(--color-muted)]">{project.url}</p>
-      </div>
+  // Group the most recent scan run for the "latest run" card. Falls back
+  // to the solo audit when scan_run_id is null.
+  const latestRunId = rows[0]?.scan_run_id ?? null;
+  const latestRunAudits = latestRunId
+    ? rows.filter((a) => a.scan_run_id === latestRunId)
+    : rows.slice(0, 1);
 
-      <div className="flex flex-wrap items-center gap-3">
-        <ProjectStatusControls
-          projectId={project.id}
-          status={(project.status ?? "active") as ProjectStatus}
-        />
-        <ScheduleToggle projectId={project.id} current={project.schedule} />
-        <RunNowButton
+  return (
+    <ProjectShell
+      project={{
+        id: project.id,
+        name: project.name,
+        url: project.url,
+        schedule: project.schedule,
+        status: (project.status ?? "active") as ProjectStatus,
+        engines: (project.engines ?? ["rule"]) as Engine[],
+      }}
+      currentTab="overview"
+    >
+      <div className="space-y-6">
+        <EnginesPanel
           projectId={project.id}
           url={project.url}
-          engines={(project.engines ?? ["rule"]) as Engine[]}
+          defaultEngines={(project.engines ?? ["rule"]) as Engine[]}
         />
-        {last && prev && (
-          <Link href={`/audits/${last.id}?diff=${prev.id}`} className="btn">
-            Diff vs previous
-          </Link>
-        )}
-      </div>
 
-      <EnginesPanel
-        projectId={project.id}
-        url={project.url}
-        defaultEngines={(project.engines ?? ["rule"]) as Engine[]}
-      />
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Metric
-          label="Current score"
-          value={last ? `${last.score}` : "—"}
-          tone={
-            last && last.score! >= 80
-              ? "pass"
-              : last && last.score! >= 50
-                ? "warn"
-                : last
-                  ? "fail"
-                  : "muted"
-          }
-        />
-        <Metric
-          label="Δ vs previous"
-          value={
-            trendDelta === null
-              ? "—"
-              : `${trendDelta > 0 ? "+" : ""}${trendDelta}`
-          }
-          tone={
-            trendDelta === null
-              ? "muted"
-              : trendDelta > 0
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Metric
+            label="Current score"
+            value={last ? `${last.score}` : "—"}
+            tone={
+              last && last.score! >= 80
                 ? "pass"
-                : trendDelta < 0
-                  ? "fail"
-                  : "muted"
-          }
-        />
-        <Metric label="Total runs" value={String(completed.length)} tone="muted" />
-      </div>
+                : last && last.score! >= 50
+                  ? "warn"
+                  : last
+                    ? "fail"
+                    : "muted"
+            }
+          />
+          <Metric
+            label="Δ vs previous"
+            value={
+              trendDelta === null
+                ? "—"
+                : `${trendDelta > 0 ? "+" : ""}${trendDelta}`
+            }
+            tone={
+              trendDelta === null
+                ? "muted"
+                : trendDelta > 0
+                  ? "pass"
+                  : trendDelta < 0
+                    ? "fail"
+                    : "muted"
+            }
+          />
+          <Metric
+            label="Total runs"
+            value={String(completed.length)}
+            tone="muted"
+          />
+        </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ScoreTrend data={trend} />
-        <StatusPie counts={statusCounts} />
-        <SectionBar rows={sectionRows} />
-        <PriorityBar counts={priorityCounts} />
-      </div>
-
-      <section>
-        <h2 className="mb-3 text-lg font-semibold">Scan history</h2>
-        {audits && audits.length > 0 ? (
-          <ul className="space-y-2">
-            {groupByRun(audits as AuditRow[]).map((run) => (
-              <li key={run.runKey} className="card p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <Link
-                      href={
-                        run.scanRunId
-                          ? `/projects/${project.id}/runs/${run.scanRunId}`
-                          : `/audits/${run.audits[0].id}`
-                      }
-                      className="font-medium hover:underline"
-                    >
-                      {new Date(run.audits[0].created_at).toLocaleString()}
-                    </Link>
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      {run.audits.map((a) => (
-                        <span
-                          key={a.id}
-                          className="badge badge-unknown"
-                          title={`${a.engine} — ${a.status}${a.score !== null ? ` (${a.score}/100)` : ""}`}
-                        >
-                          {a.engine}
-                          {a.status === "complete" && a.score !== null
-                            ? ` ${a.score}`
-                            : a.status === "failed"
-                              ? " ✗"
-                              : ""}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <ScoreBadge
-                    score={run.avgScore}
-                    status={run.allDone ? "complete" : "running"}
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-[var(--color-muted)]">No audits yet. Run one above.</p>
+        {latestRunAudits.length > 0 && (
+          <section className="card p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-lg font-semibold">Latest run</h2>
+              <p className="text-xs text-[var(--color-muted)]">
+                {new Date(latestRunAudits[0].created_at).toLocaleString()}
+              </p>
+            </div>
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+              {latestRunAudits.map((a) => (
+                <li
+                  key={a.id}
+                  className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+                >
+                  <Link
+                    href={`/audits/${a.id}`}
+                    className="text-sm font-medium hover:underline"
+                  >
+                    {a.engine}
+                  </Link>
+                  <ScoreBadge score={a.score} status={a.status} />
+                </li>
+              ))}
+            </ul>
+            {latestRunId && (
+              <div className="mt-3 flex flex-wrap gap-3 text-sm">
+                <Link
+                  href={`/projects/${project.id}/runs/${latestRunId}`}
+                  className="text-[var(--color-accent)] hover:underline"
+                >
+                  Open scan run →
+                </Link>
+                {last && prev && (
+                  <Link
+                    href={`/audits/${last.id}?diff=${prev.id}`}
+                    className="text-[var(--color-muted)] hover:underline"
+                  >
+                    Diff vs previous run
+                  </Link>
+                )}
+              </div>
+            )}
+          </section>
         )}
-      </section>
-    </div>
+      </div>
+    </ProjectShell>
   );
-}
-
-type RunGroup = {
-  runKey: string;
-  scanRunId: string | null;
-  audits: AuditRow[];
-  avgScore: number | null;
-  allDone: boolean;
-};
-
-function groupByRun(rows: AuditRow[]): RunGroup[] {
-  const groups = new Map<string, RunGroup>();
-  for (const a of rows) {
-    const key = a.scan_run_id ?? `solo-${a.id}`;
-    let g = groups.get(key);
-    if (!g) {
-      g = {
-        runKey: key,
-        scanRunId: a.scan_run_id,
-        audits: [],
-        avgScore: null,
-        allDone: true,
-      };
-      groups.set(key, g);
-    }
-    g.audits.push(a);
-  }
-  for (const g of groups.values()) {
-    const completed = g.audits.filter((a) => a.status === "complete" && a.score !== null);
-    g.avgScore =
-      completed.length > 0
-        ? Math.round(completed.reduce((s, a) => s + (a.score ?? 0), 0) / completed.length)
-        : null;
-    g.allDone = g.audits.every((a) => a.status === "complete" || a.status === "failed");
-  }
-  return Array.from(groups.values());
 }
 
 function Metric({
