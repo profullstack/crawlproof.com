@@ -95,11 +95,11 @@ export async function startAuditFromForm(input: {
       return { ok: false, error: "Daily free audit limit reached for this IP. Sign up to use credits." };
     }
     if (!(await checkPerTargetLimit(target, null))) {
-      return { ok: false, error: "This URL was just audited. Try again in a few minutes." };
+      return { ok: false, error: "This URL was just audited. Try again in 30 seconds." };
     }
   } else {
     if (!(await checkPerTargetLimit(target, user.id))) {
-      return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
+      return { ok: false, error: "You just audited this URL. Try again in 30 seconds." };
     }
     if (cost > 0) {
       const ok = await consumeCredit(user.id, cost);
@@ -175,7 +175,7 @@ export async function runScanForProject(input: {
   if (!user) return { ok: false, error: "Not authenticated." };
 
   if (!(await checkPerTargetLimit(target, user.id))) {
-    return { ok: false, error: "You just audited this URL. Try again in a few minutes." };
+    return { ok: false, error: "You just audited this URL. Try again in 30 seconds." };
   }
 
   const engines = normalizeEngines(input.engines, true);
