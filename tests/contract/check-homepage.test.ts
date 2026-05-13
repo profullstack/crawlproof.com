@@ -80,9 +80,11 @@ describe("checkHomepage", () => {
       ),
     );
     expect(findKey(without, "homepage.description")?.status).toBe("warn");
+    // Description must be ≥ 50 chars to land on `pass`; shorter content
+    // gets `warn` per the length tiers in checks/homepage.ts.
     const withDesc = checkHomepage(
       ctx(
-        `<html><head><title>Title good</title><meta name="description" content="we help X"></head><body><h1>x</h1></body></html>`,
+        `<html><head><title>Title good</title><meta name="description" content="We help teams audit how AI crawlers actually see their site."></head><body><h1>x</h1></body></html>`,
       ),
     );
     expect(findKey(withDesc, "homepage.description")?.status).toBe("pass");

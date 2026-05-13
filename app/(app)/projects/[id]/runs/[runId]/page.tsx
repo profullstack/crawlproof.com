@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { ENGINES, type Engine } from "@/lib/credits";
 import { ScanRunPoller } from "@/components/scan-run-poller";
 
+export const dynamic = "force-dynamic";
+
 type RunAudit = {
   id: string;
   engine: Engine;

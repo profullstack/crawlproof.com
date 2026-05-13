@@ -40,6 +40,9 @@ export default async function AuditPage({
   if (!audit) notFound();
   if (audit.owner_id !== user!.id) notFound();
 
+  // Premium tab summarises EVERY non-rule audit in this scan_run — including
+  // the one you're currently viewing. Filtering out audit.id would hide the
+  // current engine from its own summary when you click into it.
   const { data: siblingsData } = audit.scan_run_id
     ? await supabase
         .from("audits")
@@ -47,7 +50,6 @@ export default async function AuditPage({
           "id, engine, status, score, share_token, failed_reason, completed_at, summary",
         )
         .eq("scan_run_id", audit.scan_run_id)
-        .neq("id", audit.id)
         .neq("engine", "rule")
         .eq("owner_id", user!.id)
         .order("created_at", { ascending: true })

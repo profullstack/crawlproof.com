@@ -11,11 +11,14 @@ import {
 // rename a data point, or break the report format used by the worker, the
 // dashboard, and the Markdown report.
 describe("audit prompt constants", () => {
-  it("exposes exactly 10 canonical sections in the prompt order", () => {
-    expect(SECTIONS).toHaveLength(10);
+  it("exposes the canonical sections in the prompt order", () => {
+    // 11 sections since "AI Recognition" was added between
+    // "LLM / AI Crawler Accessibility" and "Positioning Clarity".
+    expect(SECTIONS).toHaveLength(11);
     expect(SECTIONS[0]).toBe("Crawl Summary");
     expect(SECTIONS[1]).toBe("Data Found");
-    expect(SECTIONS[9]).toBe("Priority To-Do Checklist");
+    expect(SECTIONS).toContain("AI Recognition");
+    expect(SECTIONS[SECTIONS.length - 1]).toBe("Priority To-Do Checklist");
   });
 
   it("data point list matches the prompt deliverable", () => {

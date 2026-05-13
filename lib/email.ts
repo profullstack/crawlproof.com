@@ -123,6 +123,114 @@ export function auditReadyEmailHtml(input: {
   });
 }
 
+export type SummaryEngineRow = {
+  engine: string;
+  label: string;
+  score: number | null;
+  status: string;
+  passes: number;
+  warns: number;
+  fails: number;
+  reportUrl: string;
+};
+
+export function scanRunSummaryEmailHtml(input: {
+  targetUrl: string;
+  runUrl: string;
+  engines: SummaryEngineRow[];
+  avgScore: number | null;
+}): string {
+  const host = (() => {
+    try {
+      return new URL(input.targetUrl).hostname;
+    } catch {
+      return input.targetUrl;
+    }
+  })();
+  const accent = input.avgScore !== null ? scoreAccent(input.avgScore) : scoreAccent(0);
+  const rows = input.engines
+    .map((e) => {
+      const scoreCell =
+        e.status === "complete" && e.score !== null
+          ? `<span style="font-weight:700;color:#e7e9ee;">${e.score}</span><span style="color:#64748b;"> / 100</span>`
+          : `<span style="color:#fca5a5;">${e.status}</span>`;
+      const counts =
+        e.status === "complete"
+          ? `<span style="color:#6ee7b7;">${e.passes}</span> · <span style="color:#fcd34d;">${e.warns}</span> · <span style="color:#fca5a5;">${e.fails}</span>`
+          : "—";
+      return `<tr>
+        <td style="padding:10px 0;border-top:1px solid #1f2630;">
+          <a href="${e.reportUrl}" style="color:#e7e9ee;text-decoration:none;font-weight:600;font-size:14px;">${e.label}</a>
+        </td>
+        <td style="padding:10px 0;border-top:1px solid #1f2630;text-align:right;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;">${scoreCell}</td>
+        <td style="padding:10px 0;border-top:1px solid #1f2630;text-align:right;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;color:#9aa3b2;">${counts}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const avgBlock =
+    input.avgScore !== null
+      ? `<tr>
+            <td style="padding:20px 32px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background:${accent.bg};color:${accent.fg};font-weight:800;font-size:28px;padding:14px 22px;border-radius:12px;line-height:1;">
+                    ${input.avgScore}<span style="font-size:14px;opacity:.7;font-weight:700;"> / 100</span>
+                  </td>
+                  <td style="padding-left:14px;color:#9aa3b2;font-size:13px;">
+                    average across ${input.engines.length} engine${input.engines.length === 1 ? "" : "s"}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`
+      : "";
+
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                Your multi-engine audit for ${host} is ready
+              </h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                We scored <a href="${input.targetUrl}" style="color:#9aa3b2;">${host}</a>
+                with ${input.engines.length} engine${input.engines.length === 1 ? "" : "s"}.
+              </p>
+            </td>
+          </tr>
+          ${avgBlock}
+          <tr>
+            <td style="padding:18px 32px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                <thead>
+                  <tr>
+                    <th align="left" style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#64748b;padding:6px 0;">Engine</th>
+                    <th align="right" style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#64748b;padding:6px 0;">Score</th>
+                    <th align="right" style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#64748b;padding:6px 0;">Pass · Warn · Fail</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 24px;">
+              <a href="${input.runUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                Open scan results →
+              </a>
+              <p style="margin:12px 0 0;font-size:12px;line-height:1.6;color:#64748b;">
+                Or copy this link:<br>
+                <a href="${input.runUrl}" style="color:#9aa3b2;word-break:break-all;">${input.runUrl}</a>
+              </p>
+            </td>
+          </tr>`;
+  return emailShell({
+    title: `Your CrawlProof audit for ${host} is ready`,
+    innerHtml,
+    footerNote: "Each engine has its own full report behind the link above.",
+  });
+}
+
 export function purchaseReceiptEmailHtml(input: {
   packLabel: string;
   creditsAdded: number;
