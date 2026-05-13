@@ -217,7 +217,7 @@ export async function runAudit(
   // Priority to-do — same list, sorted, just labeled differently for the report.
   for (const r of recs.slice(0, 20)) {
     findings.push({
-      section: "Priority To-Do Checklist",
+      section: "Priority To-Do List",
       check_key: `todo.${r.check_key}`,
       status: "warn",
       title: `[ ] ${r.title}`,

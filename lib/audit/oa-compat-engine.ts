@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { fetchPage, probeText } from "./fetch";
-import { SECTIONS, DATA_POINTS } from "./prompt";
+import { SECTIONS, buildAEOUserPrompt } from "./prompt";
 import type { Finding } from "./types";
 import type { ClaudeAuditResult } from "./claude-engine";
 
@@ -49,25 +49,28 @@ const SCHEMA_DESC = `{
   "markdown": string
 }`;
 
-const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) auditor. Analyze the website content the user provides — homepage HTML and well-known files — the way an LLM crawler (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot) would discover and read it.
+// Identity + JSON schema only. The canonical AEO task lives in
+// buildAEOUserPrompt and is sent as the USER turn. We pre-fetched
+// homepage + well-known files for the model since it has no tool use
+// — the user prompt is followed by the fetched context block.
+const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) auditor — you analyze websites the way an LLM crawler (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot) would discover and read them.
 
-Produce a structured AEO audit. Findings must be assigned to one of these exact section names:
+The user message contains the audit spec followed by pre-fetched page content (homepage HTML, /robots.txt, /sitemap.xml, /llms.txt, /skill.md, and linked pages). Use only that content — you don't have tool access. If a file 404'd it'll say so; report that as a finding.
+
+Follow the user's spec exactly for the report structure and Markdown output. Quote actual content from the pages — don't paraphrase. Section ${SECTIONS.length} must be reusable checkboxes (\`- [ ] **P1** Add JSON-LD Organization schema\`). Use ✅ / ⚠️ / ❌ / ❓ emojis throughout. Tone: direct, specific, no fluff.
+
+Findings JSON must match one of these exact section names:
 ${SECTIONS.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}
 
-Data Found must cover ALL of these data points (mark found:false if you couldn't find it):
-${DATA_POINTS.map((d) => `  - ${d}`).join("\n")}
-
 For each finding:
-- section: exact section name from the list above
-- check_key: short snake_case (e.g. "homepage.h1", "schema.organization", "aibot.GPTBot")
-- status: "pass" | "warn" | "fail" | "unknown"
-- title: short headline that quotes specifics from this site
+- section: exact section name above
+- check_key: short snake_case (e.g. \`homepage.h1\`, \`schema.organization\`, \`aibot.GPTBot\`)
+- status: \`pass\` | \`warn\` | \`fail\` | \`unknown\`
+- title: short headline quoting specifics from this site
 - detail: one sentence with the WHY plus actual evidence
 - priority: 1 (critical) to 5 (polish)
 
-For score: weigh critical fails heavily. Missing schema, blocked AI bots, JS-only content → below 50. Clean instrumentation → 80+.
-
-For markdown: produce the complete report in Markdown with the 10 numbered headers exactly. Use ✅ / ⚠️ / ❌ / ❓ emojis on each bullet. Include a Markdown "Data Found" table. Section 10 must be reusable checkboxes ("- [ ] **P1** Add JSON-LD Organization schema").
+For score: critical fails dominate. Missing schema, blocked AI bots, JS-only content → below 50. Clean instrumentation → 80+.
 
 OUTPUT FORMAT: Return ONLY a single JSON object matching this schema (no prose, no fences):
 ${SCHEMA_DESC}`;
@@ -169,6 +172,10 @@ export async function oaCompatAudit(
   }
   const started = Date.now();
   const context = await buildContext(targetUrl);
+  const company = (() => {
+    try { return new URL(targetUrl).hostname.replace(/^www\./, ""); } catch { return targetUrl; }
+  })();
+  const aeoTask = buildAEOUserPrompt({ targetUrl, companyName: company });
   // DashScope / Moonshot occasionally stall mid-completion. The OpenAI SDK
   // default would let a job sit for ~10 minutes, blocking the credit and
   // confusing the user — cap each request and fail fast instead.
@@ -190,7 +197,10 @@ export async function oaCompatAudit(
     model: cfg.model,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: context },
+      // Canonical AEO task followed by pre-fetched site context. The system
+      // prompt tells the model the second block is read-only context, not
+      // a separate task.
+      { role: "user", content: `${aeoTask}\n\n---\n\nPre-fetched site content:\n\n${context}` },
     ],
     response_format: { type: "json_object" },
     temperature: 0.2,

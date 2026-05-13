@@ -67,7 +67,7 @@ export function toMarkdown(input: {
   };
 
   const todo = findings
-    .filter((f) => f.section === "Priority To-Do Checklist")
+    .filter((f) => f.section === "Priority To-Do List")
     .sort((a, b) => a.priority - b.priority)
     .map((f) => `- [ ] **P${f.priority}** — ${f.title.replace(/^\[\s?\]\s*/, "")}${f.detail ? `\n      ${f.detail.split("\n").join("\n      ")}` : ""}`)
     .join("\n");
@@ -121,7 +121,7 @@ export function toMarkdown(input: {
     ``,
     section("Recommended Fixes"),
     ``,
-    `## 10. Priority To-Do Checklist`,
+    `## 10. Priority To-Do List`,
     ``,
     todo || `_No outstanding tasks. Nice work._`,
     ``,

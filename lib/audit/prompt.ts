@@ -137,11 +137,69 @@ export const SECTIONS = [
   "Schema / Structured Data Audit",
   "robots.txt and sitemap.xml Audit",
   "LLM / AI Crawler Accessibility",
-  "AI Recognition",
   "Positioning Clarity",
   "Missing or Hard-to-Find Information",
   "Recommended Fixes",
-  "Priority To-Do Checklist",
+  "Priority To-Do List",
 ] as const;
 
 export type SectionName = (typeof SECTIONS)[number];
+
+// The single source of truth for the AEO audit task. Every LLM engine
+// renders this exact prompt as its USER turn; engine-specific guidance
+// (tool hints, JSON output schema) stays in each engine's SYSTEM prompt.
+// Keep this in sync with the spec the user posted in 2026-05-13.
+export function buildAEOUserPrompt(input: {
+  targetUrl: string;
+  companyName?: string;
+}): string {
+  const name = input.companyName ?? input.targetUrl;
+  return `Pretend you've never heard of my company: ${input.targetUrl}
+
+Only use what you can find on the public web. Act like an LLM crawler discovering the site for the first time.
+
+Research and extract anything you can find about the company, including:
+
+${DATA_POINTS.map((d) => `- ${d}`).join("\n")}
+
+For each data point, tell me exactly how you found it:
+
+${SOURCES.map((s) => `- ${s}`).join("\n")}
+
+If you cannot find something easily, stop and explain what the challenge is.
+
+Also audit the AEO basics:
+
+1. Fetch the homepage.
+2. Flag whether important content appears to be JavaScript-rendered.
+3. Check for schema/structured data.
+4. Read robots.txt.
+5. Check sitemap.xml.
+6. Look for LLM crawler rules or AI bot access rules.
+7. Identify whether the site clearly explains:
+   - Who the company is
+   - What it does
+   - Who it serves
+   - Why it is different
+   - How to buy, sign up, or contact sales
+
+Summarize:
+
+- What was easy to find
+- What was hard to find
+- What was impossible to find
+- What methods you used
+- What the company should fix
+- What pages or metadata should be added
+- What would improve discoverability for AI search, LLM crawlers, and answer engines
+
+Output format:
+
+# AEO Audit for ${name}
+
+${SECTIONS.map((s, i) => `## ${i + 1}. ${s}`).join("\n\n")}
+
+(For section 2, render a Markdown table: | Data Point | Found? | Source | Notes |)
+
+Create the section ${SECTIONS.length} to-do list as actionable checklist items I can reuse after every major website change.`;
+}

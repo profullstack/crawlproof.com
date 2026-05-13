@@ -7,7 +7,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod/v4";
 import { env } from "../env";
 import type { AuditResult, Finding } from "./types";
-import { SECTIONS, DATA_POINTS } from "./prompt";
+import { SECTIONS, buildAEOUserPrompt } from "./prompt";
 
 // Schema Claude must populate. Numeric/string constraints (min/max/length)
 // aren't supported by structured outputs — we validate them client-side.
@@ -40,65 +40,32 @@ const ResultSchema = z.object({
   markdown: z.string(),
 });
 
-const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) auditor. You analyze websites the way an LLM crawler — GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot — would discover and read them.
+// Minimal system prompt — task content lives in buildAEOUserPrompt so every
+// engine sends the same canonical AEO spec as its USER turn. System only
+// covers identity, tool guidance specific to Claude, and the JSON output
+// schema that messages.parse needs to populate.
+const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) auditor — you analyze websites the way an LLM crawler (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot) would discover and read them.
 
-For every audit:
-1. Use \`web_fetch\` on the target URL (homepage).
+Research method:
+1. Use \`web_fetch\` on the homepage.
 2. Use \`web_fetch\` on each well-known file: /robots.txt, /sitemap.xml, /llms.txt, /llms-full.txt, /skill.md, /.well-known/ai-plugin.json. Some will 404 — that's a finding.
-3. Use \`web_fetch\` on up to 6 important linked pages found in the homepage nav/footer: /about, /pricing, /blog, /docs, /contact, /team, /customers, /security, /features, /changelog. Skip ones that don't exist on this site.
+3. Use \`web_fetch\` on up to 6 important linked pages from the homepage nav/footer (/about, /pricing, /blog, /docs, /contact, /team, /customers, /security, /features, /changelog). Skip the ones that 404.
 4. Optionally \`web_search\` for additional public context (press, social profiles, recent news).
 
-Then produce a structured AEO audit. Findings must be assigned to one of these exact section names:
+Follow the user's spec exactly for the report structure and Markdown output. Quote actual content from the site — don't paraphrase. Section ${SECTIONS.length} must be reusable checkboxes (\`- [ ] **P1** Add JSON-LD Organization schema\`). Use ✅ / ⚠️ / ❌ / ❓ status emojis throughout. Tone: direct, specific, no fluff.
+
+Findings JSON must match one of these exact section names:
 ${SECTIONS.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}
 
-Data Found must cover ALL of these data points (mark found:false if you couldn't find it):
-${DATA_POINTS.map((d) => `  - ${d}`).join("\n")}
-
 For each finding:
-- section: exact section name from the list above
-- check_key: short snake_case identifier (e.g. "homepage.h1", "schema.organization", "aibot.GPTBot", "positioning.cta", "llms_txt.exists")
-- status: "pass" | "warn" | "fail" | "unknown"
-- title: short headline that quotes specifics from this site (not generic)
-- detail: one sentence with the WHY plus the specific evidence (e.g. the actual H1 text, the actual robots.txt line)
-- priority: 1 (critical, breaks AEO entirely) to 5 (polish)
+- section: exact section name above
+- check_key: short snake_case identifier (e.g. \`homepage.h1\`, \`schema.organization\`, \`aibot.GPTBot\`, \`positioning.cta\`, \`llms_txt.exists\`)
+- status: \`pass\` | \`warn\` | \`fail\` | \`unknown\`
+- title: short headline quoting specifics from this site
+- detail: one sentence with the WHY plus actual evidence (the H1 text, the robots.txt line, etc.)
+- priority: 1 (critical — breaks AEO) to 5 (polish)
 
-For the "AI Recognition" section, BEFORE doing any web_fetch / web_search, answer honestly from your own training data:
-- Do you recognize this company / domain from training? (status: "pass" if yes with substantive recall, "warn" if vague, "fail" if not at all, "unknown" if uncertain)
-- check_key: "recognition.training_data"
-- title: "Familiar with <domain>" or "No prior knowledge of <domain>"
-- detail: One sentence. If you recognize it, name 1–2 concrete things you remember (what they do, who they serve, notable products). If you don't, say so plainly — do NOT speculate or paraphrase web search results.
-- priority: 3 (informational signal, not a defect)
-
-This section is a signal of training-data presence, not a quality judgment. Sites that don't appear in training can still be excellent — but the user should know whether they're invisible to the dominant AI surfaces.
-
-For score: weigh critical fails heavily. A site missing schema, blocking GPTBot in robots.txt, or hiding all content behind JS should score below 50. A clean, well-instrumented site should score 80+.
-
-For summary.pass/warn/fail/unknown: count each across all findings.
-
-For markdown: produce the complete report in Markdown with these exact section headers:
-# AEO Audit for {{domain}}
-
-**Target:** {url}
-**Score:** {N} / 100
-**Generated:** ISO timestamp
-
-## 1. Crawl Summary
-## 2. Data Found
-(Use a Markdown table here: | Data Point | Found? | Source | Notes |)
-## 3. Homepage Audit
-## 4. Schema / Structured Data Audit
-## 5. robots.txt and sitemap.xml Audit
-## 6. LLM / AI Crawler Accessibility
-## 7. AI Recognition
-(One paragraph stating whether you recognize this site from training data, and what specifically you remember if so. No fluff.)
-## 8. Positioning Clarity
-## 9. Missing or Hard-to-Find Information
-## 10. Recommended Fixes
-## 11. Priority To-Do Checklist
-
-Use ✅ / ⚠️ / ❌ / ❓ status emojis on each bullet. Quote actual content from the site. Section 10 must be reusable checkboxes ("- [ ] **P1** Add JSON-LD Organization schema").
-
-Tone: direct, specific, no fluff. This is a paid report — quality matters.`;
+For score: critical fails dominate. Missing schema, blocking GPTBot, JS-only content → below 50. Clean instrumentation → 80+. For summary.pass/warn/fail/unknown: count each across all findings.`;
 
 export type ClaudeAuditResult = AuditResult & { markdown: string };
 
@@ -116,7 +83,7 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
     }
   })();
 
-  const userPrompt = `Audit this URL: ${targetUrl}\nCompany name (for the report header): ${company}\n\nPretend you've never heard of this company. Use only the public web. Use web_fetch and web_search.`;
+  const userPrompt = buildAEOUserPrompt({ targetUrl, companyName: company });
 
   // Stream the request — high-effort adaptive thinking + web tools routinely
   // pushes past the SDK's 10-minute non-streaming HTTP timeout. `.finalMessage()`

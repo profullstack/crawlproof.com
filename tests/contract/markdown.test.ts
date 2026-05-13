@@ -31,7 +31,7 @@ const sampleResult: AuditResult = {
       priority: 1,
     },
     {
-      section: "Priority To-Do Checklist",
+      section: "Priority To-Do List",
       check_key: "todo.homepage.title",
       status: "warn",
       title: "[ ] Set a meaningful <title>",
@@ -77,7 +77,7 @@ describe("toMarkdown", () => {
       "## 7. Positioning Clarity",
       "## 8. Missing or Hard-to-Find Information",
       "## 9. Recommended Fixes",
-      "## 10. Priority To-Do Checklist",
+      "## 10. Priority To-Do List",
     ].map((h) => md.indexOf(h));
     expect(positions.every((p) => p >= 0)).toBe(true);
     // strictly ascending

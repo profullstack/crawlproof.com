@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
 import { env } from "../env";
 import type { AuditResult, Finding } from "./types";
-import { SECTIONS, DATA_POINTS } from "./prompt";
+import { SECTIONS, buildAEOUserPrompt } from "./prompt";
 import type { ClaudeAuditResult } from "./claude-engine";
 
 // OpenAI scan — same JSON shape as the Claude engine so the worker stores
@@ -42,29 +42,27 @@ const ResultSchema = z.object({
   markdown: z.string(),
 });
 
-const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) auditor. Analyze websites the way an LLM crawler — GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot — would discover and read them.
+// Identity + tool guidance + JSON schema only. The canonical AEO task lives
+// in buildAEOUserPrompt and is sent as the USER turn, identical across
+// every LLM engine.
+const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) auditor — you analyze websites the way an LLM crawler (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot) would discover and read them.
 
 Use the web_search tool to research the target. Pull the homepage, /robots.txt, /sitemap.xml, /llms.txt, /skill.md, and any About/Pricing/Blog/Contact pages you can find. Search for press, social profiles, and recent news as needed.
 
-Produce a structured AEO audit. Findings must be assigned to one of these exact section names:
+Follow the user's spec exactly for the report structure and Markdown output. Quote actual content from the site — don't paraphrase. Section ${SECTIONS.length} must be reusable checkboxes (\`- [ ] **P1** Add JSON-LD Organization schema\`). Use ✅ / ⚠️ / ❌ / ❓ emojis throughout. Tone: direct, specific, no fluff.
+
+Findings JSON must match one of these exact section names:
 ${SECTIONS.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}
 
-Data Found must cover ALL of these data points (mark found:false if you couldn't find it):
-${DATA_POINTS.map((d) => `  - ${d}`).join("\n")}
-
 For each finding:
-- section: exact section name from the list above
-- check_key: short snake_case (e.g. "homepage.h1", "schema.organization", "aibot.GPTBot")
-- status: "pass" | "warn" | "fail" | "unknown"
-- title: short headline that quotes specifics from this site
-- detail: one sentence with the WHY plus actual evidence (the H1 text, the robots.txt line, etc.)
+- section: exact section name above
+- check_key: short snake_case (e.g. \`homepage.h1\`, \`schema.organization\`, \`aibot.GPTBot\`)
+- status: \`pass\` | \`warn\` | \`fail\` | \`unknown\`
+- title: short headline quoting specifics from this site
+- detail: one sentence with the WHY plus actual evidence
 - priority: 1 (critical) to 5 (polish)
 
-For score: weigh critical fails heavily. Missing schema, blocking GPTBot, hiding content behind JS = score below 50. Clean instrumentation = 80+.
-
-For markdown: produce the complete report following the section structure exactly. Use ✅ / ⚠️ / ❌ / ❓ status emojis. Include a "Data Found" markdown table in section 2. Section 10 must be reusable checkboxes ("- [ ] **P1** Add JSON-LD Organization schema").
-
-Tone: direct, specific, no fluff. This is a paid report.`;
+For score: critical fails dominate. Missing schema, blocking GPTBot, JS-only content → below 50. Clean instrumentation → 80+.`;
 
 export async function openaiAudit(targetUrl: string): Promise<ClaudeAuditResult> {
   if (!env.openaiApiKey) {
@@ -80,7 +78,7 @@ export async function openaiAudit(targetUrl: string): Promise<ClaudeAuditResult>
     }
   })();
 
-  const userPrompt = `Audit this URL: ${targetUrl}\nCompany name (for the report header): ${company}\n\nPretend you've never heard of this company. Use only the public web. Use web_search to fetch pages.`;
+  const userPrompt = buildAEOUserPrompt({ targetUrl, companyName: company });
 
   const response = await client.responses.parse({
     model: "gpt-5",
