@@ -81,7 +81,9 @@ export const ENGINES: Record<Engine, EngineMeta> = {
   kimi: {
     label: "Kimi K2",
     cost: 1,
-    available: true,
+    // Disabled until we top up Moonshot. The org returns 429 "insufficient
+    // balance" on every call, which fails the scan and wastes the credit.
+    available: false,
     blurb:
       "Moonshot AI's flagship via OpenAI-compatible API. Strong long-context reasoning over your full homepage.",
   },

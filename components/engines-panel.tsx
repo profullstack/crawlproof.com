@@ -58,8 +58,9 @@ export function EnginesPanel({
         setConfirming(false);
         return;
       }
-      // Navigate to the first audit; others appear in audit history.
-      router.push(`/audits/${res.audits[0].id}`);
+      // Route to the scan-run page so the user sees every engine's progress
+      // side-by-side, not just one of them.
+      router.push(`/projects/${projectId}/runs/${res.scanRunId}`);
     });
   }
 

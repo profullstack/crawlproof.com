@@ -1,5 +1,6 @@
 "use server";
 
+import crypto from "node:crypto";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
@@ -25,6 +26,7 @@ import { recordMarketingConsent } from "@/lib/marketing";
 
 type ScanOk = {
   ok: true;
+  scanRunId: string;
   audits: { id: string; engine: Engine; token: string }[];
   creditsSpent: number;
 };
@@ -214,6 +216,9 @@ export async function runScanForProject(input: {
   // the account email — matches the user's expectation of "I'll get the
   // report emailed to me."
   const pdfEmail = user.email ?? null;
+  // Shared scan_run_id ties the N audits from this click together so the
+  // runs/<runId> page can show every engine side-by-side.
+  const scanRunId = crypto.randomUUID();
   const inserts = engines.map((e) => ({
     target_url: target,
     project_id: input.projectId,
@@ -223,6 +228,7 @@ export async function runScanForProject(input: {
     triggered_by: "manual",
     engine: e,
     pdf_email: pdfEmail,
+    scan_run_id: scanRunId,
   }));
   const { data: rows, error } = await svc
     .from("audits")
@@ -256,6 +262,7 @@ export async function runScanForProject(input: {
   return {
     ok: true,
     creditsSpent: cost,
+    scanRunId,
     audits: rows.map((r) => ({
       id: r.id,
       engine: r.engine as Engine,

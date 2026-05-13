@@ -18,6 +18,8 @@ type AuditRow = {
   score: number | null;
   summary: { pass?: number; warn?: number; fail?: number; unknown?: number } | null;
   created_at: string;
+  engine: string;
+  scan_run_id: string | null;
 };
 
 export default async function ProjectPage({
@@ -36,7 +38,7 @@ export default async function ProjectPage({
 
   const { data: audits } = await supabase
     .from("audits")
-    .select("id,target_url,status,score,summary,created_at")
+    .select("id,target_url,status,score,summary,created_at,engine,scan_run_id")
     .eq("project_id", id)
     .order("created_at", { ascending: false });
 
@@ -158,15 +160,45 @@ export default async function ProjectPage({
       </div>
 
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Audit history</h2>
+        <h2 className="mb-3 text-lg font-semibold">Scan history</h2>
         {audits && audits.length > 0 ? (
           <ul className="space-y-2">
-            {audits.map((a) => (
-              <li key={a.id} className="card flex items-center justify-between p-3">
-                <Link href={`/audits/${a.id}`} className="font-medium hover:underline">
-                  {new Date(a.created_at).toLocaleString()}
-                </Link>
-                <ScoreBadge score={a.score} status={a.status} />
+            {groupByRun(audits as AuditRow[]).map((run) => (
+              <li key={run.runKey} className="card p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link
+                      href={
+                        run.scanRunId
+                          ? `/projects/${project.id}/runs/${run.scanRunId}`
+                          : `/audits/${run.audits[0].id}`
+                      }
+                      className="font-medium hover:underline"
+                    >
+                      {new Date(run.audits[0].created_at).toLocaleString()}
+                    </Link>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {run.audits.map((a) => (
+                        <span
+                          key={a.id}
+                          className="badge badge-unknown"
+                          title={`${a.engine} — ${a.status}${a.score !== null ? ` (${a.score}/100)` : ""}`}
+                        >
+                          {a.engine}
+                          {a.status === "complete" && a.score !== null
+                            ? ` ${a.score}`
+                            : a.status === "failed"
+                              ? " ✗"
+                              : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <ScoreBadge
+                    score={run.avgScore}
+                    status={run.allDone ? "complete" : "running"}
+                  />
+                </div>
               </li>
             ))}
           </ul>
@@ -176,6 +208,42 @@ export default async function ProjectPage({
       </section>
     </div>
   );
+}
+
+type RunGroup = {
+  runKey: string;
+  scanRunId: string | null;
+  audits: AuditRow[];
+  avgScore: number | null;
+  allDone: boolean;
+};
+
+function groupByRun(rows: AuditRow[]): RunGroup[] {
+  const groups = new Map<string, RunGroup>();
+  for (const a of rows) {
+    const key = a.scan_run_id ?? `solo-${a.id}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        runKey: key,
+        scanRunId: a.scan_run_id,
+        audits: [],
+        avgScore: null,
+        allDone: true,
+      };
+      groups.set(key, g);
+    }
+    g.audits.push(a);
+  }
+  for (const g of groups.values()) {
+    const completed = g.audits.filter((a) => a.status === "complete" && a.score !== null);
+    g.avgScore =
+      completed.length > 0
+        ? Math.round(completed.reduce((s, a) => s + (a.score ?? 0), 0) / completed.length)
+        : null;
+    g.allDone = g.audits.every((a) => a.status === "complete" || a.status === "failed");
+  }
+  return Array.from(groups.values());
 }
 
 async function FreeQuotaPill({
