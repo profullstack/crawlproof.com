@@ -45,10 +45,17 @@ type CoinPayEvent = {
 const COMPLETE_EVENTS = new Set([
   "payment.completed",
   "payment.confirmed",
+  "payment.forwarded", // crypto path — fires once funds are sent to merchant wallet
   "payment.paid",
   "payment.succeeded",
 ]);
-const COMPLETE_STATUSES = new Set(["completed", "confirmed", "paid", "succeeded"]);
+const COMPLETE_STATUSES = new Set([
+  "completed",
+  "confirmed",
+  "forwarded",
+  "paid",
+  "succeeded",
+]);
 
 const FAIL_EVENTS = new Set(["payment.failed", "payment.expired", "payment.cancelled"]);
 const FAIL_STATUSES = new Set(["failed", "expired", "cancelled", "canceled"]);

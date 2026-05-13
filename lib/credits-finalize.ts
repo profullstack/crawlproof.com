@@ -10,12 +10,14 @@ import { findPack } from "./credits";
 export const COMPLETE_EVENTS = new Set([
   "payment.completed",
   "payment.confirmed",
+  "payment.forwarded", // crypto path — fires once funds are sent to merchant wallet
   "payment.paid",
   "payment.succeeded",
 ]);
 export const COMPLETE_STATUSES = new Set([
   "completed",
   "confirmed",
+  "forwarded",
   "paid",
   "succeeded",
 ]);
