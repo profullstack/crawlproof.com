@@ -100,13 +100,14 @@ export async function POST(req: Request) {
       console.error("[coinpay] credit_purchase_complete failed", error);
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     }
-    // Receipt mail is best-effort — credits are already granted, so we never
-    // 500 the webhook on mail / PDF failures (CoinPay would just retry).
-    try {
-      await mailReceiptIfNeeded(svc, paymentId, payload);
-    } catch (err) {
+    // Mail receipt off-band — it touches the PDF worker + Resend, can take
+    // several seconds, and the credits are already granted. Slow handlers
+    // ripple upstream: CoinPay awaits our 200 before returning to Stripe,
+    // and Stripe times out webhooks at 30s. Returning immediately keeps the
+    // chain fast; the promise keeps running on the Node process.
+    void mailReceiptIfNeeded(svc, paymentId, payload).catch((err) => {
       console.error("[coinpay] receipt mail failed", err);
-    }
+    });
     return NextResponse.json({ ok: true });
   }
 
