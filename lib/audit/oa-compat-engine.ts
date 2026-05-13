@@ -179,11 +179,14 @@ export async function oaCompatAudit(
   // DashScope / Moonshot occasionally stall mid-completion. The OpenAI SDK
   // default would let a job sit for ~10 minutes, blocking the credit and
   // confusing the user — cap each request and fail fast instead.
+  // SDK retries 429 / 5xx with Retry-After-aware exponential backoff.
+  // 4 retries handles transient Gemini Pro RPM hiccups without giving up
+  // immediately. Timeout caps each individual attempt at 4 minutes.
   const client = new OpenAI({
     apiKey: cfg.apiKey,
     baseURL: cfg.baseURL,
     timeout: 4 * 60 * 1000,
-    maxRetries: 1,
+    maxRetries: 4,
   });
 
   console.log(
@@ -193,20 +196,30 @@ export async function oaCompatAudit(
   // routinely runs 60-100K characters; non-streaming with a tight max_tokens
   // would either truncate the JSON mid-property or hit the SDK HTTP timeout
   // on slow providers (DashScope/Moonshot).
-  const stream = await client.chat.completions.create({
-    model: cfg.model,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      // Canonical AEO task followed by pre-fetched site context. The system
-      // prompt tells the model the second block is read-only context, not
-      // a separate task.
-      { role: "user", content: `${aeoTask}\n\n---\n\nPre-fetched site content:\n\n${context}` },
-    ],
-    response_format: { type: "json_object" },
-    temperature: 0.2,
-    max_tokens: cfg.maxOutputTokens,
-    stream: true,
-  });
+  let stream: Awaited<ReturnType<typeof client.chat.completions.create>>;
+  try {
+    stream = await client.chat.completions.create({
+      model: cfg.model,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        // Canonical AEO task followed by pre-fetched site context. The system
+        // prompt tells the model the second block is read-only context, not
+        // a separate task.
+        { role: "user", content: `${aeoTask}\n\n---\n\nPre-fetched site content:\n\n${context}` },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+      max_tokens: cfg.maxOutputTokens,
+      stream: true,
+    });
+  } catch (err) {
+    if (err instanceof OpenAI.APIError && err.status === 429) {
+      throw new Error(
+        `${cfg.providerLabel} rate-limited the request (HTTP 429) after ${4 + 1} attempts. Provider quota is exhausted — check the API key's tier / per-minute limit.`,
+      );
+    }
+    throw err;
+  }
 
   let raw = "";
   let finishReason: string | null = null;
