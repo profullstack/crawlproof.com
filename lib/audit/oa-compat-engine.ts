@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { ChatCompletionCreateParams } from "openai/resources/chat/completions";
 import { z } from "zod";
 import { fetchPage, probeText } from "./fetch";
 import { SECTIONS, buildAEOUserPrompt } from "./prompt";
@@ -161,6 +162,13 @@ export type OACompatConfig = {
    * summary), which routinely needs 30K+ tokens.
    */
   maxOutputTokens: number;
+  /**
+   * Override the response_format the SDK sends. Most providers accept
+   * `{ type: "json_object" }` (the default); Perplexity Sonar only
+   * accepts `text`, `json_schema`, or `regex` and rejects `json_object`
+   * with a 400.
+   */
+  responseFormat?: ChatCompletionCreateParams["response_format"];
 };
 
 export async function oaCompatAudit(
@@ -207,7 +215,7 @@ export async function oaCompatAudit(
         // a separate task.
         { role: "user", content: `${aeoTask}\n\n---\n\nPre-fetched site content:\n\n${context}` },
       ],
-      response_format: { type: "json_object" },
+      response_format: cfg.responseFormat ?? { type: "json_object" },
       temperature: 0.2,
       max_tokens: cfg.maxOutputTokens,
       stream: true,

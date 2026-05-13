@@ -6,7 +6,10 @@ export async function kimiAudit(targetUrl: string): Promise<ClaudeAuditResult> {
   return oaCompatAudit(targetUrl, {
     apiKey: env.moonshotApiKey,
     baseURL: "https://api.moonshot.ai/v1",
-    model: "kimi-k2-turbo-preview",
+    // "kimi-k2-turbo-preview" was deprecated by Moonshot and now 404s.
+    // "kimi-latest" routes to whichever Kimi K2 build they currently
+    // promote, so we don't need to chase preview-rev names manually.
+    model: "kimi-latest",
     providerLabel: "Kimi",
     // Moonshot caps max_tokens at 32768.
     maxOutputTokens: 32_768,
