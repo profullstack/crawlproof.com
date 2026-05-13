@@ -94,8 +94,10 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
     });
   }
 
-  // Title
+  // Title — flag both too-short and too-long. Search/answer engines truncate
+  // around 60 chars and AI bots use short titles as a weak signal of intent.
   const title = $("title").first().text().trim();
+  const titleLooksLikeError = /\b(502|503|504|bad gateway|service unavailable|gateway timeout|not found)\b/i.test(title);
   if (!title) {
     out.push({
       section: "Homepage Audit",
@@ -105,13 +107,33 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       detail: "The `<title>` tag is required for search and answer engines.",
       priority: 1,
     });
-  } else if (title.length < 15) {
+  } else if (titleLooksLikeError) {
+    out.push({
+      section: "Homepage Audit",
+      check_key: "homepage.title",
+      status: "fail",
+      title: "`<title>` looks like an error page",
+      detail: `Title is "${title}" — the crawl may have hit a server error or downtime. Re-scan when the site is healthy.`,
+      evidence: { title },
+      priority: 1,
+    });
+  } else if (title.length < 30) {
     out.push({
       section: "Homepage Audit",
       check_key: "homepage.title",
       status: "warn",
-      title: "Very short `<title>`",
-      detail: `Title is only ${title.length} chars.`,
+      title: `Short \`<title>\` (${title.length} chars)`,
+      detail: "Aim for 30–60 chars. Lead with brand or product, then value prop.",
+      evidence: { title },
+      priority: 3,
+    });
+  } else if (title.length > 70) {
+    out.push({
+      section: "Homepage Audit",
+      check_key: "homepage.title",
+      status: "warn",
+      title: `Long \`<title>\` (${title.length} chars)`,
+      detail: "Engines and AI snippets truncate titles around 60–70 chars. Trim to keep the key phrase visible.",
       evidence: { title },
       priority: 3,
     });
@@ -120,13 +142,14 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       section: "Homepage Audit",
       check_key: "homepage.title",
       status: "pass",
-      title: "`<title>` present",
+      title: `\`<title>\` present (${title.length} chars)`,
       evidence: { title },
       priority: 5,
     });
   }
 
-  // Meta description
+  // Meta description — length tiers (Google truncates ~155, AI bots use it
+  // as the default snippet).
   const description = $("meta[name='description']").attr("content")?.trim();
   if (!description) {
     out.push({
@@ -137,12 +160,32 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       detail: "Add a `<meta name=\"description\">` to control the snippet AI/SERP show.",
       priority: 2,
     });
+  } else if (description.length < 50) {
+    out.push({
+      section: "Homepage Audit",
+      check_key: "homepage.description",
+      status: "warn",
+      title: `Short meta description (${description.length} chars)`,
+      detail: "Aim for 50–160 chars. Restate your value prop in plain language.",
+      evidence: { description },
+      priority: 3,
+    });
+  } else if (description.length > 160) {
+    out.push({
+      section: "Homepage Audit",
+      check_key: "homepage.description",
+      status: "warn",
+      title: `Long meta description (${description.length} chars)`,
+      detail: "Snippets truncate around 160 chars. Tighten to keep the key sentence visible.",
+      evidence: { description },
+      priority: 3,
+    });
   } else {
     out.push({
       section: "Homepage Audit",
       check_key: "homepage.description",
       status: "pass",
-      title: "Meta description present",
+      title: `Meta description present (${description.length} chars)`,
       evidence: { description },
       priority: 5,
     });
@@ -177,6 +220,32 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
         : `Open Graph: missing ${ogMissing.join(", ")}`,
     evidence: og as Record<string, unknown>,
     priority: ogMissing.length === 0 ? 5 : 3,
+  });
+
+  // Twitter Card — AI link previews and social agents both consume these.
+  const twitter = {
+    card: $("meta[name='twitter:card']").attr("content"),
+    title: $("meta[name='twitter:title']").attr("content"),
+    description: $("meta[name='twitter:description']").attr("content"),
+    image: $("meta[name='twitter:image']").attr("content"),
+  };
+  const twitterMissing = Object.entries(twitter).filter(([, v]) => !v).map(([k]) => k);
+  out.push({
+    section: "Homepage Audit",
+    check_key: "homepage.twitter",
+    status: twitterMissing.length === 0 ? "pass" : twitterMissing.length === 4 ? "warn" : "warn",
+    title:
+      twitterMissing.length === 0
+        ? "Twitter Card tags complete"
+        : twitterMissing.length === 4
+          ? "No Twitter Card tags"
+          : `Twitter Card: missing ${twitterMissing.join(", ")}`,
+    detail:
+      twitterMissing.length === 0
+        ? undefined
+        : "Add twitter:card, twitter:title, twitter:description, twitter:image for richer previews in social and AI agent surfaces.",
+    evidence: twitter as Record<string, unknown>,
+    priority: twitterMissing.length === 0 ? 5 : 3,
   });
 
   // JS-rendered content check
@@ -231,6 +300,74 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
       priority: pct >= 0.9 ? 5 : 3,
     });
   }
+
+  // Content volume — AI models need enough substance to summarize. Count
+  // visible text in <body>, ignoring scripts/styles/templates.
+  const $body = $("body").clone();
+  $body.find("script, style, noscript, template").remove();
+  const visibleText = $body.text().replace(/\s+/g, " ").trim();
+  const wordCount = visibleText ? visibleText.split(/\s+/).length : 0;
+  out.push({
+    section: "Homepage Audit",
+    check_key: "homepage.word_count",
+    status: wordCount >= 300 ? "pass" : wordCount >= 100 ? "warn" : "fail",
+    title: `Content volume: ${wordCount} words`,
+    detail:
+      wordCount >= 300
+        ? "Substantive content — AI models have enough to summarize and recommend."
+        : wordCount >= 100
+          ? "Thin content. Aim for 300+ words on the homepage so AI models can extract a useful description."
+          : "Very thin content. AI models need substantive text to understand and recommend your site.",
+    evidence: { wordCount },
+    priority: wordCount >= 300 ? 5 : wordCount >= 100 ? 3 : 1,
+  });
+
+  // Heading hierarchy — AI uses h1/h2/h3 to chunk content. A flat document
+  // with one heading is harder to parse than one with sectioned structure.
+  const h2Count = $("h2").length;
+  const h3Count = $("h3").length;
+  const totalHeadings = h1s.length + h2Count + h3Count;
+  out.push({
+    section: "Homepage Audit",
+    check_key: "homepage.heading_structure",
+    status: totalHeadings >= 3 ? "pass" : totalHeadings >= 1 ? "warn" : "fail",
+    title: `Heading structure: ${totalHeadings} (h1:${h1s.length}, h2:${h2Count}, h3:${h3Count})`,
+    detail:
+      totalHeadings >= 3
+        ? "Multiple headings help AI chunk and outline your page."
+        : "Few headings make it hard for AI to understand sectioning. Use h2/h3 to label each section.",
+    evidence: { h1: h1s.length, h2: h2Count, h3: h3Count },
+    priority: totalHeadings >= 3 ? 5 : 3,
+  });
+
+  // Internal link count — AI crawlers follow links to discover the rest of
+  // the site. Need at least a nav-worth.
+  const allLinks = $("a[href]").get();
+  let internalLinks = 0;
+  let externalLinks = 0;
+  for (const a of allLinks) {
+    const href = $(a).attr("href") ?? "";
+    if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) continue;
+    try {
+      const u = new URL(href, ctx.target);
+      if (u.hostname === ctx.host) internalLinks++;
+      else externalLinks++;
+    } catch {
+      // skip invalid hrefs
+    }
+  }
+  out.push({
+    section: "Homepage Audit",
+    check_key: "homepage.internal_links",
+    status: internalLinks >= 5 ? "pass" : internalLinks >= 1 ? "warn" : "fail",
+    title: `Internal links: ${internalLinks}`,
+    detail:
+      internalLinks >= 5
+        ? `${internalLinks} internal + ${externalLinks} external links help crawlers navigate.`
+        : "Few internal links. Add a nav/footer with links to your key pages so AI crawlers can discover them.",
+    evidence: { internal: internalLinks, external: externalLinks },
+    priority: internalLinks >= 5 ? 5 : 3,
+  });
 
   return out;
 }

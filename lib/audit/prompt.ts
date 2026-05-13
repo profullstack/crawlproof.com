@@ -137,6 +137,7 @@ export const SECTIONS = [
   "Schema / Structured Data Audit",
   "robots.txt and sitemap.xml Audit",
   "LLM / AI Crawler Accessibility",
+  "AI Recognition",
   "Positioning Clarity",
   "Missing or Hard-to-Find Information",
   "Recommended Fixes",

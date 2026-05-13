@@ -58,6 +58,15 @@ For each finding:
 - detail: one sentence with the WHY plus the specific evidence (e.g. the actual H1 text, the actual robots.txt line)
 - priority: 1 (critical, breaks AEO entirely) to 5 (polish)
 
+For the "AI Recognition" section, BEFORE doing any web_fetch / web_search, answer honestly from your own training data:
+- Do you recognize this company / domain from training? (status: "pass" if yes with substantive recall, "warn" if vague, "fail" if not at all, "unknown" if uncertain)
+- check_key: "recognition.training_data"
+- title: "Familiar with <domain>" or "No prior knowledge of <domain>"
+- detail: One sentence. If you recognize it, name 1–2 concrete things you remember (what they do, who they serve, notable products). If you don't, say so plainly — do NOT speculate or paraphrase web search results.
+- priority: 3 (informational signal, not a defect)
+
+This section is a signal of training-data presence, not a quality judgment. Sites that don't appear in training can still be excellent — but the user should know whether they're invisible to the dominant AI surfaces.
+
 For score: weigh critical fails heavily. A site missing schema, blocking GPTBot in robots.txt, or hiding all content behind JS should score below 50. A clean, well-instrumented site should score 80+.
 
 For summary.pass/warn/fail/unknown: count each across all findings.
@@ -76,10 +85,12 @@ For markdown: produce the complete report in Markdown with these exact section h
 ## 4. Schema / Structured Data Audit
 ## 5. robots.txt and sitemap.xml Audit
 ## 6. LLM / AI Crawler Accessibility
-## 7. Positioning Clarity
-## 8. Missing or Hard-to-Find Information
-## 9. Recommended Fixes
-## 10. Priority To-Do Checklist
+## 7. AI Recognition
+(One paragraph stating whether you recognize this site from training data, and what specifically you remember if so. No fluff.)
+## 8. Positioning Clarity
+## 9. Missing or Hard-to-Find Information
+## 10. Recommended Fixes
+## 11. Priority To-Do Checklist
 
 Use ✅ / ⚠️ / ❌ / ❓ status emojis on each bullet. Quote actual content from the site. Section 10 must be reusable checkboxes ("- [ ] **P1** Add JSON-LD Organization schema").
 

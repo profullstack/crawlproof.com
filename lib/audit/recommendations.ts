@@ -8,19 +8,67 @@ const RECS: Record<string, { title: string; how: string }> = {
   },
   "homepage.title": {
     title: "Set a meaningful `<title>`",
-    how: "50–60 chars. Lead with the brand or product, then the value prop: 'CrawlProof — AEO audits for AI crawlers.'",
+    how:
+      "30–60 chars. Lead with the brand or product, then the value prop.\n\n" +
+      "```html\n<title>CrawlProof — AEO audits for AI crawlers</title>\n```",
   },
   "homepage.description": {
     title: "Add a meta description",
-    how: "150–160 chars. Repeat your core value prop in plain language; this often becomes the AI snippet.",
+    how:
+      "50–160 chars. Repeat your core value prop in plain language; this often becomes the AI snippet.\n\n" +
+      "```html\n<meta name=\"description\" content=\"CrawlProof shows you exactly how AI crawlers see your site, then tells you what to fix.\" />\n```",
   },
   "homepage.canonical": {
     title: "Add a canonical link",
-    how: "`<link rel=\"canonical\" href=\"https://yoursite.com/\">` on every page to prevent dup-content drift.",
+    how:
+      "Prevents dup-content drift and tells AI crawlers which URL is authoritative.\n\n" +
+      "```html\n<link rel=\"canonical\" href=\"https://yoursite.com/\" />\n```",
   },
   "homepage.og": {
     title: "Complete Open Graph tags",
-    how: "Set og:title, og:description, og:image. AI bots also use OG for fast disambiguation.",
+    how:
+      "AI bots use OG for fast disambiguation. Add all four:\n\n" +
+      "```html\n" +
+      "<meta property=\"og:title\" content=\"Your Page Title\" />\n" +
+      "<meta property=\"og:description\" content=\"50–160 char description of this page.\" />\n" +
+      "<meta property=\"og:image\" content=\"https://yoursite.com/og-image.jpg\" />\n" +
+      "<meta property=\"og:url\" content=\"https://yoursite.com/\" />\n" +
+      "<meta property=\"og:type\" content=\"website\" />\n" +
+      "<meta property=\"og:site_name\" content=\"YourSite\" />\n" +
+      "```",
+  },
+  "homepage.twitter": {
+    title: "Add Twitter Card meta tags",
+    how:
+      "Used by social platforms and AI agents for richer previews.\n\n" +
+      "```html\n" +
+      "<meta name=\"twitter:card\" content=\"summary_large_image\" />\n" +
+      "<meta name=\"twitter:title\" content=\"Your Page Title\" />\n" +
+      "<meta name=\"twitter:description\" content=\"50–160 char description.\" />\n" +
+      "<meta name=\"twitter:image\" content=\"https://yoursite.com/og-image.jpg\" />\n" +
+      "```",
+  },
+  "homepage.lang": {
+    title: "Declare a language on the <html> tag",
+    how:
+      "Helps AI engines serve localized results and confirms content language.\n\n" +
+      "```html\n<html lang=\"en\">\n```",
+  },
+  "homepage.load_time": {
+    title: "Speed up homepage rendering",
+    how: "AI crawlers commonly time out around 3s. Cache the HTML, ship less JS for the first paint, and pre-render the hero section server-side.",
+  },
+  "homepage.word_count": {
+    title: "Add more substantive homepage content",
+    how: "AI models need 300+ words of visible body text to summarize and recommend a site. Add a value-prop paragraph, a short FAQ, and a 'how it works' section.",
+  },
+  "homepage.heading_structure": {
+    title: "Add structured headings",
+    how: "Use h2 for each section and h3 for sub-points. AI uses these to outline and chunk the page.",
+  },
+  "homepage.internal_links": {
+    title: "Add internal navigation links",
+    how: "Top nav + footer with links to /pricing, /docs, /about, /contact gives AI crawlers an entry point to the rest of the site.",
   },
   "homepage.js_rendered": {
     title: "Server-render critical homepage content",
@@ -77,6 +125,37 @@ const RECS: Record<string, { title: string; how: string }> = {
   "skill_md": {
     title: "Add /skill.md",
     how: "Describe what an agent can do with your site (e.g., 'Search docs', 'Look up pricing'). Useful for agentic flows.",
+  },
+  "security_txt": {
+    title: "Publish /.well-known/security.txt",
+    how:
+      "A security contact builds trust with crawlers and researchers. Minimal example:\n\n" +
+      "```\n" +
+      "Contact: mailto:security@yourdomain.com\n" +
+      "Expires: 2027-01-01T00:00:00.000Z\n" +
+      "Preferred-Languages: en\n" +
+      "```",
+  },
+  "schema.json_ld_organization": {
+    title: "Add Schema.org Organization JSON-LD",
+    how:
+      "Helps AI engines resolve your brand entity:\n\n" +
+      "```html\n" +
+      "<script type=\"application/ld+json\">\n" +
+      "{\n" +
+      "  \"@context\": \"https://schema.org\",\n" +
+      "  \"@type\": \"Organization\",\n" +
+      "  \"name\": \"Your Company\",\n" +
+      "  \"url\": \"https://yoursite.com\",\n" +
+      "  \"logo\": \"https://yoursite.com/logo.png\",\n" +
+      "  \"description\": \"What you do, in one sentence.\",\n" +
+      "  \"sameAs\": [\n" +
+      "    \"https://twitter.com/yourhandle\",\n" +
+      "    \"https://linkedin.com/company/yourcompany\"\n" +
+      "  ]\n" +
+      "}\n" +
+      "</script>\n" +
+      "```",
   },
   "positioning.who": {
     title: "Make your About/Team page reachable",
