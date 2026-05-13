@@ -118,15 +118,15 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
 
   const userPrompt = `Audit this URL: ${targetUrl}\nCompany name (for the report header): ${company}\n\nPretend you've never heard of this company. Use only the public web. Use web_fetch and web_search.`;
 
-  const response = await client.messages.parse({
+  // Stream the request — high-effort adaptive thinking + web tools routinely
+  // pushes past the SDK's 10-minute non-streaming HTTP timeout. `.finalMessage()`
+  // gives us the same ParsedMessage shape `.parse()` did.
+  const stream = client.messages.stream({
     model: "claude-opus-4-7",
     max_tokens: 64000,
     thinking: { type: "adaptive" },
     output_config: {
       effort: "high",
-      // SDK helper's type definition still expects v3 schemas; runtime is fine
-      // because the helper imports zod/v4 internally. Cast to any to silence
-      // the structural mismatch.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       format: zodOutputFormat(ResultSchema as any),
     },
@@ -139,6 +139,7 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
     ],
     messages: [{ role: "user", content: userPrompt }],
   });
+  const response = await stream.finalMessage();
 
   const parsed = response.parsed_output;
   if (!parsed) {
