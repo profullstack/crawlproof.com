@@ -9,6 +9,8 @@ export function HeroAuditForm() {
   const [pending, startTransition] = useTransition();
   const [url, setUrl] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [monthlySales, setMonthlySales] = useState("");
   const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,6 +21,8 @@ export function HeroAuditForm() {
       const res = await startAuditFromForm({
         url,
         email: email || undefined,
+        phone: phone.trim() || undefined,
+        estimatedMonthlySales: monthlySales.trim() || undefined,
         marketingOptIn: email ? marketingOptIn : false,
       });
       if (!res.ok) {
@@ -45,6 +49,24 @@ export function HeroAuditForm() {
         placeholder="Email (optional, for PDF report)"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
+        className="input"
+      />
+      <input
+        type="tel"
+        placeholder="Phone (optional)"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        className="input"
+        autoComplete="tel"
+      />
+      <input
+        type="number"
+        inputMode="decimal"
+        min="0"
+        step="any"
+        placeholder="Monthly sales from your website (optional, USD)"
+        value={monthlySales}
+        onChange={(e) => setMonthlySales(e.target.value)}
         className="input"
       />
       <button

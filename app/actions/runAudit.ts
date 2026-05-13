@@ -63,6 +63,8 @@ function normalizeEngines(input: unknown, signedIn: boolean): Engine[] {
 export async function startAuditFromForm(input: {
   url: string;
   email?: string;
+  phone?: string;
+  estimatedMonthlySales?: string;
   engines?: Engine[];
   marketingOptIn?: boolean;
 }): Promise<({ ok: true; id: string; token: string } & { engines: Engine[] }) | Err> {
@@ -116,6 +118,9 @@ export async function startAuditFromForm(input: {
   // for anonymous; signed-in users use the project page for multi-engine).
   const firstEngine = engines[0];
   const token = newShareToken();
+  const salesRaw = input.estimatedMonthlySales?.trim();
+  const salesParsed =
+    salesRaw && Number.isFinite(Number(salesRaw)) ? Number(salesRaw) : null;
   const { data: row, error } = await svc
     .from("audits")
     .insert({
@@ -126,6 +131,8 @@ export async function startAuditFromForm(input: {
       triggered_by: "manual",
       engine: firstEngine,
       pdf_email: input.email ?? null,
+      phone: input.phone?.trim() || null,
+      estimated_monthly_sales: salesParsed,
     })
     .select("id, share_token")
     .single();
@@ -139,7 +146,14 @@ export async function startAuditFromForm(input: {
     ip_hash: ipH,
     kind: "audit_run",
     audit_id: row.id,
-    meta: { from: "hero_form", email: input.email ?? null, engine: firstEngine, credits_spent: cost },
+    meta: {
+      from: "hero_form",
+      email: input.email ?? null,
+      phone: input.phone?.trim() || null,
+      estimated_monthly_sales: salesParsed,
+      engine: firstEngine,
+      credits_spent: cost,
+    },
   });
 
   // Marketing list opt-in is independent of the PDF email — same address,
