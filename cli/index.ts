@@ -113,7 +113,7 @@ COMMANDS
   audit <url> [--engine=rule|claude] [--format=markdown|json]
       Run an AEO audit on a URL and print the report to stdout.
       --engine=rule    (default) local rule-based engine, no API calls
-      --engine=claude  Claude Opus 4.7 with web_search + web_fetch
+      --engine=claude  Claude Sonnet 4.6 with web_search + web_fetch
       --format         markdown (default) or json
 
   report <share-token>

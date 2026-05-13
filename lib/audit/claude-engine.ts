@@ -88,12 +88,15 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
   // Stream the request — high-effort adaptive thinking + web tools routinely
   // pushes past the SDK's 10-minute non-streaming HTTP timeout. `.finalMessage()`
   // gives us the same ParsedMessage shape `.parse()` did.
-  // Tuned for ~2-4 min wall time. Adaptive thinking off and effort=medium
-  // collapse the agentic loop versus the earlier high-effort path, but
-  // medium keeps enough reasoning to actually crawl + audit. effort=low
-  // under-thought the AEO task and emitted 0/100 with zero findings.
+  // Sonnet 4.6 over Opus 4.7 — AEO is classification (does robots.txt
+  // block GPTBot? is there JSON-LD?), not the kind of open-ended
+  // reasoning Opus is overpriced for. 2–3× faster wall time, ~3× cheaper
+  // input/output, same tools. Note: Sonnet 4.6 defaults to effort=high,
+  // so we *must* set effort explicitly to keep the speed gain. Adaptive
+  // thinking off + effort=medium keeps the model actually doing the
+  // audit (low under-thought it and returned 0/100 shells).
   const stream = client.messages.stream({
-    model: "claude-opus-4-7",
+    model: "claude-sonnet-4-6",
     max_tokens: 32000,
     thinking: { type: "disabled" },
     output_config: {

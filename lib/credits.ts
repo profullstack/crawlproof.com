@@ -58,12 +58,12 @@ export const ENGINES: Record<Engine, EngineMeta> = {
       "Deterministic engine — fetches your site, parses HTML / JSON-LD / robots, generates the structured report. Free.",
   },
   claude: {
-    label: "Claude Opus 4.7",
+    label: "Claude Sonnet 4.6",
     cost: 1,
     available: true,
     popular: true,
     blurb:
-      "Anthropic's most-capable model audits your site with adaptive thinking + web tools.",
+      "Anthropic's fast tier with web_fetch + web_search. Snappy AEO audit framed the way ClaudeBot would discover your site.",
   },
   openai: {
     label: "OpenAI GPT-5 Mini",

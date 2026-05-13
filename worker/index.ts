@@ -69,7 +69,7 @@ async function processJob(job: Job) {
   try {
     // Engine dispatch:
     //   'rule'   — local rule-based crawler (default for anonymous/free)
-    //   'claude' — Claude Opus 4.7 + web tools (1 credit)
+    //   'claude' — Claude Sonnet 4.6 + web tools (1 credit)
     //   'openai' — OpenAI GPT-5 + web search (1 credit)
     const engine =
       (audit.engine as
