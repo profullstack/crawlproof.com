@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
 # pandoc for canonical Markdown -> HTML conversion (the PDF path renders this
 # via Playwright). A JS-based fallback (`marked`) runs when pandoc is absent.

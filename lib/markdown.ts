@@ -30,7 +30,6 @@ async function pandocConvert(md: string): Promise<string> {
         // a head element and silently swallow everything after it.
         "--from=gfm-raw_html",
         "--to=html5",
-        "--standalone=false",
         "--no-highlight",
         "--wrap=none",
       ],
