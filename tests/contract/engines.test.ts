@@ -37,13 +37,8 @@ describe("ENGINES catalog", () => {
     }
   });
 
-  it("kimi stays disabled (Moonshot balance / 429 regression)", () => {
-    expect(ENGINES.kimi.available).toBe(false);
-  });
-
-  it("all engines except kimi are available", () => {
+  it("every engine in the catalog is available", () => {
     for (const e of ALL_ENGINES) {
-      if (e === "kimi") continue;
       expect(ENGINES[e].available).toBe(true);
     }
   });
@@ -59,7 +54,7 @@ describe("engineCost / engineAvailable", () => {
   it("engineAvailable reflects the available flag", () => {
     expect(engineAvailable("rule")).toBe(true);
     expect(engineAvailable("claude")).toBe(true);
-    expect(engineAvailable("kimi")).toBe(false);
+    expect(engineAvailable("kimi")).toBe(true);
   });
 });
 
