@@ -209,6 +209,11 @@ export async function runScanForProject(input: {
   }
 
   const svc = serviceClient();
+  // Default the PDF-receipt email to the signed-in user's address. The hero
+  // form takes an explicit email; the project page doesn't ask, so we use
+  // the account email — matches the user's expectation of "I'll get the
+  // report emailed to me."
+  const pdfEmail = user.email ?? null;
   const inserts = engines.map((e) => ({
     target_url: target,
     project_id: input.projectId,
@@ -217,6 +222,7 @@ export async function runScanForProject(input: {
     share_token: newShareToken(),
     triggered_by: "manual",
     engine: e,
+    pdf_email: pdfEmail,
   }));
   const { data: rows, error } = await svc
     .from("audits")
@@ -242,7 +248,7 @@ export async function runScanForProject(input: {
       }),
     ),
   );
-  for (const r of rows) await notifyWorker(r.id);
+  for (const r of rows) await notifyWorker(r.id, pdfEmail ?? undefined);
 
   // Suppress unused-warning on paidEngines (it's documentation for now).
   void paidEngines;
