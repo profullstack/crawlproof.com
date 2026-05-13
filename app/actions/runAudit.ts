@@ -21,6 +21,7 @@ import {
 } from "@/lib/credits";
 import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
+import { recordMarketingConsent } from "@/lib/marketing";
 
 type ScanOk = {
   ok: true;
@@ -62,6 +63,7 @@ export async function startAuditFromForm(input: {
   url: string;
   email?: string;
   engines?: Engine[];
+  marketingOptIn?: boolean;
 }): Promise<({ ok: true; id: string; token: string } & { engines: Engine[] }) | Err> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
@@ -142,6 +144,16 @@ export async function startAuditFromForm(input: {
     audit_id: row.id,
     meta: { from: "hero_form", email: input.email ?? null, engine: firstEngine, credits_spent: cost },
   });
+
+  // Marketing list opt-in is independent of the PDF email — same address,
+  // different consent. Best-effort: failure here must not break the audit.
+  if (input.marketingOptIn && input.email) {
+    try {
+      await recordMarketingConsent({ email: input.email, source: "hero_form" });
+    } catch (err) {
+      console.warn("[runAudit] marketing consent record failed", err);
+    }
+  }
 
   await notifyWorker(row.id, input.email);
   return { ok: true, id: row.id, token: row.share_token!, engines: [firstEngine] };

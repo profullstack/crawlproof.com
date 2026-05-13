@@ -9,13 +9,18 @@ export function HeroAuditForm() {
   const [pending, startTransition] = useTransition();
   const [url, setUrl] = useState("");
   const [email, setEmail] = useState("");
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const res = await startAuditFromForm({ url, email: email || undefined });
+      const res = await startAuditFromForm({
+        url,
+        email: email || undefined,
+        marketingOptIn: email ? marketingOptIn : false,
+      });
       if (!res.ok) {
         setError(res.error ?? "Could not start audit.");
         return;
@@ -53,6 +58,19 @@ export function HeroAuditForm() {
         <p className="text-xs text-[var(--color-muted)]">
           We&apos;ll email the PDF report to <strong>{email}</strong> when ready.
         </p>
+      )}
+      {email && (
+        <label className="flex items-start gap-2 text-xs text-[var(--color-muted)]">
+          <input
+            type="checkbox"
+            checked={marketingOptIn}
+            onChange={(e) => setMarketingOptIn(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            Also email me occasional CrawlProof updates. Unsubscribe anytime.
+          </span>
+        </label>
       )}
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
     </form>
