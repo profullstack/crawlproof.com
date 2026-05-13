@@ -44,9 +44,9 @@ export async function POST(req: Request) {
     const engines: Engine[] = dedupeEngines(
       ((p.engines as Engine[] | null) ?? ["rule"]).filter((e) => engineAvailable(e)),
     );
-    const nextRun = new Date(
-      Date.now() + (p.schedule === "weekly" ? 7 : 30) * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const days =
+      p.schedule === "daily" ? 1 : p.schedule === "weekly" ? 7 : 30;
+    const nextRun = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 
     if (engines.length === 0) {
       skipped_no_engines++;

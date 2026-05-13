@@ -8,7 +8,7 @@ export function ScheduleToggle({
   current,
 }: {
   projectId: string;
-  current: "off" | "weekly" | "monthly";
+  current: "off" | "daily" | "weekly" | "monthly";
 }) {
   const [value, setValue] = useState(current);
   const [pending, start] = useTransition();
@@ -29,6 +29,7 @@ export function ScheduleToggle({
         }}
       >
         <option value="off">Off</option>
+        <option value="daily">Daily</option>
         <option value="weekly">Weekly</option>
         <option value="monthly">Monthly</option>
       </select>

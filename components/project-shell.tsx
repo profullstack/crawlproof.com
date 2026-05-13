@@ -11,7 +11,7 @@ type ProjectLite = {
   id: string;
   name: string;
   url: string;
-  schedule: "off" | "weekly" | "monthly";
+  schedule: "off" | "daily" | "weekly" | "monthly";
   status: ProjectStatus | null;
   engines: Engine[] | null;
 };

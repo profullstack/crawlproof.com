@@ -20,7 +20,7 @@ export function NewProjectForm() {
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
   const [url, setUrl] = useState("");
-  const [schedule, setSchedule] = useState<"off" | "weekly" | "monthly">("off");
+  const [schedule, setSchedule] = useState<"off" | "daily" | "weekly" | "monthly">("off");
   const [error, setError] = useState<string | null>(null);
 
   function onUrlChange(next: string) {
@@ -86,6 +86,7 @@ export function NewProjectForm() {
           onChange={(e) => setSchedule(e.target.value as typeof schedule)}
         >
           <option value="off">No schedule</option>
+          <option value="daily">Daily re-audits</option>
           <option value="weekly">Weekly re-audits</option>
           <option value="monthly">Monthly re-audits</option>
         </select>

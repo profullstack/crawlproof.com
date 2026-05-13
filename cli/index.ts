@@ -4,6 +4,7 @@
 // Available commands (more land as the API stabilizes):
 //   crawlproof audit <url> [--engine=rule|claude] [--format=markdown|json]
 //   crawlproof report <token>
+//   crawlproof sweep
 //   crawlproof help
 //
 // Currently `audit` runs the rule-based engine locally with no DB/credit
@@ -103,6 +104,29 @@ async function cmdReport(args: Args): Promise<number> {
   return 0;
 }
 
+async function cmdSweep(_args: Args): Promise<number> {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    console.error("CRON_SECRET is not set — set it in .env or env.");
+    return 2;
+  }
+  const base = process.env.CRAWLPROOF_SITE_URL ?? "https://crawlproof.com";
+  const url = `${base.replace(/\/$/, "")}/api/cron/scheduled-audits`;
+  console.error(`[cli] forcing scheduled-audits sweep at ${url} …`);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "x-cron-secret": secret, "content-type": "application/json" },
+    body: "{}",
+  });
+  const body = await res.text();
+  if (!res.ok) {
+    console.error(`sweep failed: ${res.status} ${res.statusText}\n${body}`);
+    return 1;
+  }
+  process.stdout.write(body.endsWith("\n") ? body : body + "\n");
+  return 0;
+}
+
 function help() {
   console.log(`crawlproof — AEO audit CLI (stub)
 
@@ -120,17 +144,24 @@ COMMANDS
       Fetch a public report by share-token from production.
       Override with CRAWLPROOF_SITE_URL.
 
+  sweep
+      Force the scheduled-audits cron sweep to run now. Useful for testing
+      Daily/Weekly schedules without waiting for the hourly pg_cron tick.
+      Requires CRON_SECRET. Override host with CRAWLPROOF_SITE_URL.
+
   help
       Print this message.
 
 ENV
   ANTHROPIC_API_KEY      Required for --engine=claude.
-  CRAWLPROOF_SITE_URL    Override the API base URL for 'report'.
+  CRAWLPROOF_SITE_URL    Override the API base URL for 'report' and 'sweep'.
+  CRON_SECRET            Required for 'sweep'.
 
 EXAMPLES
   crawlproof audit https://crawlproof.com
   crawlproof audit https://example.com --engine=claude --format=json > report.json
   crawlproof report r-ceiZSv2VnqypqUfjLwtrV0
+  CRAWLPROOF_SITE_URL=http://localhost:3000 crawlproof sweep
 `);
 }
 
@@ -142,6 +173,8 @@ async function main() {
         return await cmdAudit(args);
       case "report":
         return await cmdReport(args);
+      case "sweep":
+        return await cmdSweep(args);
       case "help":
       case "--help":
       case "-h":
