@@ -93,8 +93,12 @@ export function BuyCreditsModal({
           return;
         }
         if (data.is_card && data.checkout_url) {
-          window.location.href = data.checkout_url;
-          return;
+          // CoinPay's card mode wires Stripe's success_url back to its own
+          // /pay/<id> portal, not to our redirect_url — so a top-level
+          // navigation leaves the user stranded on coinpayportal.com. Open
+          // Stripe in a new tab and keep the modal in control; the existing
+          // status poll picks up the webhook-driven `complete`.
+          window.open(data.checkout_url, "_blank", "noopener,noreferrer");
         }
         setPayment(data);
         setStep("payment");
@@ -216,6 +220,44 @@ export function BuyCreditsModal({
               }}
             >
               Try again
+            </button>
+          </div>
+        )}
+
+        {status === "pending" && step === "payment" && payment?.ok && payment.is_card && payment.checkout_url && (
+          <div className="space-y-4">
+            <div className="text-sm">
+              <span className="font-semibold">Pay with card</span>
+              <span className="ml-2 text-[var(--color-muted)]">
+                ${amountUsd.toFixed(2)} USD
+              </span>
+            </div>
+            <p className="text-sm text-[var(--color-muted)]">
+              We opened Stripe Checkout in a new tab. Complete payment there —
+              this window will update automatically when the payment clears.
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary w-full"
+              onClick={() =>
+                payment.checkout_url &&
+                window.open(payment.checkout_url, "_blank", "noopener,noreferrer")
+              }
+            >
+              Reopen Stripe Checkout
+            </button>
+            <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+              <span
+                aria-hidden
+                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-accent)]"
+              />
+              <span>Waiting for payment confirmation…</span>
+            </div>
+            <button
+              className="w-full rounded-md border border-[var(--color-border)] px-3 py-2 text-sm hover:bg-[var(--color-bg)]"
+              onClick={onClose}
+            >
+              Close
             </button>
           </div>
         )}
