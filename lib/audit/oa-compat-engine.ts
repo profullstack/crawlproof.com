@@ -104,6 +104,12 @@ export type OACompatConfig = {
    * with a 400.
    */
   responseFormat?: ChatCompletionCreateParams["response_format"];
+  /**
+   * Sampling temperature. Defaults to 0.2 for deterministic-ish
+   * audit output. Kimi K2.6 rejects anything other than 1 with a 400;
+   * its engine override pins it.
+   */
+  temperature?: number;
 };
 
 export async function oaCompatAudit(
@@ -151,7 +157,7 @@ export async function oaCompatAudit(
         { role: "user", content: `${aeoTask}\n\n---\n\nPre-fetched site content:\n\n${context}` },
       ],
       response_format: cfg.responseFormat ?? { type: "json_object" },
-      temperature: 0.2,
+      temperature: cfg.temperature ?? 0.2,
       max_tokens: cfg.maxOutputTokens,
       stream: true,
     });

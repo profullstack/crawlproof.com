@@ -88,17 +88,16 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
   // Stream the request — high-effort adaptive thinking + web tools routinely
   // pushes past the SDK's 10-minute non-streaming HTTP timeout. `.finalMessage()`
   // gives us the same ParsedMessage shape `.parse()` did.
-  // Tuned for 1–2 min wall time. Adaptive thinking off and effort=low
-  // collapse the agentic loop from ~10 web tool round-trips at high
-  // reasoning to a couple of focused fetches. Quality holds for the
-  // bulk of factual checks (schema, robots, bot rules) since the AEO
-  // task is mostly classification, not open-ended reasoning.
+  // Tuned for ~2-4 min wall time. Adaptive thinking off and effort=medium
+  // collapse the agentic loop versus the earlier high-effort path, but
+  // medium keeps enough reasoning to actually crawl + audit. effort=low
+  // under-thought the AEO task and emitted 0/100 with zero findings.
   const stream = client.messages.stream({
     model: "claude-opus-4-7",
     max_tokens: 32000,
     thinking: { type: "disabled" },
     output_config: {
-      effort: "low",
+      effort: "medium",
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       format: zodOutputFormat(ResultSchema as any),
     },
