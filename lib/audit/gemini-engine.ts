@@ -11,9 +11,11 @@ export async function geminiAudit(targetUrl: string): Promise<ClaudeAuditResult>
   return oaCompatAudit(targetUrl, {
     apiKey: env.geminiApiKey,
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    model: "gemini-2.5-flash",
+    // The UI catalog advertises "Gemini 2.5 Pro" — match it. Pro follows
+    // instructions more tightly than Flash, which had a habit of looping
+    // and emitting ~1.8M chars of redundant output before hitting the cap.
+    model: "gemini-2.5-pro",
     providerLabel: "Gemini",
-    // gemini-2.5-flash supports up to 65K output tokens.
     maxOutputTokens: 65_000,
   });
 }
