@@ -1,19 +1,52 @@
 import { serviceClient } from "@/lib/supabase/service";
+import { buildScanRunMarkdown, type SummaryRow } from "@/lib/audit/summary-markdown";
 
 export const dynamic = "force-dynamic";
 
+// Serves the share-token's report as Markdown. For multi-engine scan runs
+// (≥ 2 audits sharing the same scan_run_id) the response is a consolidated
+// document — executive summary + each engine's full report — designed for
+// pasting into another LLM. Solo runs return the single audit's markdown.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token } = await params;
   const svc = serviceClient();
-  const { data } = await svc.rpc("get_public_audit", { token });
-  const audit = (data as Array<{ report_markdown: string | null }> | null)?.[0];
-  if (!audit) return new Response("Not found", { status: 404 });
-  const md = audit.report_markdown;
-  if (!md) return new Response("Report not ready yet.", { status: 425 });
-  return new Response(md, {
+
+  // Look up the audit by share_token. We need the scan_run_id and
+  // target_url to decide whether to stitch siblings into one document.
+  const { data: own } = await svc
+    .from("audits")
+    .select("id, scan_run_id, target_url, report_markdown, status")
+    .eq("share_token", token)
+    .maybeSingle();
+  if (!own) return new Response("Not found", { status: 404 });
+  if (own.status !== "complete" || !own.report_markdown) {
+    return new Response("Report not ready yet.", { status: 425 });
+  }
+
+  if (own.scan_run_id) {
+    const { data: siblings } = await svc
+      .from("audits")
+      .select(
+        "id, engine, status, score, share_token, summary, report_markdown, failed_reason, created_at",
+      )
+      .eq("scan_run_id", own.scan_run_id)
+      .order("created_at", { ascending: true });
+    const rows = (siblings ?? []) as SummaryRow[];
+    if (rows.length > 1) {
+      const md = buildScanRunMarkdown({ targetUrl: own.target_url, rows });
+      return new Response(md, {
+        headers: {
+          "content-type": "text/markdown; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    }
+  }
+
+  return new Response(own.report_markdown, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
       "cache-control": "no-store",

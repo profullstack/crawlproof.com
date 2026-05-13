@@ -5,6 +5,7 @@ import { ScoreBadge } from "@/components/score-badge";
 import { EnginesPanel } from "@/components/engines-panel";
 import { ScheduleToggle } from "@/components/schedule-toggle";
 import { ProjectStatusControls } from "@/components/project-status-controls";
+import { RunNowButton } from "@/components/run-now-button";
 import type { ProjectStatus } from "@/app/actions/projects";
 import type { Engine } from "@/lib/credits";
 import { ScoreTrend } from "@/components/charts/score-trend";
@@ -109,6 +110,11 @@ export default async function ProjectPage({
           status={(project.status ?? "active") as ProjectStatus}
         />
         <ScheduleToggle projectId={project.id} current={project.schedule} />
+        <RunNowButton
+          projectId={project.id}
+          url={project.url}
+          engines={(project.engines ?? ["rule"]) as Engine[]}
+        />
         {last && prev && (
           <Link href={`/audits/${last.id}?diff=${prev.id}`} className="btn">
             Diff vs previous
