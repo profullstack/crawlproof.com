@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { type Engine } from "@/lib/credits";
 import { ScanRunResults, type RunAudit } from "@/components/scan-run-results";
 import { ScanRunRefresh } from "@/components/scan-run-refresh";
+import { PdfButton } from "@/components/pdf-button";
+import { CopyMarkdownButton } from "@/components/copy-markdown-button";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +50,8 @@ export default async function ScanRunPage({
     summary: r.summary,
   }));
 
+  const anyComplete = typedRows.some((r) => r.status === "complete");
+
   return (
     <>
       <ScanRunResults
@@ -55,6 +59,16 @@ export default async function ScanRunPage({
         targetUrl={rows[0].target_url}
         backHref={`/projects/${projectId}`}
         backLabel={project.name}
+        ownerActions={
+          anyComplete ? (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <PdfButton auditId={rows[0].id} />
+              <CopyMarkdownButton
+                href={`/api/projects/${projectId}/runs/${runId}/markdown`}
+              />
+            </div>
+          ) : undefined
+        }
       />
       <ScanRunRefresh projectId={projectId} runId={runId} done={allDone} />
     </>
