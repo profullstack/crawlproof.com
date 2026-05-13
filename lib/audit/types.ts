@@ -38,6 +38,7 @@ export type CrawlContext = {
     llmsFullTxt?: { content: string; status: number };
     skillMd?: { content: string; status: number };
     aiPlugin?: { content: string; status: number };
+    securityTxt?: { content: string; status: number };
   };
   findings: Finding[];
 };

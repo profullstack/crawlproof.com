@@ -200,5 +200,19 @@ export function checkRobotsAndSitemap(ctx: CrawlContext): Finding[] {
     });
   }
 
+  const sec = ctx.wellKnown.securityTxt;
+  out.push({
+    section: "LLM / AI Crawler Accessibility",
+    check_key: "security_txt",
+    status: sec && sec.status === 200 ? "pass" : "warn",
+    title: sec && sec.status === 200
+      ? "/.well-known/security.txt present"
+      : "/.well-known/security.txt missing",
+    detail: sec && sec.status === 200
+      ? "Security contact published — builds trust with crawlers and security researchers."
+      : "Publish a /.well-known/security.txt with at least a Contact: line. Crawlers and security researchers expect it; AI systems use it as a trust signal.",
+    priority: sec && sec.status === 200 ? 5 : 3,
+  });
+
   return out;
 }

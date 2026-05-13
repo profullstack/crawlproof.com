@@ -95,13 +95,14 @@ export async function runAudit(
   // 1. Fetch homepage.
   const homepage = await fetchPage(target);
   // 2. Probe well-known files in parallel.
-  const [robots, sitemap, llmsTxt, llmsFullTxt, skillMd, aiPlugin] = await Promise.all([
+  const [robots, sitemap, llmsTxt, llmsFullTxt, skillMd, aiPlugin, securityTxt] = await Promise.all([
     probeText(`${origin}/robots.txt`),
     probeText(`${origin}/sitemap.xml`),
     probeText(`${origin}/llms.txt`),
     probeText(`${origin}/llms-full.txt`),
     probeText(`${origin}/skill.md`),
     probeText(`${origin}/.well-known/ai-plugin.json`),
+    probeText(`${origin}/.well-known/security.txt`),
   ]);
 
   // 3. Render homepage with Playwright (best effort).
@@ -137,6 +138,7 @@ export async function runAudit(
       llmsFullTxt: llmsFullTxt,
       skillMd: skillMd,
       aiPlugin: aiPlugin,
+      securityTxt: securityTxt,
     },
     findings: [],
   };

@@ -26,7 +26,40 @@ export function checkHomepage(ctx: CrawlContext): Finding[] {
     priority: 5,
   });
 
+  // Page load time grading. Crawlers (including AI bots) deprioritize slow
+  // pages — anything over ~3s tends to time out for GPTBot.
+  const loadSec = home.fetchMs / 1000;
+  out.push({
+    section: "Homepage Audit",
+    check_key: "homepage.load_time",
+    status: loadSec < 1 ? "pass" : loadSec < 3 ? "warn" : "fail",
+    title: `Page load time: ${loadSec.toFixed(2)}s`,
+    detail:
+      loadSec < 1
+        ? "Fast — well within AI crawler budgets."
+        : loadSec < 3
+          ? "Acceptable — consider optimizing for faster crawl times."
+          : "Too slow — AI crawlers commonly time out around 3s.",
+    evidence: { fetchMs: home.fetchMs },
+    priority: loadSec < 1 ? 5 : loadSec < 3 ? 3 : 2,
+  });
+
   const $ = cheerio.load(home.rawHtml);
+
+  // <html lang="…"> — helps engines serve localized results and confirms
+  // content language without needing to NLP-detect it.
+  const lang = $("html").attr("lang")?.trim();
+  out.push({
+    section: "Homepage Audit",
+    check_key: "homepage.lang",
+    status: lang ? "pass" : "warn",
+    title: lang ? `<html lang="${lang}"> declared` : "Missing <html lang> attribute",
+    detail: lang
+      ? undefined
+      : 'Add a lang attribute on the root <html> tag (e.g. <html lang="en">) so AI engines serve language-appropriate results.',
+    evidence: lang ? { lang } : undefined,
+    priority: lang ? 5 : 3,
+  });
 
   // H1
   const h1s = $("h1").map((_, el) => $(el).text().trim()).get().filter(Boolean);
