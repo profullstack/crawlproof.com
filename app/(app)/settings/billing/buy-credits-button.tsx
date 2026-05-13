@@ -14,7 +14,7 @@ export function BuyCreditsButton({ packId }: { packId: string }) {
         className="btn btn-primary mt-4 w-full"
         onClick={() => setOpen(true)}
       >
-        Buy with crypto
+        Buy now
       </button>
       <BuyCreditsModal
         open={open}

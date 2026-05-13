@@ -158,13 +158,14 @@ export async function createPayment(
   const body = {
     business_id: env.coinpayMerchantId,
     amount_usd: Number((input.amountCents / 100).toFixed(2)),
-    // payment_method "card" → Stripe Checkout only (returns stripe_checkout_url).
-    // "both" makes CoinPay host the payment page and Stripe redirects back to
-    // /pay/{id}?status=success on coinpayportal.com, which is the wrong landing
-    // for users who explicitly picked card in our modal. `currency` is still
-    // required by CoinPay even in card mode; the value is ignored.
+    // payment_method "both" returns stripe_checkout_url alongside a crypto
+    // address — we open the Stripe URL in a popup from the client and ignore
+    // the crypto half. Tried "card" once (per docs) but CoinPay 500s on it,
+    // so "both" is what's actually accepted today. CoinPay's own redirect
+    // after Stripe success goes to /pay/<id> on coinpayportal.com — that's
+    // why the modal polls instead of relying on a top-level redirect back.
     ...(isCard
-      ? { payment_method: "card", currency: "usdc_pol" }
+      ? { payment_method: "both", currency: "usdc_pol" }
       : { payment_method: "crypto", currency: input.currency }),
     description: descriptionParts.join(" · "),
     redirect_url: input.successUrl,
