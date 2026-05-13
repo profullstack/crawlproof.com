@@ -9,5 +9,7 @@ export async function deepseekAudit(targetUrl: string): Promise<ClaudeAuditResul
     // V3 chat model — cheapest of the live engines, OpenAI-compatible.
     model: "deepseek-chat",
     providerLabel: "DeepSeek",
+    // deepseek-chat caps max output at 8K (default 4K).
+    maxOutputTokens: 8_192,
   });
 }

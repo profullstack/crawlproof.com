@@ -8,5 +8,8 @@ export async function qwenAudit(targetUrl: string): Promise<ClaudeAuditResult> {
     baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     model: "qwen-plus",
     providerLabel: "Qwen",
+    // DashScope hard-caps max_tokens at 32768; anything higher returns
+    // 400 InvalidParameter.
+    maxOutputTokens: 32_768,
   });
 }

@@ -13,5 +13,7 @@ export async function geminiAudit(targetUrl: string): Promise<ClaudeAuditResult>
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     model: "gemini-2.5-flash",
     providerLabel: "Gemini",
+    // gemini-2.5-flash supports up to 65K output tokens.
+    maxOutputTokens: 65_000,
   });
 }

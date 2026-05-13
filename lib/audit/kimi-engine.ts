@@ -8,5 +8,7 @@ export async function kimiAudit(targetUrl: string): Promise<ClaudeAuditResult> {
     baseURL: "https://api.moonshot.ai/v1",
     model: "kimi-k2-turbo-preview",
     providerLabel: "Kimi",
+    // Moonshot caps max_tokens at 32768.
+    maxOutputTokens: 32_768,
   });
 }

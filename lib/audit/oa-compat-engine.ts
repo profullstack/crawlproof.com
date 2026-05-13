@@ -151,6 +151,13 @@ export type OACompatConfig = {
   model: string;
   /** Human label only used for error messages. */
   providerLabel: string;
+  /**
+   * Max output tokens the provider will accept. Each provider has its own
+   * ceiling — DashScope/Qwen rejects > 32768 with a 400; Gemini handles 65K.
+   * Must be large enough to fit the full JSON report (markdown + findings +
+   * summary), which routinely needs 30K+ tokens.
+   */
+  maxOutputTokens: number;
 };
 
 export async function oaCompatAudit(
@@ -187,7 +194,7 @@ export async function oaCompatAudit(
     ],
     response_format: { type: "json_object" },
     temperature: 0.2,
-    max_tokens: 65_000,
+    max_tokens: cfg.maxOutputTokens,
     stream: true,
   });
 
