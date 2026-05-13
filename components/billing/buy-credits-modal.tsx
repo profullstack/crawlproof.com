@@ -255,7 +255,13 @@ export function BuyCreditsModal({
                 Expires {new Date(payment.expires_at).toLocaleTimeString()}
               </p>
             )}
-            <p className="text-xs text-[var(--color-muted)]">Listening for confirmation…</p>
+            <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+              <span
+                aria-hidden
+                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-accent)]"
+              />
+              <span>Listening for confirmation…</span>
+            </div>
             <button
               className="w-full rounded-md border border-[var(--color-border)] px-3 py-2 text-sm hover:bg-[var(--color-bg)]"
               onClick={onClose}
