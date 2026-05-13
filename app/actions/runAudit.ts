@@ -193,11 +193,13 @@ export async function runScanForProject(input: {
   const hasRule = engines.includes("rule");
   const cost = selectionCost(engines);
 
-  // Rule engine: free quota check (only if rule is among the picks).
-  if (hasRule) {
+  // Rule engine quota gate. Only enforced when the scan is rule-only —
+  // if the user is paying for at least one engine, the rule engine rides
+  // along for free without consulting the daily ceiling.
+  if (hasRule && paidEngines.length === 0) {
     const quota = await checkFreeManualQuota(user.id, target);
     if (!quota.free) {
-      return { ok: false, error: `Free quota (${quota.cap}/day on this URL) used. Deselect 'Rule-based' or wait for the daily reset.` };
+      return { ok: false, error: `Free quota (${quota.cap}/day on this URL) used. Pick a paid engine or wait for the daily reset.` };
     }
   }
 

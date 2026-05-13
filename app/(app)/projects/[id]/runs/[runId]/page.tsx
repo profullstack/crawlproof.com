@@ -12,6 +12,7 @@ type RunAudit = {
   share_token: string | null;
   failed_reason: string | null;
   completed_at: string | null;
+  created_at: string;
   summary: { pass?: number; warn?: number; fail?: number } | null;
 };
 
@@ -39,7 +40,7 @@ export default async function ScanRunPage({
     .eq("project_id", projectId)
     .order("created_at", { ascending: true });
 
-  const rows = (audits ?? []) as (RunAudit & { created_at: string; target_url: string })[];
+  const rows = (audits ?? []) as (RunAudit & { target_url: string })[];
   if (rows.length === 0) notFound();
 
   const first = rows[0];

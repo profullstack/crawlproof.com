@@ -5,6 +5,10 @@ import { ReportView, type AuditRow } from "@/components/report/report-view";
 import { MarkdownView } from "@/components/report/markdown-view";
 import { ViewTabs } from "@/components/report/view-tabs";
 import { PerformancePreview } from "@/components/report/performance-preview";
+import {
+  PremiumEngines,
+  type PremiumSibling,
+} from "@/components/report/premium-engines";
 import { LivePoller } from "@/components/report/live-poller";
 import { DiffView } from "@/components/report/diff-view";
 import { CopyLink } from "@/components/copy-link";
@@ -30,11 +34,25 @@ export default async function AuditPage({
 
   const { data: audit } = await supabase
     .from("audits")
-    .select("id, target_url, status, score, summary, report_markdown, completed_at, created_at, share_token, owner_id, project_id")
+    .select("id, target_url, status, score, summary, report_markdown, completed_at, created_at, share_token, owner_id, project_id, scan_run_id, engine")
     .eq("id", id)
     .maybeSingle();
   if (!audit) notFound();
   if (audit.owner_id !== user!.id) notFound();
+
+  const { data: siblingsData } = audit.scan_run_id
+    ? await supabase
+        .from("audits")
+        .select(
+          "id, engine, status, score, share_token, failed_reason, completed_at, summary",
+        )
+        .eq("scan_run_id", audit.scan_run_id)
+        .neq("id", audit.id)
+        .neq("engine", "rule")
+        .eq("owner_id", user!.id)
+        .order("created_at", { ascending: true })
+    : { data: null };
+  const premiumSiblings = (siblingsData ?? []) as unknown as PremiumSibling[];
 
   const { data: findingsData } = await supabase
     .from("audit_findings")
@@ -99,7 +117,16 @@ export default async function AuditPage({
               ownerActions={ownerActions}
             />
           }
-          performanceView={<PerformancePreview />}
+          performanceView={
+            premiumSiblings.length > 0 ? (
+              <PremiumEngines siblings={premiumSiblings} />
+            ) : (
+              <PerformancePreview />
+            )
+          }
+          performanceLabel={
+            premiumSiblings.length > 0 ? "AI Engines" : "Performance"
+          }
         />
       ) : (
         <ReportView

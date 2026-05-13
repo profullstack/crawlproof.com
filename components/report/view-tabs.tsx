@@ -8,11 +8,13 @@ export function ViewTabs({
   markdownView,
   structuredView,
   performanceView,
+  performanceLabel = "Performance",
   rawMarkdownUrl,
 }: {
   markdownView: ReactNode;
   structuredView: ReactNode;
   performanceView?: ReactNode;
+  performanceLabel?: string;
   rawMarkdownUrl?: string;
 }) {
   const [tab, setTab] = useState<TabKey>("report");
@@ -56,7 +58,11 @@ export function ViewTabs({
           <TabButton id="report" label="Report" />
           <TabButton id="structured" label="Structured view" />
           {performanceView && (
-            <TabButton id="performance" label="Performance" badge="Premium" />
+            <TabButton
+              id="performance"
+              label={performanceLabel}
+              badge="Premium"
+            />
           )}
         </div>
         {rawMarkdownUrl && (

@@ -162,8 +162,19 @@ export async function oaCompatAudit(
   }
   const started = Date.now();
   const context = await buildContext(targetUrl);
-  const client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL });
+  // DashScope / Moonshot occasionally stall mid-completion. The OpenAI SDK
+  // default would let a job sit for ~10 minutes, blocking the credit and
+  // confusing the user — cap each request and fail fast instead.
+  const client = new OpenAI({
+    apiKey: cfg.apiKey,
+    baseURL: cfg.baseURL,
+    timeout: 4 * 60 * 1000,
+    maxRetries: 1,
+  });
 
+  console.log(
+    `[oa-compat:${cfg.providerLabel}] calling ${cfg.model} (${context.length} chars context)`,
+  );
   const response = await client.chat.completions.create({
     model: cfg.model,
     messages: [
@@ -174,6 +185,9 @@ export async function oaCompatAudit(
     temperature: 0.2,
     max_tokens: 16000,
   });
+  console.log(
+    `[oa-compat:${cfg.providerLabel}] ${cfg.model} returned in ${Date.now() - started}ms`,
+  );
 
   const raw = response.choices[0]?.message?.content ?? "";
   if (!raw) throw new Error(`${cfg.providerLabel} returned empty content.`);
