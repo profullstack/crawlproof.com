@@ -6,7 +6,6 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import {
   checkAnonymousLimit,
-  checkFreeManualQuota,
   checkPerTargetLimit,
   consumeCredit,
   hashIp,
@@ -107,13 +106,9 @@ export async function startAuditFromForm(input: {
       if (!ok.ok) {
         return { ok: false, error: `Need ${cost} credits for ${engines.length} engine${engines.length === 1 ? "" : "s"}; not enough balance. Buy credits in Billing.` };
       }
-    } else {
-      // Free rule engine: check 10/day-per-URL quota.
-      const quota = await checkFreeManualQuota(user.id, target);
-      if (!quota.free) {
-        return { ok: false, error: `Free quota (${quota.cap}/day on this URL) used. Pick a paid engine.` };
-      }
     }
+    // Signed-in users have no daily ceiling on the free rule engine —
+    // the per-target back-to-back gate above is enough abuse protection.
   }
 
   const svc = serviceClient();
@@ -189,19 +184,11 @@ export async function runScanForProject(input: {
     return { ok: false, error: `${ENGINES[unavailable].label} isn't wired up yet.` };
   }
 
-  const paidEngines = engines.filter((e) => ENGINES[e].cost > 0);
-  const hasRule = engines.includes("rule");
   const cost = selectionCost(engines);
 
-  // Rule engine quota gate. Only enforced when the scan is rule-only —
-  // if the user is paying for at least one engine, the rule engine rides
-  // along for free without consulting the daily ceiling.
-  if (hasRule && paidEngines.length === 0) {
-    const quota = await checkFreeManualQuota(user.id, target);
-    if (!quota.free) {
-      return { ok: false, error: `Free quota (${quota.cap}/day on this URL) used. Pick a paid engine or wait for the daily reset.` };
-    }
-  }
+  // No daily free-quota gate for signed-in users — the per-target
+  // back-to-back limit is the only rate guard. Rate-limiting / daily
+  // caps apply to anonymous (logged-out) users only.
 
   // Atomic multi-credit deduction up front. If anything below fails we
   // refund the lot.
@@ -257,9 +244,6 @@ export async function runScanForProject(input: {
     ),
   );
   for (const r of rows) await notifyWorker(r.id, pdfEmail ?? undefined);
-
-  // Suppress unused-warning on paidEngines (it's documentation for now).
-  void paidEngines;
 
   return {
     ok: true,

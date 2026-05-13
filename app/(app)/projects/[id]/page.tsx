@@ -9,7 +9,6 @@ import { ScoreTrend } from "@/components/charts/score-trend";
 import { StatusPie } from "@/components/charts/status-pie";
 import { SectionBar, type SectionRow } from "@/components/charts/section-bar";
 import { PriorityBar } from "@/components/charts/priority-bar";
-import { checkFreeManualQuota, FREE_MANUAL_PER_DAY } from "@/lib/rateLimit";
 
 type AuditRow = {
   id: string;
@@ -109,7 +108,6 @@ export default async function ProjectPage({
             Diff vs previous
           </Link>
         )}
-        <FreeQuotaPill ownerId={project.owner_id} url={project.url} />
       </div>
 
       <EnginesPanel
@@ -244,25 +242,6 @@ function groupByRun(rows: AuditRow[]): RunGroup[] {
     g.allDone = g.audits.every((a) => a.status === "complete" || a.status === "failed");
   }
   return Array.from(groups.values());
-}
-
-async function FreeQuotaPill({
-  ownerId,
-  url,
-}: {
-  ownerId: string;
-  url: string;
-}) {
-  const q = await checkFreeManualQuota(ownerId, url);
-  const remaining = Math.max(0, q.cap - q.used);
-  return (
-    <span
-      className="badge"
-      title={`Free manual scans: ${remaining}/${FREE_MANUAL_PER_DAY} per 24h on this URL`}
-    >
-      {remaining}/{q.cap} free today
-    </span>
-  );
 }
 
 function Metric({
