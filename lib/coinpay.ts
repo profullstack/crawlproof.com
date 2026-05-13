@@ -158,10 +158,13 @@ export async function createPayment(
   const body = {
     business_id: env.coinpayMerchantId,
     amount_usd: Number((input.amountCents / 100).toFixed(2)),
-    // For card we still set a fallback crypto currency (CoinPay requires
-    // one) and ask for `both` so the customer gets the Stripe option.
+    // payment_method "card" → Stripe Checkout only (returns stripe_checkout_url).
+    // "both" makes CoinPay host the payment page and Stripe redirects back to
+    // /pay/{id}?status=success on coinpayportal.com, which is the wrong landing
+    // for users who explicitly picked card in our modal. `currency` is still
+    // required by CoinPay even in card mode; the value is ignored.
     ...(isCard
-      ? { payment_method: "both", currency: "usdc_pol" }
+      ? { payment_method: "card", currency: "usdc_pol" }
       : { payment_method: "crypto", currency: input.currency }),
     description: descriptionParts.join(" · "),
     redirect_url: input.successUrl,
