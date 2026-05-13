@@ -1,7 +1,18 @@
 import Link from "next/link";
 import { CREDIT_PACKS, ENGINES, discountPct, dollars, perScanCents } from "@/lib/credits";
 
-export const metadata = { title: "Pricing" };
+export const metadata = {
+  title: "Pricing",
+  description:
+    "Pay only for what you scan. $1 per credit, 1 credit per audit, with volume discounts up to 30% off — no subscription, credits never expire.",
+  alternates: { canonical: "/pricing" },
+  openGraph: {
+    title: "Pricing · CrawlProof",
+    description:
+      "Pay only for what you scan. $1 per credit, 1 credit per audit, volume discounts to 30%.",
+    url: "/pricing",
+  },
+};
 
 export default function PricingPage() {
   return (

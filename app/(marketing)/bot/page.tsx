@@ -1,4 +1,15 @@
-export const metadata = { title: "About CrawlProofBot" };
+export const metadata = {
+  title: "About CrawlProofBot",
+  description:
+    "CrawlProofBot is the user agent CrawlProof uses to fetch pages on behalf of customers running audits. Identity, rate limits, and how to allow- or block-list it.",
+  alternates: { canonical: "/bot" },
+  openGraph: {
+    title: "CrawlProofBot — user agent reference",
+    description:
+      "Identity, rate limits, and how to allow- or block-list the CrawlProof user agent.",
+    url: "/bot",
+  },
+};
 
 export default function BotPage() {
   return (

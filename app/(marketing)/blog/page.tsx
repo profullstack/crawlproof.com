@@ -1,7 +1,18 @@
 import Link from "next/link";
 import { posts } from "@/lib/blog/posts";
 
-export const metadata = { title: "Blog" };
+export const metadata = {
+  title: "Blog",
+  description:
+    "Notes on AEO, LLM crawlers, schema markup, llms.txt, and how AI answer engines actually pick what to cite — from the team building CrawlProof.",
+  alternates: { canonical: "/blog" },
+  openGraph: {
+    title: "CrawlProof blog",
+    description:
+      "Notes on AEO, LLM crawlers, schema, llms.txt, and how AI answer engines pick what to cite.",
+    url: "/blog",
+  },
+};
 
 export default function BlogIndex() {
   return (

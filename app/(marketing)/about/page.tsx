@@ -1,4 +1,15 @@
-export const metadata = { title: "About" };
+export const metadata = {
+  title: "About",
+  description:
+    "CrawlProof is an AEO (answer-engine optimization) auditor — built so site owners can see exactly what LLM crawlers and AI answer engines find on their pages, and what they miss.",
+  alternates: { canonical: "/about" },
+  openGraph: {
+    title: "About CrawlProof",
+    description:
+      "AEO auditing for the AI-search era. See what LLM crawlers find on your site — and what they miss.",
+    url: "/about",
+  },
+};
 
 export default function AboutPage() {
   return (

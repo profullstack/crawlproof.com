@@ -3,7 +3,17 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { SignupForm } from "./form";
 
-export const metadata = { title: "Sign up" };
+export const metadata = {
+  title: "Sign up",
+  description:
+    "Create a free CrawlProof account — get 3 free credits to run AEO audits across LLM engines.",
+  alternates: { canonical: "/signup" },
+  openGraph: {
+    title: "Sign up for CrawlProof",
+    description: "Create a free CrawlProof account — get 3 free credits to start.",
+    url: "/signup",
+  },
+};
 
 export default async function SignupPage({
   searchParams,
