@@ -175,7 +175,11 @@ export async function oaCompatAudit(
   console.log(
     `[oa-compat:${cfg.providerLabel}] calling ${cfg.model} (${context.length} chars context)`,
   );
-  const response = await client.chat.completions.create({
+  // Stream the completion. The full report (markdown + findings + summary)
+  // routinely runs 60-100K characters; non-streaming with a tight max_tokens
+  // would either truncate the JSON mid-property or hit the SDK HTTP timeout
+  // on slow providers (DashScope/Moonshot).
+  const stream = await client.chat.completions.create({
     model: cfg.model,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -183,14 +187,28 @@ export async function oaCompatAudit(
     ],
     response_format: { type: "json_object" },
     temperature: 0.2,
-    max_tokens: 16000,
+    max_tokens: 65_000,
+    stream: true,
   });
+
+  let raw = "";
+  let finishReason: string | null = null;
+  for await (const chunk of stream) {
+    const choice = chunk.choices[0];
+    const delta = choice?.delta?.content;
+    if (delta) raw += delta;
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
+  }
   console.log(
-    `[oa-compat:${cfg.providerLabel}] ${cfg.model} returned in ${Date.now() - started}ms`,
+    `[oa-compat:${cfg.providerLabel}] ${cfg.model} returned in ${Date.now() - started}ms (${raw.length} chars, finish=${finishReason ?? "?"})`,
   );
 
-  const raw = response.choices[0]?.message?.content ?? "";
   if (!raw) throw new Error(`${cfg.providerLabel} returned empty content.`);
+  if (finishReason === "length") {
+    throw new Error(
+      `${cfg.providerLabel} hit the output token cap (${raw.length} chars). The model didn't finish the JSON — raise max_tokens.`,
+    );
+  }
 
   let json: unknown;
   try {
