@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ScoreTrend } from "@/components/charts/score-trend";
 import { StatusPie } from "@/components/charts/status-pie";
@@ -66,6 +67,12 @@ const COPY: Record<Variant, {
 
 export function PerformancePreview({ variant = "report" }: { variant?: Variant } = {}) {
   const copy = COPY[variant];
+  // Recharts' ResponsiveContainer can't size itself during SSR (no DOM, no
+  // measured width) and spams width(-1)/height(-1) warnings into Railway
+  // logs. Render charts only after mount; reserve the space so layout doesn't
+  // jump.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   return (
     <div className="space-y-6">
       <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
@@ -87,10 +94,21 @@ export function PerformancePreview({ variant = "report" }: { variant?: Variant }
           className="pointer-events-none select-none"
         >
           <div className="grid gap-4 lg:grid-cols-2">
-            <ScoreTrend data={SAMPLE_TREND} />
-            <StatusPie counts={SAMPLE_STATUS} />
-            <SectionBar rows={SAMPLE_SECTIONS} />
-            <PriorityBar counts={SAMPLE_PRIORITY} />
+            {mounted ? (
+              <>
+                <ScoreTrend data={SAMPLE_TREND} />
+                <StatusPie counts={SAMPLE_STATUS} />
+                <SectionBar rows={SAMPLE_SECTIONS} />
+                <PriorityBar counts={SAMPLE_PRIORITY} />
+              </>
+            ) : (
+              <>
+                <div className="card h-64" />
+                <div className="card h-64" />
+                <div className="card h-72" />
+                <div className="card h-72" />
+              </>
+            )}
           </div>
         </div>
 

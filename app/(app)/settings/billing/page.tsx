@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { BuyCreditsButton } from "./buy-credits-button";
+import { PurchaseStatusBanner } from "./purchase-status-banner";
 import { CREDIT_PACKS, discountPct, dollars, perScanCents } from "@/lib/credits";
 
 export const metadata = { title: "Billing" };
@@ -24,10 +25,22 @@ export default async function BillingPage({
 
   const { data: purchases } = await supabase
     .from("credit_purchases")
-    .select("id, pack_id, credits_added, amount_cents, status, created_at, completed_at")
+    .select(
+      "id, pack_id, credits_added, amount_cents, status, created_at, completed_at, coinpay_payment_id",
+    )
     .eq("owner_id", user!.id)
     .order("created_at", { ascending: false })
     .limit(20);
+
+  // For the success banner, latch onto the most recent purchase from the last
+  // hour so we can show the real status (and poll if pending) instead of the
+  // optimistic "Payment received" message that Stripe's redirect carried.
+  const latest = purchases?.[0];
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  const recent =
+    latest && new Date(latest.created_at).getTime() > oneHourAgo
+      ? latest
+      : null;
 
   return (
     <div className="space-y-6">
@@ -36,11 +49,15 @@ export default async function BillingPage({
       </Link>
       <h1 className="text-3xl font-bold">Billing</h1>
 
-      {sp.purchase === "success" && (
-        <div className="card border-[rgba(52,211,153,0.4)] p-4 text-sm text-[var(--color-pass)]">
-          Payment received. Credits will land in your balance as soon as the
-          CoinPay webhook confirms (usually a few seconds).
-        </div>
+      {sp.purchase === "success" && recent && (
+        <PurchaseStatusBanner
+          initial={{
+            id: recent.id,
+            coinpay_payment_id: recent.coinpay_payment_id ?? null,
+            status: recent.status,
+            credits_added: recent.credits_added,
+          }}
+        />
       )}
       {sp.purchase === "cancel" && (
         <div className="card border-[rgba(251,191,36,0.4)] p-4 text-sm text-[var(--color-warn)]">
