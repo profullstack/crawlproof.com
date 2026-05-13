@@ -5,8 +5,9 @@ const body = `# CrawlProof
 > See your site the way AI crawlers do. CrawlProof runs an AEO audit on any URL and produces a structured report of what LLM crawlers and answer engines can actually find — content, schema, robots rules, AI-bot access, positioning clarity, and recommended fixes.
 
 ## Product
-- Free single-URL AEO audit, 3 per day per IP, no signup required.
-- Saved projects, scheduled re-audits, PDF export, and diff view on Pro ($29/mo).
+- Free single-URL AEO audit, 10 per day per IP, no signup required.
+- Signed-in users get 3 free credits; additional scans are pay-per-credit ($1/credit, volume discounts down to $0.50/credit at 100 scans). No subscription — credits never expire.
+- Saved projects, scheduled re-audits, multi-engine LLM scans (Claude Sonnet 4.6, OpenAI GPT-5 Mini, Gemini 2.5 Pro, Perplexity Sonar Pro, Qwen Plus, Kimi K2, DeepSeek V3), consolidated PDF reports, and diff view.
 - Identifies as CrawlProofBot/1.0 (+https://crawlproof.com/bot).
 
 ## Key pages

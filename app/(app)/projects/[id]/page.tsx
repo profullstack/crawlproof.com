@@ -119,6 +119,14 @@ export default async function ProjectOverviewPage({
                 {new Date(latestRunAudits[0].created_at).toLocaleString()}
               </p>
             </div>
+            {last && (
+              <Link
+                href={`/audits/${last.id}`}
+                className="btn btn-primary mt-3 inline-flex"
+              >
+                View latest report →
+              </Link>
+            )}
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {latestRunAudits.map((a) => (
                 <li
@@ -141,7 +149,7 @@ export default async function ProjectOverviewPage({
                   href={`/projects/${project.id}/runs/${latestRunId}`}
                   className="text-[var(--color-accent)] hover:underline"
                 >
-                  Open scan run →
+                  Open multi-engine scan run →
                 </Link>
                 {last && prev && (
                   <Link

@@ -16,7 +16,7 @@ const faqs = [
   },
   {
     q: "Is the free tier really free?",
-    a: "Yes, 10 audits per month, no card required. Pro at $29/mo unlocks scheduled re-audits, diffs, PDF export, and private reports.",
+    a: "Yes — anonymous visitors get 10 audits per day per IP with no signup, and signing up unlocks 3 free credits. Paid scans are $1/credit with volume discounts down to $0.50/credit at 100 scans. No subscription, credits never expire.",
   },
 ];
 

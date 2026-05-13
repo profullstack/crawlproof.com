@@ -1,4 +1,5 @@
 import { env } from "@/lib/env";
+import { CREDIT_PACKS } from "@/lib/credits";
 
 function Tag({ data }: { data: unknown }) {
   return (
@@ -33,20 +34,25 @@ export function SoftwareApplicationJsonLd() {
         name: "CrawlProof",
         applicationCategory: "BusinessApplication",
         operatingSystem: "Web",
+        description:
+          "AEO auditor — fetches any URL, checks how LLM crawlers and answer engines see it (content, schema, robots, AI-bot rules, llms.txt, positioning) and produces a prioritized to-do list.",
         offers: [
           {
             "@type": "Offer",
-            name: "Free",
+            name: "Free scan",
             price: "0",
             priceCurrency: "USD",
+            description:
+              "10 anonymous audits/day per IP, plus 3 free credits on signup.",
           },
-          {
+          // Real catalog — pay-per-scan credit packs, no subscription tier.
+          ...CREDIT_PACKS.map((p) => ({
             "@type": "Offer",
-            name: "Pro",
-            price: "29",
+            name: p.label,
+            price: (p.amountCents / 100).toFixed(2),
             priceCurrency: "USD",
-            billingDuration: "P1M",
-          },
+            description: `${p.credits} scan${p.credits === 1 ? "" : "s"} · $${(p.amountCents / p.credits / 100).toFixed(2)}/scan`,
+          })),
         ],
       }}
     />

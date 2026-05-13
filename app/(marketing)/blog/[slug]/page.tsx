@@ -13,7 +13,20 @@ export async function generateMetadata({
 }) {
   const { slug } = await params;
   const post = findPost(slug);
-  return { title: post?.title ?? "Post not found" };
+  if (!post) {
+    return { title: "Post not found", alternates: { canonical: `/blog/${slug}` } };
+  }
+  return {
+    title: post.title,
+    description: post.excerpt ?? undefined,
+    alternates: { canonical: `/blog/${slug}` },
+    openGraph: {
+      type: "article",
+      url: `/blog/${slug}`,
+      title: post.title,
+      description: post.excerpt ?? undefined,
+    },
+  };
 }
 
 export default async function BlogPost({
