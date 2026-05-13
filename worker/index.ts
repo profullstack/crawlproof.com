@@ -12,6 +12,7 @@ import { toMarkdown } from "../lib/audit/markdown";
 import { Resend } from "resend";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { markdownToHtml, htmlDocument } from "../lib/markdown";
+import { auditReadyEmailHtml } from "../lib/email";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -162,10 +163,13 @@ async function processJob(job: Job) {
           const sendRes = await resend.emails.send({
             from: process.env.RESEND_FROM ?? "CrawlProof <reports@crawlproof.com>",
             to: pdfEmail,
-            subject: `Your AEO audit for ${audit.target_url}`,
-            html: `<p>Your audit is ready.</p>
-              <p><a href="${reportUrl}">View interactive report</a></p>
-              <p>Score: ${score}/100</p>`,
+            subject: `Your CrawlProof audit for ${new URL(audit.target_url).hostname} (${score}/100)`,
+            html: auditReadyEmailHtml({
+              targetUrl: audit.target_url,
+              score,
+              reportUrl,
+              pdfAttached: true,
+            }),
             attachments: [{ filename, content: pdf.toString("base64") }],
           });
           if (sendRes.error) {
