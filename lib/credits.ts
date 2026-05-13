@@ -66,11 +66,11 @@ export const ENGINES: Record<Engine, EngineMeta> = {
       "Anthropic's most-capable model audits your site with adaptive thinking + web tools.",
   },
   openai: {
-    label: "OpenAI GPT-5",
+    label: "OpenAI GPT-5 Mini",
     cost: 1,
     available: true,
     blurb:
-      "OpenAI's flagship with web search. Second opinion framed the way an OpenAI-tier answer engine would.",
+      "OpenAI's fast tier with live web search. Snappy second opinion framed the way an OpenAI-tier answer engine would.",
   },
   qwen: {
     label: "Qwen Max",

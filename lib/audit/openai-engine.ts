@@ -80,8 +80,11 @@ export async function openaiAudit(targetUrl: string): Promise<ClaudeAuditResult>
 
   const userPrompt = buildAEOUserPrompt({ targetUrl, companyName: company });
 
+  // gpt-5-mini for speed — gpt-5 with web_search_preview routinely
+  // took 10–20 min. Mini handles the AEO classification task fine and
+  // brings wall time down to 1–3 min while keeping live web research.
   const response = await client.responses.parse({
-    model: "gpt-5",
+    model: "gpt-5-mini",
     instructions: SYSTEM_PROMPT,
     input: userPrompt,
     tools: [{ type: "web_search_preview" }],
