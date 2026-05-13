@@ -1,11 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ScoreTrend } from "@/components/charts/score-trend";
-import { StatusPie } from "@/components/charts/status-pie";
-import { SectionBar } from "@/components/charts/section-bar";
-import { PriorityBar } from "@/components/charts/priority-bar";
+
+// next/dynamic with ssr:false keeps recharts (and its d3 deps) out of the
+// server module graph. The homepage and report pages both render this, so
+// without this gate every Node process carries recharts in resident memory
+// even when nobody's looking at a chart.
+const ScoreTrend = dynamic(
+  () => import("@/components/charts/score-trend").then((m) => m.ScoreTrend),
+  { ssr: false, loading: () => <div className="card h-64" /> },
+);
+const StatusPie = dynamic(
+  () => import("@/components/charts/status-pie").then((m) => m.StatusPie),
+  { ssr: false, loading: () => <div className="card h-64" /> },
+);
+const SectionBar = dynamic(
+  () => import("@/components/charts/section-bar").then((m) => m.SectionBar),
+  { ssr: false, loading: () => <div className="card h-72" /> },
+);
+const PriorityBar = dynamic(
+  () => import("@/components/charts/priority-bar").then((m) => m.PriorityBar),
+  { ssr: false, loading: () => <div className="card h-72" /> },
+);
 
 // Sample data — illustrative only. Picked so the chart shows an obvious
 // upward trend, varied bar heights, and a non-trivial pie split. The 4
@@ -67,12 +84,6 @@ const COPY: Record<Variant, {
 
 export function PerformancePreview({ variant = "report" }: { variant?: Variant } = {}) {
   const copy = COPY[variant];
-  // Recharts' ResponsiveContainer can't size itself during SSR (no DOM, no
-  // measured width) and spams width(-1)/height(-1) warnings into Railway
-  // logs. Render charts only after mount; reserve the space so layout doesn't
-  // jump.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
   return (
     <div className="space-y-6">
       <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
@@ -94,21 +105,10 @@ export function PerformancePreview({ variant = "report" }: { variant?: Variant }
           className="pointer-events-none select-none"
         >
           <div className="grid gap-4 lg:grid-cols-2">
-            {mounted ? (
-              <>
-                <ScoreTrend data={SAMPLE_TREND} />
-                <StatusPie counts={SAMPLE_STATUS} />
-                <SectionBar rows={SAMPLE_SECTIONS} />
-                <PriorityBar counts={SAMPLE_PRIORITY} />
-              </>
-            ) : (
-              <>
-                <div className="card h-64" />
-                <div className="card h-64" />
-                <div className="card h-72" />
-                <div className="card h-72" />
-              </>
-            )}
+            <ScoreTrend data={SAMPLE_TREND} />
+            <StatusPie counts={SAMPLE_STATUS} />
+            <SectionBar rows={SAMPLE_SECTIONS} />
+            <PriorityBar counts={SAMPLE_PRIORITY} />
           </div>
         </div>
 
