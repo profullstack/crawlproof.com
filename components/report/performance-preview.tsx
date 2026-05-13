@@ -35,7 +35,37 @@ const SAMPLE_SECTIONS = [
 
 const SAMPLE_PRIORITY = { p1: 0, p2: 2, p3: 6, p4: 5, p5: 4 };
 
-export function PerformancePreview() {
+type Variant = "report" | "home";
+
+const COPY: Record<Variant, {
+  topTitle: string;
+  topBody: string;
+  topCta: string;
+  overlayTitle: string;
+  overlayBody: string;
+}> = {
+  report: {
+    topTitle: "Track this site week over week",
+    topBody:
+      "Save it as a project, run scheduled re-audits, and watch your AEO score climb with the four charts below. Sample data shown.",
+    topCta: "Start tracking →",
+    overlayTitle: "Your charts, not these.",
+    overlayBody:
+      "Sign up free, add this URL as a project, and we'll rebuild the dashboard with your own scan history.",
+  },
+  home: {
+    topTitle: "Track any site week over week",
+    topBody:
+      "Sign up, save a URL as a project, and watch your AEO score climb with the four charts below. Sample data shown — your dashboard updates with every re-audit.",
+    topCta: "Sign up free →",
+    overlayTitle: "Your dashboard, not this demo.",
+    overlayBody:
+      "Sign up free, add a URL as a project, and we'll build the dashboard out of your own scan history.",
+  },
+};
+
+export function PerformancePreview({ variant = "report" }: { variant?: Variant } = {}) {
+  const copy = COPY[variant];
   return (
     <div className="space-y-6">
       <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
@@ -43,14 +73,11 @@ export function PerformancePreview() {
           <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-accent)]">
             Premium feature
           </div>
-          <h3 className="mt-1 text-lg font-bold">Track this site week over week</h3>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Save it as a project, run scheduled re-audits, and watch your AEO score
-            climb with the four charts below. Sample data shown.
-          </p>
+          <h3 className="mt-1 text-lg font-bold">{copy.topTitle}</h3>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">{copy.topBody}</p>
         </div>
         <Link href="/signup" className="btn btn-primary">
-          Start tracking →
+          {copy.topCta}
         </Link>
       </div>
 
@@ -72,11 +99,8 @@ export function PerformancePreview() {
         <div className="pointer-events-none absolute inset-0 flex items-end justify-center bg-gradient-to-b from-[var(--color-bg)]/0 via-[var(--color-bg)]/40 to-[var(--color-bg)]">
           <div className="pointer-events-auto card mb-6 max-w-md p-5 text-center shadow-lg">
             <span className="badge badge-pass">Premium</span>
-            <h4 className="mt-2 text-base font-bold">Your charts, not these.</h4>
-            <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Sign up free, add this URL as a project, and we&apos;ll rebuild the
-              dashboard with your own scan history.
-            </p>
+            <h4 className="mt-2 text-base font-bold">{copy.overlayTitle}</h4>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">{copy.overlayBody}</p>
             <Link href="/signup" className="btn btn-primary mt-3 w-full">
               Sign up free
             </Link>
