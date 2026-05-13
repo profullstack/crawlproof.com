@@ -1,6 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { z } from "zod";
+// The SDK's zod helper imports from "zod/v4" internally and calls
+// z.toJSONSchema() — a v4-only API. Importing plain "zod" here gives us v3
+// schemas whose `_def` shape v4 can't read, producing the
+// "Cannot read properties of undefined (reading 'def')" crash at runtime.
+import { z } from "zod/v4";
 import { env } from "../env";
 import type { AuditResult, Finding } from "./types";
 import { SECTIONS, DATA_POINTS } from "./prompt";
@@ -120,7 +124,11 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
     thinking: { type: "adaptive" },
     output_config: {
       effort: "high",
-      format: zodOutputFormat(ResultSchema),
+      // SDK helper's type definition still expects v3 schemas; runtime is fine
+      // because the helper imports zod/v4 internally. Cast to any to silence
+      // the structural mismatch.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      format: zodOutputFormat(ResultSchema as any),
     },
     tools: [
       { type: "web_search_20260209", name: "web_search" },
@@ -140,7 +148,7 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
     );
   }
 
-  const findings: Finding[] = parsed.findings.map((f) => ({
+  const findings: Finding[] = parsed.findings.map((f: z.infer<typeof FindingSchema>) => ({
     section: f.section,
     check_key: f.check_key,
     status: f.status,

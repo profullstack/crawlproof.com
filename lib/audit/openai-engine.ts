@@ -11,12 +11,14 @@ import type { ClaudeAuditResult } from "./claude-engine";
 // Responses API with the built-in web_search_preview tool so GPT-5 can
 // research the target like the Claude engine does.
 
+// OpenAI structured outputs reject `.optional()` without `.nullable()` — every
+// field has to be in the required set, and absence is expressed as null.
 const FindingSchema = z.object({
   section: z.string(),
   check_key: z.string(),
   status: z.enum(["pass", "warn", "fail", "unknown"]),
   title: z.string(),
-  detail: z.string().optional(),
+  detail: z.string().nullable(),
   priority: z.number().int(),
 });
 
