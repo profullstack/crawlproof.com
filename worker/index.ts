@@ -51,10 +51,19 @@ async function processJob(job: Job) {
   // carry one (e.g. the sweep loop, or older enqueue bodies).
   const pdfEmail = job.pdfEmail ?? (audit.pdf_email as string | null) ?? undefined;
 
-  await supabase
+  // Conditional flip to running — if the user aborted before we picked
+  // this job up, aborted_at is non-null and the update returns no rows.
+  const { data: claimed } = await supabase
     .from("audits")
     .update({ status: "running" })
-    .eq("id", auditId);
+    .eq("id", auditId)
+    .is("aborted_at", null)
+    .select("id")
+    .maybeSingle();
+  if (!claimed) {
+    console.log(`[worker] audit ${auditId} was aborted before pickup; skipping`);
+    return;
+  }
 
   try {
     // Engine dispatch:
@@ -125,8 +134,10 @@ async function processJob(job: Job) {
       if (insErr) console.error("[worker] findings insert", insErr);
     }
 
-    // Mark complete.
-    await supabase
+    // Mark complete — but only if the row hasn't been aborted while we
+    // were mid-flight. If aborted_at flipped, this update no-ops and the
+    // abort + refund the user already saw stays authoritative.
+    const { data: completed } = await supabase
       .from("audits")
       .update({
         status: "complete",
@@ -135,7 +146,16 @@ async function processJob(job: Job) {
         report_markdown: markdown,
         completed_at: new Date().toISOString(),
       })
-      .eq("id", auditId);
+      .eq("id", auditId)
+      .is("aborted_at", null)
+      .select("id")
+      .maybeSingle();
+    if (!completed) {
+      console.log(
+        `[worker] audit ${auditId} was aborted mid-flight; skipping complete write + email`,
+      );
+      return;
+    }
 
     console.log(`[worker] audit ${auditId} complete, score=${score}`);
 

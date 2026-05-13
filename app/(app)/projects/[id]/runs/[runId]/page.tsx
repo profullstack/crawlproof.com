@@ -5,6 +5,7 @@ import { ScanRunResults, type RunAudit } from "@/components/scan-run-results";
 import { ScanRunRefresh } from "@/components/scan-run-refresh";
 import { PdfButton } from "@/components/pdf-button";
 import { CopyMarkdownButton } from "@/components/copy-markdown-button";
+import { AbortScanButton } from "@/components/abort-scan-button";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,9 @@ export default async function ScanRunPage({
   }));
 
   const anyComplete = typedRows.some((r) => r.status === "complete");
+  const anyPending = typedRows.some(
+    (r) => r.status === "queued" || r.status === "running",
+  );
 
   return (
     <>
@@ -60,14 +64,17 @@ export default async function ScanRunPage({
         backHref={`/projects/${projectId}`}
         backLabel={project.name}
         ownerActions={
-          anyComplete ? (
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <PdfButton auditId={rows[0].id} />
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {anyComplete && <PdfButton auditId={rows[0].id} />}
+            {anyComplete && (
               <CopyMarkdownButton
                 href={`/api/projects/${projectId}/runs/${runId}/markdown`}
               />
-            </div>
-          ) : undefined
+            )}
+            {anyPending && (
+              <AbortScanButton projectId={projectId} runId={runId} />
+            )}
+          </div>
         }
       />
       <ScanRunRefresh projectId={projectId} runId={runId} done={allDone} />
