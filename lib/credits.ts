@@ -12,8 +12,12 @@ export type CreditPack = {
 export const CREDIT_PACKS: CreditPack[] = [
   { id: "pack-1", label: "Starter", credits: 1, amountCents: 100 }, // $1.00/scan — full rack rate
   { id: "pack-10", label: "10 scans", credits: 10, amountCents: 900 }, // $0.90/scan — 10% off
-  { id: "pack-50", label: "50 scans", credits: 50, amountCents: 4000, popular: true }, // $0.80/scan — 20% off
-  { id: "pack-100", label: "100 scans", credits: 100, amountCents: 7500 }, // $0.75/scan — 25% off
+  { id: "pack-50", label: "50 scans", credits: 50, amountCents: 3500, popular: true }, // $0.70/scan — 30% off
+  // Deepest bundle is anchored at ~2× the worst-case per-scan cost
+  // (Claude Sonnet 4.6 ~$0.26 → cap of $0.52). Rounded to $0.50/credit
+  // so Claude lands at ~92% markup and the floor stays at or below
+  // the 100% markup ceiling.
+  { id: "pack-100", label: "100 scans", credits: 100, amountCents: 5000 }, // $0.50/scan — 50% off
 ];
 
 export function findPack(id: string): CreditPack | undefined {
