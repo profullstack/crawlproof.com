@@ -23,8 +23,8 @@ export function HireForm() {
         <p className="mt-2 text-sm text-[var(--color-muted)]">
           We&apos;ll reach out within a few hours during business hours.
           If it&apos;s urgent, email us directly at{" "}
-          <a className="underline" href="mailto:sales@crawlproof.com">
-            sales@crawlproof.com
+          <a className="underline" href="mailto:hello@crawlproof.com">
+            hello@crawlproof.com
           </a>
           .
         </p>

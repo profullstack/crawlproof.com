@@ -443,7 +443,7 @@ export async function sendHireInquiryEmail(input: {
 
   const res = await c.emails.send({
     from: env.resendFrom,
-    to: "sales@crawlproof.com",
+    to: "hello@crawlproof.com",
     replyTo: input.email,
     subject: `Hire-us inquiry: ${input.name} (${input.website})`,
     html,
