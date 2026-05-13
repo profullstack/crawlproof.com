@@ -36,7 +36,7 @@ describe("credit packs catalog", () => {
 
   it("dollars keeps decimals for non-whole-dollar amounts", () => {
     expect(dollars(3750)).toBe("$37.50");
-    expect(dollars(7000)).toBe("$70");
+    expect(dollars(7500)).toBe("$75");
   });
 
   it("discountPct is 0 for the rack-rate starter", () => {
@@ -55,9 +55,9 @@ describe("credit packs catalog", () => {
     }
   });
 
-  it("100-pack ships the big-bag 30% discount", () => {
+  it("100-pack ships the big-bag 25% discount", () => {
     const big = findPack("pack-100")!;
-    expect(discountPct(big)).toBe(30);
-    expect(perScanCents(big)).toBe(70);
+    expect(discountPct(big)).toBe(25);
+    expect(perScanCents(big)).toBe(75);
   });
 });

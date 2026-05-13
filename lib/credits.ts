@@ -10,10 +10,10 @@ export type CreditPack = {
 };
 
 export const CREDIT_PACKS: CreditPack[] = [
-  { id: "pack-1", label: "Starter", credits: 1, amountCents: 100 }, // $1.00/scan
+  { id: "pack-1", label: "Starter", credits: 1, amountCents: 100 }, // $1.00/scan — full rack rate
   { id: "pack-10", label: "10 scans", credits: 10, amountCents: 900 }, // $0.90/scan — 10% off
-  { id: "pack-50", label: "50 scans", credits: 50, amountCents: 3750, popular: true }, // $0.75/scan — 25% off
-  { id: "pack-100", label: "100 scans", credits: 100, amountCents: 7000 }, // $0.70/scan — 30% off
+  { id: "pack-50", label: "50 scans", credits: 50, amountCents: 4000, popular: true }, // $0.80/scan — 20% off
+  { id: "pack-100", label: "100 scans", credits: 100, amountCents: 7500 }, // $0.75/scan — 25% off
 ];
 
 export function findPack(id: string): CreditPack | undefined {
