@@ -18,6 +18,12 @@ export async function SiteHeader() {
           CrawlProof
         </Link>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
+          <Link
+            href="/hire"
+            className="font-semibold text-[var(--color-accent)]"
+          >
+            Hire us
+          </Link>
           <Link href="/pricing">Pricing</Link>
           <Link href="/recent">Recent</Link>
           <Link href="/about" className="hidden sm:inline">

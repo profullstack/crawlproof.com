@@ -406,3 +406,48 @@ export async function sendPurchaseReceiptEmail(input: {
   if (res.error) return { sent: false, error: String(res.error) };
   return { sent: true };
 }
+
+// Internal lead notification — sent to the sales inbox when a visitor fills
+// out the /hire contact form. Plain HTML, no shell branding (this lands in
+// our inbox, not the customer's).
+export async function sendHireInquiryEmail(input: {
+  name: string;
+  email: string;
+  phone: string;
+  website: string;
+  monthlyRevenue?: string;
+  location?: string;
+  message?: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const row = (label: string, value?: string) =>
+    value
+      ? `<tr><td style="padding:6px 12px 6px 0;color:#666;vertical-align:top;">${label}</td><td style="padding:6px 0;"><strong>${esc(value)}</strong></td></tr>`
+      : "";
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#111">
+    <h2 style="margin:0 0 12px">New AEO-fix inquiry</h2>
+    <table cellpadding="0" cellspacing="0" border="0">
+      ${row("Name", input.name)}
+      ${row("Email", input.email)}
+      ${row("Phone", input.phone)}
+      ${row("Website", input.website)}
+      ${row("Monthly revenue", input.monthlyRevenue)}
+      ${row("Location", input.location)}
+    </table>
+    ${input.message ? `<p style="margin-top:16px"><strong>Message</strong><br/><pre style="white-space:pre-wrap;font-family:inherit;background:#f6f8fa;padding:12px;border-radius:6px">${esc(input.message)}</pre></p>` : ""}
+  </body></html>`;
+
+  const res = await c.emails.send({
+    from: env.resendFrom,
+    to: "sales@crawlproof.com",
+    replyTo: input.email,
+    subject: `Hire-us inquiry: ${input.name} (${input.website})`,
+    html,
+  });
+  if (res.error) return { sent: false, error: String(res.error) };
+  return { sent: true };
+}
