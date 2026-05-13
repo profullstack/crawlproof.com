@@ -38,7 +38,8 @@ export type Engine =
   | "qwen"
   | "kimi"
   | "gemini"
-  | "deepseek";
+  | "deepseek"
+  | "perplexity";
 
 export type EngineMeta = {
   label: string;
@@ -98,6 +99,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Cost-efficient open-weight model. Strong reasoning, OpenAI-compatible API — quick, lightweight second opinion.",
+  },
+  perplexity: {
+    label: "Perplexity Sonar Pro",
+    cost: 1,
+    available: true,
+    blurb:
+      "Web-grounded with live citations. Frames your site the way Perplexity's answer engine would surface it to users.",
   },
 };
 

@@ -16,6 +16,7 @@ const ALL_ENGINES: Engine[] = [
   "kimi",
   "gemini",
   "deepseek",
+  "perplexity",
 ];
 
 describe("ENGINES catalog", () => {

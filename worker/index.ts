@@ -8,6 +8,7 @@ import { geminiAudit } from "../lib/audit/gemini-engine";
 import { qwenAudit } from "../lib/audit/qwen-engine";
 import { kimiAudit } from "../lib/audit/kimi-engine";
 import { deepseekAudit } from "../lib/audit/deepseek-engine";
+import { perplexityAudit } from "../lib/audit/perplexity-engine";
 import { toMarkdown } from "../lib/audit/markdown";
 import { Resend } from "resend";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
@@ -78,7 +79,8 @@ async function processJob(job: Job) {
         | "gemini"
         | "qwen"
         | "kimi"
-        | "deepseek") ?? "rule";
+        | "deepseek"
+        | "perplexity") ?? "rule";
     console.log(`[worker] audit ${auditId} engine=${engine}`);
 
     let score: number;
@@ -101,6 +103,7 @@ async function processJob(job: Job) {
       qwen: qwenAudit,
       kimi: kimiAudit,
       deepseek: deepseekAudit,
+      perplexity: perplexityAudit,
     } as const;
 
     if (engine in llmEngines) {

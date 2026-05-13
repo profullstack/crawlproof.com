@@ -28,5 +28,6 @@ export const env = {
   dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? "",   // Qwen
   moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
+  perplexityApiKey: process.env.PERPLEXITY_API_KEY ?? "", // Sonar API
   required,
 };

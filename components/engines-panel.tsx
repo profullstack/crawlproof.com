@@ -6,7 +6,7 @@ import { ENGINES, selectionCost, type Engine } from "@/lib/credits";
 import { runScanForProject } from "@/app/actions/runAudit";
 import { updateProjectEngines } from "@/app/actions/projects";
 
-const ENGINE_ORDER: Engine[] = ["rule", "claude", "openai", "gemini", "qwen", "kimi", "deepseek"];
+const ENGINE_ORDER: Engine[] = ["rule", "claude", "openai", "gemini", "perplexity", "qwen", "kimi", "deepseek"];
 
 export function EnginesPanel({
   projectId,
