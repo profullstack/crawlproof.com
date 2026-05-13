@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ReportView, type AuditRow } from "@/components/report/report-view";
 import { MarkdownView } from "@/components/report/markdown-view";
 import { ViewTabs } from "@/components/report/view-tabs";
+import { PerformancePreview } from "@/components/report/performance-preview";
 import { LivePoller } from "@/components/report/live-poller";
 import { DiffView } from "@/components/report/diff-view";
 import { CopyLink } from "@/components/copy-link";
@@ -98,6 +99,7 @@ export default async function AuditPage({
               ownerActions={ownerActions}
             />
           }
+          performanceView={<PerformancePreview />}
         />
       ) : (
         <ReportView
