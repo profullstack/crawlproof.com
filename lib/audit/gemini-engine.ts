@@ -1,5 +1,6 @@
 import { env } from "../env";
 import { oaCompatAudit } from "./oa-compat-engine";
+import { aeoAuditResponseFormat } from "./result-schema";
 import type { ClaudeAuditResult } from "./claude-engine";
 
 // Gemini through Google's OpenAI-compatible endpoint. We lose live Google
@@ -17,5 +18,11 @@ export async function geminiAudit(targetUrl: string): Promise<ClaudeAuditResult>
     model: "gemini-2.5-pro",
     providerLabel: "Gemini",
     maxOutputTokens: 65_000,
+    // Google's OpenAI-compat layer doesn't reliably enforce
+    // json_object — Pro sometimes glues prose between objects and
+    // we land on "Unexpected token 'e' " mid-stream. json_schema with
+    // the explicit AEO schema gets strict structured-output
+    // enforcement instead.
+    responseFormat: aeoAuditResponseFormat(),
   });
 }
