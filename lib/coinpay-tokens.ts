@@ -52,8 +52,9 @@ export async function fetchSupportedTokens(opts?: {
     return [];
   }
   const base = env.coinpayApiUrl.replace(/\/$/, "");
-  // env.coinpayApiUrl is configured as ".../api" — supported-coins lives at /supported-coins
-  const url = `${base}/supported-coins?active_only=true`;
+  // env.coinpayApiUrl is the bare host (e.g. https://coinpayportal.com);
+  // the existing createCheckout() appends `/api/...` and we match that.
+  const url = `${base}/api/supported-coins?active_only=true`;
   try {
     const res = await fetch(url, {
       headers: { authorization: `Bearer ${env.coinpayApiKey}` },

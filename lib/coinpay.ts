@@ -147,7 +147,7 @@ export async function createPayment(
     throw new Error("CoinPay is not configured (COINPAY_API_URL/KEY/MERCHANT_ID).");
   }
   const base = env.coinpayApiUrl.replace(/\/$/, "");
-  const apiUrl = `${base}/payments/create`;
+  const apiUrl = `${base}/api/payments/create`;
   const descriptionParts = [
     `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
   ];
@@ -206,7 +206,7 @@ export async function getPaymentStatus(
 ): Promise<PaymentStatusResult | null> {
   if (!env.coinpayApiUrl) return null;
   const base = env.coinpayApiUrl.replace(/\/$/, "");
-  const res = await fetch(`${base}/payments/${paymentId}`, { cache: "no-store" });
+  const res = await fetch(`${base}/api/payments/${paymentId}`, { cache: "no-store" });
   if (!res.ok) return null;
   const json = (await res.json()) as CoinPayResponse & { payment?: CoinPayPayment };
   const p = json.payment;
