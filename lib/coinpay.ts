@@ -27,11 +27,37 @@ export type CreateCheckoutResult = {
   hostedUrl: string;
 };
 
+export type CreatePaymentInput = CreateCheckoutInput & {
+  currency: string; // lowercase code, e.g. "usdc_pol", "btc"
+};
+
+export type CreatePaymentResult = {
+  paymentId: string;
+  address: string | null;
+  amountCrypto: number | null;
+  currency: string;
+  expiresAt: string | null;
+  hostedUrl: string;
+};
+
+export type PaymentStatusResult = {
+  paymentId: string;
+  status: string;
+  amountCrypto: number | null;
+  currency: string | null;
+  txHash: string | null;
+};
+
 type CoinPayPayment = {
   id?: string;
   payment_address?: string;
+  amount_crypto?: number | string;
+  crypto_amount?: number | string;
+  currency?: string;
+  expires_at?: string;
   stripe_checkout_url?: string;
   status?: string;
+  tx_hash?: string;
 };
 
 type CoinPayResponse = {
@@ -108,6 +134,96 @@ export async function createCheckout(
   // payment_method=both).
   const hostedUrl = `${base}/pay/${payment.id}`;
   return { paymentId: payment.id, hostedUrl };
+}
+
+// Currency-aware payment creation — used by the in-app modal flow so the
+// user picks a coin without ever leaving the site. Returns the address,
+// amount_crypto, and expires_at so the client can render a QR code and
+// poll for confirmation.
+export async function createPayment(
+  input: CreatePaymentInput,
+): Promise<CreatePaymentResult> {
+  if (!env.coinpayApiKey || !env.coinpayApiUrl || !env.coinpayMerchantId) {
+    throw new Error("CoinPay is not configured (COINPAY_API_URL/KEY/MERCHANT_ID).");
+  }
+  const base = env.coinpayApiUrl.replace(/\/$/, "");
+  const apiUrl = `${base}/payments/create`;
+  const descriptionParts = [
+    `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
+  ];
+  if (input.metadata?.purchase_id) {
+    descriptionParts.push(`purchase=${input.metadata.purchase_id}`);
+  }
+  const isCard = input.currency === "card";
+  const body = {
+    business_id: env.coinpayMerchantId,
+    amount_usd: Number((input.amountCents / 100).toFixed(2)),
+    // For card we still set a fallback crypto currency (CoinPay requires
+    // one) and ask for `both` so the customer gets the Stripe option.
+    ...(isCard
+      ? { payment_method: "both", currency: "usdc_pol" }
+      : { payment_method: "crypto", currency: input.currency }),
+    description: descriptionParts.join(" · "),
+    redirect_url: input.successUrl,
+  };
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.coinpayApiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`CoinPay createPayment failed ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as CoinPayResponse;
+  const payment = json.payment;
+  if (!payment?.id) {
+    throw new Error(`CoinPay response missing payment.id: ${JSON.stringify(json).slice(0, 200)}`);
+  }
+  const amountCrypto =
+    typeof payment.amount_crypto !== "undefined"
+      ? Number(payment.amount_crypto)
+      : typeof payment.crypto_amount !== "undefined"
+        ? Number(payment.crypto_amount)
+        : null;
+  return {
+    paymentId: payment.id,
+    address: payment.payment_address ?? null,
+    amountCrypto: Number.isFinite(amountCrypto) ? amountCrypto : null,
+    currency: payment.currency ?? input.currency,
+    expiresAt: payment.expires_at ?? null,
+    hostedUrl: payment.stripe_checkout_url ?? `${base}/pay/${payment.id}`,
+  };
+}
+
+// Poll-target. Returns the public payment view; status drives the modal's
+// state machine on the client.
+export async function getPaymentStatus(
+  paymentId: string,
+): Promise<PaymentStatusResult | null> {
+  if (!env.coinpayApiUrl) return null;
+  const base = env.coinpayApiUrl.replace(/\/$/, "");
+  const res = await fetch(`${base}/payments/${paymentId}`, { cache: "no-store" });
+  if (!res.ok) return null;
+  const json = (await res.json()) as CoinPayResponse & { payment?: CoinPayPayment };
+  const p = json.payment;
+  if (!p?.id) return null;
+  const amountCrypto =
+    typeof p.amount_crypto !== "undefined"
+      ? Number(p.amount_crypto)
+      : typeof p.crypto_amount !== "undefined"
+        ? Number(p.crypto_amount)
+        : null;
+  return {
+    paymentId: p.id,
+    status: p.status ?? "pending",
+    amountCrypto: Number.isFinite(amountCrypto) ? amountCrypto : null,
+    currency: p.currency ?? null,
+    txHash: p.tx_hash ?? null,
+  };
 }
 
 // Parse the Stripe-style `t=...,v1=...` header into its parts.
