@@ -54,7 +54,46 @@ export default async function AuditPage({
         .eq("owner_id", user!.id)
         .order("created_at", { ascending: true })
     : { data: null };
-  const premiumSiblings = (siblingsData ?? []) as unknown as PremiumSibling[];
+  const premiumSiblingsBase = (siblingsData ?? []) as unknown as Omit<
+    PremiumSibling,
+    "topFindings"
+  >[];
+
+  // Pull a handful of top-priority findings per sibling for inline display.
+  // One round-trip via IN; we filter to fail/warn priorities ≤3 and slice
+  // client-side because PostgREST doesn't do per-group LIMIT.
+  let premiumSiblings: PremiumSibling[] = [];
+  if (premiumSiblingsBase.length > 0) {
+    const siblingIds = premiumSiblingsBase.map((s) => s.id);
+    const { data: findingsForSiblings } = await supabase
+      .from("audit_findings")
+      .select("audit_id, section, status, title, detail, priority")
+      .in("audit_id", siblingIds)
+      .in("status", ["fail", "warn"])
+      .lte("priority", 3)
+      .order("priority", { ascending: true });
+    const byAudit = new Map<
+      string,
+      { section: string; status: string; title: string; detail: string | null; priority: number }[]
+    >();
+    for (const f of findingsForSiblings ?? []) {
+      const arr = byAudit.get(f.audit_id as string) ?? [];
+      if (arr.length < 4) {
+        arr.push({
+          section: f.section as string,
+          status: f.status as string,
+          title: f.title as string,
+          detail: (f.detail as string | null) ?? null,
+          priority: f.priority as number,
+        });
+      }
+      byAudit.set(f.audit_id as string, arr);
+    }
+    premiumSiblings = premiumSiblingsBase.map((s) => ({
+      ...s,
+      topFindings: byAudit.get(s.id) ?? [],
+    })) as PremiumSibling[];
+  }
 
   const { data: findingsData } = await supabase
     .from("audit_findings")

@@ -2,6 +2,14 @@ import Link from "next/link";
 import { ENGINES, type Engine } from "@/lib/credits";
 import { ScoreBadge } from "@/components/score-badge";
 
+export type PremiumFinding = {
+  section: string;
+  status: string;
+  title: string;
+  detail: string | null;
+  priority: number;
+};
+
 export type PremiumSibling = {
   id: string;
   engine: Engine;
@@ -11,6 +19,7 @@ export type PremiumSibling = {
   failed_reason: string | null;
   completed_at: string | null;
   summary: { pass?: number; warn?: number; fail?: number } | null;
+  topFindings?: PremiumFinding[];
 };
 
 export function PremiumEngines({ siblings }: { siblings: PremiumSibling[] }) {
@@ -115,6 +124,41 @@ function EngineCard({ audit }: { audit: PremiumSibling }) {
           {audit.failed_reason}
         </p>
       )}
+
+      {audit.status === "complete" &&
+        audit.topFindings &&
+        audit.topFindings.length > 0 && (
+          <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+              Top recommendations
+            </div>
+            <ul className="mt-2 space-y-1.5 text-xs">
+              {audit.topFindings.map((f, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span
+                    aria-hidden
+                    className={
+                      f.status === "fail"
+                        ? "mt-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-fail)]"
+                        : "mt-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-warn)]"
+                    }
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium text-[var(--color-fg)]">
+                      P{f.priority} · {f.title}
+                    </span>
+                    {f.detail && (
+                      <span className="text-[var(--color-muted)]">
+                        {" "}
+                        — {f.detail}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
       <div className="mt-3 flex items-center gap-3 text-xs">
         {audit.status === "complete" && (
