@@ -47,6 +47,39 @@ export async function sendDigestEmail(input: {
   });
 }
 
+// Plain marketing send (non-transactional). Always appends an unsubscribe
+// footer and the List-Unsubscribe headers that mail clients (Gmail, etc.)
+// look for to render a native unsubscribe button.
+export async function sendMarketingEmail(input: {
+  to: string;
+  subject: string;
+  html: string;
+  unsubscribeToken: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+
+  const unsubUrl = `${env.siteUrl}/unsubscribe/${input.unsubscribeToken}`;
+  const footer = `<hr style="border:none;border-top:1px solid #eee;margin:24px 0" />
+    <p style="color:#888;font-size:12px">
+      You're receiving this because you opted in on crawlproof.com.
+      <a href="${unsubUrl}" style="color:#888">Unsubscribe</a>.
+    </p>`;
+
+  const res = await c.emails.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: input.subject,
+    html: `${input.html}${footer}`,
+    headers: {
+      "List-Unsubscribe": `<${unsubUrl}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+  });
+  if (res.error) return { sent: false, error: String(res.error) };
+  return { sent: true };
+}
+
 export async function sendPurchaseReceiptEmail(input: {
   to: string;
   paymentId: string;
