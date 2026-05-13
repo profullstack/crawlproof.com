@@ -10,33 +10,24 @@ function client() {
 }
 
 // Shared CrawlProof email shell — mirrors supabase/templates/* so transactional
-// mail (audit-ready, receipts) looks the same as auth mail. Score colors hint
-// at how the user should feel about the result.
+// mail (audit-ready, receipts) looks the same as auth mail.
 function scoreAccent(score: number): { bg: string; fg: string } {
   if (score >= 80) return { bg: "#6ee7b7", fg: "#042f1a" };
   if (score >= 60) return { bg: "#fcd34d", fg: "#3a2a05" };
   return { bg: "#fca5a5", fg: "#3a0808" };
 }
 
-export function auditReadyEmailHtml(input: {
-  targetUrl: string;
-  score: number;
-  reportUrl: string;
-  pdfAttached?: boolean;
+function emailShell(input: {
+  title: string;
+  innerHtml: string;
+  footerNote?: string;
 }): string {
-  const host = (() => {
-    try { return new URL(input.targetUrl).hostname; } catch { return input.targetUrl; }
-  })();
-  const accent = scoreAccent(input.score);
-  const attachedLine = input.pdfAttached
-    ? `<p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#64748b;">A PDF copy of this report is attached to this email.</p>`
-    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Your CrawlProof audit for ${host} is ready</title>
+<title>${input.title}</title>
 </head>
 <body style="margin:0;padding:0;background:#0b0d10;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e7e9ee;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0b0d10;padding:32px 16px;">
@@ -55,7 +46,38 @@ export function auditReadyEmailHtml(input: {
               </table>
             </td>
           </tr>
-          <tr>
+          ${input.innerHtml}
+          ${input.footerNote ? `<tr>
+            <td style="padding:16px 32px 28px;border-top:1px solid #1f2630;">
+              <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b;">${input.footerNote}</p>
+            </td>
+          </tr>` : ""}
+        </table>
+        <p style="margin:18px 0 0;font-size:11px;color:#475569;">
+          CrawlProof · See your site the way AI crawlers do.<br>
+          <a href="${env.siteUrl}" style="color:#64748b;">${env.siteUrl}</a>
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+export function auditReadyEmailHtml(input: {
+  targetUrl: string;
+  score: number;
+  reportUrl: string;
+  pdfAttached?: boolean;
+}): string {
+  const host = (() => {
+    try { return new URL(input.targetUrl).hostname; } catch { return input.targetUrl; }
+  })();
+  const accent = scoreAccent(input.score);
+  const attachedLine = input.pdfAttached
+    ? `<p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#64748b;">A PDF copy of this report is attached to this email.</p>`
+    : "";
+  const innerHtml = `<tr>
             <td style="padding:24px 32px 0;">
               <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
                 Your audit for ${host} is ready
@@ -93,25 +115,82 @@ export function auditReadyEmailHtml(input: {
               </p>
               ${attachedLine}
             </td>
-          </tr>
-          <tr>
-            <td style="padding:16px 32px 28px;border-top:1px solid #1f2630;">
-              <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b;">
-                Want to track this site over time? Sign in and add it as a
-                project to schedule weekly or monthly re-audits.
+          </tr>`;
+  return emailShell({
+    title: `Your CrawlProof audit for ${host} is ready`,
+    innerHtml,
+    footerNote: "Want to track this site over time? Sign in and add it as a project to schedule weekly or monthly re-audits.",
+  });
+}
+
+export function purchaseReceiptEmailHtml(input: {
+  packLabel: string;
+  creditsAdded: number;
+  amountFormatted: string;
+  currency: string;
+  paymentId: string;
+  txHash?: string | null;
+}): string {
+  const txRow = input.txHash
+    ? `<tr>
+        <td style="padding:6px 0;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.1em;">Tx</td>
+        <td style="padding:6px 0;color:#e7e9ee;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;word-break:break-all;">${input.txHash}</td>
+      </tr>`
+    : "";
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                Thanks for your purchase
+              </h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                <strong style="color:#6ee7b7;">${input.creditsAdded} credit${input.creditsAdded === 1 ? "" : "s"}</strong>
+                added to your CrawlProof account.
               </p>
             </td>
           </tr>
-        </table>
-        <p style="margin:18px 0 0;font-size:11px;color:#475569;">
-          CrawlProof · See your site the way AI crawlers do.<br>
-          <a href="${env.siteUrl}" style="color:#64748b;">${env.siteUrl}</a>
-        </p>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
+          <tr>
+            <td style="padding:20px 32px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#0b0d10;border:1px solid #1f2630;border-radius:10px;padding:14px 18px;">
+                <tr>
+                  <td style="padding:6px 0;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.1em;">Pack</td>
+                  <td style="padding:6px 0;color:#e7e9ee;font-size:14px;font-weight:600;text-align:right;">${input.packLabel}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.1em;">Credits</td>
+                  <td style="padding:6px 0;color:#e7e9ee;font-size:14px;font-weight:600;text-align:right;">${input.creditsAdded}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.1em;">Total</td>
+                  <td style="padding:6px 0;color:#e7e9ee;font-size:14px;font-weight:600;text-align:right;">${input.amountFormatted} ${input.currency}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.1em;">Order</td>
+                  <td style="padding:6px 0;color:#e7e9ee;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;text-align:right;word-break:break-all;">${input.paymentId}</td>
+                </tr>
+                ${txRow}
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 8px;">
+              <a href="${env.siteUrl}/settings/billing"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                View billing →
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <p style="margin:8px 0 0;font-size:13px;line-height:1.6;color:#64748b;">
+                A PDF copy of this receipt is attached for your records.
+              </p>
+            </td>
+          </tr>`;
+  return emailShell({
+    title: `Your CrawlProof receipt`,
+    innerHtml,
+    footerNote: "Credits never expire and can be used on any scan engine.",
+  });
 }
 
 export async function sendAuditReadyEmail(input: {
@@ -201,20 +280,19 @@ export async function sendPurchaseReceiptEmail(input: {
     minimumFractionDigits: input.amountCents % 100 === 0 ? 0 : 2,
   })}`;
   const filename = `crawlproof-receipt-${input.paymentId.slice(0, 12)}.pdf`;
-  const txLine = input.txHash
-    ? `<p style="color:#666;font-size:12px"><strong>Tx:</strong> <code>${input.txHash}</code></p>`
-    : "";
 
   const res = await c.emails.send({
     from: env.resendFrom,
     to: input.to,
     subject: `Your CrawlProof receipt — ${input.creditsAdded} credit${input.creditsAdded === 1 ? "" : "s"}`,
-    html: `<p>Thanks for your purchase!</p>
-      <p><strong>${input.packLabel}</strong> — ${input.creditsAdded} credit${input.creditsAdded === 1 ? "" : "s"} added to your account.</p>
-      <p><strong>Total paid:</strong> ${amount} ${input.currency}</p>
-      <p><strong>Order:</strong> ${input.paymentId}</p>
-      ${txLine}
-      <p>A PDF copy of this receipt is attached.</p>`,
+    html: purchaseReceiptEmailHtml({
+      packLabel: input.packLabel,
+      creditsAdded: input.creditsAdded,
+      amountFormatted: amount,
+      currency: input.currency,
+      paymentId: input.paymentId,
+      txHash: input.txHash,
+    }),
     attachments: [{ filename, content: input.pdf.toString("base64") }],
   });
   if (res.error) return { sent: false, error: String(res.error) };
