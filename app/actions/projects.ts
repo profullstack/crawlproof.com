@@ -37,3 +37,49 @@ export async function updateProjectEngines(input: {
   revalidatePath(`/projects/${input.projectId}`);
   return { ok: true, engines: cleaned };
 }
+
+export type ProjectStatus = "active" | "paused" | "archived";
+
+type StatusOk = { ok: true; status: ProjectStatus };
+type StatusErr = { ok: false; error: string };
+
+async function setProjectStatus(
+  projectId: string,
+  next: ProjectStatus,
+): Promise<StatusOk | StatusErr> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const patch: Record<string, unknown> = { status: next };
+  patch.archived_at = next === "archived" ? new Date().toISOString() : null;
+
+  const { error } = await supabase
+    .from("projects")
+    .update(patch)
+    .eq("id", projectId)
+    .eq("owner_id", user.id);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, status: next };
+}
+
+export async function pauseProject(projectId: string) {
+  return setProjectStatus(projectId, "paused");
+}
+
+export async function resumeProject(projectId: string) {
+  return setProjectStatus(projectId, "active");
+}
+
+export async function archiveProject(projectId: string) {
+  return setProjectStatus(projectId, "archived");
+}
+
+export async function restoreProject(projectId: string) {
+  return setProjectStatus(projectId, "active");
+}

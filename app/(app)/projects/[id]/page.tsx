@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
 import { EnginesPanel } from "@/components/engines-panel";
 import { ScheduleToggle } from "@/components/schedule-toggle";
+import { ProjectStatusControls } from "@/components/project-status-controls";
+import type { ProjectStatus } from "@/app/actions/projects";
 import type { Engine } from "@/lib/credits";
 import { ScoreTrend } from "@/components/charts/score-trend";
 import { StatusPie } from "@/components/charts/status-pie";
@@ -102,6 +104,10 @@ export default async function ProjectPage({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        <ProjectStatusControls
+          projectId={project.id}
+          status={(project.status ?? "active") as ProjectStatus}
+        />
         <ScheduleToggle projectId={project.id} current={project.schedule} />
         {last && prev && (
           <Link href={`/audits/${last.id}?diff=${prev.id}`} className="btn">

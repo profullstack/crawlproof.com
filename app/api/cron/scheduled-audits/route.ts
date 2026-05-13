@@ -29,6 +29,7 @@ export async function POST(req: Request) {
   const { data: due, error } = await svc
     .from("projects")
     .select("id, owner_id, url, schedule, engines")
+    .eq("status", "active")
     .neq("schedule", "off")
     .lt("next_run_at", now)
     .limit(100);
