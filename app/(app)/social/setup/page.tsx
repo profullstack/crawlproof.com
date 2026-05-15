@@ -52,6 +52,12 @@ export default async function SocialSetupPage({
           ← Dashboard
         </Link>
         <h1 className="mt-4 text-3xl font-bold">Social accounts</h1>
+        <Link
+          href="/social/api-tokens"
+          className="float-right text-sm text-[var(--color-muted)] hover:underline"
+        >
+          API tokens →
+        </Link>
         <p className="mt-2 text-[var(--color-muted)]">
           Connect your social accounts once at the account level. Each blog
           (site) you own can then choose which of these to post from.

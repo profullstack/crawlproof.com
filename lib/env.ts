@@ -81,5 +81,9 @@ export const env = {
   // default 6 uploads/day quota needs a raise request for prod use.
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  // Pepper for SHA-256(token || pepper) on sp_api_token. A DB leak
+  // alone cannot exploit any token without this server-side value.
+  // Generate with `openssl rand -base64 32`.
+  spTokenPepper: process.env.SP_TOKEN_PEPPER ?? "",
   required,
 };
