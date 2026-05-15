@@ -39,6 +39,10 @@ import {
   refreshXToken,
   X_MAX_CHARS,
 } from "@/lib/sp/platforms/x";
+import {
+  createFacebookPagePost,
+  FACEBOOK_MAX_CHARS,
+} from "@/lib/sp/platforms/facebook";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -361,6 +365,13 @@ export async function postNow(input: {
         error: `X posts max ${X_MAX_CHARS} chars (got ${text.length}).`,
       };
     }
+  } else if (account.platform === "facebook_page") {
+    if (text.length > FACEBOOK_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `Facebook posts max ${FACEBOOK_MAX_CHARS} chars (got ${text.length}).`,
+      };
+    }
   } else {
     return {
       ok: false,
@@ -492,13 +503,22 @@ export async function postNow(input: {
         text,
       });
       result = { platformPostId: r.urn, webUrl: r.webUrl };
-    } else {
-      // account.platform === "x" — narrowed by the validation block.
+    } else if (account.platform === "x") {
       // account.handle is stored as "@username"; createTweet wants the
       // bare username for the permalink.
       const username = account.handle.replace(/^@/, "");
       const r = await createTweet({ accessToken, username, text });
       result = { platformPostId: r.tweetId, webUrl: r.webUrl };
+    } else {
+      // account.platform === "facebook_page" — narrowed above.
+      // enc_access_token holds the Page access token, external_id is
+      // the Page id.
+      const r = await createFacebookPagePost({
+        pageId: account.external_id,
+        pageAccessToken: accessToken,
+        text,
+      });
+      result = { platformPostId: r.postId, webUrl: r.webUrl };
     }
     await supabase
       .from("sp_post")

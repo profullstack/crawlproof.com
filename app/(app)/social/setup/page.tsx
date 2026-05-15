@@ -57,10 +57,11 @@ export default async function SocialSetupPage({
           (site) you own can then choose which of these to post from.
           Phase 1 supports <strong>Bluesky</strong>, <strong>Reddit</strong>,{" "}
           <strong>Mastodon</strong>, <strong>LinkedIn</strong>,{" "}
-          <strong>X</strong>, <strong>Discord</strong>, and{" "}
-          <strong>Telegram</strong>. X requires a paid API tier ($200/mo+
-          for writes). Facebook, Instagram, Threads, TikTok, Pinterest, and
-          YouTube ship next; some are blocked on per-platform app review.
+          <strong>X</strong>, <strong>Facebook Pages</strong>,{" "}
+          <strong>Discord</strong>, and <strong>Telegram</strong>. X needs
+          paid API access; Facebook Pages work for Pages you admin in dev
+          mode (Meta review required for customer Pages). Instagram,
+          Threads, TikTok, Pinterest, and YouTube ship next.
         </p>
       </div>
 
@@ -153,6 +154,24 @@ export default async function SocialSetupPage({
         </p>
         <a href="/api/sp/oauth/reddit/start" className="btn btn-primary mt-4">
           Connect Reddit
+        </a>
+      </section>
+
+      {/* Connect Facebook Page */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect Facebook Pages</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Connect once; every Facebook Page you admin lands as its own
+          account here. We request <code>pages_manage_posts</code> +{" "}
+          <code>pages_read_engagement</code>. <strong>Posts to Pages you
+          don't admin in our Meta app require Meta app review</strong>{" "}
+          (takes 1–3 weeks). Pages you admin work in dev mode immediately.
+        </p>
+        <a
+          href="/api/sp/oauth/facebook/start"
+          className="btn btn-primary mt-4"
+        >
+          Connect Facebook
         </a>
       </section>
 
