@@ -268,7 +268,7 @@ Each user-platform combo gets its own isolated Playwright context. Cookie mode r
 - **Account bans.** Platforms detect server-side activity from residential IPs eventually. Cookie mode helps (no login flow to trip detection on every session) but doesn't eliminate the risk. Expected attrition: ~3%/month for cookie-mode accounts, ~5%/month for puppeteer-mode. Disclosure modal MUST make this clear.
 - **2FA push notifications (puppeteer mode only).** Some platforms now require a phone-tap to approve new logins. If the user doesn't have TOTP, we get stuck. Cookie mode dodges this entirely.
 - **Platform UI changes.** Every IG redesign breaks our selectors. Need a regression test that runs once per day and pages the on-call when it fails. Affects both modes (the post-composition selectors are the same).
-- **Legal**: most platforms' ToS forbid automation. We are not the user; we are an agent posting on their behalf. The legal theory we'd rely on is that the *user* directed us — but platforms sometimes treat the agent and the user as one party for enforcement. **Real lawyer review before this ships.** Cookie mode is *not* a legal differentiator; "the user gave us a session cookie" is still "we are operating their account as them."
+- **Platform ToS friction**: most platforms' ToS technically forbid automation, but every customer has explicitly authorized us to act on their account (that's what the connect flow *is*). The disclosure modal at connect time covers the customer-expectations side. The real operational risk is the platform banning the *user's* account — that's the customer's problem to weigh, and the modal makes sure they go in eyes-open.
 
 ### 5.6 The cookie-ingest flow (UI walkthrough)
 
@@ -408,7 +408,7 @@ COGS realism:
 6. **Dashboard + setup UI** — three routes (§8).
 7. **Meta family** — once app review lands.
 8. **X** — once the user agrees to the $200/mo API tier.
-9. **Browser mode — cookie variant first.** Behind a `browser_mode_enabled` flag on the user's profile, ships dark until lawyer-reviewed. Order within this step:
+9. **Browser mode — cookie variant first.** Behind a `browser_mode_enabled` flag on the user's profile. Order within this step:
    1. cURL-paste cookie ingest (§5.6) for Instagram + TikTok. No login flow to build; biggest leverage per LOC.
    2. Health-check job (cookie liveness) + "Refresh session" UI.
    3. Crawlproof browser extension (v2) for one-click ingest.
@@ -418,7 +418,6 @@ COGS realism:
 
 ## 14. Open questions for before build
 
-- **Lawyer review on browser-automation ToS exposure.** Specifically: are we liable if a customer's account gets banned because we logged in on their behalf — *or replayed their session cookie?* US case law leans "the user gave us permission so it's fine"; platform ToS lean "no it's not." Cookie-replay isn't legally distinguishable from password-login here.
 - **Browser extension publishing.** We need a Chrome Web Store / Firefox Add-ons listing for the v2 one-click cookie ingest. Approval timelines for "this extension exfiltrates cookies" extensions are uncertain. Plan B is a Tampermonkey userscript distributed via the docs page.
 - **Browser cluster vendor choice.** Browserless / Browserbase / self-host Playwright on Railway? Each has different security + cost profiles for the credential-decryption path.
 - **Proxy vendor.** Bright Data is the gold standard; Soax / Smartproxy are cheaper. Need to test detection rates per platform.
