@@ -14,7 +14,8 @@
     "test:coverage": "vitest run --coverage",
     "worker": "tsx worker/index.ts",
     "worker:build": "tsc -p worker/tsconfig.json",
-    "cli": "tsx cli/index.ts"
+    "cli": "tsx cli/index.ts",
+    "rotate-secret": "tsx bin/rotate-secret.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
