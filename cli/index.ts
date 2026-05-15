@@ -111,9 +111,16 @@ async function cmdSweep(args: Args): Promise<number> {
     return 2;
   }
   const target = (args.flags.target as string | undefined) ?? "scheduled-audits";
-  const path = target === "autoblog" ? "lx-autoblog" : "scheduled-audits";
-  if (target !== "autoblog" && target !== "scheduled-audits") {
-    console.error(`unknown --target: ${target} (expected: scheduled-audits | autoblog)`);
+  const ALLOWED: Record<string, string> = {
+    "scheduled-audits": "scheduled-audits",
+    "autoblog": "lx-autoblog",
+    "perf-reports": "perf-reports",
+  };
+  const path = ALLOWED[target];
+  if (!path) {
+    console.error(
+      `unknown --target: ${target} (expected: scheduled-audits | autoblog | perf-reports)`,
+    );
     return 2;
   }
   const base = process.env.CRAWLPROOF_SITE_URL ?? "https://crawlproof.com";
@@ -150,10 +157,11 @@ COMMANDS
       Fetch a public report by share-token from production.
       Override with CRAWLPROOF_SITE_URL.
 
-  sweep [--target=scheduled-audits|autoblog]
+  sweep [--target=scheduled-audits|autoblog|perf-reports]
       Force a cron sweep to run now. --target=scheduled-audits (default)
       fires /api/cron/scheduled-audits; --target=autoblog fires
-      /api/cron/lx-autoblog. Useful for testing without waiting for the
+      /api/cron/lx-autoblog; --target=perf-reports fires
+      /api/cron/perf-reports. Useful for testing without waiting for the
       hourly pg_cron tick. Requires CRON_SECRET. Override host with
       CRAWLPROOF_SITE_URL.
 

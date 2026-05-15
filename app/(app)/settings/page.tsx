@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { SettingsForm } from "./form";
+import { listTimezones } from "@/lib/timezones";
 
 export const metadata = { title: "Settings" };
 
@@ -11,9 +12,12 @@ export default async function SettingsPage() {
   } = await supabase.auth.getUser();
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, email, credits_balance, retain_raw_html")
+    .select(
+      "display_name, email, credits_balance, retain_raw_html, perf_report_cadence, timezone",
+    )
     .eq("id", user!.id)
     .maybeSingle();
+  const { common, all } = listTimezones();
 
   return (
     <div className="space-y-6">
@@ -32,6 +36,15 @@ export default async function SettingsPage() {
       <SettingsForm
         displayName={profile?.display_name ?? ""}
         retainRawHtml={!!profile?.retain_raw_html}
+        perfReportCadence={
+          (profile?.perf_report_cadence ?? "weekly") as
+            | "off"
+            | "weekly"
+            | "monthly"
+        }
+        timezone={profile?.timezone ?? "UTC"}
+        commonTimezones={common}
+        allTimezones={all}
       />
     </div>
   );
