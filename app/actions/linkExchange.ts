@@ -7,6 +7,12 @@ import { detectSitemapUrl } from "@/lib/lx/sitemap";
 import { generateWebhookSecret } from "@/lib/lx/secret";
 import { nextPublishAt } from "@/lib/lx/schedule";
 import { enqueueSitemapCrawl } from "@/lib/lx/workerClient";
+import {
+  discoverBlogUrls,
+  enrichBlogProfile,
+  type DiscoveredUrls,
+  type EnrichmentResult,
+} from "@/lib/lx/detectBlog";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -59,8 +65,8 @@ function parseAudiences(input: string): string[] {
 }
 
 // ------------------------------------------------------------
-// detectSitemap — server action so the client form can probe
-// without exposing the target site to the browser's CORS rules.
+// detectSitemap — legacy single-shot sitemap probe, used by the
+// "Detect" button next to the sitemap field for manual re-runs.
 // ------------------------------------------------------------
 export async function detectSitemap(
   domainInput: string,
@@ -69,6 +75,43 @@ export async function detectSitemap(
   if (!domain) return { ok: false, error: "Enter a valid domain." };
   const sitemapUrl = await detectSitemapUrl(domain);
   return { ok: true, sitemapUrl };
+}
+
+// ------------------------------------------------------------
+// discoverFromHomepage — phase 1 of the new wizard. Pass any URL
+// (homepage or blog), get back the trio of URLs we need.
+// ------------------------------------------------------------
+export async function discoverFromHomepage(
+  rawUrl: string,
+): Promise<Ok<{ urls: DiscoveredUrls }> | Err> {
+  const res = await discoverBlogUrls(rawUrl);
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, urls: res.urls };
+}
+
+// ------------------------------------------------------------
+// enrichFromUrls — phase 2 of the new wizard. With confirmed URLs
+// (auto-found or user-supplied), scrape the blog + feed and ask
+// Claude Haiku to extract niche / audiences / description.
+// ------------------------------------------------------------
+export async function enrichFromUrls(input: {
+  blogUrl: string;
+  feedUrl: string | null;
+  sitemapUrl: string | null;
+}): Promise<Ok<{ profile: EnrichmentResult }> | Err> {
+  if (!isValidHttpsUrl(input.blogUrl)) {
+    return { ok: false, error: "Blog URL must be a valid http(s) URL." };
+  }
+  if (input.feedUrl && !isValidHttpsUrl(input.feedUrl)) {
+    return { ok: false, error: "Feed URL must be a valid http(s) URL." };
+  }
+  const res = await enrichBlogProfile({
+    blogUrl: input.blogUrl,
+    feedUrl: input.feedUrl,
+    sitemapUrl: input.sitemapUrl,
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, profile: res.profile };
 }
 
 // ------------------------------------------------------------

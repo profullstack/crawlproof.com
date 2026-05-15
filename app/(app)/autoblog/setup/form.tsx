@@ -5,8 +5,12 @@ import { useRouter } from "next/navigation";
 import {
   createOrUpdateSite,
   detectSitemap,
+  discoverFromHomepage,
+  enrichFromUrls,
   rotateWebhookSecret,
 } from "@/app/actions/linkExchange";
+
+type WizardStep = "discover" | "confirm" | "review";
 
 type Existing = {
   id: string;
@@ -103,6 +107,14 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   const [detecting, setDetecting] = useState(false);
   const [rotating, startRotation] = useTransition();
 
+  // Wizard state — for new sites we run a 3-step discover → confirm →
+  // review flow. For existing sites we jump straight to review.
+  const [step, setStep] = useState<WizardStep>(initial ? "review" : "discover");
+  const [homepageUrl, setHomepageUrl] = useState("");
+  const [discovering, setDiscovering] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [feedUrl, setFeedUrl] = useState("");
+
   const [domain, setDomain] = useState(initial?.domain ?? "");
   const [blogRoot, setBlogRoot] = useState(initial?.blog_root_url ?? "");
   const [sitemap, setSitemap] = useState(initial?.sitemap_url ?? "");
@@ -158,6 +170,58 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     setNotice(`Sitemap found: ${res.sitemapUrl}`);
   }
 
+  async function onDiscoverHomepage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!homepageUrl.trim()) {
+      setError("Paste your homepage URL.");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setDiscovering(true);
+    const res = await discoverFromHomepage(homepageUrl);
+    setDiscovering(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setDomain(res.urls.domain);
+    setBlogRoot(res.urls.blogUrl ?? "");
+    setFeedUrl(res.urls.feedUrl ?? "");
+    setSitemap(res.urls.sitemapUrl ?? "");
+    setStep("confirm");
+  }
+
+  async function onConfirmUrls(e: React.FormEvent) {
+    e.preventDefault();
+    if (!blogRoot.trim() || !sitemap.trim()) {
+      setError("Blog URL and sitemap URL are both required.");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setEnriching(true);
+    const res = await enrichFromUrls({
+      blogUrl: blogRoot.trim(),
+      feedUrl: feedUrl.trim() || null,
+      sitemapUrl: sitemap.trim() || null,
+    });
+    setEnriching(false);
+    if (!res.ok) {
+      // Soft-fail: surface a notice but let the user proceed and fill
+      // in the editorial fields by hand.
+      setNotice(
+        `Couldn't auto-write your editorial profile (${res.error}). You can fill it in below.`,
+      );
+      setStep("review");
+      return;
+    }
+    setNiche(res.profile.niche);
+    setAudiences(res.profile.targetAudiences.join(", "));
+    setDescription(res.profile.description);
+    setStep("review");
+  }
+
   async function onRotate() {
     setError(null);
     startRotation(async () => {
@@ -207,6 +271,145 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       setNotice("Settings saved.");
       router.refresh();
     });
+  }
+
+  if (step === "discover") {
+    return (
+      <form onSubmit={onDiscoverHomepage} className="mt-6 space-y-4">
+        <div className="card p-5">
+          <h2 className="text-lg font-semibold">What's your site?</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Paste your homepage URL. We'll try to find your blog, RSS feed,
+            and sitemap. You'll get a chance to fix anything we miss.
+          </p>
+          <div className="mt-4">
+            <input
+              className="input"
+              type="text"
+              placeholder="example.com"
+              required
+              value={homepageUrl}
+              onChange={(e) => setHomepageUrl(e.target.value)}
+              autoFocus
+            />
+          </div>
+          {error && (
+            <p className="mt-3 text-sm text-[var(--color-fail)]">{error}</p>
+          )}
+          <div className="mt-4">
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={discovering}
+            >
+              {discovering ? "Detecting…" : "Detect"}
+            </button>
+          </div>
+        </div>
+      </form>
+    );
+  }
+
+  if (step === "confirm") {
+    const missing: string[] = [];
+    if (!blogRoot) missing.push("blog URL");
+    if (!feedUrl) missing.push("RSS feed (optional)");
+    if (!sitemap) missing.push("sitemap URL");
+    return (
+      <form onSubmit={onConfirmUrls} className="mt-6 space-y-4">
+        <div className="card p-5">
+          <h2 className="text-lg font-semibold">Confirm what we found</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            {missing.length > 0
+              ? `We couldn't auto-find: ${missing.join(", ")}. Fill in whatever's missing — we'll re-scrape these URLs to write your editorial profile.`
+              : "Looks like we found everything. Review and continue."}
+          </p>
+
+          <div className="mt-4 space-y-3">
+            <div>
+              <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                Blog URL{" "}
+                {blogRoot ? (
+                  <span className="text-[var(--color-pass)]">· auto-detected</span>
+                ) : (
+                  <span className="text-[var(--color-warn)]">· needed</span>
+                )}
+              </label>
+              <input
+                className="input mt-1"
+                type="url"
+                placeholder="https://example.com/blog"
+                required
+                value={blogRoot}
+                onChange={(e) => setBlogRoot(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                RSS / Atom feed (optional){" "}
+                {feedUrl && (
+                  <span className="text-[var(--color-pass)]">· auto-detected</span>
+                )}
+              </label>
+              <input
+                className="input mt-1"
+                type="url"
+                placeholder="https://example.com/feed"
+                value={feedUrl}
+                onChange={(e) => setFeedUrl(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                If your blog has a feed, we'll use the recent post titles to
+                write a sharper editorial profile. Skip if you don't have one.
+              </p>
+            </div>
+
+            <div>
+              <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                Sitemap URL{" "}
+                {sitemap ? (
+                  <span className="text-[var(--color-pass)]">· auto-detected</span>
+                ) : (
+                  <span className="text-[var(--color-warn)]">· needed</span>
+                )}
+              </label>
+              <input
+                className="input mt-1"
+                type="url"
+                placeholder="https://example.com/sitemap.xml"
+                required
+                value={sitemap}
+                onChange={(e) => setSitemap(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {error && (
+            <p className="mt-3 text-sm text-[var(--color-fail)]">{error}</p>
+          )}
+          <div className="mt-4 flex gap-2">
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={enriching}
+            >
+              {enriching ? "Reading your blog…" : "Continue"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setError(null);
+                setStep("discover");
+              }}
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      </form>
+    );
   }
 
   return (
