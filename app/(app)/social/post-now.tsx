@@ -6,6 +6,8 @@ import { postNow } from "@/app/actions/socialPosting";
 
 const BLUESKY_MAX = 300;
 const MASTODON_MAX = 500;
+const DISCORD_MAX = 2000;
+const TELEGRAM_MAX = 4096;
 const REDDIT_TITLE_MAX = 300;
 
 export function PostNowForm({
@@ -29,7 +31,11 @@ export function PostNowForm({
       ? BLUESKY_MAX
       : acct?.platform === "mastodon"
         ? MASTODON_MAX
-        : null;
+        : acct?.platform === "discord"
+          ? DISCORD_MAX
+          : acct?.platform === "telegram"
+            ? TELEGRAM_MAX
+            : null;
   const remaining = charMax !== null ? charMax - text.length : null;
   const titleRemaining = isReddit ? REDDIT_TITLE_MAX - title.length : null;
 

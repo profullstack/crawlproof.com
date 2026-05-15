@@ -18,6 +18,18 @@ import {
   createMastodonStatus,
   MASTODON_DEFAULT_MAX_CHARS,
 } from "@/lib/sp/platforms/mastodon";
+import {
+  getDiscordWebhookInfo,
+  postDiscordWebhook,
+  DISCORD_MAX_CHARS,
+} from "@/lib/sp/platforms/discord";
+import {
+  getTelegramBotInfo,
+  getTelegramChatInfo,
+  sendTelegramMessage,
+  validateTelegramToken,
+  TELEGRAM_MAX_CHARS,
+} from "@/lib/sp/platforms/telegram";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -69,6 +81,137 @@ export async function connectBluesky(input: {
         external_id: session.did,
         enc_access_token: encryptSecret(session.accessJwt),
         enc_refresh_token: encryptSecret(session.refreshJwt),
+        status: "active",
+      },
+      { onConflict: "user_id,platform,external_id" },
+    )
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not save account." };
+  }
+
+  revalidatePath("/social");
+  revalidatePath("/social/setup");
+  return { ok: true, accountId: data.id };
+}
+
+// ------------------------------------------------------------
+// connectDiscord — take a Discord channel webhook URL, validate it
+// against Discord's API (GET on the URL returns webhook metadata),
+// store the URL AES-GCM-encrypted in enc_access_token. handle =
+// "<webhook-name> (#<channel-id>)" so the picker shows a human-readable
+// label; external_id = the webhook id (stable across the webhook's
+// lifetime; unique-conflict key with user_id+platform).
+// ------------------------------------------------------------
+export async function connectDiscord(input: {
+  webhookUrl: string;
+}): Promise<Ok<{ accountId: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const webhookUrl = (input.webhookUrl ?? "").trim();
+  if (!webhookUrl) return { ok: false, error: "Paste a webhook URL." };
+
+  let info;
+  try {
+    info = await getDiscordWebhookInfo(webhookUrl);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Discord webhook check failed.",
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("sp_account")
+    .upsert(
+      {
+        user_id: user.id,
+        platform: "discord",
+        auth_mode: "oauth", // webhook tokens behave like a bearer; reuse the column
+        handle: info.displayHandle,
+        external_id: info.id,
+        enc_access_token: encryptSecret(webhookUrl),
+        status: "active",
+      },
+      { onConflict: "user_id,platform,external_id" },
+    )
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not save account." };
+  }
+
+  revalidatePath("/social");
+  revalidatePath("/social/setup");
+  return { ok: true, accountId: data.id };
+}
+
+// ------------------------------------------------------------
+// connectTelegram — take a bot token + channel reference, verify with
+// getMe + getChat (which also confirms the bot has been added to the
+// channel), then store. handle = "{channel-title} via @{bot-username}";
+// external_id = numeric channel id as a string; enc_access_token =
+// AES-GCM(bot token).
+// ------------------------------------------------------------
+export async function connectTelegram(input: {
+  botToken: string;
+  channel: string;
+}): Promise<Ok<{ accountId: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  let token: string;
+  try {
+    token = validateTelegramToken(input.botToken ?? "");
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Bad Telegram token.",
+    };
+  }
+
+  let bot;
+  try {
+    bot = await getTelegramBotInfo(token);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Telegram bot check failed.",
+    };
+  }
+
+  let chat;
+  try {
+    chat = await getTelegramChatInfo({ token, chatRef: input.channel ?? "" });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Telegram getChat failed.",
+    };
+  }
+
+  const handle =
+    `${chat.title} via @${bot.username}` +
+    (chat.username ? "" : " (private)");
+
+  const { data, error } = await supabase
+    .from("sp_account")
+    .upsert(
+      {
+        user_id: user.id,
+        platform: "telegram",
+        auth_mode: "oauth",
+        handle,
+        external_id: String(chat.id),
+        enc_access_token: encryptSecret(token),
         status: "active",
       },
       { onConflict: "user_id,platform,external_id" },
@@ -181,6 +324,20 @@ export async function postNow(input: {
         error: `Mastodon posts max ${MASTODON_DEFAULT_MAX_CHARS} chars (got ${text.length}).`,
       };
     }
+  } else if (account.platform === "discord") {
+    if (text.length > DISCORD_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `Discord messages max ${DISCORD_MAX_CHARS} chars (got ${text.length}).`,
+      };
+    }
+  } else if (account.platform === "telegram") {
+    if (text.length > TELEGRAM_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `Telegram messages max ${TELEGRAM_MAX_CHARS} chars (got ${text.length}).`,
+      };
+    }
   } else {
     return {
       ok: false,
@@ -273,16 +430,31 @@ export async function postNow(input: {
         text,
       });
       result = { platformPostId: r.fullname, webUrl: r.webUrl };
-    } else {
-      // account.platform === "mastodon" — narrowed above; instance_url
-      // is guaranteed non-null because the validation block returns
-      // early when missing.
+    } else if (account.platform === "mastodon") {
       const r = await createMastodonStatus({
         instanceUrl: account.instance_url!,
         accessToken,
         status: text,
       });
       result = { platformPostId: r.id, webUrl: r.webUrl };
+    } else if (account.platform === "discord") {
+      // For Discord the decrypted "access token" is actually the
+      // webhook URL.
+      const r = await postDiscordWebhook({ webhookUrl: accessToken, text });
+      result = { platformPostId: r.messageId, webUrl: r.webUrl };
+    } else {
+      // account.platform === "telegram" — narrowed by the validation
+      // block above. enc_access_token holds the bot token; external_id
+      // is the numeric chat id.
+      const r = await sendTelegramMessage({
+        token: accessToken,
+        chatId: account.external_id,
+        text,
+      });
+      result = {
+        platformPostId: String(r.messageId),
+        webUrl: r.webUrl,
+      };
     }
     await supabase
       .from("sp_post")

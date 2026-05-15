@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { ConnectBlueskyForm, DisconnectButton } from "./form";
+import {
+  ConnectBlueskyForm,
+  ConnectDiscordForm,
+  ConnectTelegramForm,
+  DisconnectButton,
+} from "./form";
 
 export const metadata = { title: "Social · Connect accounts" };
 
@@ -50,9 +55,10 @@ export default async function SocialSetupPage({
         <p className="mt-2 text-[var(--color-muted)]">
           Connect your social accounts once at the account level. Each blog
           (site) you own can then choose which of these to post from.
-          Phase 1 supports <strong>Bluesky</strong> and <strong>Reddit</strong>;
-          Mastodon, LinkedIn, Threads, Pinterest, and Tumblr land in
-          subsequent phases.
+          Phase 1 supports <strong>Bluesky</strong>, <strong>Reddit</strong>,{" "}
+          <strong>Mastodon</strong>, <strong>Discord</strong>, and{" "}
+          <strong>Telegram</strong>. LinkedIn, Threads, Pinterest, and Tumblr
+          land in subsequent phases.
         </p>
       </div>
 
@@ -175,6 +181,35 @@ export default async function SocialSetupPage({
             Connect Mastodon
           </button>
         </form>
+      </section>
+
+      {/* Connect Discord */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect Discord channel</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          One webhook per channel. In Discord: <em>Edit Channel →
+          Integrations → Webhooks → New Webhook → Copy URL</em>, then paste
+          below. No bot to manage, no OAuth — the webhook URL itself
+          authorises posting and is encrypted at rest.
+        </p>
+        <ConnectDiscordForm />
+      </section>
+
+      {/* Connect Telegram */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect Telegram channel</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Create a bot via <a
+            href="https://t.me/BotFather"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >@BotFather</a> to get a token. In your channel, <em>Manage
+          channel → Administrators → Add Administrator</em>, search for your
+          bot, and grant <em>Post Messages</em>. Then paste the token + the
+          channel @username below.
+        </p>
+        <ConnectTelegramForm />
       </section>
     </div>
   );
