@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { enqueueSitemapCrawl } from "@/lib/lx/workerClient";
+import { getCurrentSite } from "@/lib/lx/currentSite";
 
 export const runtime = "nodejs";
 
@@ -13,11 +14,7 @@ export async function POST() {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const { data: site } = await supabase
-    .from("lx_site")
-    .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const site = (await getCurrentSite("id")) as { id: string } | null;
   if (!site) {
     return NextResponse.json(
       { ok: false, error: "no site configured" },

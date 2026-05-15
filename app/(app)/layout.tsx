@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { listUserSites, CURRENT_SITE_COOKIE } from "@/lib/lx/currentSite";
+import { SitePicker } from "./site-picker";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -9,11 +12,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("display_name, email, credits_balance")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [{ data: profile }, sites, cookieStore] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("display_name, email, credits_balance")
+      .eq("id", user.id)
+      .maybeSingle(),
+    listUserSites(),
+    cookies(),
+  ]);
+  const currentSiteId = cookieStore.get(CURRENT_SITE_COOKIE)?.value ?? null;
 
   return (
     <div>
@@ -34,6 +42,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/autoblog" className="hidden sm:inline">
               Autoblog
             </Link>
+            <SitePicker sites={sites} currentId={currentSiteId} />
             <Link href="/settings" className="hidden sm:inline">
               Settings
             </Link>

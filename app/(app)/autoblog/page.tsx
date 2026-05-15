@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentSite } from "@/lib/lx/currentSite";
 import { DashboardActions } from "./actions";
 import { Countdown } from "./countdown";
 import { checkAutoblogReadiness, readinessLabel } from "@/lib/lx/readiness";
@@ -35,13 +36,22 @@ export default async function AutoblogDashboardPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: site } = await supabase
-    .from("lx_site")
-    .select(
-      "id, domain, status, sitemap_status, last_sitemap_fetch_at, publish_days, publish_hour, daily_article_count, next_publish_at, webhook_url",
-    )
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const site = (await getCurrentSite(
+    "id, domain, status, sitemap_status, last_sitemap_fetch_at, publish_days, publish_hour, daily_article_count, next_publish_at, webhook_url",
+  )) as
+    | {
+        id: string;
+        domain: string;
+        status: string;
+        sitemap_status: string | null;
+        last_sitemap_fetch_at: string | null;
+        publish_days: number[];
+        publish_hour: number;
+        daily_article_count: number;
+        next_publish_at: string | null;
+        webhook_url: string | null;
+      }
+    | null;
 
   if (!site) {
     return (

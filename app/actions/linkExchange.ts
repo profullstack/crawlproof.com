@@ -7,6 +7,7 @@ import { detectSitemapUrl } from "@/lib/lx/sitemap";
 import { generateWebhookSecret } from "@/lib/lx/secret";
 import { nextPublishAt } from "@/lib/lx/schedule";
 import { enqueueSitemapCrawl } from "@/lib/lx/workerClient";
+import { setCurrentSite, getCurrentSite } from "@/lib/lx/currentSite";
 import {
   discoverBlogUrls,
   enrichBlogProfile,
@@ -119,6 +120,9 @@ export async function enrichFromUrls(input: {
 // On first create, generates a webhook secret and seeds next_publish_at.
 // ------------------------------------------------------------
 export type SiteInput = {
+  // Optional: when set, update that specific site (multi-site agency
+  // model). When unset, create a new lx_site row.
+  siteId?: string;
   domain: string;
   blogRootUrl: string;
   sitemapUrl: string;
@@ -203,12 +207,21 @@ export async function createOrUpdateSite(
     };
   }
 
-  // Look up the existing row (v1: one per user).
-  const { data: existing } = await supabase
-    .from("lx_site")
-    .select("id, webhook_secret")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  // Multi-site: if siteId is provided, edit that one; verify
+  // ownership. Otherwise, this is a create.
+  let existing:
+    | { id: string; webhook_secret: string | null }
+    | null = null;
+  if (input.siteId) {
+    const { data } = await supabase
+      .from("lx_site")
+      .select("id, webhook_secret")
+      .eq("id", input.siteId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!data) return { ok: false, error: "Site not found." };
+    existing = data as { id: string; webhook_secret: string | null };
+  }
 
   const nextAt = nextPublishAt(publishDays, publishHour);
 
@@ -283,6 +296,9 @@ export async function createOrUpdateSite(
   }
 
   await enqueueSitemapCrawl(inserted.id);
+  // Multi-site: a fresh create becomes the active site so the user
+  // doesn't have to manually pick it from the picker after onboarding.
+  await setCurrentSite(inserted.id);
   revalidatePath("/autoblog");
   return { ok: true, siteId: inserted.id, webhookSecret };
 }
@@ -299,10 +315,14 @@ export async function rotateWebhookSecret(): Promise<
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
+  const site = (await getCurrentSite("id")) as { id: string } | null;
+  if (!site) return { ok: false, error: "No site selected." };
+
   const webhookSecret = generateWebhookSecret();
   const { error } = await supabase
     .from("lx_site")
     .update({ webhook_secret: webhookSecret })
+    .eq("id", site.id)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
   return { ok: true, webhookSecret };
@@ -318,9 +338,13 @@ export async function setSitePaused(paused: boolean): Promise<Ok | Err> {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
+  const site = (await getCurrentSite("id")) as { id: string } | null;
+  if (!site) return { ok: false, error: "No site selected." };
+
   const { error } = await supabase
     .from("lx_site")
     .update({ status: paused ? "paused" : "active" })
+    .eq("id", site.id)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/autoblog");

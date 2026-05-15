@@ -254,6 +254,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     setNotice(null);
     startTransition(async () => {
       const res = await createOrUpdateSite({
+        siteId: initial?.id,
         domain,
         blogRootUrl: blogRoot,
         sitemapUrl: sitemap,

@@ -72,17 +72,14 @@ What we want from recon:
 New tables, all prefixed `sp_`.
 
 ```sql
--- A connected social account on one platform, for one site.
---
--- Scoped to a site (lx_site.id), not just the user, so an agency
--- managing N client sites has each client's social accounts in their
--- own bucket. See docs/agency-prd.md §2.1 for the multi-site rationale.
--- user_id stays on the row for RLS; site_id is the natural grouping
--- for dashboards and per-client billing rollups.
+-- A connected social account in the user's pool. NOT scoped to a
+-- specific site — agencies reuse the same "Acme LinkedIn" connection
+-- across multiple sites without re-authing. The site-to-account
+-- binding lives in sp_site_account (below), which also carries
+-- per-site mode flags like `auto`.
 create table sp_account (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
-  site_id uuid not null references public.lx_site(id) on delete cascade,
   platform text not null check (platform in (
     'x','linkedin','reddit','mastodon','bluesky','threads','pinterest','tumblr',
     'facebook_page','instagram_business','youtube','tiktok','instagram','snapchat'
@@ -121,8 +118,34 @@ create table sp_account (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create unique index on sp_account(site_id, platform, external_id);
-create index on sp_account(user_id);  -- RLS lookups
+create unique index on sp_account(user_id, platform, external_id);
+create index on sp_account(user_id);  -- RLS + listing the user's pool
+
+-- M:N binding of connected accounts to sites the user wants to post
+-- to. One account can be bound to many sites (an agency's "Acme
+-- LinkedIn" can serve both acme.com and acme-product.com). Each
+-- binding carries the per-site config — most importantly the `auto`
+-- flag that gates AI-generated post content.
+create table sp_site_account (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  site_id uuid not null references public.lx_site(id) on delete cascade,
+  account_id uuid not null references sp_account(id) on delete cascade,
+  -- auto=true → when this site publishes an autoblog article, we
+  -- AI-generate a platform-appropriate post (text + optional image)
+  -- and queue it under this account. auto=false → site lists the
+  -- account as available but never fires automatically; the user
+  -- composes manually.
+  auto boolean not null default false,
+  -- Per-site rendering knobs (override the platform defaults).
+  -- Example: a financial blog might want all X posts to skip emoji.
+  render_overrides jsonb not null default '{}',
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index on sp_site_account(site_id, account_id);
+create index on sp_site_account(account_id);  -- "which sites use this account?"
 
 -- A queued or sent post. One row per (platform target, scheduled-time) pair.
 create table sp_post (
@@ -297,9 +320,16 @@ When `cookies_acquired_at` ages past 25 days, the UI shows a "Refresh session" p
 
 ---
 
-## 6. AI generation pipeline
+## 6. AI generation pipeline (auto mode)
 
-When the source is `autoblog`, an article publishing → one `sp_post` row per connected account, per-platform-rendered:
+Each site has a set of `sp_site_account` bindings — the accounts it's allowed to post to. Each binding has an `auto` flag:
+
+- **auto=true**: when this site publishes an autoblog article, we automatically generate a platform-appropriate post (text + optional image, video later) for this account, queue it as `sp_post`, schedule for immediate or near-future delivery.
+- **auto=false**: the account is listed in the site's "available accounts" picker for manual compose, but no automatic queueing happens.
+
+Sites can mix modes: e.g. auto-post to Bluesky + LinkedIn, manual-only for X (where the user wants editorial control on copy).
+
+When the source is `autoblog` and at least one auto-mode binding exists, an article publishing produces one `sp_post` row per auto binding, per-platform-rendered:
 
 - **X (≤ 280 chars)**: thread of 3–6 tweets. Hook tweet → 2–4 substance tweets → CTA tweet linking the article. Claude Sonnet 4.6 with the operator-voice prompt narrowed to social-thread mode.
 - **LinkedIn (≤ 3,000 chars)**: single long-form post. Strong opening line, scannable body, no link-in-comments BS (LinkedIn now ranks posts with links fine). Claude Sonnet 4.6.

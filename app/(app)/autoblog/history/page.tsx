@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentSite } from "@/lib/lx/currentSite";
 import { RetryButton } from "../actions";
 
 export const metadata = { title: "Autoblog · History" };
@@ -21,11 +22,9 @@ export default async function AutoblogHistoryPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: site } = await supabase
-    .from("lx_site")
-    .select("id, domain")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const site = (await getCurrentSite("id, domain")) as
+    | { id: string; domain: string }
+    | null;
   if (!site) redirect("/autoblog/setup");
 
   const { data: articles } = await supabase
