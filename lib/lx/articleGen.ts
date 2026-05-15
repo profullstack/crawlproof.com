@@ -15,7 +15,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
-import { z } from "zod";
+// The SDK's zod helper imports from "zod/v4" internally and calls
+// z.toJSONSchema() — a v4-only API. Importing plain "zod" gives v3
+// schemas whose `_def` shape v4 can't read.
+import { z } from "zod/v4";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { markdownToHtml } from "../markdown";
 

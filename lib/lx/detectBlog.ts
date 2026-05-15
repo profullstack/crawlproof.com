@@ -26,7 +26,11 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { z } from "zod";
+// The SDK's zod helper imports from "zod/v4" internally and calls
+// z.toJSONSchema() — a v4-only API. Importing plain "zod" gives v3
+// schemas whose `_def` shape v4 can't read, producing the
+// "Cannot read properties of undefined (reading 'def')" crash.
+import { z } from "zod/v4";
 import { detectSitemapUrl } from "./sitemap";
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -460,9 +464,9 @@ export async function enrichBlogProfile(
     const stream = anthropic.messages.stream({
       model: HAIKU_MODEL,
       max_tokens: 700,
-      thinking: { type: "disabled" },
+      // Haiku 4.5 has no adaptive thinking and rejects the `effort`
+      // parameter — only Sonnet/Opus accept it. Pass `format` alone.
       output_config: {
-        effort: "low",
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         format: zodOutputFormat(ProfileLLMOutput as any),
       },
