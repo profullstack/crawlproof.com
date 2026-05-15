@@ -26,10 +26,17 @@ function getKey(): Buffer {
 }
 
 // Encrypt a string. Output format: base64(nonce || ciphertext || tag).
+//
+// `authTagLength: TAG_LEN` is explicit on both Cipher and Decipher so the
+// runtime rejects any tag of a different length — guards against an
+// attacker submitting a truncated GCM tag and is what Semgrep's
+// gcm-no-tag-length rule wants to see.
 export function encryptSecret(plaintext: string): string {
   const key = getKey();
   const nonce = crypto.randomBytes(NONCE_LEN);
-  const cipher = crypto.createCipheriv(ALGO, key, nonce);
+  const cipher = crypto.createCipheriv(ALGO, key, nonce, {
+    authTagLength: TAG_LEN,
+  });
   const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return Buffer.concat([nonce, ct, tag]).toString("base64");
@@ -45,7 +52,9 @@ export function decryptSecret(encoded: string): string {
   const nonce = blob.subarray(0, NONCE_LEN);
   const tag = blob.subarray(blob.length - TAG_LEN);
   const ct = blob.subarray(NONCE_LEN, blob.length - TAG_LEN);
-  const decipher = crypto.createDecipheriv(ALGO, key, nonce);
+  const decipher = crypto.createDecipheriv(ALGO, key, nonce, {
+    authTagLength: TAG_LEN,
+  });
   decipher.setAuthTag(tag);
   const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
   return pt.toString("utf8");
