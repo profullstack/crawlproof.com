@@ -34,6 +34,11 @@ import {
   createLinkedinTextPost,
   LINKEDIN_MAX_CHARS,
 } from "@/lib/sp/platforms/linkedin";
+import {
+  createTweet,
+  refreshXToken,
+  X_MAX_CHARS,
+} from "@/lib/sp/platforms/x";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -349,6 +354,13 @@ export async function postNow(input: {
         error: `LinkedIn posts max ${LINKEDIN_MAX_CHARS} chars (got ${text.length}).`,
       };
     }
+  } else if (account.platform === "x") {
+    if (text.length > X_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `X posts max ${X_MAX_CHARS} chars (got ${text.length}).`,
+      };
+    }
   } else {
     return {
       ok: false,
@@ -389,23 +401,30 @@ export async function postNow(input: {
     return { ok: false, error: "Stored token could not be decrypted." };
   }
 
-  // Reddit tokens last 1 hour. Refresh proactively if expiring within
-  // 60s, then persist the new tokens before posting.
-  if (
-    account.platform === "reddit" &&
-    account.token_expires_at &&
-    account.enc_refresh_token &&
-    new Date(account.token_expires_at).getTime() - Date.now() < 60_000
-  ) {
+  // Token refresh for the short-lived-token platforms. Both Reddit
+  // (~1h tokens) and X (~2h tokens) ship a refresh_token grant; we
+  // refresh proactively when within 60s of expiry. X rotates the
+  // refresh_token on every refresh — we re-encrypt + persist whatever
+  // the response gives us.
+  const tokenNearExpiry =
+    !!account.token_expires_at &&
+    !!account.enc_refresh_token &&
+    new Date(account.token_expires_at).getTime() - Date.now() < 60_000;
+  if (tokenNearExpiry && (account.platform === "reddit" || account.platform === "x")) {
     try {
       const refreshToken = decryptSecret(account.enc_refresh_token);
-      const fresh = await refreshRedditToken({ refreshToken });
+      const fresh =
+        account.platform === "reddit"
+          ? await refreshRedditToken({ refreshToken })
+          : await refreshXToken({ refreshToken });
       accessToken = fresh.accessToken;
       await supabase
         .from("sp_account")
         .update({
           enc_access_token: encryptSecret(fresh.accessToken),
-          enc_refresh_token: encryptSecret(fresh.refreshToken),
+          enc_refresh_token: fresh.refreshToken
+            ? encryptSecret(fresh.refreshToken)
+            : null,
           token_expires_at: fresh.expiresAt.toISOString(),
         })
         .eq("id", account.id);
@@ -419,7 +438,10 @@ export async function postNow(input: {
         .from("sp_account")
         .update({ status: "token_expired" })
         .eq("id", account.id);
-      return { ok: false, error: `Reddit token refresh failed: ${message}` };
+      return {
+        ok: false,
+        error: `${account.platform} token refresh failed: ${message}`,
+      };
     }
   }
 
@@ -463,16 +485,20 @@ export async function postNow(input: {
         platformPostId: String(r.messageId),
         webUrl: r.webUrl,
       };
-    } else {
-      // account.platform === "linkedin" — narrowed by the validation
-      // block above. external_id holds the OIDC `sub` we use as the
-      // member URN.
+    } else if (account.platform === "linkedin") {
       const r = await createLinkedinTextPost({
         accessToken,
         memberSub: account.external_id,
         text,
       });
       result = { platformPostId: r.urn, webUrl: r.webUrl };
+    } else {
+      // account.platform === "x" — narrowed by the validation block.
+      // account.handle is stored as "@username"; createTweet wants the
+      // bare username for the permalink.
+      const username = account.handle.replace(/^@/, "");
+      const r = await createTweet({ accessToken, username, text });
+      result = { platformPostId: r.tweetId, webUrl: r.webUrl };
     }
     await supabase
       .from("sp_post")

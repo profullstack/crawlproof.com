@@ -9,6 +9,7 @@ const MASTODON_MAX = 500;
 const DISCORD_MAX = 2000;
 const TELEGRAM_MAX = 4096;
 const LINKEDIN_MAX = 3000;
+const X_MAX = 280;
 const REDDIT_TITLE_MAX = 300;
 
 export function PostNowForm({
@@ -30,15 +31,17 @@ export function PostNowForm({
   const charMax =
     acct?.platform === "bluesky"
       ? BLUESKY_MAX
-      : acct?.platform === "mastodon"
-        ? MASTODON_MAX
-        : acct?.platform === "discord"
-          ? DISCORD_MAX
-          : acct?.platform === "telegram"
-            ? TELEGRAM_MAX
-            : acct?.platform === "linkedin"
-              ? LINKEDIN_MAX
-              : null;
+      : acct?.platform === "x"
+        ? X_MAX
+        : acct?.platform === "mastodon"
+          ? MASTODON_MAX
+          : acct?.platform === "discord"
+            ? DISCORD_MAX
+            : acct?.platform === "telegram"
+              ? TELEGRAM_MAX
+              : acct?.platform === "linkedin"
+                ? LINKEDIN_MAX
+                : null;
   const remaining = charMax !== null ? charMax - text.length : null;
   const titleRemaining = isReddit ? REDDIT_TITLE_MAX - title.length : null;
 

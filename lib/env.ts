@@ -54,5 +54,32 @@ export const env = {
   // {siteUrl}/api/sp/oauth/linkedin/callback.
   linkedinClientId: process.env.LINKEDIN_CLIENT_ID ?? "",
   linkedinClientSecret: process.env.LINKEDIN_CLIENT_SECRET ?? "",
+  // X (Twitter) — OAuth2 with PKCE, confidential client. Requires a
+  // paid X API tier ($200/mo Basic and up) for write access; the code
+  // still compiles + the OAuth flow works on free, but POST /2/tweets
+  // returns 403 until you upgrade.
+  xClientId: process.env.X_CLIENT_ID ?? "",
+  xClientSecret: process.env.X_CLIENT_SECRET ?? "",
+  // Meta family — one OAuth app at developers.facebook.com covers
+  // Facebook Pages, Instagram Business, and Threads. Different scopes
+  // and endpoints, same app id/secret. Public use of `pages_manage_posts`
+  // / `instagram_content_publish` needs Meta app review; works for the
+  // app developer's own pages in dev mode pre-review.
+  metaAppId: process.env.META_APP_ID ?? "",
+  metaAppSecret: process.env.META_APP_SECRET ?? "",
+  // Graph API version pin. Bump quarterly; Meta deprecates the oldest
+  // version every ~2 years.
+  metaGraphVersion: process.env.META_GRAPH_VERSION ?? "v21.0",
+  // Pinterest — OAuth2; /v5 API. Register at developers.pinterest.com.
+  pinterestClientId: process.env.PINTEREST_CLIENT_ID ?? "",
+  pinterestClientSecret: process.env.PINTEREST_CLIENT_SECRET ?? "",
+  // TikTok — Content Posting API. Sandbox-only until TikTok's audit
+  // approves your app for `video.publish` scope.
+  tiktokClientKey: process.env.TIKTOK_CLIENT_KEY ?? "",
+  tiktokClientSecret: process.env.TIKTOK_CLIENT_SECRET ?? "",
+  // Google / YouTube — Google OAuth2 + YouTube Data API v3. The
+  // default 6 uploads/day quota needs a raise request for prod use.
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   required,
 };
