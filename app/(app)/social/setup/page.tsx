@@ -5,6 +5,11 @@ import { ConnectBlueskyForm, DisconnectButton } from "./form";
 
 export const metadata = { title: "Social · Connect accounts" };
 
+type SetupSearchParams = Promise<{
+  connected?: string;
+  error?: string;
+}>;
+
 type AccountRow = {
   id: string;
   platform: string;
@@ -14,12 +19,20 @@ type AccountRow = {
   consecutive_failures: number;
 };
 
-export default async function SocialSetupPage() {
+export default async function SocialSetupPage({
+  searchParams,
+}: {
+  searchParams: SetupSearchParams;
+}) {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  const sp = await searchParams;
+  const oauthError = sp.error ?? null;
+  const connected = sp.connected ?? null;
 
   const { data: accounts } = await supabase
     .from("sp_account")
@@ -37,10 +50,22 @@ export default async function SocialSetupPage() {
         <p className="mt-2 text-[var(--color-muted)]">
           Connect your social accounts once at the account level. Each blog
           (site) you own can then choose which of these to post from.
-          Phase 1 ships <strong>Bluesky</strong>; Reddit, Mastodon, LinkedIn,
-          Threads, Pinterest, and Tumblr land in subsequent phases.
+          Phase 1 supports <strong>Bluesky</strong> and <strong>Reddit</strong>;
+          Mastodon, LinkedIn, Threads, Pinterest, and Tumblr land in
+          subsequent phases.
         </p>
       </div>
+
+      {connected && (
+        <p className="rounded border border-[var(--color-pass)]/40 bg-[var(--color-pass)]/10 px-3 py-2 text-sm text-[var(--color-pass)]">
+          Connected your {connected} account.
+        </p>
+      )}
+      {oauthError && (
+        <p className="rounded border border-[var(--color-fail)]/40 bg-[var(--color-fail)]/10 px-3 py-2 text-sm text-[var(--color-fail)]">
+          {oauthError}
+        </p>
+      )}
 
       {/* Connected accounts */}
       <section className="card p-5">
@@ -107,6 +132,20 @@ export default async function SocialSetupPage() {
           password itself.
         </p>
         <ConnectBlueskyForm />
+      </section>
+
+      {/* Connect Reddit */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect Reddit</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Reddit uses standard OAuth. Click below to redirect to Reddit, grant
+          permission, and come back — we ask only for the <code>identity</code>{" "}
+          and <code>submit</code> scopes (read your username + post on your
+          behalf). Refresh tokens are stored encrypted.
+        </p>
+        <a href="/api/sp/oauth/reddit/start" className="btn btn-primary mt-4">
+          Connect Reddit
+        </a>
       </section>
     </div>
   );

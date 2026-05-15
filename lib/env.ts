@@ -37,5 +37,16 @@ export const env = {
   // Phase 1 only; envelope encryption (Vault KEK + per-user DEKs)
   // replaces this when cookie + puppeteer modes ship.
   socialVaultKey: process.env.SOCIAL_VAULT_KEY ?? "",
+  // Reddit OAuth — one app per Crawlproof env (web app type).
+  // Register at https://www.reddit.com/prefs/apps with redirect
+  // {siteUrl}/api/sp/oauth/reddit/callback.
+  redditClientId: process.env.REDDIT_CLIENT_ID ?? "",
+  redditClientSecret: process.env.REDDIT_CLIENT_SECRET ?? "",
+  // User-Agent string sent on every Reddit API call. Reddit rejects
+  // generic UAs ("Node-fetch/...") with 429; theirs is the only API
+  // that genuinely cares.
+  redditUserAgent:
+    process.env.REDDIT_USER_AGENT ??
+    "web:com.crawlproof.social:v1.0 (by /u/crawlproof)",
   required,
 };

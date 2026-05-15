@@ -8,6 +8,12 @@ import {
   createBlueskyPost,
   BLUESKY_MAX_CHARS,
 } from "@/lib/sp/platforms/bluesky";
+import {
+  createRedditSelfPost,
+  refreshRedditToken,
+  REDDIT_TITLE_MAX,
+  REDDIT_TEXT_MAX,
+} from "@/lib/sp/platforms/reddit";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -102,10 +108,15 @@ export async function disconnectAccount(
 // postNow — synchronous "post this text right now to this account."
 // v1 Phase 1: ignores scheduling, no worker, no queue. The full
 // scheduled-publish path lands when we wire the worker tick.
+//
+// Per-platform extras (subreddit + title for Reddit) ride along on the
+// input shape — irrelevant for other platforms.
 // ------------------------------------------------------------
 export async function postNow(input: {
   accountId: string;
   text: string;
+  subreddit?: string;
+  title?: string;
 }): Promise<Ok<{ postId: string; webUrl: string }> | Err> {
   const supabase = await createClient();
   const {
@@ -119,7 +130,7 @@ export async function postNow(input: {
   const { data: account } = await supabase
     .from("sp_account")
     .select(
-      "id, platform, handle, external_id, enc_access_token, enc_refresh_token, status",
+      "id, platform, handle, external_id, enc_access_token, enc_refresh_token, token_expires_at, status, consecutive_failures",
     )
     .eq("id", input.accountId)
     .eq("user_id", user.id)
@@ -128,22 +139,36 @@ export async function postNow(input: {
   if (account.status !== "active") {
     return { ok: false, error: `Account is ${account.status}.` };
   }
+  if (!account.enc_access_token || !account.external_id) {
+    return { ok: false, error: "Account has no stored token." };
+  }
 
-  // Phase 1 only supports Bluesky.
-  if (account.platform !== "bluesky") {
+  // Per-platform input validation, before we touch sp_post.
+  let title: string | null = null;
+  let subreddit: string | null = null;
+  if (account.platform === "bluesky") {
+    if (text.length > BLUESKY_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `Bluesky posts max ${BLUESKY_MAX_CHARS} chars (got ${text.length}).`,
+      };
+    }
+  } else if (account.platform === "reddit") {
+    subreddit = (input.subreddit ?? "").trim().replace(/^\/?r\//, "");
+    title = (input.title ?? "").trim();
+    if (!subreddit) return { ok: false, error: "Pick a subreddit." };
+    if (!title) return { ok: false, error: "Enter a post title." };
+    if (title.length > REDDIT_TITLE_MAX) {
+      return { ok: false, error: `Reddit title max ${REDDIT_TITLE_MAX} chars.` };
+    }
+    if (text.length > REDDIT_TEXT_MAX) {
+      return { ok: false, error: `Reddit text body max ${REDDIT_TEXT_MAX} chars.` };
+    }
+  } else {
     return {
       ok: false,
       error: `Posting for ${account.platform} ships in a later phase.`,
     };
-  }
-  if (text.length > BLUESKY_MAX_CHARS) {
-    return {
-      ok: false,
-      error: `Bluesky posts max ${BLUESKY_MAX_CHARS} chars (got ${text.length}).`,
-    };
-  }
-  if (!account.enc_access_token || !account.external_id) {
-    return { ok: false, error: "Account has no stored token." };
   }
 
   // Write the sp_post row in 'publishing' state up front so the post
@@ -165,9 +190,9 @@ export async function postNow(input: {
     return { ok: false, error: insErr?.message ?? "Could not queue post." };
   }
 
-  let accessJwt: string;
+  let accessToken: string;
   try {
-    accessJwt = decryptSecret(account.enc_access_token);
+    accessToken = decryptSecret(account.enc_access_token);
   } catch (err) {
     await supabase
       .from("sp_post")
@@ -179,19 +204,66 @@ export async function postNow(input: {
     return { ok: false, error: "Stored token could not be decrypted." };
   }
 
+  // Reddit tokens last 1 hour. Refresh proactively if expiring within
+  // 60s, then persist the new tokens before posting.
+  if (
+    account.platform === "reddit" &&
+    account.token_expires_at &&
+    account.enc_refresh_token &&
+    new Date(account.token_expires_at).getTime() - Date.now() < 60_000
+  ) {
+    try {
+      const refreshToken = decryptSecret(account.enc_refresh_token);
+      const fresh = await refreshRedditToken({ refreshToken });
+      accessToken = fresh.accessToken;
+      await supabase
+        .from("sp_account")
+        .update({
+          enc_access_token: encryptSecret(fresh.accessToken),
+          enc_refresh_token: encryptSecret(fresh.refreshToken),
+          token_expires_at: fresh.expiresAt.toISOString(),
+        })
+        .eq("id", account.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Refresh failed.";
+      await supabase
+        .from("sp_post")
+        .update({ status: "failed", last_error: message })
+        .eq("id", row.id);
+      await supabase
+        .from("sp_account")
+        .update({ status: "token_expired" })
+        .eq("id", account.id);
+      return { ok: false, error: `Reddit token refresh failed: ${message}` };
+    }
+  }
+
   try {
-    const result = await createBlueskyPost({
-      accessJwt,
-      did: account.external_id,
-      handle: account.handle,
-      text,
-    });
+    let result: { platformPostId: string; webUrl: string };
+    if (account.platform === "bluesky") {
+      const r = await createBlueskyPost({
+        accessJwt: accessToken,
+        did: account.external_id,
+        handle: account.handle,
+        text,
+      });
+      result = { platformPostId: r.uri, webUrl: r.webUrl };
+    } else {
+      // account.platform === "reddit" — narrowed above.
+      const r = await createRedditSelfPost({
+        accessToken,
+        subreddit: subreddit!,
+        title: title!,
+        text,
+      });
+      result = { platformPostId: r.fullname, webUrl: r.webUrl };
+    }
     await supabase
       .from("sp_post")
       .update({
         status: "published",
         published_at: new Date().toISOString(),
-        platform_post_id: result.uri,
+        platform_post_id: result.platformPostId,
         platform_post_url: result.webUrl,
       })
       .eq("id", row.id);
@@ -216,7 +288,9 @@ export async function postNow(input: {
       .eq("id", row.id);
     await supabase
       .from("sp_account")
-      .update({ consecutive_failures: (account as any).consecutive_failures + 1 || 1 })
+      .update({
+        consecutive_failures: (account.consecutive_failures ?? 0) + 1,
+      })
       .eq("id", account.id);
     await supabase.from("sp_publish_attempt").insert({
       post_id: row.id,

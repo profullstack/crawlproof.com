@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { postNow } from "@/app/actions/socialPosting";
 
 const BLUESKY_MAX = 300;
+const REDDIT_TITLE_MAX = 300;
 
 export function PostNowForm({
   accounts,
@@ -15,24 +16,40 @@ export function PostNowForm({
   const [pending, start] = useTransition();
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [text, setText] = useState("");
+  const [subreddit, setSubreddit] = useState("");
+  const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const acct = accounts.find((a) => a.id === accountId);
+  const isReddit = acct?.platform === "reddit";
   const remaining =
     acct?.platform === "bluesky" ? BLUESKY_MAX - text.length : null;
+  const titleRemaining = isReddit ? REDDIT_TITLE_MAX - title.length : null;
+
+  const canSubmit =
+    !!accountId &&
+    !!text.trim() &&
+    (remaining === null || remaining >= 0) &&
+    (!isReddit || (!!subreddit.trim() && !!title.trim() && titleRemaining! >= 0));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setNotice(null);
     start(async () => {
-      const r = await postNow({ accountId, text });
+      const r = await postNow({
+        accountId,
+        text,
+        ...(isReddit ? { subreddit, title } : {}),
+      });
       if (!r.ok) {
         setError(r.error);
         return;
       }
       setText("");
+      setTitle("");
+      // Keep subreddit between posts — users typically iterate on the same sub.
       setNotice(`Posted. View at ${r.webUrl}`);
       router.refresh();
     });
@@ -56,9 +73,56 @@ export function PostNowForm({
           ))}
         </select>
       </div>
+      {isReddit && (
+        <>
+          <div>
+            <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              Subreddit
+            </label>
+            <input
+              className="input mt-1"
+              type="text"
+              placeholder="r/test"
+              autoComplete="off"
+              required
+              value={subreddit}
+              onChange={(e) => setSubreddit(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Without the r/ — just the subreddit name. You need posting
+              permissions there.
+            </p>
+          </div>
+          <div>
+            <label className="flex items-baseline justify-between text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              <span>Title</span>
+              {titleRemaining !== null && (
+                <span
+                  className={
+                    titleRemaining < 0
+                      ? "text-[var(--color-fail)]"
+                      : titleRemaining < 30
+                        ? "text-[var(--color-warn)]"
+                        : ""
+                  }
+                >
+                  {titleRemaining}
+                </span>
+              )}
+            </label>
+            <input
+              className="input mt-1"
+              type="text"
+              required
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+        </>
+      )}
       <div>
         <label className="flex items-baseline justify-between text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          <span>Text</span>
+          <span>{isReddit ? "Body" : "Text"}</span>
           {remaining !== null && (
             <span
               className={
@@ -75,7 +139,7 @@ export function PostNowForm({
         </label>
         <textarea
           className="input mt-1 min-h-[8rem]"
-          placeholder="What's on your mind?"
+          placeholder={isReddit ? "Post body (markdown supported)" : "What's on your mind?"}
           required
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -86,7 +150,7 @@ export function PostNowForm({
       <button
         type="submit"
         className="btn btn-primary"
-        disabled={pending || !accountId || !text.trim() || (remaining !== null && remaining < 0)}
+        disabled={pending || !canSubmit}
       >
         {pending ? "Posting…" : "Post now"}
       </button>
