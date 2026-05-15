@@ -72,10 +72,17 @@ What we want from recon:
 New tables, all prefixed `sp_`.
 
 ```sql
--- A user's connected social account on one platform.
+-- A connected social account on one platform, for one site.
+--
+-- Scoped to a site (lx_site.id), not just the user, so an agency
+-- managing N client sites has each client's social accounts in their
+-- own bucket. See docs/agency-prd.md §2.1 for the multi-site rationale.
+-- user_id stays on the row for RLS; site_id is the natural grouping
+-- for dashboards and per-client billing rollups.
 create table sp_account (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
+  site_id uuid not null references public.lx_site(id) on delete cascade,
   platform text not null check (platform in (
     'x','linkedin','reddit','mastodon','bluesky','threads','pinterest','tumblr',
     'facebook_page','instagram_business','youtube','tiktok','instagram','snapchat'
@@ -114,12 +121,14 @@ create table sp_account (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create unique index on sp_account(user_id, platform, external_id);
+create unique index on sp_account(site_id, platform, external_id);
+create index on sp_account(user_id);  -- RLS lookups
 
 -- A queued or sent post. One row per (platform target, scheduled-time) pair.
 create table sp_post (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
+  site_id uuid not null references public.lx_site(id) on delete cascade,
   account_id uuid not null references sp_account(id) on delete cascade,
   -- Source of truth for the content. Either crawlproof-generated or user-paste.
   source text not null check (source in ('autoblog','manual','rss','api')),
