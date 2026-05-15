@@ -1,22 +1,19 @@
 // Webhook delivery for autoblog articles (PRD §7).
 //
-// Reads one lx_article (status='ready') + its owning lx_site, builds the
-// lx.publish_article payload, and POSTs to site.webhook_url with the
-// site's bearer secret. Retries on transient failure (non-2xx response,
-// network error). On 3xx redirects we follow once; on 4xx we do NOT
-// retry (the receiver is asking us to stop). On 5xx + network errors
-// we retry up to MAX_ATTEMPTS with backoff.
+// Reads one lx_article (status='ready') + its owning lx_site, maps it
+// to the normalized `Post` shape, and hands the actual HTTP work off
+// to @profullstack/autoblog. The SDK emits CloudEvents 1.0 envelopes
+// signed with Standard Webhooks headers and handles retry policy
+// (0s / 10s / 60s, retry on 5xx/408/429/network, give up on 4xx).
 //
-// Idempotency: the X-Crawlproof-Delivery UUID is stable across retries
-// of the same lx_article. Receivers can hash it to detect replays.
+// This function still owns the DB orchestration around delivery: the
+// atomic ready→publishing claim, the published/failed terminal write,
+// and the keyword status bump. The wire shape and transport live in
+// the SDK so all four Profullstack consumers share one definition.
 
-import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-
-const UA = "Crawlproof-LinkExchange/1.0";
-const REQUEST_TIMEOUT_MS = 10_000;
-const MAX_ATTEMPTS = 3;
-const RETRY_DELAYS_MS = [0, 10_000, 60_000]; // 0s, 10s, 60s
+import { buildEvent, sendWebhook, type Post } from "@profullstack/autoblog";
+import { env } from "../env";
 
 type ArticleRow = {
   id: string;
@@ -38,6 +35,8 @@ type ArticleRow = {
 
 type SiteRow = {
   id: string;
+  domain: string;
+  blog_root_url: string;
   webhook_url: string | null;
   webhook_secret: string | null;
 };
@@ -50,65 +49,25 @@ export type DeliveryResult = {
   error?: string;
 };
 
-function shouldRetry(status: number | null): boolean {
-  if (status === null) return true; // network / timeout
-  if (status >= 500) return true;
-  if (status === 408 || status === 429) return true;
-  return false;
-}
-
-async function postOnce(input: {
-  url: string;
-  secret: string;
-  deliveryId: string;
-  payload: unknown;
-}): Promise<{ status: number | null; error?: string }> {
-  const { url, secret, deliveryId, payload } = input;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${secret}`,
-        "user-agent": UA,
-        "x-crawlproof-delivery": deliveryId,
-      },
-      body: JSON.stringify(payload),
-      redirect: "follow",
-    });
-    return { status: res.status };
-  } catch (err) {
-    return {
-      status: null,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function buildPayload(article: ArticleRow): unknown {
+function articleToPost(article: ArticleRow, site: SiteRow): Post {
+  const blogRoot = site.blog_root_url.replace(/\/$/, "");
+  const url = `${blogRoot}/${article.slug}`;
   return {
-    event_type: "lx.publish_article",
-    timestamp: new Date().toISOString(),
-    data: {
-      article: {
-        id: article.id,
-        title: article.title,
-        slug: article.slug,
-        content_markdown: article.content_markdown,
-        content_html: article.content_html,
-        meta_description: article.meta_description,
-        image_url: article.image_url,
-        tags: article.tags,
-        outbound_links: article.outbound_links ?? [],
-        internal_links: article.internal_links ?? [],
-        created_at: article.created_at,
-      },
-    },
+    id: article.id,
+    url,
+    canonical_url: url,
+    title: article.title,
+    slug: article.slug,
+    excerpt: article.meta_description || null,
+    html: article.content_html,
+    markdown: article.content_markdown,
+    status: "published",
+    published_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    author: null,
+    tags: article.tags ?? [],
+    categories: [],
+    featured_image: article.image_url ? { url: article.image_url } : null,
   };
 }
 
@@ -118,8 +77,7 @@ export async function deliverArticle(
 ): Promise<DeliveryResult> {
   const { supabase } = deps;
 
-  // Atomic claim: only flip ready -> publishing once. If the row isn't
-  // ready (already publishing or published), bail.
+  // Atomic claim: only flip ready -> publishing once.
   const { data: claimed } = await supabase
     .from("lx_article")
     .update({ status: "publishing" })
@@ -141,7 +99,7 @@ export async function deliverArticle(
 
   const { data: site } = await supabase
     .from("lx_site")
-    .select("id, webhook_url, webhook_secret")
+    .select("id, domain, blog_root_url, webhook_url, webhook_secret")
     .eq("id", claimed.site_id)
     .maybeSingle<SiteRow>();
   if (!site?.webhook_url || !site?.webhook_secret) {
@@ -161,64 +119,51 @@ export async function deliverArticle(
     };
   }
 
-  const deliveryId = claimed.webhook_delivery_id ?? crypto.randomUUID();
-  const payload = buildPayload(claimed);
+  const post = articleToPost(claimed, site);
+  // Reuse the saved delivery id on retries so receivers idempotently
+  // dedupe. SDK uses event.id as the webhook-id header.
+  const event = buildEvent(post, {
+    source: env.siteUrl,
+    eventId: claimed.webhook_delivery_id ?? undefined,
+  });
 
-  let attempt = 0;
-  let lastStatus: number | null = null;
-  let lastError: string | undefined;
+  const result = await sendWebhook(site.webhook_url, event, {
+    secret: site.webhook_secret,
+  });
 
-  while (attempt < MAX_ATTEMPTS) {
-    if (RETRY_DELAYS_MS[attempt] > 0) {
-      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
-    }
-    attempt++;
-    const r = await postOnce({
-      url: site.webhook_url,
-      secret: site.webhook_secret,
-      deliveryId,
-      payload,
-    });
-    lastStatus = r.status;
-    lastError = r.error;
-    if (r.status !== null && r.status >= 200 && r.status < 300) {
-      // Success.
-      await supabase
-        .from("lx_article")
-        .update({
-          status: "published",
-          published_at: new Date().toISOString(),
-          webhook_delivery_id: deliveryId,
-          webhook_response_code: r.status,
-          webhook_attempts: attempt,
-          webhook_last_error: null,
-        })
-        .eq("id", articleId);
-      // Mark the originating keyword as published.
-      await supabase
-        .from("lx_keyword")
-        .update({ status: "published" })
-        .eq("article_id", articleId);
-      return {
-        ok: true,
+  if (result.ok) {
+    await supabase
+      .from("lx_article")
+      .update({
         status: "published",
-        responseCode: r.status,
-        attempts: attempt,
-      };
-    }
-    if (!shouldRetry(r.status)) break;
+        published_at: new Date().toISOString(),
+        webhook_delivery_id: event.id,
+        webhook_response_code: result.status,
+        webhook_attempts: result.attempts,
+        webhook_last_error: null,
+      })
+      .eq("id", articleId);
+    await supabase
+      .from("lx_keyword")
+      .update({ status: "published" })
+      .eq("article_id", articleId);
+    return {
+      ok: true,
+      status: "published",
+      responseCode: result.status,
+      attempts: result.attempts,
+    };
   }
 
-  // All attempts failed.
   await supabase
     .from("lx_article")
     .update({
       status: "failed",
-      webhook_delivery_id: deliveryId,
-      webhook_response_code: lastStatus,
-      webhook_attempts: attempt,
+      webhook_delivery_id: event.id,
+      webhook_response_code: result.status,
+      webhook_attempts: result.attempts,
       webhook_last_error:
-        lastError ?? (lastStatus !== null ? `HTTP ${lastStatus}` : "unknown error"),
+        result.error ?? (result.status !== null ? `HTTP ${result.status}` : "unknown error"),
     })
     .eq("id", articleId);
   await supabase
@@ -229,8 +174,8 @@ export async function deliverArticle(
   return {
     ok: false,
     status: "failed",
-    responseCode: lastStatus,
-    attempts: attempt,
-    error: lastError ?? `HTTP ${lastStatus}`,
+    responseCode: result.status,
+    attempts: result.attempts,
+    error: result.error ?? `HTTP ${result.status}`,
   };
 }
