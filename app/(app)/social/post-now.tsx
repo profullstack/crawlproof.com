@@ -8,6 +8,7 @@ const BLUESKY_MAX = 300;
 const MASTODON_MAX = 500;
 const DISCORD_MAX = 2000;
 const TELEGRAM_MAX = 4096;
+const LINKEDIN_MAX = 3000;
 const REDDIT_TITLE_MAX = 300;
 
 export function PostNowForm({
@@ -35,7 +36,9 @@ export function PostNowForm({
           ? DISCORD_MAX
           : acct?.platform === "telegram"
             ? TELEGRAM_MAX
-            : null;
+            : acct?.platform === "linkedin"
+              ? LINKEDIN_MAX
+              : null;
   const remaining = charMax !== null ? charMax - text.length : null;
   const titleRemaining = isReddit ? REDDIT_TITLE_MAX - title.length : null;
 

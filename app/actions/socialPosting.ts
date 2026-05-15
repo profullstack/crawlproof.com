@@ -30,6 +30,10 @@ import {
   validateTelegramToken,
   TELEGRAM_MAX_CHARS,
 } from "@/lib/sp/platforms/telegram";
+import {
+  createLinkedinTextPost,
+  LINKEDIN_MAX_CHARS,
+} from "@/lib/sp/platforms/linkedin";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -338,6 +342,13 @@ export async function postNow(input: {
         error: `Telegram messages max ${TELEGRAM_MAX_CHARS} chars (got ${text.length}).`,
       };
     }
+  } else if (account.platform === "linkedin") {
+    if (text.length > LINKEDIN_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `LinkedIn posts max ${LINKEDIN_MAX_CHARS} chars (got ${text.length}).`,
+      };
+    }
   } else {
     return {
       ok: false,
@@ -442,10 +453,7 @@ export async function postNow(input: {
       // webhook URL.
       const r = await postDiscordWebhook({ webhookUrl: accessToken, text });
       result = { platformPostId: r.messageId, webUrl: r.webUrl };
-    } else {
-      // account.platform === "telegram" — narrowed by the validation
-      // block above. enc_access_token holds the bot token; external_id
-      // is the numeric chat id.
+    } else if (account.platform === "telegram") {
       const r = await sendTelegramMessage({
         token: accessToken,
         chatId: account.external_id,
@@ -455,6 +463,16 @@ export async function postNow(input: {
         platformPostId: String(r.messageId),
         webUrl: r.webUrl,
       };
+    } else {
+      // account.platform === "linkedin" — narrowed by the validation
+      // block above. external_id holds the OIDC `sub` we use as the
+      // member URN.
+      const r = await createLinkedinTextPost({
+        accessToken,
+        memberSub: account.external_id,
+        text,
+      });
+      result = { platformPostId: r.urn, webUrl: r.webUrl };
     }
     await supabase
       .from("sp_post")

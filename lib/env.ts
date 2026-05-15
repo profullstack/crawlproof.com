@@ -48,5 +48,11 @@ export const env = {
   redditUserAgent:
     process.env.REDDIT_USER_AGENT ??
     "web:com.crawlproof.social:v1.0 (by /u/crawlproof)",
+  // LinkedIn — "Sign In with LinkedIn using OpenID Connect" + "Share on
+  // LinkedIn" products, both auto-enabled on a fresh dev app.
+  // Register at https://www.linkedin.com/developers/apps with redirect
+  // {siteUrl}/api/sp/oauth/linkedin/callback.
+  linkedinClientId: process.env.LINKEDIN_CLIENT_ID ?? "",
+  linkedinClientSecret: process.env.LINKEDIN_CLIENT_SECRET ?? "",
   required,
 };

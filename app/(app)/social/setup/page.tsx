@@ -56,9 +56,11 @@ export default async function SocialSetupPage({
           Connect your social accounts once at the account level. Each blog
           (site) you own can then choose which of these to post from.
           Phase 1 supports <strong>Bluesky</strong>, <strong>Reddit</strong>,{" "}
-          <strong>Mastodon</strong>, <strong>Discord</strong>, and{" "}
-          <strong>Telegram</strong>. LinkedIn, Threads, Pinterest, and Tumblr
-          land in subsequent phases.
+          <strong>Mastodon</strong>, <strong>LinkedIn</strong>,{" "}
+          <strong>Discord</strong>, and <strong>Telegram</strong>. Threads,
+          Pinterest, X, Facebook, Instagram, TikTok, and YouTube land in
+          subsequent phases (most are blocked on per-platform app review or
+          paid API access).
         </p>
       </div>
 
@@ -151,6 +153,23 @@ export default async function SocialSetupPage({
         </p>
         <a href="/api/sp/oauth/reddit/start" className="btn btn-primary mt-4">
           Connect Reddit
+        </a>
+      </section>
+
+      {/* Connect LinkedIn */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect LinkedIn</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          LinkedIn uses standard OAuth. We request <code>openid</code>,{" "}
+          <code>profile</code>, <code>email</code>, and{" "}
+          <code>w_member_social</code> (post as you). The access token
+          lasts 60 days — you'll be prompted to reconnect after that.
+        </p>
+        <a
+          href="/api/sp/oauth/linkedin/start"
+          className="btn btn-primary mt-4"
+        >
+          Connect LinkedIn
         </a>
       </section>
 
