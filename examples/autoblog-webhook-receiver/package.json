@@ -1,0 +1,14 @@
+{
+  "name": "autoblog-webhook-receiver",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal zero-dependency receiver for CrawlProof Autoblog webhooks.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

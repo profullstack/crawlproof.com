@@ -104,15 +104,21 @@ async function cmdReport(args: Args): Promise<number> {
   return 0;
 }
 
-async function cmdSweep(_args: Args): Promise<number> {
+async function cmdSweep(args: Args): Promise<number> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     console.error("CRON_SECRET is not set — set it in .env or env.");
     return 2;
   }
+  const target = (args.flags.target as string | undefined) ?? "scheduled-audits";
+  const path = target === "autoblog" ? "lx-autoblog" : "scheduled-audits";
+  if (target !== "autoblog" && target !== "scheduled-audits") {
+    console.error(`unknown --target: ${target} (expected: scheduled-audits | autoblog)`);
+    return 2;
+  }
   const base = process.env.CRAWLPROOF_SITE_URL ?? "https://crawlproof.com";
-  const url = `${base.replace(/\/$/, "")}/api/cron/scheduled-audits`;
-  console.error(`[cli] forcing scheduled-audits sweep at ${url} …`);
+  const url = `${base.replace(/\/$/, "")}/api/cron/${path}`;
+  console.error(`[cli] forcing ${path} sweep at ${url} …`);
   const res = await fetch(url, {
     method: "POST",
     headers: { "x-cron-secret": secret, "content-type": "application/json" },
@@ -144,10 +150,12 @@ COMMANDS
       Fetch a public report by share-token from production.
       Override with CRAWLPROOF_SITE_URL.
 
-  sweep
-      Force the scheduled-audits cron sweep to run now. Useful for testing
-      Daily/Weekly schedules without waiting for the hourly pg_cron tick.
-      Requires CRON_SECRET. Override host with CRAWLPROOF_SITE_URL.
+  sweep [--target=scheduled-audits|autoblog]
+      Force a cron sweep to run now. --target=scheduled-audits (default)
+      fires /api/cron/scheduled-audits; --target=autoblog fires
+      /api/cron/lx-autoblog. Useful for testing without waiting for the
+      hourly pg_cron tick. Requires CRON_SECRET. Override host with
+      CRAWLPROOF_SITE_URL.
 
   help
       Print this message.
@@ -162,6 +170,7 @@ EXAMPLES
   crawlproof audit https://example.com --engine=claude --format=json > report.json
   crawlproof report r-ceiZSv2VnqypqUfjLwtrV0
   CRAWLPROOF_SITE_URL=http://localhost:3000 crawlproof sweep
+  CRAWLPROOF_SITE_URL=http://localhost:3000 crawlproof sweep --target=autoblog
 `);
 }
 

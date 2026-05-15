@@ -16,6 +16,13 @@ import { markdownToHtml, htmlDocument } from "../lib/markdown";
 import { auditReadyEmailHtml, scanRunSummaryEmailHtml, type SummaryEngineRow } from "../lib/email";
 import { ENGINES, type Engine } from "../lib/credits";
 import { buildScanRunMarkdown } from "../lib/audit/summary-markdown";
+import OpenAI from "openai";
+import { crawlSitemap } from "../lib/lx/sitemapCrawl";
+import { DataForSeoClient } from "../lib/lx/dataforseo";
+import { researchKeywords } from "../lib/lx/keywordsResearch";
+import Anthropic from "@anthropic-ai/sdk";
+import { generateArticle } from "../lib/lx/articleGen";
+import { deliverArticle } from "../lib/lx/webhookDeliver";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -32,6 +39,75 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
   realtime: { transport: WebSocket as unknown as typeof globalThis.WebSocket },
 });
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+async function processLxSitemap(siteId: string) {
+  if (!openai) {
+    console.error(`[worker] lx sitemap ${siteId}: OPENAI_API_KEY not set`);
+    return;
+  }
+  console.log(`[worker] lx sitemap crawl ${siteId}`);
+  try {
+    const r = await crawlSitemap(siteId, { supabase, openai });
+    console.log(
+      `[worker] lx sitemap ${siteId} ok=${r.ok} discovered=${r.discovered} fetched=${r.fetched} embedded=${r.embedded}${r.error ? ` error=${r.error}` : ""}`,
+    );
+  } catch (err) {
+    console.error(`[worker] lx sitemap ${siteId} crashed`, err);
+  }
+}
+
+async function processLxGenerate(siteId: string) {
+  if (!openai) {
+    console.error(`[worker] lx generate ${siteId}: OPENAI_API_KEY not set`);
+    return;
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error(`[worker] lx generate ${siteId}: ANTHROPIC_API_KEY not set`);
+    return;
+  }
+  console.log(`[worker] lx article generate ${siteId}`);
+  try {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const r = await generateArticle(siteId, { supabase, openai, anthropic });
+    if (r.skipped) {
+      console.log(`[worker] lx generate ${siteId} skipped: ${r.skipped}`);
+    } else if (r.ok && r.articleId) {
+      console.log(`[worker] lx generate ${siteId} ok article=${r.articleId} slug=${r.slug}`);
+      // Chain straight into delivery — the cron's "produce 1 article per
+      // due slot" contract means publish should be the same job.
+      const d = await deliverArticle(r.articleId, { supabase });
+      console.log(
+        `[worker] lx deliver ${r.articleId} status=${d.status} code=${d.responseCode ?? "-"} attempts=${d.attempts}${d.error ? ` error=${d.error}` : ""}`,
+      );
+    } else {
+      console.warn(`[worker] lx generate ${siteId} failed: ${r.error}`);
+    }
+  } catch (err) {
+    console.error(`[worker] lx generate ${siteId} crashed`, err);
+  }
+}
+
+async function processLxKeywords(siteId: string) {
+  const login = process.env.DATAFORSEO_LOGIN ?? "";
+  const password = process.env.DATAFORSEO_PASSWORD ?? "";
+  if (!login || !password) {
+    console.error(`[worker] lx keywords ${siteId}: DATAFORSEO_LOGIN/PASSWORD not set`);
+    return;
+  }
+  console.log(`[worker] lx keywords research ${siteId}`);
+  try {
+    const dfs = new DataForSeoClient(login, password);
+    const r = await researchKeywords(siteId, { supabase, dfs });
+    console.log(
+      `[worker] lx keywords ${siteId} ok=${r.ok} inserted=${r.inserted} cost=$${r.apiCost.toFixed(3)}${r.error ? ` error=${r.error}` : ""}`,
+    );
+  } catch (err) {
+    console.error(`[worker] lx keywords ${siteId} crashed`, err);
+  }
+}
 
 type Job = { auditId: string; pdfEmail?: string };
 
@@ -462,6 +538,130 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  if (req.method === "POST" && req.url === "/lx/sitemap-crawl") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: { siteId?: string };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+        return;
+      }
+      if (!payload.siteId) {
+        res.writeHead(400);
+        res.end("siteId required");
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      processLxSitemap(payload.siteId).catch((e) =>
+        console.error("[worker] lx sitemap unhandled", e),
+      );
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/lx/article-deliver") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: { articleId?: string };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+        return;
+      }
+      if (!payload.articleId) {
+        res.writeHead(400);
+        res.end("articleId required");
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      deliverArticle(payload.articleId, { supabase })
+        .then((d) =>
+          console.log(
+            `[worker] lx deliver ${payload.articleId} status=${d.status} code=${d.responseCode ?? "-"} attempts=${d.attempts}${d.error ? ` error=${d.error}` : ""}`,
+          ),
+        )
+        .catch((e) => console.error("[worker] lx deliver unhandled", e));
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/lx/article-generate") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: { siteId?: string };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+        return;
+      }
+      if (!payload.siteId) {
+        res.writeHead(400);
+        res.end("siteId required");
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      processLxGenerate(payload.siteId).catch((e) =>
+        console.error("[worker] lx generate unhandled", e),
+      );
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/lx/keywords-research") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: { siteId?: string };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+        return;
+      }
+      if (!payload.siteId) {
+        res.writeHead(400);
+        res.end("siteId required");
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      processLxKeywords(payload.siteId).catch((e) =>
+        console.error("[worker] lx keywords unhandled", e),
+      );
+    });
+    return;
+  }
   if (req.method !== "POST" || req.url !== "/enqueue") {
     res.writeHead(404);
     res.end();
@@ -507,7 +707,51 @@ async function sweep() {
   for (const row of data) await processJob({ auditId: row.id });
 }
 
+// Recover lx jobs orphaned by a worker crash. Two failure modes:
+//   * lx_article stuck in 'publishing' — atomic claim flipped it but the
+//     delivery loop never reached a terminal state. Reset to 'ready' so
+//     the cron / manual retry path can pick it up again.
+//   * lx_keyword stuck in 'generating' — article generation started but
+//     never wrote an article. Reset to 'queued'.
+// Conservative 10-minute threshold so we don't fight legitimate in-flight
+// work (article generation typically completes in 30–90s; delivery up to
+// 70s with retry backoff).
+const LX_STUCK_AFTER_MS = 10 * 60 * 1000;
+
+async function lxSweep() {
+  const cutoff = new Date(Date.now() - LX_STUCK_AFTER_MS).toISOString();
+
+  // updated_at < cutoff = "this row hasn't transitioned in 10 minutes".
+  // For 'publishing' that means delivery never reached a terminal state;
+  // reset to 'ready' so cron / manual retry can re-pick it. We do NOT
+  // re-fire delivery from the sweep itself — that's the cron/manual path.
+  const { data: stuckArticles, error: artErr } = await supabase
+    .from("lx_article")
+    .update({ status: "ready", webhook_last_error: "recovered from stuck publishing" })
+    .eq("status", "publishing")
+    .lt("updated_at", cutoff)
+    .select("id");
+  if (artErr) {
+    console.warn("[worker] lx sweep articles", artErr.message);
+  } else if (stuckArticles && stuckArticles.length > 0) {
+    console.log(`[worker] lx sweep: recovered ${stuckArticles.length} stuck article(s)`);
+  }
+
+  const { data: stuckKeywords, error: kwErr } = await supabase
+    .from("lx_keyword")
+    .update({ status: "queued" })
+    .eq("status", "generating")
+    .lt("updated_at", cutoff)
+    .select("id");
+  if (kwErr) {
+    console.warn("[worker] lx sweep keywords", kwErr.message);
+  } else if (stuckKeywords && stuckKeywords.length > 0) {
+    console.log(`[worker] lx sweep: recovered ${stuckKeywords.length} stuck keyword(s)`);
+  }
+}
+
 setInterval(() => sweep().catch(() => {}), 60_000);
+setInterval(() => lxSweep().catch((e) => console.error("[worker] lx sweep", e)), 60_000);
 
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to

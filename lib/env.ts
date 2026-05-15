@@ -29,5 +29,8 @@ export const env = {
   moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
   perplexityApiKey: process.env.PERPLEXITY_API_KEY ?? "", // Sonar API
+  // DataForSEO — keyword research for Autoblog. Basic-auth credentials.
+  dataforseoLogin: process.env.DATAFORSEO_LOGIN ?? "",
+  dataforseoPassword: process.env.DATAFORSEO_PASSWORD ?? "",
   required,
 };

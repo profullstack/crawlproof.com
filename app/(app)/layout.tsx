@@ -31,6 +31,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/projects/new" className="hidden sm:inline">
               New
             </Link>
+            <Link href="/autoblog" className="hidden sm:inline">
+              Autoblog
+            </Link>
             <Link href="/settings" className="hidden sm:inline">
               Settings
             </Link>
