@@ -134,6 +134,10 @@ export type SiteInput = {
   publishDays: number[];
   publishHour: number;
   internalLinksPerArticle: number;
+  // Backlink-exchange opt-in. Stored verbatim; the matcher + verifier
+  // (Link Exchange phase) ships separately.
+  backlinksEnabled?: boolean;
+  externalLinksPerArticle?: number;
 };
 
 // Light sanity check on a pasted bearer: ASCII, no whitespace, length
@@ -177,6 +181,8 @@ export async function createOrUpdateSite(
   const dailyArticleCount = Math.max(1, Math.min(5, Math.floor(input.dailyArticleCount || 1)));
   const publishHour = Math.max(0, Math.min(23, Math.floor(input.publishHour ?? 9)));
   const internalLinks = Math.max(0, Math.min(8, Math.floor(input.internalLinksPerArticle ?? 3)));
+  const backlinksEnabled = !!input.backlinksEnabled;
+  const externalLinks = Math.max(0, Math.min(5, Math.floor(input.externalLinksPerArticle ?? 3)));
   const publishDays = Array.from(
     new Set(
       (input.publishDays ?? [1, 2, 3, 4, 5])
@@ -225,6 +231,8 @@ export async function createOrUpdateSite(
       publish_days: publishDays,
       publish_hour: publishHour,
       internal_links_per_article: internalLinks,
+      backlinks_enabled: backlinksEnabled,
+      external_links_per_article: externalLinks,
       next_publish_at: nextAt?.toISOString() ?? null,
     };
     if (overrideSecret) {
@@ -263,6 +271,8 @@ export async function createOrUpdateSite(
       publish_days: publishDays,
       publish_hour: publishHour,
       internal_links_per_article: internalLinks,
+      backlinks_enabled: backlinksEnabled,
+      external_links_per_article: externalLinks,
       next_publish_at: nextAt?.toISOString() ?? null,
     })
     .select("id")

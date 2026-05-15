@@ -26,6 +26,8 @@ type Existing = {
   publish_days: number[];
   publish_hour: number;
   internal_links_per_article: number;
+  backlinks_enabled: boolean;
+  external_links_per_article: number;
   status: string;
 };
 
@@ -139,6 +141,12 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   );
   const [internalLinks, setInternalLinks] = useState<number>(
     initial?.internal_links_per_article ?? 3,
+  );
+  const [backlinksEnabled, setBacklinksEnabled] = useState<boolean>(
+    initial?.backlinks_enabled ?? false,
+  );
+  const [externalLinks, setExternalLinks] = useState<number>(
+    initial?.external_links_per_article ?? 3,
   );
 
   const [error, setError] = useState<string | null>(null);
@@ -258,6 +266,8 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         publishDays: days,
         publishHour,
         internalLinksPerArticle: internalLinks,
+        backlinksEnabled,
+        externalLinksPerArticle: externalLinks,
       });
       if (!res.ok) {
         setError(res.error);
@@ -595,6 +605,49 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
               </button>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* Backlink exchange (Link Exchange phase — currently invitation-only) */}
+      <section className="space-y-3">
+        <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Backlink exchange
+        </h2>
+        <p className="text-xs text-[var(--color-muted)]">
+          When enabled, articles will include outbound links to other
+          sites in the Crawlproof network whose niche matches yours.
+          The network is currently invitation-only; toggling on now
+          opts you in for when it opens to your niche.
+        </p>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={backlinksEnabled}
+            onChange={(e) => setBacklinksEnabled(e.target.checked)}
+          />
+          Participate in the backlink exchange
+        </label>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Outbound exchange links / article
+          </label>
+          <select
+            className="input mt-1"
+            value={externalLinks}
+            onChange={(e) => setExternalLinks(parseInt(e.target.value, 10))}
+            disabled={!backlinksEnabled}
+          >
+            {[0, 1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            How many network links your articles will carry once the
+            exchange opens. Receivers' niche + quality gates still
+            decide whether your post is accepted on the other end.
+          </p>
         </div>
       </section>
 

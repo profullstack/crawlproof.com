@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Autoblog webhook",
   description:
-    "How CrawlProof delivers Autoblog articles to your site. Payload schema, headers, retry behavior, and a copy-paste receiver.",
+    "How CrawlProof delivers Autoblog articles to your site. CloudEvents 1.0 envelope, Standard Webhooks signing, payload schema, retry behavior, and a copy-paste receiver.",
   alternates: { canonical: "/docs/autoblog-webhook" },
 };
 
@@ -11,9 +11,19 @@ export default function AutoblogWebhookDocsPage() {
       <h1 className="text-4xl font-extrabold">Autoblog webhook</h1>
       <p className="mt-3 text-[var(--color-muted)]">
         CrawlProof generates one SEO blog post per scheduled slot and POSTs
-        it to your endpoint. Your endpoint owns the actual publish — turning
-        the payload into a row in your CMS, a file in your repo, an MDX file
-        in S3, whatever.
+        it to your endpoint. The wire shape is a{" "}
+        <a className="underline" href="https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md" target="_blank" rel="noreferrer">CloudEvents 1.0</a>{" "}
+        envelope, signed per{" "}
+        <a className="underline" href="https://www.standardwebhooks.com/" target="_blank" rel="noreferrer">Standard Webhooks</a>.
+        Your endpoint owns the actual publish — turning the payload into a
+        row in your CMS, a file in your repo, an MDX file in S3, whatever.
+      </p>
+      <p className="mt-3 text-[var(--color-muted)]">
+        The easiest receiver is{" "}
+        <code className="font-mono">@profullstack/autoblog</code>: its{" "}
+        <code>verifyAndParse</code> helper validates the bearer + signature
+        + envelope in a single call and hands you a normalized{" "}
+        <code>Post</code> object.
       </p>
 
       <section className="mt-10 space-y-3">
@@ -30,139 +40,214 @@ export default function AutoblogWebhookDocsPage() {
             .
           </li>
           <li>
-            Content type <code className="font-mono">application/json</code>.
+            Content type{" "}
+            <code className="font-mono">application/cloudevents+json</code>.
           </li>
           <li>10-second timeout. Reply <code>2xx</code> to acknowledge.</li>
         </ul>
 
         <h3 className="mt-6 text-lg font-bold">Headers</h3>
-        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`Authorization: Bearer cp_lx_<your-secret>
-Content-Type:  application/json
-User-Agent:    Crawlproof-LinkExchange/1.0
-X-Crawlproof-Delivery: <uuid>   # stable across retries of the same article`}</pre>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`Authorization:      Bearer cp_lx_<your-secret>          # token from /autoblog/setup
+webhook-id:         <event uuid>                        # stable across retries
+webhook-timestamp:  <unix seconds>                       # delivery time
+webhook-signature:  v1,<base64 HMAC-SHA256>              # signs id.timestamp.body
+Content-Type:       application/cloudevents+json
+User-Agent:         @profullstack/autoblog/0.2`}</pre>
         <p className="text-sm text-[var(--color-muted)]">
           The bearer is the secret shown when you first save Autoblog
-          settings (or after you click <em>Regenerate</em>). Treat it like
-          a password — anyone with it can post articles to your endpoint.
+          settings (or one you pasted from your own receiver). The same
+          value is the HMAC key for the signature header.
+        </p>
+        <p className="text-sm text-[var(--color-muted)]">
+          <strong>Signing details (Standard Webhooks):</strong> the
+          signature is{" "}
+          <code className="font-mono">
+            HMAC-SHA256(secret, &quot;{`{id}.{timestamp}.{body}`}&quot;)
+          </code>{" "}
+          base64-encoded and prefixed with{" "}
+          <code className="font-mono">v1,</code>. Receivers should reject
+          deliveries whose timestamp is more than 5 minutes from now (replay
+          defense). Multiple space-separated signatures are allowed in the
+          header so we can rotate keys without dropping in-flight deliveries.
         </p>
       </section>
 
       <section className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Body</h2>
+        <p className="text-sm text-[var(--color-muted)]">
+          CloudEvents 1.0 envelope. The <code>data.post</code> object is the
+          canonical, normalized blog post.
+        </p>
         <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`{
-  "event_type": "lx.publish_article",
-  "timestamp": "2026-05-14T09:00:00.000Z",
+  "specversion": "1.0",
+  "id":          "0193a8b9-d2c4-7f44-9a31-3f1c2e7b9a01",
+  "type":        "com.crawlproof.post.published.v1",
+  "source":      "https://crawlproof.com",
+  "subject":     "post:<id>",
+  "time":        "2026-05-15T09:00:00.000Z",
+  "datacontenttype": "application/json",
   "data": {
-    "article": {
-      "id": "uuid",
-      "title": "string",
-      "slug": "kebab-case-slug",
-      "meta_description": "string",
-      "content_markdown": "string",
-      "content_html": "string",
-      "image_url": "https://.../lx-article-images/{site}/{slug}.png" | null,
-      "tags": ["..."],
-      "internal_links": [
-        { "url": "https://your-site/...", "title": "..." }
-      ],
-      "outbound_links": [],
-      "created_at": "ISO-8601"
+    "post": {
+      "id":            "uuid",
+      "url":           "https://your-site/blog/{slug}",
+      "canonical_url": "https://your-site/blog/{slug}",
+      "title":         "string",
+      "slug":          "kebab-case-slug",
+      "excerpt":       "≤240-char prose summary" | null,
+      "html":          "<p>…</p>",
+      "markdown":      "..." | null,
+      "status":        "published",
+      "published_at":  "ISO-8601",
+      "updated_at":    "ISO-8601",
+      "author":        null,
+      "tags":          ["seo", "ai bots"],
+      "categories":    [],
+      "featured_image": { "url": "https://...", "alt": "..." } | null
     }
   }
 }`}</pre>
         <p className="text-sm text-[var(--color-muted)]">
-          <code className="font-mono">outbound_links</code> is reserved for
-          the upcoming Link Exchange — it stays empty during the Autoblog
-          phase, but receivers should not error if it's present and
-          non-empty later.
+          <code className="font-mono">meta_description</code> (≤160 chars,
+          SEO copy) is sent inside the legacy fields when present but the
+          canonical short summary lives in{" "}
+          <code className="font-mono">post.excerpt</code> (≤240 chars).
+          Receivers should prefer <code>excerpt</code>.
         </p>
       </section>
 
       <section className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Retry</h2>
         <p className="text-sm leading-relaxed">
-          At-least-once delivery. On a 5xx, 408, 429, or network error we
-          retry up to 3 attempts spaced at 0s / 10s / 60s. On a 4xx (other
-          than 408/429) we give up immediately — that's your endpoint
-          asking us to stop. The{" "}
-          <code className="font-mono">X-Crawlproof-Delivery</code> UUID is
-          stable across retries: hash it (or store it) so a second attempt
-          for the same article doesn't create a duplicate post.
+          At-least-once delivery. On 5xx, 408, 429, or network error we
+          retry up to 3 attempts spaced at 0s / 10s / 60s. On any other 4xx
+          we give up immediately — that's your endpoint asking us to stop.
+          The <code className="font-mono">webhook-id</code> stays stable
+          across retries of the same article, so dedupe on that.
         </p>
       </section>
 
       <section className="mt-10 space-y-3">
-        <h2 className="text-2xl font-bold">Receiver — Next.js route handler</h2>
+        <h2 className="text-2xl font-bold">Receiver — recommended (SDK)</h2>
+        <p className="text-sm leading-relaxed">
+          The 30-LOC version. The SDK handles bearer + signature +
+          envelope validation; you handle storage.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`// npm i @profullstack/autoblog
+import { verifyAndParse } from "@profullstack/autoblog";
+
+export async function POST(req: Request) {
+  const body = await req.text(); // raw bytes — needed for signature
+  const r = verifyAndParse({
+    headers: Object.fromEntries(req.headers),
+    body,
+    opts: { secret: process.env.CRAWLPROOF_WEBHOOK_SECRET! },
+  });
+  if (!r.ok) return new Response(r.reason, { status: r.status });
+
+  await savePost(r.post); // your CMS / DB
+  return new Response(null, { status: 200 });
+}`}</pre>
+      </section>
+
+      <section className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Receiver — recommended (SDK + gate)</h2>
+        <p className="text-sm leading-relaxed">
+          If your blog is in a topical network, add the network gate so
+          off-niche or low-quality posts are rejected before they touch
+          your DB. The SDK ships{" "}
+          <code className="font-mono">@profullstack/autoblog/quality</code>{" "}
+          for this:
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`import { verifyAndParse } from "@profullstack/autoblog";
+import { gatePost } from "@profullstack/autoblog/quality";
+
+export async function POST(req: Request) {
+  const body = await req.text();
+  const r = verifyAndParse({
+    headers: Object.fromEntries(req.headers),
+    body,
+    opts: { secret: process.env.CRAWLPROOF_WEBHOOK_SECRET! },
+  });
+  if (!r.ok) return new Response(r.reason, { status: r.status });
+
+  const gated = await gatePost(r.post, {
+    allowedNiches: ["security", "ctem", "soc"],
+    heuristics: { minWordCount: 500, maxLinkDensity: 1.0 },
+    minQualityScore: 6,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
+  });
+  if (!gated.ok) {
+    return new Response(gated.reasons.join("; "), {
+      status: gated.stage === "niche" ? 403 : 422,
+    });
+  }
+
+  await savePost(r.post);
+  return new Response(null, { status: 200 });
+}`}</pre>
+        <p className="text-sm text-[var(--color-muted)]">
+          Niche match is loose by default (case-insensitive, partial-word
+          overlap). Empty <code>allowedNiches</code> = accept any niche.
+        </p>
+      </section>
+
+      <section className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Receiver — from scratch (no SDK)</h2>
         <p className="text-sm">
-          Drop this in <code className="font-mono">app/api/autoblog/route.ts</code>{" "}
-          (or anywhere your app routes POSTs). It verifies the bearer,
-          dedupes by delivery id, and writes the article. Replace the
-          comment block with your actual storage.
+          If you can't add a dependency, the verification is ~40 LOC of
+          standard library. <code className="font-mono">crypto.timingSafeEqual</code>{" "}
+          for the bearer, <code className="font-mono">crypto.createHmac</code>{" "}
+          for the signature.
         </p>
         <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 
 const SECRET = process.env.CRAWLPROOF_WEBHOOK_SECRET!;
-const seen = new Set<string>(); // swap for Redis / DB in prod
+const TOLERANCE_SEC = 5 * 60;
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const bearer = req.headers.get("authorization")?.replace(/^Bearer\\s+/i, "");
+  const body = await req.text();
+  const h = (k: string) => req.headers.get(k) ?? "";
+
+  // Bearer.
+  const bearer = h("authorization").replace(/^Bearer\\s+/i, "");
   if (
-    !bearer ||
     bearer.length !== SECRET.length ||
     !crypto.timingSafeEqual(Buffer.from(bearer), Buffer.from(SECRET))
   ) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  const deliveryId = req.headers.get("x-crawlproof-delivery") ?? "";
-  if (deliveryId && seen.has(deliveryId)) {
-    return NextResponse.json({ ok: true, dedupe: true });
+  // Standard Webhooks signature.
+  const id = h("webhook-id");
+  const ts = h("webhook-timestamp");
+  const sig = h("webhook-signature");
+  const now = Math.floor(Date.now() / 1000);
+  if (!id || !ts || !sig) return NextResponse.json({ ok: false }, { status: 401 });
+  if (Math.abs(now - Number(ts)) > TOLERANCE_SEC) {
+    return NextResponse.json({ ok: false, reason: "stale" }, { status: 401 });
   }
+  const expected =
+    "v1," +
+    crypto.createHmac("sha256", SECRET).update(\`\${id}.\${ts}.\${body}\`).digest("base64");
+  const ok = sig.split(/\\s+/).some(
+    (s) =>
+      s.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(s), Buffer.from(expected)),
+  );
+  if (!ok) return NextResponse.json({ ok: false, reason: "bad sig" }, { status: 401 });
 
-  const payload = await req.json();
-  if (payload?.event_type !== "lx.publish_article") {
+  // Envelope.
+  const evt = JSON.parse(body);
+  if (evt?.specversion !== "1.0" || !evt?.data?.post) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
-  const article = payload.data.article;
-  // ↓↓↓ Replace this with your actual publish step.
-  console.log("publish", article.slug, article.title);
-
-  if (deliveryId) seen.add(deliveryId);
+  await savePost(evt.data.post); // your storage
   return NextResponse.json({ ok: true });
 }`}</pre>
-      </section>
-
-      <section className="mt-10 space-y-3">
-        <h2 className="text-2xl font-bold">Receiver — plain Express</h2>
-        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`import express from "express";
-import crypto from "node:crypto";
-
-const app = express();
-const SECRET = process.env.CRAWLPROOF_WEBHOOK_SECRET!;
-const seen = new Set();
-
-app.post("/autoblog", express.json({ limit: "2mb" }), (req, res) => {
-  const bearer = req.get("authorization")?.replace(/^Bearer\\s+/i, "") ?? "";
-  if (
-    bearer.length !== SECRET.length ||
-    !crypto.timingSafeEqual(Buffer.from(bearer), Buffer.from(SECRET))
-  ) return res.status(401).end();
-
-  const deliveryId = req.get("x-crawlproof-delivery") ?? "";
-  if (deliveryId && seen.has(deliveryId)) return res.json({ dedupe: true });
-
-  if (req.body?.event_type !== "lx.publish_article") return res.status(400).end();
-
-  const article = req.body.data.article;
-  // … write to your CMS / storage here …
-
-  if (deliveryId) seen.add(deliveryId);
-  res.json({ ok: true });
-});`}</pre>
       </section>
 
       <section className="mt-10 space-y-2">
@@ -170,20 +255,15 @@ app.post("/autoblog", express.json({ limit: "2mb" }), (req, res) => {
         <p className="text-sm leading-relaxed">
           We ship a zero-dependency reference receiver under{" "}
           <code className="font-mono">examples/autoblog-webhook-receiver/</code>{" "}
-          in the CrawlProof repo. It verifies the bearer, dedupes by
-          delivery ID, and writes each article as Markdown with YAML
-          front-matter to <code>./posts/</code> — drop-in compatible with
-          Astro, Hugo, Eleventy, and most static-site generators.
-        </p>
-        <p className="text-sm leading-relaxed">
-          To wire it up: <code>node server.mjs</code> with{" "}
-          <code className="font-mono">CRAWLPROOF_WEBHOOK_SECRET</code> set,
-          expose <code>localhost:3000</code> via ngrok or Cloudflare Tunnel,
-          paste the public URL into{" "}
+          in the CrawlProof repo. Drop your secret into{" "}
+          <code className="font-mono">CRAWLPROOF_WEBHOOK_SECRET</code>, run{" "}
+          <code>node server.mjs</code>, expose it via ngrok or Cloudflare
+          Tunnel, and paste the public URL into{" "}
           <a className="underline" href="/autoblog/setup">
             /autoblog/setup
           </a>
-          , then hit <em>Generate article now</em> on the dashboard.
+          . Hit <em>Generate article now</em> on the dashboard to fire an
+          immediate delivery.
         </p>
       </section>
     </main>

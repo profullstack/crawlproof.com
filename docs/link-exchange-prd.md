@@ -6,6 +6,26 @@
 
 ---
 
+## Status as of 2026-05-15
+
+**Phase 1 — Autoblog v1 (publishing only): SHIPPED.**
+- Per-site config, AI article generation (Claude Sonnet 4.6 with the operator-voice prompt, ~2.2k–3.2k words), gpt-image-1 hero images, CloudEvents/Standard Webhooks delivery, the `@profullstack/autoblog` SDK on receivers, WebSub publisher mode, weekly/monthly digest emails.
+- Three receivers wired and live: threatcrush, coinpayportal, sh1pt.
+- crawlproof.com /autoblog/setup exposes the `backlinks_enabled` + `external_links_per_article` knobs so customers can opt in pre-launch. The knobs are stored but the matcher behind them is not yet built (see Phase 2).
+
+**Phase 2 — Network gate (receiver side): IN PROGRESS.**
+- Per-receiver niche allowlist + heuristic + LLM quality score, via `@profullstack/autoblog/quality` (`gatePost`). Loose niche match (case-insensitive partial overlap). Fail-open on LLM errors by default.
+- Prerequisite for Phase 3 — the gate is what lets the exchange grow to third-party blogs without becoming a spam swamp.
+
+**Phase 3 — Link Exchange (§4 + §17): GATED, NOT CANCELLED.**
+- §4 backlink matcher, §5 verification crawler, §17 candidate discovery from the existing audit corpus — all stay as planned.
+- Opens **only when**: (a) the network gate (Phase 2) ships on all receivers AND (b) the active-site count justifies a meaningful matching pool (target ≥10 active participants per niche).
+- Model is outrank.so-style multi-tenant exchange — any opted-in customer can both give and receive backlinks. Per-blog `backlinks_enabled` toggle (already in schema) is the opt-in.
+
+---
+
+---
+
 ## 1. How outrank.so does it (observed)
 
 ### 1.1 Stack

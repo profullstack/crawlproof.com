@@ -15,7 +15,7 @@ export default async function AutoblogSetupPage() {
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, domain, blog_root_url, sitemap_url, niche, target_audiences, description, webhook_url, webhook_secret, daily_article_count, publish_days, publish_hour, internal_links_per_article, status",
+      "id, domain, blog_root_url, sitemap_url, niche, target_audiences, description, webhook_url, webhook_secret, daily_article_count, publish_days, publish_hour, internal_links_per_article, backlinks_enabled, external_links_per_article, status",
     )
     .eq("user_id", user.id)
     .maybeSingle();
