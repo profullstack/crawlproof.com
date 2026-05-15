@@ -18,8 +18,11 @@
 - Facebook Pages (Graph API, well-documented), Instagram Business (Graph API for image+video), YouTube Community (Data API v3), X via paid API tier.
 - All require app review and platform-specific approval; treat as "ships when the review lands."
 
-**Phase 3 — Browser-automation fallback: PLANNED, GATED.**
+**Phase 3 — Browser-mode fallback (cookie OR full creds): PLANNED, GATED.**
 - For platforms that either (a) have no content-publish scope (Instagram personal, TikTok for non-approved apps, Snapchat) or (b) gate the API behind a long approval process we don't want to wait on.
+- Two sub-modes per account:
+  - `cookie` — user pastes a session-cookie blob from their already-logged-in browser. We replay those cookies in Playwright, skipping login entirely (no 2FA, no password storage). **Preferred** when available.
+  - `puppeteer` — user provides username + password + optional TOTP seed. We run the full login flow in Playwright each session. Fallback when cookies aren't available or have expired.
 - Higher operational + legal risk (most platforms' ToS forbid automation). Opt-in per customer with a real disclosure modal, isolated browser-runner cluster, residential proxies, encrypted credential vault.
 
 ---
@@ -77,9 +80,14 @@ create table sp_account (
     'x','linkedin','reddit','mastodon','bluesky','threads','pinterest','tumblr',
     'facebook_page','instagram_business','youtube','tiktok','instagram','snapchat'
   )),
-  -- 'oauth' = bearer/OAuth2 token via that platform's official API.
-  -- 'puppeteer' = browser automation with stored credentials.
-  auth_mode text not null check (auth_mode in ('oauth','puppeteer')),
+  -- 'oauth'     = bearer/OAuth2 token via the platform's official API.
+  -- 'cookie'    = browser automation, but we replay user-supplied
+  --               session cookies; no login flow, no 2FA challenge.
+  --               Preferred browser-mode auth.
+  -- 'puppeteer' = browser automation with stored username + password
+  --               + optional TOTP seed; we run the full login each
+  --               session. Fallback when cookie auth isn't viable.
+  auth_mode text not null check (auth_mode in ('oauth','cookie','puppeteer')),
   -- Display name shown in the UI ("@chovy", "Crawlproof on LinkedIn").
   handle text not null,
   -- Platform's own ID for this account (X user_id, etc.) — for dedupe + analytics.
@@ -88,7 +96,13 @@ create table sp_account (
   access_token text,                              -- vault.create_secret returns the key
   refresh_token text,                             -- same
   token_expires_at timestamptz,
-  -- Puppeteer credentials (envelope-encrypted with the user's master DEK).
+  -- Cookie-mode: encrypted JSON blob of Playwright-shaped cookies
+  -- `[{ name, value, domain, path, httpOnly, secure, sameSite, expires }, …]`.
+  -- We trust the user's paste verbatim; the worker injects these via
+  -- context.addCookies() before navigating.
+  enc_cookies bytea,
+  cookies_acquired_at timestamptz,                -- shown in UI as "session age"
+  -- Puppeteer-mode credentials (envelope-encrypted with the user's master DEK).
   enc_username bytea,
   enc_password bytea,
   enc_2fa_seed bytea,                             -- if user provides TOTP seed
@@ -176,43 +190,101 @@ Documented in code as `lib/sp/platforms.ts`. Below is the v1 target list with re
 
 ---
 
-## 5. Browser-automation fallback (Phase 3)
+## 5. Browser-mode fallback (Phase 3)
 
 **This is the heavy section.** Doing it right is hard; doing it sloppy is dangerous (to customer accounts and to us as ToS violators). PRD captures the design *and* the case for keeping it small.
 
 ### 5.1 When we use it
 
-A platform falls into the Puppeteer path iff *both*:
+A platform falls into the browser-mode path iff *both*:
 - It has no OAuth content-publish scope (Instagram personal, TikTok if not approved, Snapchat).
-- The customer has explicitly opted in via a disclosure modal that says: "We will log into your account from a server. Most platforms forbid this in their Terms of Service. If your account is banned, that's on the platform, not on us."
+- The customer has explicitly opted in via a disclosure modal: "We will operate your account from a server. Most platforms forbid this in their Terms of Service. If your account is banned, that's on the platform, not on us."
 
-### 5.2 Credential vault
+Within browser mode, we prefer `cookie` over `puppeteer` whenever the user can supply cookies — see §5.2.
 
-**Encryption model: envelope encryption with two keys.** "Encrypt with our private key" (the user's phrasing in the task) is too vague to ship — what we actually need:
+### 5.2 Auth sub-modes
+
+Browser mode has two sub-modes per account. The user picks at connection time; we tag the row's `auth_mode` accordingly.
+
+#### `cookie` — session-cookie replay (preferred)
+
+The user is already logged into the platform in their browser, with 2FA and device challenges already cleared. They export their session cookies to us; we replay those cookies in a fresh Playwright context (`context.addCookies()`) and the platform sees an authenticated session immediately. No login flow, no 2FA prompt, no password storage on our side.
+
+**Trade-offs vs. full puppeteer login:**
+
+| | cookie | puppeteer |
+|---|---|---|
+| Bypasses 2FA | ✓ | only if user gave us a TOTP seed |
+| Bypasses CAPTCHA / device challenge | ✓ | ✗ |
+| Stores user's password | ✗ | ✓ |
+| Survives platform-side suspicious-activity logout | ✗ | ✓ (we re-login) |
+| User effort to set up | one paste + occasional refresh | one paste once |
+| Session lifetime before re-acquire | ~30 days typical | persistent (we re-login on expiry) |
+
+**The cookie-extraction UX problem.** The user's original suggestion — paste the output of `document.cookie` from the browser console — works for *some* platforms but misses the critical auth cookie on most. Modern platforms (X, LinkedIn, Instagram, TikTok) set the session token with the `HttpOnly` flag, and `HttpOnly` cookies are *invisible* to JavaScript (`document.cookie` excludes them by spec). The DevTools Application panel shows them; JS does not. So the naive paste UX is a footgun.
+
+We support three extraction paths in order of preference:
+
+1. **Crawlproof browser extension (recommended, v2)** — a published Chrome/Firefox extension. User clicks the extension on the platform tab → it reads the full cookie jar via the extension `chrome.cookies` API (which sees HttpOnly cookies) → POSTs the relevant cookies to `/api/sp/account/cookie-ingest` over a signed Crawlproof-bound URL. One click, no console required. **This is the right long-term UX.**
+
+2. **DevTools → Network → Copy as cURL (v1 fallback)** — the user opens DevTools, refreshes the platform page, clicks any authenticated XHR, "Copy → Copy as cURL", and pastes the curl command into Crawlproof. We parse the `-H 'Cookie: …'` line out of the curl text. This includes HttpOnly cookies because they're in the request *header*, where JS can't read them but DevTools shows them. Verbose, but works on every platform without extra software.
+
+3. **`document.cookie` paste (v1 fallback for low-security platforms)** — for platforms whose session token is *not* HttpOnly (rare; usually a security oversight on their part). The user's original suggestion. Works fine for those; we detect "did this paste produce a working session?" on the first health check and surface a clear error if not.
+
+The UI in `/social/setup` walks the user through whichever option they pick, with a per-platform hint about which is known to work (e.g., "Instagram — extension or curl; the console paste won't work because Meta sets `sessionid` as HttpOnly").
+
+#### `puppeteer` — full username + password + optional TOTP
+
+When the user can't or won't supply cookies (e.g. they want set-and-forget without periodic re-paste, or they're connecting a fresh account they'll only ever use from Crawlproof), they hand us username + password + optional TOTP seed. We store them encrypted (§5.3) and run the full login flow in Playwright every session.
+
+CAPTCHA + device-challenge handling, residential proxy, fingerprint stability — all live in the puppeteer path (§5.4). Cookie mode skips all of that because the platform already trusts the session.
+
+### 5.3 Credential vault
+
+**Encryption model: envelope encryption with two keys.** "Encrypt with our private key" (the user's phrasing in the original task) is too vague to ship — what we actually need:
 
 1. **Per-user DEK** (data encryption key): a 256-bit AES key, one per Crawlproof user, stored encrypted under a KEK.
 2. **KEK** (key-encrypting key): managed by Supabase Vault (or KMS if we outgrow Vault). The KEK never leaves the secure boundary.
-3. To encrypt the user's IG password: pull DEK, encrypt the password with AES-GCM, store ciphertext + nonce in `sp_account.enc_password`. The DEK is re-encrypted under KEK so the at-rest DB column never contains plaintext.
-4. To decrypt for use: the worker calls Vault to unwrap the DEK, decrypts the password just-in-time, uses it in the headless browser session, then discards from memory.
+3. To encrypt the user's IG password (or cookie blob): pull DEK, encrypt the plaintext with AES-GCM, store ciphertext + nonce in `sp_account.enc_password` / `sp_account.enc_cookies`. The DEK is re-encrypted under KEK so the at-rest DB column never contains plaintext.
+4. To decrypt for use: the worker calls Vault to unwrap the DEK, decrypts the secret just-in-time, uses it in the headless browser session, then discards from memory.
 
-This is industry-standard and what every credential-stashing product (1Password, Vault, Doppler) does. The naive "encrypt with our private key" model (asymmetric, one keypair for all users) is what gets companies in TechCrunch articles when one server compromise pops every credential.
+This applies identically to `enc_password`, `enc_cookies`, `enc_2fa_seed`, and `enc_username`. All four columns share one envelope per user.
 
-### 5.3 Browser-runner cluster
+This is industry-standard and what every credential-stashing product (1Password, Vault, Doppler) does. The naive "encrypt with our private key" model (one keypair for all users) is what gets companies in TechCrunch articles when one server compromise pops every credential.
 
-Each user-platform combo gets its own isolated Playwright context:
+### 5.4 Browser-runner cluster
 
-- **Per-user residential proxies** (Bright Data / Soax / etc.). Logging in from a datacenter IP is the #1 detection signal. Approx $0.50/GB residential. Per-customer per-month cost varies; a typical IG post needs ~50 MB of traffic, so $0.025 per post. Adds to COGS.
-- **Persistent user-data dirs** keyed by `(user_id, platform)`. Reuse cookies + local storage across runs so we don't trigger "new device" challenges on every login.
-- **Fingerprint stability**: each (user_id, platform) gets a stable user-agent, screen size, timezone, language. Fingerprint rotation kills login flows.
-- **2FA handling**: if the user provides a TOTP seed, we generate the code at login time. If they don't, we prompt them via a modal that asks them to enter the code from their authenticator (and queue the post for 2 minutes later).
-- **CAPTCHA**: 2Captcha / Anti-Captcha integration. ~$0.001/solve. Build assumes 5% of logins hit a CAPTCHA.
+Each user-platform combo gets its own isolated Playwright context. Cookie mode reuses the cluster, just without the login flow.
 
-### 5.4 What can go wrong (and why we keep it small)
+- **Per-user residential proxies** (Bright Data / Soax / etc.). Logging in *or operating* from a datacenter IP is the #1 detection signal. Approx $0.50/GB residential. A typical IG post needs ~50 MB of traffic, so $0.025 per post. Adds to COGS. Cookie mode reduces per-session bandwidth (no login flow assets), but the proxy is still required for the post itself.
+- **Persistent user-data dirs** keyed by `(user_id, platform)`. Reuse cookies + local storage across runs so we don't trigger "new device" challenges on every action. In cookie mode this is doubly important — we inject the user's exported cookies on first run, then let the platform's own session-refresh dance keep them fresh inside our persistent context.
+- **Fingerprint stability**: each (user_id, platform) gets a stable user-agent, screen size, timezone, language. The user's exported cookies were issued to *their* browser's fingerprint; if our injected fingerprint diverges too far the platform may force re-auth even with valid cookies. Mitigation: ask the user for their user-agent string at cookie-ingest time (the extension can pass it; the curl-paste UX includes it in the `-H 'User-Agent'` line).
+- **2FA handling (puppeteer mode only)**: if the user provides a TOTP seed, we generate the code at login time. If they don't, we prompt them via a modal that asks them to enter the code from their authenticator (and queue the post for 2 minutes later). **Cookie mode never sees 2FA** — that's the whole point.
+- **CAPTCHA (puppeteer mode only)**: 2Captcha / Anti-Captcha integration. ~$0.001/solve. Build assumes 5% of logins hit a CAPTCHA. Cookie mode rarely encounters CAPTCHA since we're not on the login page.
 
-- **Account bans.** Platforms detect server-side login from residential IPs eventually. Expected attrition: ~5%/month of accounts get challenged or banned. Disclosure modal MUST make this clear.
-- **2FA push notifications.** Some platforms now require a phone-tap to approve new logins. If the user doesn't have TOTP, we get stuck.
-- **Platform UI changes.** Every IG redesign breaks our selectors. Need a regression test that runs once per day and pages the on-call when it fails.
-- **Legal**: most platforms' ToS forbid automation. We are not the user; we are an agent posting on their behalf. The legal theory we'd rely on is that the *user* directed us — but platforms sometimes treat the agent and the user as one party for enforcement. **Real lawyer review before this ships.**
+### 5.5 What can go wrong (and why we keep it small)
+
+- **Cookies expire / get invalidated.** Platforms revoke sessions on signs of suspicious activity (new IP, fingerprint shift, password change). When they do, our injected cookies stop working. We detect this on the next health check (or on the next post attempt — whichever comes first) and mark the account `token_expired`, email the user, and queued posts pause. User re-pastes cookies → back in business. Typical lifetime is ~30 days; we surface "session age" in the UI so the user knows when to refresh.
+- **Account bans.** Platforms detect server-side activity from residential IPs eventually. Cookie mode helps (no login flow to trip detection on every session) but doesn't eliminate the risk. Expected attrition: ~3%/month for cookie-mode accounts, ~5%/month for puppeteer-mode. Disclosure modal MUST make this clear.
+- **2FA push notifications (puppeteer mode only).** Some platforms now require a phone-tap to approve new logins. If the user doesn't have TOTP, we get stuck. Cookie mode dodges this entirely.
+- **Platform UI changes.** Every IG redesign breaks our selectors. Need a regression test that runs once per day and pages the on-call when it fails. Affects both modes (the post-composition selectors are the same).
+- **Legal**: most platforms' ToS forbid automation. We are not the user; we are an agent posting on their behalf. The legal theory we'd rely on is that the *user* directed us — but platforms sometimes treat the agent and the user as one party for enforcement. **Real lawyer review before this ships.** Cookie mode is *not* a legal differentiator; "the user gave us a session cookie" is still "we are operating their account as them."
+
+### 5.6 The cookie-ingest flow (UI walkthrough)
+
+For a v1 ship, the user-facing flow at `/social/setup` for a cookie-mode platform:
+
+1. User clicks "Connect Instagram (browser mode)" → a modal opens.
+2. Modal says: "Crawlproof can post to Instagram by replaying your existing session. Pick how you want to send us the session." Three buttons:
+   - **Install Crawlproof extension** (v2; greyed-out + "coming soon" pill in v1)
+   - **Paste from `Copy as cURL`** (default)
+   - **Paste `document.cookie`** (disabled for platforms where we know HttpOnly is required, with a tooltip explaining why)
+3. For the cURL path: a screenshot-illustrated walkthrough — "Open instagram.com, log in, open DevTools (Cmd+Opt+I), Network tab, refresh, click any request, right-click → Copy → Copy as cURL, paste below."
+4. Customer pastes. We parse the `-H 'Cookie: …'` and `-H 'User-Agent: …'` headers, normalize to Playwright cookie shape, encrypt, store.
+5. We immediately fire a session-validity probe (load the user's profile page in a worker) to confirm the session works. Surface result inline.
+6. On success: account row gets `auth_mode='cookie'`, `cookies_acquired_at=now()`, `status='active'`. User is ready to schedule posts.
+
+When `cookies_acquired_at` ages past 25 days, the UI shows a "Refresh session" prompt. Past 35 days or on health-check failure, the account flips to `status='token_expired'` and queued posts pause.
 
 ---
 
@@ -242,7 +314,7 @@ Reuse `worker/index.ts`. New jobs:
 | `sp.oauth.refresh` | every 10 min | Find tokens within 1h of expiry and refresh via the platform's refresh endpoint. |
 | `sp.publish.tick` | every 60 sec | Find `sp_post` rows with `scheduled_for <= now()` and `status='queued'`, claim atomically, dispatch to the platform-specific publisher. |
 | `sp.puppeteer.publish` | invoked by tick | One isolated Playwright session per call. Login → post → confirm → close. |
-| `sp.account.health` | hourly | For each `auth_mode='puppeteer'` account, run a no-op "is the session still valid" check (load the profile page). On fail: mark `token_expired`, email the user. |
+| `sp.account.health` | hourly | For each `auth_mode in ('cookie','puppeteer')` account, run a no-op "is the session still valid" check (load the profile page). On fail: mark `token_expired`, email the user. Cookie-mode accounts also get a daily "session age >25 days" reminder. |
 
 ---
 
@@ -264,6 +336,8 @@ All under `app/api/sp/`:
 
 - `POST /api/sp/account/oauth-start?platform=x` — kicks off the OAuth dance.
 - `GET  /api/sp/account/oauth-callback` — handles the callback, persists tokens.
+- `POST /api/sp/account/cookie` — body: `{ platform, source: 'curl'|'document_cookie'|'extension', payload, user_agent? }`. We parse the payload into Playwright cookies (`curl` path strips the `-H 'Cookie:'` line, `document_cookie` path splits on `; `, `extension` path takes the JSON our extension POSTs directly), encrypt + store. Immediately fires a session-validity probe.
+- `POST /api/sp/account/cookie/refresh` — same shape; replaces the existing blob. Used by the "Refresh session" prompt.
 - `POST /api/sp/account/puppeteer` — body: `{ platform, username, password, totp_seed? }`. Encrypts + stores.
 - `DELETE /api/sp/account/{id}` — disconnects.
 - `POST /api/sp/post` — schedule a new post (or thread).
@@ -334,13 +408,18 @@ COGS realism:
 6. **Dashboard + setup UI** — three routes (§8).
 7. **Meta family** — once app review lands.
 8. **X** — once the user agrees to the $200/mo API tier.
-9. **Puppeteer fallback** — last. Behind a `puppeteer_enabled` flag on the user's profile; ships dark until lawyer-reviewed.
+9. **Browser mode — cookie variant first.** Behind a `browser_mode_enabled` flag on the user's profile, ships dark until lawyer-reviewed. Order within this step:
+   1. cURL-paste cookie ingest (§5.6) for Instagram + TikTok. No login flow to build; biggest leverage per LOC.
+   2. Health-check job (cookie liveness) + "Refresh session" UI.
+   3. Crawlproof browser extension (v2) for one-click ingest.
+10. **Browser mode — puppeteer variant.** Full username/password/TOTP path for users who refuse cookie mode. Most operational complexity (login flow, CAPTCHA, residential proxy hygiene) lives here.
 
 ---
 
 ## 14. Open questions for before build
 
-- **Lawyer review on browser-automation ToS exposure.** Specifically: are we liable if a customer's account gets banned because we logged in on their behalf? US case law leans "the user gave us permission so it's fine"; platform ToS lean "no it's not."
+- **Lawyer review on browser-automation ToS exposure.** Specifically: are we liable if a customer's account gets banned because we logged in on their behalf — *or replayed their session cookie?* US case law leans "the user gave us permission so it's fine"; platform ToS lean "no it's not." Cookie-replay isn't legally distinguishable from password-login here.
+- **Browser extension publishing.** We need a Chrome Web Store / Firefox Add-ons listing for the v2 one-click cookie ingest. Approval timelines for "this extension exfiltrates cookies" extensions are uncertain. Plan B is a Tampermonkey userscript distributed via the docs page.
 - **Browser cluster vendor choice.** Browserless / Browserbase / self-host Playwright on Railway? Each has different security + cost profiles for the credential-decryption path.
 - **Proxy vendor.** Bright Data is the gold standard; Soax / Smartproxy are cheaper. Need to test detection rates per platform.
 - **Image strategy on social posts.** Reuse the autoblog hero image, or generate a per-platform 16:9 / 1:1 / 9:16 variant via gpt-image-1 (~$0.04 each, meaningful at scale)?
