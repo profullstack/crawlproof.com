@@ -127,6 +127,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   const [webhookSecret, setWebhookSecret] = useState<string | null>(
     initial?.webhook_secret ?? null,
   );
+  const [webhookSecretOverride, setWebhookSecretOverride] = useState("");
   const [dailyCount, setDailyCount] = useState<number>(
     initial?.daily_article_count ?? 1,
   );
@@ -252,6 +253,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         targetAudiences: audiences,
         description,
         webhookUrl,
+        webhookSecretOverride: webhookSecretOverride.trim() || undefined,
         dailyArticleCount: dailyCount,
         publishDays: days,
         publishHour,
@@ -616,6 +618,25 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             We POST a JSON body with the article. Your endpoint must reply 2xx within 10s.
             See <a className="underline" href="/docs/autoblog-webhook">webhook docs</a>.
+          </p>
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Bearer secret <span className="opacity-60">(optional)</span>
+          </label>
+          <input
+            className="input mt-1 font-mono"
+            type="text"
+            placeholder="Leave blank to generate one"
+            value={webhookSecretOverride}
+            onChange={(e) => setWebhookSecretOverride(e.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            If your receiver (e.g. an existing CMS admin page) already issued you a token,
+            paste it here so we send it as <code>Authorization: Bearer …</code>. Otherwise
+            we'll generate one for you on save.
           </p>
         </div>
         {webhookSecret && (

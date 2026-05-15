@@ -126,11 +126,22 @@ export type SiteInput = {
   targetAudiences: string;
   description: string;
   webhookUrl: string;
+  // Optional: if the receiver issued its own bearer (e.g. an existing
+  // CMS admin generated a token), the user pastes it here and we send
+  // that as the Authorization header instead of auto-generating one.
+  webhookSecretOverride?: string;
   dailyArticleCount: number;
   publishDays: number[];
   publishHour: number;
   internalLinksPerArticle: number;
 };
+
+// Light sanity check on a pasted bearer: ASCII, no whitespace, length
+// in the same ballpark as something a competent receiver would issue.
+function isPlausibleSecret(s: string): boolean {
+  if (s.length < 16 || s.length > 256) return false;
+  return /^[\x21-\x7e]+$/.test(s); // printable ASCII, no spaces
+}
 
 export async function createOrUpdateSite(
   input: SiteInput,
@@ -177,6 +188,15 @@ export async function createOrUpdateSite(
     return { ok: false, error: "Pick at least one publishing day." };
   }
 
+  const overrideSecret = input.webhookSecretOverride?.trim();
+  if (overrideSecret && !isPlausibleSecret(overrideSecret)) {
+    return {
+      ok: false,
+      error:
+        "Bearer secret must be 16-256 printable ASCII characters with no whitespace.",
+    };
+  }
+
   // Look up the existing row (v1: one per user).
   const { data: existing } = await supabase
     .from("lx_site")
@@ -192,33 +212,40 @@ export async function createOrUpdateSite(
       .select("sitemap_url")
       .eq("id", existing.id)
       .maybeSingle();
+    const updatePayload: Record<string, unknown> = {
+      domain,
+      url: `https://${domain}`,
+      blog_root_url: blogRootUrl,
+      sitemap_url: sitemapUrl,
+      niche,
+      target_audiences: audiences,
+      description,
+      webhook_url: webhookUrl,
+      daily_article_count: dailyArticleCount,
+      publish_days: publishDays,
+      publish_hour: publishHour,
+      internal_links_per_article: internalLinks,
+      next_publish_at: nextAt?.toISOString() ?? null,
+    };
+    if (overrideSecret) {
+      updatePayload.webhook_secret = overrideSecret;
+    }
     const { error } = await supabase
       .from("lx_site")
-      .update({
-        domain,
-        url: `https://${domain}`,
-        blog_root_url: blogRootUrl,
-        sitemap_url: sitemapUrl,
-        niche,
-        target_audiences: audiences,
-        description,
-        webhook_url: webhookUrl,
-        daily_article_count: dailyArticleCount,
-        publish_days: publishDays,
-        publish_hour: publishHour,
-        internal_links_per_article: internalLinks,
-        next_publish_at: nextAt?.toISOString() ?? null,
-      })
+      .update(updatePayload)
       .eq("id", existing.id);
     if (error) return { ok: false, error: error.message };
     if (prev?.sitemap_url !== sitemapUrl) {
       await enqueueSitemapCrawl(existing.id);
     }
     revalidatePath("/autoblog");
-    return { ok: true, siteId: existing.id };
+    // Echo the pasted secret back so the form can render the card.
+    return overrideSecret
+      ? { ok: true, siteId: existing.id, webhookSecret: overrideSecret }
+      : { ok: true, siteId: existing.id };
   }
 
-  const webhookSecret = generateWebhookSecret();
+  const webhookSecret = overrideSecret || generateWebhookSecret();
   const { data: inserted, error } = await supabase
     .from("lx_site")
     .insert({
