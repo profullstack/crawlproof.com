@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { postNow } from "@/app/actions/socialPosting";
 
 const BLUESKY_MAX = 300;
+const MASTODON_MAX = 500;
 const REDDIT_TITLE_MAX = 300;
 
 export function PostNowForm({
@@ -23,8 +24,13 @@ export function PostNowForm({
 
   const acct = accounts.find((a) => a.id === accountId);
   const isReddit = acct?.platform === "reddit";
-  const remaining =
-    acct?.platform === "bluesky" ? BLUESKY_MAX - text.length : null;
+  const charMax =
+    acct?.platform === "bluesky"
+      ? BLUESKY_MAX
+      : acct?.platform === "mastodon"
+        ? MASTODON_MAX
+        : null;
+  const remaining = charMax !== null ? charMax - text.length : null;
   const titleRemaining = isReddit ? REDDIT_TITLE_MAX - title.length : null;
 
   const canSubmit =

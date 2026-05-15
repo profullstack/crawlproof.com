@@ -147,6 +147,35 @@ export default async function SocialSetupPage({
           Connect Reddit
         </a>
       </section>
+
+      {/* Connect Mastodon */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect Mastodon</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Mastodon is federated — every instance is its own OAuth provider.
+          Enter the URL of your instance (e.g. <code>mastodon.social</code> or{" "}
+          <code>fosstodon.org</code>). We register a Crawlproof app there
+          automatically the first time, then redirect you to grant{" "}
+          <code>read</code> + <code>write:statuses</code> permission.
+        </p>
+        <form
+          method="POST"
+          action="/api/sp/oauth/mastodon/start"
+          className="mt-4 flex flex-wrap gap-2"
+        >
+          <input
+            className="input min-w-[16rem] flex-1"
+            type="text"
+            name="instance_url"
+            placeholder="mastodon.social"
+            autoComplete="off"
+            required
+          />
+          <button type="submit" className="btn btn-primary">
+            Connect Mastodon
+          </button>
+        </form>
+      </section>
     </div>
   );
 }

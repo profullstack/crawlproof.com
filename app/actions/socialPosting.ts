@@ -14,6 +14,10 @@ import {
   REDDIT_TITLE_MAX,
   REDDIT_TEXT_MAX,
 } from "@/lib/sp/platforms/reddit";
+import {
+  createMastodonStatus,
+  MASTODON_DEFAULT_MAX_CHARS,
+} from "@/lib/sp/platforms/mastodon";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -130,7 +134,7 @@ export async function postNow(input: {
   const { data: account } = await supabase
     .from("sp_account")
     .select(
-      "id, platform, handle, external_id, enc_access_token, enc_refresh_token, token_expires_at, status, consecutive_failures",
+      "id, platform, handle, external_id, instance_url, enc_access_token, enc_refresh_token, token_expires_at, status, consecutive_failures",
     )
     .eq("id", input.accountId)
     .eq("user_id", user.id)
@@ -163,6 +167,19 @@ export async function postNow(input: {
     }
     if (text.length > REDDIT_TEXT_MAX) {
       return { ok: false, error: `Reddit text body max ${REDDIT_TEXT_MAX} chars.` };
+    }
+  } else if (account.platform === "mastodon") {
+    if (!account.instance_url) {
+      return { ok: false, error: "Mastodon account is missing its instance URL." };
+    }
+    // Most instances default to 500. Some go higher; if the user tunes
+    // their instance for longer toots they can raise this — for now we
+    // enforce the conservative ceiling matching what we tell users.
+    if (text.length > MASTODON_DEFAULT_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `Mastodon posts max ${MASTODON_DEFAULT_MAX_CHARS} chars (got ${text.length}).`,
+      };
     }
   } else {
     return {
@@ -248,8 +265,7 @@ export async function postNow(input: {
         text,
       });
       result = { platformPostId: r.uri, webUrl: r.webUrl };
-    } else {
-      // account.platform === "reddit" — narrowed above.
+    } else if (account.platform === "reddit") {
       const r = await createRedditSelfPost({
         accessToken,
         subreddit: subreddit!,
@@ -257,6 +273,16 @@ export async function postNow(input: {
         text,
       });
       result = { platformPostId: r.fullname, webUrl: r.webUrl };
+    } else {
+      // account.platform === "mastodon" — narrowed above; instance_url
+      // is guaranteed non-null because the validation block returns
+      // early when missing.
+      const r = await createMastodonStatus({
+        instanceUrl: account.instance_url!,
+        accessToken,
+        status: text,
+      });
+      result = { platformPostId: r.id, webUrl: r.webUrl };
     }
     await supabase
       .from("sp_post")
