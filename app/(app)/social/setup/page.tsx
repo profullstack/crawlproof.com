@@ -157,6 +157,24 @@ export default async function SocialSetupPage({
         </a>
       </section>
 
+      {/* Connect Threads */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect Threads</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Threads OAuth — scopes <code>threads_basic</code> +{" "}
+          <code>threads_content_publish</code>. Same Meta app credentials
+          as Facebook. <strong>Posting on behalf of users beyond the app's
+          developers/testers requires Meta app review.</strong> Tokens are
+          long-lived (~60 days).
+        </p>
+        <a
+          href="/api/sp/oauth/threads/start"
+          className="btn btn-primary mt-4"
+        >
+          Connect Threads
+        </a>
+      </section>
+
       {/* Connect Facebook Page */}
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Connect Facebook Pages</h2>

@@ -43,6 +43,10 @@ import {
   createFacebookPagePost,
   FACEBOOK_MAX_CHARS,
 } from "@/lib/sp/platforms/facebook";
+import {
+  createThreadsPost,
+  THREADS_MAX_CHARS,
+} from "@/lib/sp/platforms/threads";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -372,6 +376,13 @@ export async function postNow(input: {
         error: `Facebook posts max ${FACEBOOK_MAX_CHARS} chars (got ${text.length}).`,
       };
     }
+  } else if (account.platform === "threads") {
+    if (text.length > THREADS_MAX_CHARS) {
+      return {
+        ok: false,
+        error: `Threads posts max ${THREADS_MAX_CHARS} chars (got ${text.length}).`,
+      };
+    }
   } else {
     return {
       ok: false,
@@ -509,16 +520,24 @@ export async function postNow(input: {
       const username = account.handle.replace(/^@/, "");
       const r = await createTweet({ accessToken, username, text });
       result = { platformPostId: r.tweetId, webUrl: r.webUrl };
-    } else {
-      // account.platform === "facebook_page" — narrowed above.
-      // enc_access_token holds the Page access token, external_id is
-      // the Page id.
+    } else if (account.platform === "facebook_page") {
       const r = await createFacebookPagePost({
         pageId: account.external_id,
         pageAccessToken: accessToken,
         text,
       });
       result = { platformPostId: r.postId, webUrl: r.webUrl };
+    } else {
+      // account.platform === "threads" — narrowed above. external_id
+      // is the Threads user id; handle is stored as "@username".
+      const username = account.handle.replace(/^@/, "");
+      const r = await createThreadsPost({
+        accessToken,
+        userId: account.external_id,
+        username,
+        text,
+      });
+      result = { platformPostId: r.threadId, webUrl: r.webUrl };
     }
     await supabase
       .from("sp_post")
