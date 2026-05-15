@@ -21,6 +21,7 @@ type ArticleRow = {
   title: string;
   slug: string;
   meta_description: string;
+  excerpt: string | null;
   content_markdown: string;
   content_html: string;
   image_url: string | null;
@@ -58,7 +59,7 @@ function articleToPost(article: ArticleRow, site: SiteRow): Post {
     canonical_url: url,
     title: article.title,
     slug: article.slug,
-    excerpt: article.meta_description || null,
+    excerpt: article.excerpt || article.meta_description || null,
     html: article.content_html,
     markdown: article.content_markdown,
     status: "published",
@@ -84,7 +85,7 @@ export async function deliverArticle(
     .eq("id", articleId)
     .eq("status", "ready")
     .select(
-      "id, site_id, title, slug, meta_description, content_markdown, content_html, image_url, tags, outbound_links, internal_links, status, webhook_delivery_id, webhook_attempts, created_at",
+      "id, site_id, title, slug, meta_description, excerpt, content_markdown, content_html, image_url, tags, outbound_links, internal_links, status, webhook_delivery_id, webhook_attempts, created_at",
     )
     .maybeSingle<ArticleRow>();
   if (!claimed) {

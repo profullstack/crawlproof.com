@@ -63,9 +63,10 @@ const ArticleSchema = z.object({
     .min(3)
     .max(96)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "lowercase-kebab-case"),
-  meta_description: z.string().min(50).max(220),
-  tags: z.array(z.string().min(2).max(40)).min(2).max(6),
-  markdown_body: z.string().min(800),
+  meta_description: z.string().min(50).max(160),
+  excerpt: z.string().min(50).max(240),
+  tags: z.array(z.string().min(2).max(40)).min(5).max(8),
+  markdown_body: z.string().min(5000),
   used_internal_link_urls: z.array(z.string().url()).max(8),
 });
 
@@ -84,15 +85,56 @@ export function slugify(input: string, max = 80): string {
 
 function buildSystemPrompt(): string {
   return [
-    "You are a senior SEO content writer producing publication-ready blog posts.",
-    "Write in a confident, expert tone — neither breathless marketing copy nor academic dryness.",
-    "Aim for 900–1,400 words. Use H2/H3 structure. Open with a one-paragraph hook that previews the answer; do not bury the lede.",
-    "Cite concrete examples or numbers when claiming a fact. If you cannot, hedge ('many', 'in our experience') instead of inventing.",
-    "Never include a 'Conclusion:' or 'In summary:' heading — close with a forward-looking paragraph instead.",
-    "Internal links MUST be inserted inline as standard markdown links `[anchor](url)` where the surrounding sentence is naturally about that URL's topic. Never create a 'Further reading' list.",
-    "Do NOT invent URLs. Use only the URLs explicitly provided in the user's message; if none fit a section, omit that link rather than fabricate one.",
-    "Return strict JSON matching the schema. The markdown_body must be the article body only — no front matter, no leading title (the title goes in its own field).",
+    "You are writing a long-form SEO blog post in the practical, operator-focused style of ThreatCrush and CoinPayPortal: pragmatic B2B/technical voice, strong opening pain point, the topic reframed as an architecture/workflow problem (not a definition), table of contents, H2/H3 sections, practical rules in blockquotes, bullets/tables, implementation advice, soft product CTA near the end.",
+    "",
+    "Voice:",
+    "- Direct, confident, technical but readable, slightly skeptical of hype.",
+    "- Pragmatic founder/operator explaining a real workflow problem, not a generic SEO writer.",
+    "- Open with a concrete pain point in 2–4 short paragraphs.",
+    "- Use the pattern: \"Teams think the problem is X. The real problem is Y.\"",
+    "- Use phrases like: \"The mistake teams make is…\" / \"That changes the conversation.\" / \"The practical question is…\" / \"A useful way to think about it is…\" / \"What breaks in practice is…\"",
+    "- Avoid fluff, motivational language, generic marketing claims, emoji clutter, academic tone.",
+    "- Do not invent stats or citations. If sources are provided, weave them naturally. If not, hedge (\"many teams\", \"in production\").",
+    "",
+    "Structure for markdown_body (do NOT include front matter / a leading H1 — title goes in the title field):",
+    "- Intro: real-world problem, why now, reframe the keyword as an architecture/workflow/business decision.",
+    "- Table of Contents: markdown links to 6–8 H2 sections (each with 1–3 H3 subsections beneath when sensible).",
+    "- Body sections: each H2 makes one strong point; each H3 answers a practical sub-question.",
+    "- Include at least 3 blockquotes formatted `> Practical rule: …`.",
+    "- Include at least one comparison table.",
+    "- Include at least one numbered workflow / implementation sequence.",
+    "- Discuss common failure modes and what breaks when teams implement the topic badly.",
+    "- Where useful, include explicit \"what works\" and \"what fails\" sections.",
+    "- Near the end, a product-fit section connecting the topic to the brand — useful and architectural, not salesy.",
+    "- Final CTA: a horizontal rule, then a short `### Try {brand}` block with the brand one-liner and a markdown link.",
+    "",
+    "Content patterns:",
+    "- Security/CTEM/SOC topics: signals, workflows, detection, automation, integration, ownership, response, validation, operational context. Emphasize reducing noise, shortening investigation time, connecting proactive and reactive work, avoiding disconnected tooling.",
+    "- Payments/API/crypto topics: checkout architecture, APIs, webhooks, reconciliation, custody boundaries, escrow, settlement, rate limits, retries, idempotency, merchant operations. Emphasize that the UI is not the whole system — state, trust, settlement, and support are the real work.",
+    "",
+    "SEO requirements:",
+    "- Use the topic naturally in the H1, the first 100 words, at least 2 H2 headings, and the closing.",
+    "- Use secondary keywords naturally; never stuff.",
+    "- Include semantic variations.",
+    "- meta_description: ≤160 characters.",
+    "- excerpt: ≤240 characters.",
+    "- 5–8 lowercase tags related to the topic.",
+    "",
+    "Length: 2,200–3,200 words. Prioritize depth and usefulness over word count.",
+    "",
+    "Internal links: insert each provided URL inline exactly once as a standard markdown `[anchor](url)` link where the surrounding sentence is genuinely about that URL's topic. Never create a \"Further reading\" list. Never invent URLs — use only those provided.",
+    "",
+    "Output: strict JSON matching the schema. The markdown_body is the article body only.",
   ].join("\n");
+}
+
+function brandOneLiner(site: SiteRow): string {
+  // First sentence of the site's description, capped — gives the LLM a
+  // crisp one-liner to use in the final CTA without us guessing.
+  const desc = (site.description ?? "").trim();
+  if (!desc) return `${site.domain} — autoblog feed.`;
+  const m = desc.match(/^[\s\S]{20,200}?[.!?](?:\s|$)/);
+  return (m ? m[0] : desc).trim().slice(0, 200);
 }
 
 function buildUserPrompt(input: {
@@ -102,10 +144,16 @@ function buildUserPrompt(input: {
   linkSlots: number;
 }): string {
   const { site, keyword, candidates, linkSlots } = input;
-  const audienceLine = site.target_audiences.length
-    ? `Audience: ${site.target_audiences.join(", ")}.`
-    : "Audience: general technical readers.";
-  const nicheLine = site.niche ? `Niche: ${site.niche}.` : "";
+  const brand = site.domain;
+  const niche = site.niche?.trim() || "B2B / technical SaaS";
+  const audiences = site.target_audiences.length
+    ? site.target_audiences.join(", ")
+    : "technical operators and engineering leads";
+  const today = new Date().toISOString().slice(0, 10);
+  const year = new Date().getUTCFullYear();
+  const ctaUrl = `https://${site.domain}`;
+  const ctaText = `Try ${brand}`;
+
   const linkList = candidates
     .slice(0, MAX_LINK_CANDIDATES)
     .map(
@@ -115,19 +163,28 @@ function buildUserPrompt(input: {
         }`,
     )
     .join("\n");
+  const linkSlotLine = linkSlots > 0
+    ? `Insert EXACTLY ${linkSlots} of the following internal links inline as standard markdown links, where each fits naturally in the surrounding sentence. Pick the ${linkSlots} most relevant — do not include the others. Do not invent additional URLs.`
+    : "Internal-link slots: 0. Return used_internal_link_urls: [] and do not link out.";
 
   return [
-    `Write a blog post for ${site.domain}.`,
-    `Topic / target keyword: "${keyword}".`,
-    nicheLine,
-    audienceLine,
-    site.description ? `Site description: ${site.description}` : "",
+    "Runtime inputs:",
+    `- Site/brand: ${brand}`,
+    `- Brand one-liner: ${brandOneLiner(site)}`,
+    `- Niche/audience: ${niche}`,
+    `- Main topic/keyword: "${keyword}"`,
+    `- Target reader: ${audiences}`,
+    `- Desired CTA URL/text: ${ctaUrl} / ${ctaText}`,
+    `- Current year: ${year}`,
+    `- Current date: ${today}`,
+    site.description ? `- Site description: ${site.description}` : "",
     "",
-    `You MUST insert exactly ${linkSlots} of the following internal links, inline as markdown links, where each fits naturally. Pick the ${linkSlots} most relevant — do not include the others. Do not invent additional URLs.`,
+    "Internal links to fit naturally inline (do NOT include in a Further Reading list):",
+    linkSlotLine,
     "",
-    linkList || "(no internal link candidates — write the post without any internal links and return used_internal_link_urls: [])",
+    linkList || "(none — return used_internal_link_urls: [])",
     "",
-    "Return the JSON object only.",
+    "Now write the blog post. Return the JSON object only.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -189,11 +246,15 @@ async function generateImage(
   title: string,
   nicheHint: string | null,
 ): Promise<Buffer | null> {
+  // Hero image for a pragmatic B2B / technical SEO post. Match the
+  // tone of the article: operator-focused, architectural, not salesy.
   const prompt = [
-    `Editorial illustration for a blog post titled: "${title}".`,
+    `Hero image for a long-form technical SEO blog post titled: "${title}".`,
     nicheHint ? `Subject area: ${nicheHint}.` : "",
-    "Style: clean, modern, minimal. Muted palette. No text, no UI screenshots, no logos.",
-    "Aspect ratio: wide / cinematic, suitable as a blog hero image.",
+    "Audience: engineers, operators, technical buyers.",
+    "Style: editorial, architectural, minimal. Restrained dark palette with one accent color. Abstract geometric composition (flows, nodes, layers) implying a system, workflow, or infrastructure topic.",
+    "Strictly NO text or typography of any kind. NO UI screenshots, NO logos, NO charts with labels, NO people, NO stock-photo office scenes.",
+    "Cinematic 3:2 hero aspect. Subtle depth, not flat.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -317,7 +378,9 @@ export async function generateArticle(
   try {
     const stream = anthropic.messages.stream({
       model: CLAUDE_MODEL,
-      max_tokens: 4000,
+      // 2,200–3,200 words ≈ ~12k–18k output tokens including JSON
+      // overhead; give headroom so the model isn't truncated mid-body.
+      max_tokens: 24000,
       thinking: { type: "disabled" },
       output_config: {
         effort: "medium",
@@ -418,6 +481,7 @@ export async function generateArticle(
       title: article.title,
       slug: finalSlug,
       meta_description: article.meta_description,
+      excerpt: article.excerpt,
       content_markdown: article.markdown_body,
       content_html: html,
       image_url: imageUrl,
