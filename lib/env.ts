@@ -32,5 +32,10 @@ export const env = {
   // DataForSEO — keyword research for Autoblog. Basic-auth credentials.
   dataforseoLogin: process.env.DATAFORSEO_LOGIN ?? "",
   dataforseoPassword: process.env.DATAFORSEO_PASSWORD ?? "",
+  // Social Posting — static AES-GCM key for at-rest token encryption.
+  // 32 bytes base64-encoded. Generate via `openssl rand -base64 32`.
+  // Phase 1 only; envelope encryption (Vault KEK + per-user DEKs)
+  // replaces this when cookie + puppeteer modes ship.
+  socialVaultKey: process.env.SOCIAL_VAULT_KEY ?? "",
   required,
 };

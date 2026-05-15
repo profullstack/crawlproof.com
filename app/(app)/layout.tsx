@@ -42,6 +42,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/autoblog" className="hidden sm:inline">
               Autoblog
             </Link>
+            <Link href="/social" className="hidden sm:inline">
+              Social
+            </Link>
             <SitePicker sites={sites} currentId={currentSiteId} />
             <Link href="/settings" className="hidden sm:inline">
               Settings
