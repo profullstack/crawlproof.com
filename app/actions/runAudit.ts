@@ -21,7 +21,7 @@ import {
 } from "@/lib/credits";
 import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
-import { recordMarketingConsent } from "@/lib/marketing";
+import { recordMarketingConsent, recordLead } from "@/lib/marketing";
 
 type ScanOk = {
   ok: true;
@@ -71,6 +71,14 @@ export async function startAuditFromForm(input: {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
   const target = check.url;
+
+  // Email is now required on the hero form — we use it for the PDF
+  // report + lead capture. Belt-and-braces in case a client bypasses
+  // the `required` attribute.
+  const email = input.email?.trim();
+  if (!email || !email.includes("@")) {
+    return { ok: false, error: "Email is required." };
+  }
 
   const hdrs = await headers();
   const ip =
@@ -130,7 +138,7 @@ export async function startAuditFromForm(input: {
       share_token: token,
       triggered_by: "manual",
       engine: firstEngine,
-      pdf_email: input.email ?? null,
+      pdf_email: email,
       phone: input.phone?.trim() || null,
       estimated_monthly_sales: salesParsed,
     })
@@ -148,7 +156,7 @@ export async function startAuditFromForm(input: {
     audit_id: row.id,
     meta: {
       from: "hero_form",
-      email: input.email ?? null,
+      email,
       phone: input.phone?.trim() || null,
       estimated_monthly_sales: salesParsed,
       engine: firstEngine,
@@ -156,17 +164,21 @@ export async function startAuditFromForm(input: {
     },
   });
 
-  // Marketing list opt-in is independent of the PDF email — same address,
-  // different consent. Best-effort: failure here must not break the audit.
-  if (input.marketingOptIn && input.email) {
-    try {
-      await recordMarketingConsent({ email: input.email, source: "hero_form" });
-    } catch (err) {
-      console.warn("[runAudit] marketing consent record failed", err);
+  // Lead capture: every hero-form submission lands in
+  // marketing_contacts. Tick → consented_at=now() (real opt-in).
+  // Unticked → consented_at=NULL (lead only, no marketing sends).
+  // Best-effort: failures must not break the audit.
+  try {
+    if (input.marketingOptIn) {
+      await recordMarketingConsent({ email, source: "hero_form" });
+    } else {
+      await recordLead({ email, source: "hero_form" });
     }
+  } catch (err) {
+    console.warn("[runAudit] lead/consent record failed", err);
   }
 
-  await notifyWorker(row.id, input.email);
+  await notifyWorker(row.id, email);
   return { ok: true, id: row.id, token: row.share_token!, engines: [firstEngine] };
 }
 

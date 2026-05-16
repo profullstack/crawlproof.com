@@ -6,6 +6,41 @@ function normalize(email: string): string | null {
   return e;
 }
 
+// Record a *lead* — an email we captured during a transaction (e.g.
+// hero audit form), NOT a marketing opt-in. Inserts a marketing_contacts
+// row with consented_at=NULL.
+//
+// Rule: never downgrade a prior consent to a lead. If a row already
+// exists for this email, leave it alone (its consent state and source
+// stay intact).
+//
+// Senders MUST filter `where consented_at is not null` before sending
+// promotional email. Lead rows are for transactional / sales follow-up
+// only.
+export async function recordLead(input: {
+  email: string;
+  source: string;
+}): Promise<void> {
+  const email = normalize(input.email);
+  if (!email) return;
+  const svc = serviceClient();
+  const { data: existing } = await svc
+    .from("marketing_contacts")
+    .select("id")
+    .ilike("email", email)
+    .maybeSingle();
+  if (existing) return;
+  const { error } = await svc.from("marketing_contacts").insert({
+    email,
+    source: input.source,
+    consented_at: null,
+  });
+  if (error) {
+    // Race window: another concurrent insert won the unique index. Fine.
+    console.warn("[marketing.recordLead]", error.message);
+  }
+}
+
 // Record an explicit marketing opt-in. Idempotent: if the email already has
 // a row, we refresh consented_at and clear any prior unsubscribe (the user
 // is opting in again, presumably knowingly). The unsubscribe_token is

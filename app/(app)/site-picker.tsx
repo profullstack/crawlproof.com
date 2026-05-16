@@ -25,7 +25,7 @@ export function SitePicker({
   if (sites.length === 0) {
     return (
       <a
-        href="/autoblog/setup"
+        href="/sites/new"
         className="text-xs uppercase tracking-wider text-[var(--color-muted)] hover:text-[var(--color-fg)]"
       >
         + Add site
@@ -77,7 +77,7 @@ export function SitePicker({
           ))}
           <div className="my-1 border-t border-[var(--color-border)]/50" />
           <a
-            href="/autoblog/setup?new=1"
+            href="/sites/new"
             className="block px-3 py-2 text-xs text-[var(--color-muted)] hover:bg-[var(--color-border)]/30 hover:text-[var(--color-fg)]"
             onClick={() => setOpen(false)}
           >

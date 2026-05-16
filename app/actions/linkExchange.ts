@@ -91,6 +91,74 @@ export async function discoverFromHomepage(
 }
 
 // ------------------------------------------------------------
+// createSite — minimal "add this domain so I can scan it" path.
+//
+// Distinct from createOrUpdateSite: this one stores ONLY the domain
+// (and an optional display name). No blog URL, no sitemap, no
+// autoblog webhook — all those fields stay NULL, the autoblog cron
+// already filters `where webhook_url is not null`, so the site
+// simply doesn't participate in autoblog/backlinks until the user
+// opts in via /autoblog/setup.
+//
+// Sets the new row as the current site so the picker reflects it
+// without an extra click.
+// ------------------------------------------------------------
+export async function createSite(input: {
+  domain: string;
+  name?: string;
+}): Promise<Ok<{ siteId: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const domain = normalizeDomain(input.domain);
+  if (!domain) return { ok: false, error: "Enter a valid domain." };
+
+  const name = clean(input.name, MAX.niche) || null;
+
+  // Reject duplicates per-user — same domain already added.
+  const { data: existing } = await supabase
+    .from("lx_site")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("domain", domain)
+    .maybeSingle();
+  if (existing) {
+    await setCurrentSite(existing.id as string);
+    revalidatePath("/dashboard");
+    return { ok: true, siteId: existing.id as string };
+  }
+
+  const { data: inserted, error } = await supabase
+    .from("lx_site")
+    .insert({
+      user_id: user.id,
+      domain,
+      url: `https://${domain}`,
+      // name lives in lx_site if the column exists; harmless coalesce
+      // because supabase ignores unknown columns when not strict-mode.
+      name,
+      // Everything autoblog-shaped stays null until the user
+      // explicitly configures it on /autoblog/setup.
+      blog_root_url: null,
+      sitemap_url: null,
+      webhook_url: null,
+      webhook_secret: null,
+    })
+    .select("id")
+    .single();
+  if (error || !inserted) {
+    return { ok: false, error: error?.message ?? "Could not add site." };
+  }
+
+  await setCurrentSite(inserted.id as string);
+  revalidatePath("/dashboard");
+  return { ok: true, siteId: inserted.id as string };
+}
+
+// ------------------------------------------------------------
 // enrichFromUrls — phase 2 of the new wizard. With confirmed URLs
 // (auto-found or user-supplied), scrape the blog + feed and ask
 // Claude Haiku to extract niche / audiences / description.

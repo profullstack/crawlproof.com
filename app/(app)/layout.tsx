@@ -36,19 +36,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Link>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
-            <Link href="/projects/new" className="hidden sm:inline">
-              New
-            </Link>
-            <Link href="/autoblog" className="hidden sm:inline">
-              Autoblog
-            </Link>
-            <Link href="/social" className="hidden sm:inline">
-              Social
-            </Link>
+            <Link href="/projects/new">New</Link>
+            <Link href="/autoblog">Autoblog</Link>
+            <Link href="/social">Social</Link>
             <SitePicker sites={sites} currentId={currentSiteId} />
-            <Link href="/settings" className="hidden sm:inline">
-              Settings
-            </Link>
+            <Link href="/settings">Settings</Link>
             <Link
               href="/settings/billing"
               className="badge badge-pass font-mono"

@@ -17,13 +17,17 @@ export function HeroAuditForm() {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!email.trim()) {
+      setError("Email is required so we can send you the PDF report.");
+      return;
+    }
     startTransition(async () => {
       const res = await startAuditFromForm({
         url,
-        email: email || undefined,
+        email,
         phone: phone.trim() || undefined,
         estimatedMonthlySales: monthlySales.trim() || undefined,
-        marketingOptIn: email ? marketingOptIn : false,
+        marketingOptIn,
       });
       if (!res.ok) {
         setError(res.error ?? "Could not start audit.");
@@ -46,7 +50,8 @@ export function HeroAuditForm() {
       />
       <input
         type="email"
-        placeholder="Email (optional, for PDF report)"
+        required
+        placeholder="Email — we'll send the PDF report here"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         className="input"
@@ -76,24 +81,17 @@ export function HeroAuditForm() {
       >
         {pending ? "Starting…" : "Run free audit"}
       </button>
-      {email && (
-        <p className="text-xs text-[var(--color-muted)]">
-          We&apos;ll email the PDF report to <strong>{email}</strong> when ready.
-        </p>
-      )}
-      {email && (
-        <label className="flex items-start gap-2 text-xs text-[var(--color-muted)]">
-          <input
-            type="checkbox"
-            checked={marketingOptIn}
-            onChange={(e) => setMarketingOptIn(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            Also email me occasional CrawlProof updates. Unsubscribe anytime.
-          </span>
-        </label>
-      )}
+      <label className="flex items-start gap-2 text-xs text-[var(--color-muted)]">
+        <input
+          type="checkbox"
+          checked={marketingOptIn}
+          onChange={(e) => setMarketingOptIn(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span>
+          Also email me occasional CrawlProof updates. Unsubscribe anytime.
+        </span>
+      </label>
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
     </form>
   );
