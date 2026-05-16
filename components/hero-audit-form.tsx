@@ -4,6 +4,19 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { startAuditFromForm } from "@/app/actions/runAudit";
 
+// Datafa.st injects `window.datafast` once its script.js loads. Calls
+// before then are dropped silently — that's the right behavior here:
+// we don't want analytics to ever block or break a real conversion.
+declare global {
+  interface Window {
+    datafast?: (
+      eventName: string,
+      customData?: Record<string, string>,
+      callback?: (r: { status: number }) => void,
+    ) => void;
+  }
+}
+
 export function HeroAuditForm() {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -21,6 +34,14 @@ export function HeroAuditForm() {
       setError("Email is required so we can send you the PDF report.");
       return;
     }
+    // Fire as soon as the user commits to submit (before the action).
+    // This is the denominator for the conversion funnel — pageview →
+    // attempt → success.
+    window.datafast?.("audit_submit_attempted", {
+      has_phone: phone.trim() ? "yes" : "no",
+      has_sales: monthlySales.trim() ? "yes" : "no",
+      marketing_opt_in: marketingOptIn ? "yes" : "no",
+    });
     startTransition(async () => {
       const res = await startAuditFromForm({
         url,
@@ -31,8 +52,19 @@ export function HeroAuditForm() {
       });
       if (!res.ok) {
         setError(res.error ?? "Could not start audit.");
+        // Slugify the error message so we don't blow past Datafa.st's
+        // 255-char value limit + keep distinct error buckets tidy.
+        const reason = (res.error ?? "unknown")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "")
+          .slice(0, 64);
+        window.datafast?.("audit_submit_failed", { reason });
         return;
       }
+      window.datafast?.("audit_submitted", {
+        marketing_opt_in: marketingOptIn ? "yes" : "no",
+      });
       router.push(`/r/${res.token}`);
     });
   }
