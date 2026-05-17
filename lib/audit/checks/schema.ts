@@ -112,5 +112,29 @@ export function checkSchema(ctx: CrawlContext): Finding[] {
     priority: hasFaq ? 5 : 3,
   });
 
+  // Additional AEO-friendly types — each is a soft warn when missing, since
+  // not every site needs every type, but their presence boosts AI ingestion.
+  const extras: Array<{ key: string; types: string[]; label: string; priority: 1 | 2 | 3 | 4 | 5 }> = [
+    { key: "schema.article", types: ["Article", "BlogPosting", "NewsArticle"], label: "Article / BlogPosting", priority: 3 },
+    { key: "schema.breadcrumb", types: ["BreadcrumbList"], label: "BreadcrumbList", priority: 3 },
+    { key: "schema.product", types: ["Product", "Offer"], label: "Product / Offer", priority: 3 },
+    { key: "schema.local_business", types: ["LocalBusiness"], label: "LocalBusiness", priority: 4 },
+    { key: "schema.person", types: ["Person"], label: "Person (author / founder)", priority: 4 },
+    { key: "schema.howto", types: ["HowTo"], label: "HowTo", priority: 4 },
+    { key: "schema.video", types: ["VideoObject"], label: "VideoObject", priority: 4 },
+  ];
+  for (const e of extras) {
+    if (e.key === "schema.product" && types.some((t) => t.includes("SoftwareApplication"))) continue;
+    const has = types.some((t) => e.types.some((needle) => t.includes(needle)));
+    out.push({
+      section: "Schema / Structured Data Audit",
+      check_key: e.key,
+      status: has ? "pass" : "warn",
+      title: has ? `${e.label} JSON-LD present` : `${e.label} JSON-LD not found`,
+      detail: has ? undefined : `Add ${e.label} where applicable so AI answer engines can resolve the entity precisely.`,
+      priority: has ? 5 : e.priority,
+    });
+  }
+
   return out;
 }

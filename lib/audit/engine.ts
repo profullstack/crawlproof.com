@@ -6,6 +6,12 @@ import { checkSchema } from "./checks/schema";
 import { checkRobotsAndSitemap } from "./checks/robots";
 import { checkPositioning } from "./checks/positioning";
 import { collectDataPoints } from "./checks/dataPoints";
+import { checkMeta } from "./checks/meta";
+import { checkContent } from "./checks/content";
+import { checkImages } from "./checks/images";
+import { checkLinks } from "./checks/links";
+import { checkSecurity } from "./checks/security";
+import { checkPerformance } from "./checks/performance";
 import { scoreFindings } from "./score";
 import { deriveRecommendations } from "./recommendations";
 import type { AuditResult, CrawlContext, FetchedPage, Finding } from "./types";
@@ -168,7 +174,13 @@ export async function runAudit(
   });
 
   findings.push(...checkHomepage(ctx));
+  findings.push(...checkMeta(ctx));
+  findings.push(...checkContent(ctx));
   findings.push(...checkSchema(ctx));
+  findings.push(...checkImages(ctx));
+  findings.push(...(await checkLinks(ctx)));
+  findings.push(...checkPerformance(ctx));
+  findings.push(...checkSecurity(ctx));
   findings.push(...checkRobotsAndSitemap(ctx));
   findings.push(...checkPositioning(ctx));
 
