@@ -85,6 +85,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   );
 
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   function onDomainBlur() {
@@ -143,6 +144,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       return;
     }
     setError(null);
+    setWarning(null);
     setNotice(null);
     setEnriching(true);
     const res = await enrichFromUrls({
@@ -152,10 +154,10 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     });
     setEnriching(false);
     if (!res.ok) {
-      // Soft-fail: surface a notice but let the user proceed and fill
-      // in the editorial fields by hand.
-      setNotice(
-        `Couldn't auto-write your editorial profile (${res.error}). You can fill it in below.`,
+      // Soft-fail: surface a warning so the user knows enrichment didn't
+      // run and they need to fill the editorial fields by hand.
+      setWarning(
+        `Couldn't auto-write your editorial profile (${res.error}). Fill in the niche, audiences, and description below.`,
       );
       setStep("review");
       return;
@@ -614,6 +616,11 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       </section>
 
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
+      {warning && (
+        <p className="text-sm text-amber-500 dark:text-amber-400">
+          ⚠ {warning}
+        </p>
+      )}
       {notice && (
         <p className="text-sm text-[var(--color-pass)]">{notice}</p>
       )}
