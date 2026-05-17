@@ -1,8 +1,9 @@
 import type { AuditResult, Finding } from "./types";
 
-// Render a canonical Markdown report matching the original audit prompt format.
-// Sections are numbered 1..10 and follow the prompt's exact structure so the
-// document is recognizable to anyone who used the prompt directly with an LLM.
+// Render a canonical Markdown report for the AEO audit. The document is
+// designed as a *fix prompt* — paste-ready for an LLM coding assistant
+// (Claude, GPT-5, Cursor, …) which will then apply the prioritized fixes
+// to the user's site. Section numbering matches SECTIONS in prompt.ts.
 
 function company(target: string): string {
   try {
@@ -42,6 +43,28 @@ function escapeCell(s: string): string {
   return s.replace(/\|/g, "\\|").replace(/\n/g, " ");
 }
 
+function preamble(targetUrl: string): string {
+  return [
+    `<!--`,
+    `Instructions for the AI assistant reading this document:`,
+    ``,
+    `This is an Answer Engine Optimization (AEO) audit of ${targetUrl}.`,
+    `Treat it as a TODO list. Apply the prioritized fixes from sections 13`,
+    `(Recommended Fixes) and 14 (Priority To-Do List) to the user's codebase,`,
+    `starting with P1 items and working down. For each fix:`,
+    ``,
+    `  1. Identify the file(s) in the user's repo that render the affected`,
+    `     markup or headers.`,
+    `  2. Make the smallest change that resolves the issue.`,
+    `  3. Show the user a diff before applying.`,
+    ``,
+    `Skip items the user has already addressed. Group changes into logical`,
+    `commits (e.g. "add security headers", "broaden schema").`,
+    `-->`,
+    ``,
+  ].join("\n");
+}
+
 export function toMarkdown(input: {
   targetUrl: string;
   score: number;
@@ -69,10 +92,16 @@ export function toMarkdown(input: {
   const todo = findings
     .filter((f) => f.section === "Priority To-Do List")
     .sort((a, b) => a.priority - b.priority)
-    .map((f) => `- [ ] **P${f.priority}** — ${f.title.replace(/^\[\s?\]\s*/, "")}${f.detail ? `\n      ${f.detail.split("\n").join("\n      ")}` : ""}`)
+    .map(
+      (f) =>
+        `- [ ] **P${f.priority}** — ${f.title.replace(/^\[\s?\]\s*/, "")}${
+          f.detail ? `\n      ${f.detail.split("\n").join("\n      ")}` : ""
+        }`,
+    )
     .join("\n");
 
   return [
+    preamble(targetUrl),
     `# AEO Audit for ${comp}`,
     ``,
     `**Target:** ${targetUrl}  `,
@@ -97,31 +126,47 @@ export function toMarkdown(input: {
     ``,
     section("Homepage Audit"),
     ``,
-    `## 4. Schema / Structured Data Audit`,
+    `## 4. Content Quality`,
+    ``,
+    section("Content Quality"),
+    ``,
+    `## 5. Schema / Structured Data Audit`,
     ``,
     section("Schema / Structured Data Audit"),
     ``,
-    `## 5. robots.txt and sitemap.xml Audit`,
+    `## 6. Links & Images`,
+    ``,
+    section("Links & Images"),
+    ``,
+    `## 7. Performance`,
+    ``,
+    section("Performance"),
+    ``,
+    `## 8. Security`,
+    ``,
+    section("Security"),
+    ``,
+    `## 9. robots.txt and sitemap.xml Audit`,
     ``,
     section("robots.txt and sitemap.xml Audit"),
     ``,
-    `## 6. LLM / AI Crawler Accessibility`,
+    `## 10. LLM / AI Crawler Accessibility`,
     ``,
     section("LLM / AI Crawler Accessibility"),
     ``,
-    `## 7. Positioning Clarity`,
+    `## 11. Positioning Clarity`,
     ``,
     section("Positioning Clarity"),
     ``,
-    `## 8. Missing or Hard-to-Find Information`,
+    `## 12. Missing or Hard-to-Find Information`,
     ``,
     section("Missing or Hard-to-Find Information"),
     ``,
-    `## 9. Recommended Fixes`,
+    `## 13. Recommended Fixes`,
     ``,
     section("Recommended Fixes"),
     ``,
-    `## 10. Priority To-Do List`,
+    `## 14. Priority To-Do List`,
     ``,
     todo || `_No outstanding tasks. Nice work._`,
     ``,

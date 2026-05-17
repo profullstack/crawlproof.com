@@ -205,7 +205,7 @@ export default async function PublicReportPage({
 
         {audit.status === "complete" && audit.report_markdown ? (
           <ViewTabs
-            rawMarkdownUrl={`/r/${token}/report.md`}
+            rawMarkdownUrl={`/r/${token}/prompt.md`}
             markdownView={<MarkdownView markdown={audit.report_markdown} />}
             structuredView={
               <ReportView

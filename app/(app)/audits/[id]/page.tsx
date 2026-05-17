@@ -148,7 +148,7 @@ export default async function AuditPage({
       {audit.status === "complete" && audit.report_markdown ? (
         <ViewTabs
           rawMarkdownUrl={
-            audit.share_token ? `/r/${audit.share_token}/report.md` : undefined
+            audit.share_token ? `/r/${audit.share_token}/prompt.md` : undefined
           }
           markdownView={<MarkdownView markdown={audit.report_markdown} />}
           structuredView={
