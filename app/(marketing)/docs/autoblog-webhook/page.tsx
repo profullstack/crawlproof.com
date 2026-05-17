@@ -54,9 +54,10 @@ webhook-signature:  v1,<base64 HMAC-SHA256>              # signs id.timestamp.bo
 Content-Type:       application/cloudevents+json
 User-Agent:         @profullstack/autoblog/0.2`}</pre>
         <p className="text-sm text-[var(--color-muted)]">
-          The bearer is the secret shown when you first save Autoblog
-          settings (or one you pasted from your own receiver). The same
-          value is the HMAC key for the signature header.
+          The bearer is the secret Crawlproof generates and shows on
+          <code className="font-mono"> /autoblog/setup </code>after you save.
+          Copy it onto your receiver as an env var and use the same value as
+          the HMAC key for the signature header.
         </p>
         <p className="text-sm text-[var(--color-muted)]">
           <strong>Signing details (Standard Webhooks):</strong> the

@@ -78,7 +78,7 @@ function WebhookSecretCard({
     <div className="card p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          Bearer secret
+          Bearer token — copy to your site
         </span>
         <div className="flex gap-2">
           <button type="button" className="btn text-xs" onClick={onCopy}>
@@ -96,8 +96,9 @@ function WebhookSecretCard({
       </div>
       <code className="mt-2 block break-all font-mono text-xs">{secret}</code>
       <p className="mt-2 text-xs text-[var(--color-muted)]">
-        Sent as <code>Authorization: Bearer …</code>. Store it on your
-        receiver and verify on every request.
+        Paste this on your receiver site as <code>CRAWLPROOF_WEBHOOK_SECRET</code>.
+        Crawlproof sends it as <code>Authorization: Bearer …</code> on every webhook
+        call so your endpoint can authenticate the request.
       </p>
     </div>
   );
@@ -129,7 +130,6 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   const [webhookSecret, setWebhookSecret] = useState<string | null>(
     initial?.webhook_secret ?? null,
   );
-  const [webhookSecretOverride, setWebhookSecretOverride] = useState("");
   const [dailyCount, setDailyCount] = useState<number>(
     initial?.daily_article_count ?? 1,
   );
@@ -262,7 +262,6 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         targetAudiences: audiences,
         description,
         webhookUrl,
-        webhookSecretOverride: webhookSecretOverride.trim() || undefined,
         dailyArticleCount: dailyCount,
         publishDays: days,
         publishHour,
@@ -674,31 +673,22 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
             See <a className="underline" href="/docs/autoblog-webhook">webhook docs</a>.
           </p>
         </div>
-        <div>
-          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-            Bearer secret <span className="opacity-60">(optional)</span>
-          </label>
-          <input
-            className="input mt-1 font-mono"
-            type="text"
-            placeholder="Leave blank to generate one"
-            value={webhookSecretOverride}
-            onChange={(e) => setWebhookSecretOverride(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <p className="mt-1 text-xs text-[var(--color-muted)]">
-            If your receiver (e.g. an existing CMS admin page) already issued you a token,
-            paste it here so we send it as <code>Authorization: Bearer …</code>. Otherwise
-            we'll generate one for you on save.
-          </p>
-        </div>
-        {webhookSecret && (
+        {webhookSecret ? (
           <WebhookSecretCard
             secret={webhookSecret}
             onRotate={onRotate}
             rotating={rotating}
           />
+        ) : (
+          <div className="card p-3">
+            <p className="text-xs text-[var(--color-muted)]">
+              <strong className="text-[var(--color-fg)]">A bearer token will be generated for you on save.</strong>{" "}
+              Copy it from this page and paste it on your receiver site as an env var
+              (<code>CRAWLPROOF_WEBHOOK_SECRET</code>). We'll send it on every webhook
+              call as <code>Authorization: Bearer …</code>; your receiver compares
+              against the stored value to authenticate the request.
+            </p>
+          </div>
         )}
       </section>
 

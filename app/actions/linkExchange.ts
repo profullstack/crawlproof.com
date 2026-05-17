@@ -198,10 +198,6 @@ export type SiteInput = {
   targetAudiences: string;
   description: string;
   webhookUrl: string;
-  // Optional: if the receiver issued its own bearer (e.g. an existing
-  // CMS admin generated a token), the user pastes it here and we send
-  // that as the Authorization header instead of auto-generating one.
-  webhookSecretOverride?: string;
   dailyArticleCount: number;
   publishDays: number[];
   publishHour: number;
@@ -211,13 +207,6 @@ export type SiteInput = {
   backlinksEnabled?: boolean;
   externalLinksPerArticle?: number;
 };
-
-// Light sanity check on a pasted bearer: ASCII, no whitespace, length
-// in the same ballpark as something a competent receiver would issue.
-function isPlausibleSecret(s: string): boolean {
-  if (s.length < 16 || s.length > 256) return false;
-  return /^[\x21-\x7e]+$/.test(s); // printable ASCII, no spaces
-}
 
 export async function createOrUpdateSite(
   input: SiteInput,
@@ -266,15 +255,6 @@ export async function createOrUpdateSite(
     return { ok: false, error: "Pick at least one publishing day." };
   }
 
-  const overrideSecret = input.webhookSecretOverride?.trim();
-  if (overrideSecret && !isPlausibleSecret(overrideSecret)) {
-    return {
-      ok: false,
-      error:
-        "Bearer secret must be 16-256 printable ASCII characters with no whitespace.",
-    };
-  }
-
   // Multi-site: if siteId is provided, edit that one; verify
   // ownership. Otherwise, this is a create.
   let existing:
@@ -316,9 +296,6 @@ export async function createOrUpdateSite(
       external_links_per_article: externalLinks,
       next_publish_at: nextAt?.toISOString() ?? null,
     };
-    if (overrideSecret) {
-      updatePayload.webhook_secret = overrideSecret;
-    }
     const { error } = await supabase
       .from("lx_site")
       .update(updatePayload)
@@ -328,13 +305,10 @@ export async function createOrUpdateSite(
       await enqueueSitemapCrawl(existing.id);
     }
     revalidatePath("/autoblog");
-    // Echo the pasted secret back so the form can render the card.
-    return overrideSecret
-      ? { ok: true, siteId: existing.id, webhookSecret: overrideSecret }
-      : { ok: true, siteId: existing.id };
+    return { ok: true, siteId: existing.id };
   }
 
-  const webhookSecret = overrideSecret || generateWebhookSecret();
+  const webhookSecret = generateWebhookSecret();
   const { data: inserted, error } = await supabase
     .from("lx_site")
     .insert({
