@@ -7,7 +7,6 @@ import {
   detectSitemap,
   discoverFromHomepage,
   enrichFromUrls,
-  rotateWebhookSecret,
 } from "@/app/actions/linkExchange";
 
 type WizardStep = "discover" | "confirm" | "review";
@@ -41,74 +40,10 @@ const DAY_LABELS: Array<{ n: number; label: string }> = [
   { n: 7, label: "Sun" },
 ];
 
-function WebhookSecretCard({
-  secret,
-  onRotate,
-  rotating,
-}: {
-  secret: string;
-  onRotate: () => void;
-  rotating: boolean;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  async function onCopy() {
-    try {
-      await navigator.clipboard.writeText(secret);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API can fail under permissions/insecure-context — fall
-      // back to a manual select via a hidden textarea.
-      const ta = document.createElement("textarea");
-      ta.value = secret;
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      } finally {
-        document.body.removeChild(ta);
-      }
-    }
-  }
-
-  return (
-    <div className="card p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          Bearer token — copy to your site
-        </span>
-        <div className="flex gap-2">
-          <button type="button" className="btn text-xs" onClick={onCopy}>
-            {copied ? "Copied!" : "Copy"}
-          </button>
-          <button
-            type="button"
-            className="btn text-xs"
-            onClick={onRotate}
-            disabled={rotating}
-          >
-            {rotating ? "Rotating…" : "Regenerate"}
-          </button>
-        </div>
-      </div>
-      <code className="mt-2 block break-all font-mono text-xs">{secret}</code>
-      <p className="mt-2 text-xs text-[var(--color-muted)]">
-        Paste this on your receiver site as <code>CRAWLPROOF_WEBHOOK_SECRET</code>.
-        Crawlproof sends it as <code>Authorization: Bearer …</code> on every webhook
-        call so your endpoint can authenticate the request.
-      </p>
-    </div>
-  );
-}
-
 export function SetupForm({ initial }: { initial: Existing | null }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [detecting, setDetecting] = useState(false);
-  const [rotating, startRotation] = useTransition();
 
   // Wizard state — for new sites we run a 3-step discover → confirm →
   // review flow. For existing sites we jump straight to review.
@@ -127,8 +62,8 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   );
   const [description, setDescription] = useState(initial?.description ?? "");
   const [webhookUrl, setWebhookUrl] = useState(initial?.webhook_url ?? "");
-  const [webhookSecret, setWebhookSecret] = useState<string | null>(
-    initial?.webhook_secret ?? null,
+  const [webhookSecret, setWebhookSecret] = useState<string>(
+    initial?.webhook_secret ?? "",
   );
   const [dailyCount, setDailyCount] = useState<number>(
     initial?.daily_article_count ?? 1,
@@ -231,19 +166,6 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     setStep("review");
   }
 
-  async function onRotate() {
-    setError(null);
-    startRotation(async () => {
-      const res = await rotateWebhookSecret();
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      setWebhookSecret(res.webhookSecret);
-      setNotice("New webhook secret generated. Update your receiver.");
-    });
-  }
-
   function toggleDay(n: number) {
     setDays((d) => (d.includes(n) ? d.filter((x) => x !== n) : [...d, n].sort()));
   }
@@ -262,6 +184,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         targetAudiences: audiences,
         description,
         webhookUrl,
+        webhookSecret,
         dailyArticleCount: dailyCount,
         publishDays: days,
         publishHour,
@@ -271,13 +194,6 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       });
       if (!res.ok) {
         setError(res.error);
-        return;
-      }
-      if (res.webhookSecret) {
-        setWebhookSecret(res.webhookSecret);
-        setNotice(
-          "Saved. Copy the webhook secret below — we'll show its prefix only after you leave this page.",
-        );
         return;
       }
       setNotice("Settings saved.");
@@ -673,23 +589,28 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
             See <a className="underline" href="/docs/autoblog-webhook">webhook docs</a>.
           </p>
         </div>
-        {webhookSecret ? (
-          <WebhookSecretCard
-            secret={webhookSecret}
-            onRotate={onRotate}
-            rotating={rotating}
+        <div>
+          <label className="text-sm font-medium" htmlFor="webhookSecret">
+            Bearer token
+          </label>
+          <input
+            id="webhookSecret"
+            className="input mt-1 font-mono text-xs"
+            type="text"
+            placeholder="cp_lx_…"
+            required
+            value={webhookSecret}
+            onChange={(e) => setWebhookSecret(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
           />
-        ) : (
-          <div className="card p-3">
-            <p className="text-xs text-[var(--color-muted)]">
-              <strong className="text-[var(--color-fg)]">A bearer token will be generated for you on save.</strong>{" "}
-              Copy it from this page and paste it on your receiver site as an env var
-              (<code>CRAWLPROOF_WEBHOOK_SECRET</code>). We'll send it on every webhook
-              call as <code>Authorization: Bearer …</code>; your receiver compares
-              against the stored value to authenticate the request.
-            </p>
-          </div>
-        )}
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            Generate this on your receiver site (the blog) and paste it here.
+            We'll send it as <code>Authorization: Bearer …</code> on every
+            webhook call so your endpoint can authenticate the request.
+            Pasting a new value rotates it.
+          </p>
+        </div>
       </section>
 
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
