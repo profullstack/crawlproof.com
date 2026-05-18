@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   createOrUpdateSite,
@@ -50,7 +50,6 @@ const DAY_LABELS: Array<{ n: number; label: string }> = [
 export function SetupForm({ initial }: { initial: Existing | null }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [detecting, setDetecting] = useState(false);
 
   // Wizard state — for new sites we run a 3-step discover → confirm →
   // review flow. For existing sites we jump straight to review.
@@ -107,33 +106,100 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
+  const [autoFilling, setAutoFilling] = useState(false);
+  const lastAutoFilledDomain = useRef<string | null>(null);
+
+  function normalizeDomainInput(raw: string): string {
+    return raw
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split("/")[0];
+  }
 
   function onDomainBlur() {
     if (!domain) return;
-    const host = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+    const host = normalizeDomainInput(domain);
     if (!blogRoot) setBlogRoot(`https://${host}/blog`);
+    // Kick the auto-fill chain. It's idempotent per-host, so editing
+    // the domain back to a value we already filled is a no-op.
+    void autoFillFromDomain();
   }
 
-  async function onDetectSitemap() {
-    if (!domain) {
-      setError("Enter a domain first.");
-      return;
-    }
+  // Chained auto-population: sitemap detect → blog enrichment →
+  // search-volume lookup. Runs whenever the domain is set and we
+  // haven't already auto-filled for that exact domain. The wizard's
+  // confirm step also triggers this implicitly by setting the domain.
+  async function autoFillFromDomain(force = false) {
+    const host = normalizeDomainInput(domain);
+    if (!host) return;
+    if (!force && lastAutoFilledDomain.current === host) return;
+    lastAutoFilledDomain.current = host;
+
     setError(null);
-    setDetecting(true);
-    const res = await detectSitemap(domain);
-    setDetecting(false);
-    if (!res.ok) {
-      setError(res.error);
+    setWarning(null);
+    setNotice(null);
+    setAutoFilling(true);
+
+    const ensureBlogRoot = blogRoot.trim() || `https://${host}/blog`;
+    if (!blogRoot.trim()) setBlogRoot(ensureBlogRoot);
+
+    // 1. Sitemap detect — only if the field is empty.
+    let resolvedSitemap = sitemap.trim();
+    if (!resolvedSitemap) {
+      const sm = await detectSitemap(host);
+      if (sm.ok && sm.sitemapUrl) {
+        resolvedSitemap = sm.sitemapUrl;
+        setSitemap(sm.sitemapUrl);
+      }
+    }
+
+    // 2. Editorial enrichment via Anthropic.
+    setEnriching(true);
+    const enrich = await enrichFromUrls({
+      blogUrl: ensureBlogRoot,
+      feedUrl: feedUrl.trim() || null,
+      sitemapUrl: resolvedSitemap || null,
+    });
+    setEnriching(false);
+    if (!enrich.ok) {
+      setWarning(
+        `Couldn't auto-write your editorial profile (${enrich.error}). Fill the niche, audiences, and description by hand.`,
+      );
+      setAutoFilling(false);
       return;
     }
-    if (!res.sitemapUrl) {
-      setError("Couldn't find a sitemap. Paste the URL manually.");
-      return;
+    applyProfile(enrich.profile);
+
+    // 3. DataForSEO traffic lookup on the long-tail candidates Anthropic
+    // just produced. Anything <100/mo gets dropped from the textarea.
+    setSuggesting(true);
+    const traffic = await suggestLongTailKeywords(enrich.profile.keywords);
+    setSuggesting(false);
+    if (traffic.ok && traffic.suggestions.length > 0) {
+      setKeywords(
+        traffic.suggestions.map((s) => `${s.keyword},${s.searchVolume}`).join("\n"),
+      );
+      setNotice(`Auto-filled — ${traffic.tier}.`);
+    } else if (traffic.ok) {
+      setNotice("Auto-filled. No keywords met the traffic threshold yet.");
+    } else {
+      setWarning(`Editorial filled, but traffic lookup failed (${traffic.error}).`);
     }
-    setSitemap(res.sitemapUrl);
-    setNotice(`Sitemap found: ${res.sitemapUrl}`);
+
+    setAutoFilling(false);
   }
+
+  // Trigger auto-fill on mount when we land on the review step with
+  // an existing domain but missing editorial — i.e., user re-opens
+  // /autoblog/setup for a project that hasn't been enriched yet.
+  useEffect(() => {
+    if (step !== "review") return;
+    const editorialBlank = !niche && !description && !keywords;
+    if (editorialBlank && domain) void autoFillFromDomain();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   async function onDiscoverHomepage(e: React.FormEvent) {
     e.preventDefault();
@@ -163,26 +229,9 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       setError("Blog URL and sitemap URL are both required.");
       return;
     }
-    setError(null);
-    setWarning(null);
-    setNotice(null);
-    setEnriching(true);
-    const res = await enrichFromUrls({
-      blogUrl: blogRoot.trim(),
-      feedUrl: feedUrl.trim() || null,
-      sitemapUrl: sitemap.trim() || null,
-    });
-    setEnriching(false);
-    if (!res.ok) {
-      // Soft-fail: surface a warning so the user knows enrichment didn't
-      // run and they need to fill the editorial fields by hand.
-      setWarning(
-        `Couldn't auto-write your editorial profile (${res.error}). Fill in the niche, audiences, and description below.`,
-      );
-      setStep("review");
-      return;
-    }
-    applyProfile(res.profile);
+    // Move to review — the useEffect watching `step` then triggers
+    // autoFillFromDomain (sitemap detect → Anthropic enrichment →
+    // DataForSEO traffic lookup) and the spinner becomes visible.
     setStep("review");
   }
 
@@ -216,72 +265,6 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-  }
-
-  function keywordNameFromRow(row: string): string {
-    const idx = row.indexOf(",");
-    return (idx === -1 ? row : row.slice(0, idx)).trim();
-  }
-
-  async function onSuggestKeywords() {
-    // We look up traffic for the long-tail phrases already in the
-    // textarea (typically what Anthropic generated). DataForSEO
-    // search_volume is a pure lookup — it confirms which phrases
-    // actually have monthly traffic, drops zero-volume duds, and
-    // returns the rest annotated with volume.
-    const candidates = keywordsAsArray().map(keywordNameFromRow);
-    if (candidates.length === 0) {
-      setError(
-        "No keywords to look up. Run Fetch metadata to generate long-tail candidates first.",
-      );
-      return;
-    }
-    setError(null);
-    setWarning(null);
-    setNotice(null);
-    setSuggesting(true);
-    const res = await suggestLongTailKeywords(candidates);
-    setSuggesting(false);
-    if (!res.ok) {
-      setWarning(`Couldn't fetch traffic stats (${res.error}).`);
-      return;
-    }
-    // Replace the textarea in-place with the keepers, sorted by
-    // volume desc. Zero-traffic phrases are dropped entirely — they
-    // can't earn clicks so they don't deserve a slot in the
-    // editorial list.
-    if (res.suggestions.length === 0) {
-      setWarning(
-        `None of the ${candidates.length} keywords have meaningful traffic. Try broader phrasings.`,
-      );
-      return;
-    }
-    const rows = res.suggestions.map((s) => `${s.keyword},${s.searchVolume}`);
-    setKeywords(rows.join("\n"));
-    setNotice(`Updated — ${res.tier}.`);
-  }
-
-  async function onFetchMetadata() {
-    if (!blogRoot.trim()) {
-      setError("Set a blog URL first.");
-      return;
-    }
-    setError(null);
-    setWarning(null);
-    setNotice(null);
-    setEnriching(true);
-    const res = await enrichFromUrls({
-      blogUrl: blogRoot.trim(),
-      feedUrl: feedUrl.trim() || null,
-      sitemapUrl: sitemap.trim() || null,
-    });
-    setEnriching(false);
-    if (!res.ok) {
-      setWarning(`Couldn't fetch metadata (${res.error}).`);
-      return;
-    }
-    applyProfile(res.profile);
-    setNotice("Metadata fetched.");
   }
 
   function toggleDay(n: number) {
@@ -475,16 +458,27 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Domain
           </label>
-          <input
-            className="input mt-1"
-            type="text"
-            placeholder="example.com"
-            required
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            onBlur={onDomainBlur}
-            autoFocus
-          />
+          <div className="mt-1 flex gap-2">
+            <input
+              className="input flex-1"
+              type="text"
+              placeholder="example.com"
+              required
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              onBlur={onDomainBlur}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void autoFillFromDomain(true)}
+              disabled={!domain || autoFilling}
+              title="Re-run sitemap detect + AI enrichment + DataForSEO traffic lookup"
+            >
+              {autoFilling ? "Fetching…" : "Refetch"}
+            </button>
+          </div>
         </div>
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
@@ -506,43 +500,22 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Sitemap URL
           </label>
-          <div className="mt-1 flex gap-2">
-            <input
-              className="input"
-              type="url"
-              placeholder="https://example.com/sitemap.xml"
-              required
-              value={sitemap}
-              onChange={(e) => setSitemap(e.target.value)}
-            />
-            <button
-              type="button"
-              className="btn"
-              onClick={onDetectSitemap}
-              disabled={detecting || !domain}
-            >
-              {detecting ? "Detecting…" : "Detect"}
-            </button>
-          </div>
+          <input
+            className="input mt-1"
+            type="url"
+            placeholder="https://example.com/sitemap.xml"
+            required
+            value={sitemap}
+            onChange={(e) => setSitemap(e.target.value)}
+          />
         </div>
       </section>
 
       {/* Editorial profile */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-            Editorial profile
-          </h2>
-          <button
-            type="button"
-            className="btn text-xs"
-            onClick={onFetchMetadata}
-            disabled={enriching}
-            title="Re-run AI enrichment on the blog URL above"
-          >
-            {enriching ? "Fetching…" : "Fetch metadata"}
-          </button>
-        </div>
+        <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Editorial profile
+        </h2>
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Niche
@@ -590,25 +563,14 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
             onChange={(e) => setSeedKeywords(e.target.value)}
           />
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            Broad terms DataForSEO expands into long-tail. Auto-filled by
-            Fetch metadata; edit freely.
+            Broad terms DataForSEO expands into long-tail. Auto-filled by{" "}
+            <em>Refetch</em>; edit freely.
           </p>
         </div>
         <div>
-          <div className="flex items-center justify-between gap-2">
-            <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-              Keywords — one CSV row per line: <code>keyword,monthly_volume</code>
-            </label>
-            <button
-              type="button"
-              className="btn text-xs"
-              onClick={onSuggestKeywords}
-              disabled={suggesting}
-              title="Look up monthly traffic for each keyword via DataForSEO; drop the zero-traffic ones"
-            >
-              {suggesting ? "Looking up…" : "Get traffic stats"}
-            </button>
-          </div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Keywords — one CSV row per line: <code>keyword,monthly_volume</code>
+          </label>
           <textarea
             className="input mt-1 min-h-[8rem] font-mono text-sm"
             placeholder={
@@ -619,9 +581,8 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           />
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             {keywordsAsArray().length} keyword(s). Each row is{" "}
-            <code>keyword,monthly_volume</code>. Click <em>Get traffic
-            stats</em> to look up volumes via DataForSEO and drop the
-            zero-traffic phrases.
+            <code>keyword,monthly_volume</code>. Auto-filled by{" "}
+            <em>Refetch</em> — zero-traffic phrases are dropped.
           </p>
         </div>
         <div>
