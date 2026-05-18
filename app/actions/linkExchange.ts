@@ -454,14 +454,17 @@ export async function createOrUpdateSite(
 }
 
 // ------------------------------------------------------------
-// suggestLongTailKeywords — DataForSEO Labs "Keyword Ideas" expansion.
+// lookupKeywordTraffic — DataForSEO Google Ads search_volume lookup.
 //
-// Seeds are BROAD head terms ("web security", "cyber security"), not
-// the user's narrow long-tail keywords. Anthropic's enrichment fills
-// seed_keywords during Fetch metadata; the user can edit them. DFS
-// Labs then expands those broad terms into ~100 ideas with monthly
-// search volumes, and we filter to long-tail (≥3 words) at ≥100/mo,
-// preferring ≥300/mo when available.
+// Given a list of candidate keywords (typically the long-tail phrases
+// Anthropic generated during Fetch metadata), pull monthly search
+// volumes from Google Ads' Keyword Planner data. We drop anything
+// below MIN_VOLUME (a 0-traffic keyword is dead weight) and return
+// what's left sorted by volume desc.
+//
+// No keyword fan-out happens here — search_volume is a pure lookup,
+// not an expansion. Anthropic does the creative work of inventing
+// long-tail phrases; DFS just confirms which actually have traffic.
 // ------------------------------------------------------------
 export type KeywordSuggestion = {
   keyword: string;
@@ -470,19 +473,10 @@ export type KeywordSuggestion = {
   competition: "LOW" | "MEDIUM" | "HIGH" | null;
 };
 
-type FilterTier = {
-  label: string;
-  minVolume: number;
-  minWords: number;
-};
-
-const FILTER_TIERS: FilterTier[] = [
-  { label: "long-tail · ≥300/mo · 3+ words", minVolume: 300, minWords: 3 },
-  { label: "broader · ≥100/mo · 2+ words", minVolume: 100, minWords: 2 },
-];
+const MIN_VOLUME = 100;
 
 export async function suggestLongTailKeywords(
-  seeds: string[],
+  candidates: string[],
 ): Promise<
   Ok<{ suggestions: KeywordSuggestion[]; tier: string }> | Err
 > {
@@ -492,22 +486,20 @@ export async function suggestLongTailKeywords(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  // Each seed must be a short head term (1-3 words). We trim, drop
-  // sentence-length phrases, lowercase, and dedupe before sending.
-  const cleanedSeeds = Array.from(
+  // Trim, lowercase, dedupe. DataForSEO accepts up to 1000 keywords
+  // per call; the UI typically passes 5-15.
+  const cleanedCandidates = Array.from(
     new Set(
-      (seeds ?? [])
+      (candidates ?? [])
         .map((s) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
-        .filter(
-          (s) => s.length >= 2 && s.length <= 80 && s.split(/\s+/).length <= 4,
-        ),
+        .filter((s) => s.length >= 2 && s.length <= 80),
     ),
-  ).slice(0, 20);
-  if (cleanedSeeds.length === 0) {
+  ).slice(0, 200);
+  if (cleanedCandidates.length === 0) {
     return {
       ok: false,
       error:
-        "Need 1-4 word head terms as seeds (e.g. 'web security'). Run Fetch metadata or add to seed keywords.",
+        "No keywords to look up. Run Fetch metadata first, or paste keywords into the textarea.",
     };
   }
 
@@ -524,39 +516,23 @@ export async function suggestLongTailKeywords(
   const dfs = new DataForSeoClient(login, password);
 
   try {
-    // One Labs call covers a much wider net than keywords_for_keywords:
-    // up to 1000 ideas, sorted by volume server-side. We ask for 200
-    // with min_volume=100 pushed to the API, then apply our tier
-    // logic on top so the UI can label which tier landed.
-    const res = await dfs.keywordIdeas(cleanedSeeds, {
-      limit: 200,
-      minVolume: 100,
-      closelyVariants: false,
-    });
+    const res = await dfs.searchVolume(cleanedCandidates);
     const cleaned = filterOutliers(res.rows);
+    const withTraffic = cleaned
+      .filter((r) => (r.search_volume ?? 0) >= MIN_VOLUME)
+      .sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0));
 
-    let matched: typeof cleaned = [];
-    let tierUsed = FILTER_TIERS[FILTER_TIERS.length - 1].label;
-    for (const tier of FILTER_TIERS) {
-      matched = cleaned.filter((r) => {
-        const vol = r.search_volume ?? 0;
-        const words = r.keyword.trim().split(/\s+/).length;
-        return vol >= tier.minVolume && words >= tier.minWords;
-      });
-      if (matched.length > 0) {
-        tierUsed = tier.label;
-        break;
-      }
-    }
-
-    matched.sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0));
-    const suggestions: KeywordSuggestion[] = matched.slice(0, 30).map((r) => ({
+    const suggestions: KeywordSuggestion[] = withTraffic.map((r) => ({
       keyword: r.keyword,
       searchVolume: r.search_volume ?? 0,
       cpcUsd: r.cpc ?? null,
       competition: r.competition,
     }));
-    return { ok: true, suggestions, tier: tierUsed };
+    const tier =
+      suggestions.length > 0
+        ? `${suggestions.length} of ${cleanedCandidates.length} have ≥${MIN_VOLUME}/mo`
+        : `none of ${cleanedCandidates.length} hit ≥${MIN_VOLUME}/mo`;
+    return { ok: true, suggestions, tier };
   } catch (err) {
     return {
       ok: false,

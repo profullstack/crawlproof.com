@@ -98,14 +98,20 @@ export class DataForSeoClient {
     return this.post("/v3/keywords_data/google_ads/keywords_for_keywords/live", [payload]);
   }
 
-  // PRD §15.2a: volume lookup for a known list (no fan-out).
+  // PRD §15.2a: volume lookup for a known list (no fan-out). The
+  // Google Ads search_volume endpoint requires a location — unlike
+  // some other Google Ads endpoints that default to worldwide. We
+  // default to 2840 (US) / "en" so the form works without an explicit
+  // setting; callers can override per-call.
   async searchVolume(keywords: string[], opts?: {
     locationCode?: number;
     languageCode?: string;
   }): Promise<DfsResult> {
-    const payload: any = { keywords: keywords.slice(0, 1000) };
-    if (opts?.locationCode) payload.location_code = opts.locationCode;
-    if (opts?.languageCode) payload.language_code = opts.languageCode;
+    const payload: any = {
+      keywords: keywords.slice(0, 1000),
+      location_code: opts?.locationCode ?? 2840,
+      language_code: opts?.languageCode ?? "en",
+    };
     return this.post("/v3/keywords_data/google_ads/search_volume/live", [payload]);
   }
 

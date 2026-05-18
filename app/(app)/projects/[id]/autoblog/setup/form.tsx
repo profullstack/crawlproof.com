@@ -8,7 +8,6 @@ import {
   discoverFromHomepage,
   enrichFromUrls,
   suggestLongTailKeywords,
-  type KeywordSuggestion,
 } from "@/app/actions/linkExchange";
 
 type WizardStep = "discover" | "confirm" | "review";
@@ -107,7 +106,6 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
   const [suggesting, setSuggesting] = useState(false);
 
   function onDomainBlur() {
@@ -226,17 +224,15 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   }
 
   async function onSuggestKeywords() {
-    // DFS expansion runs on BROAD head terms from seed_keywords. We
-    // intentionally don't include the user's long-tail keywords as
-    // seeds — they're already specific, expanding from them tends to
-    // return nothing.
-    const seeds = seedKeywords
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (seeds.length === 0) {
+    // We look up traffic for the long-tail phrases already in the
+    // textarea (typically what Anthropic generated). DataForSEO
+    // search_volume is a pure lookup — it confirms which phrases
+    // actually have monthly traffic, drops zero-volume duds, and
+    // returns the rest annotated with volume.
+    const candidates = keywordsAsArray().map(keywordNameFromRow);
+    if (candidates.length === 0) {
       setError(
-        "Add seed keywords first (1-3 word head terms). Run Fetch metadata to auto-generate them.",
+        "No keywords to look up. Run Fetch metadata to generate long-tail candidates first.",
       );
       return;
     }
@@ -244,49 +240,25 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     setWarning(null);
     setNotice(null);
     setSuggesting(true);
-    const res = await suggestLongTailKeywords(seeds);
+    const res = await suggestLongTailKeywords(candidates);
     setSuggesting(false);
     if (!res.ok) {
-      setWarning(`Couldn't fetch suggestions (${res.error}).`);
-      setSuggestions([]);
+      setWarning(`Couldn't fetch traffic stats (${res.error}).`);
       return;
     }
-    setSuggestions(res.suggestions);
+    // Replace the textarea in-place with the keepers, sorted by
+    // volume desc. Zero-traffic phrases are dropped entirely — they
+    // can't earn clicks so they don't deserve a slot in the
+    // editorial list.
     if (res.suggestions.length === 0) {
-      setNotice("No keyword suggestions found for those seeds.");
-    } else {
-      setNotice(
-        `${res.suggestions.length} suggestion(s) — ${res.tier}. Click to add.`,
+      setWarning(
+        `None of the ${candidates.length} keywords have meaningful traffic. Try broader phrasings.`,
       );
+      return;
     }
-  }
-
-  function formatRow(s: KeywordSuggestion): string {
-    return `${s.keyword},${s.searchVolume}`;
-  }
-
-  function addSuggestion(s: KeywordSuggestion) {
-    const existing = new Set(
-      keywordsAsArray().map((row) => keywordNameFromRow(row).toLowerCase()),
-    );
-    if (existing.has(s.keyword.toLowerCase())) return;
-    const row = formatRow(s);
-    setKeywords((prev) => (prev.trim() ? `${prev.trim()}\n${row}` : row));
-    setSuggestions((prev) => prev.filter((x) => x.keyword !== s.keyword));
-  }
-
-  function addAllSuggestions() {
-    const existing = new Set(
-      keywordsAsArray().map((row) => keywordNameFromRow(row).toLowerCase()),
-    );
-    const fresh = suggestions
-      .filter((s) => !existing.has(s.keyword.toLowerCase()))
-      .map(formatRow);
-    if (fresh.length === 0) return;
-    setKeywords((prev) =>
-      prev.trim() ? `${prev.trim()}\n${fresh.join("\n")}` : fresh.join("\n"),
-    );
-    setSuggestions([]);
+    const rows = res.suggestions.map((s) => `${s.keyword},${s.searchVolume}`);
+    setKeywords(rows.join("\n"));
+    setNotice(`Updated — ${res.tier}.`);
   }
 
   async function onFetchMetadata() {
@@ -632,9 +604,9 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
               className="btn text-xs"
               onClick={onSuggestKeywords}
               disabled={suggesting}
-              title="Expand seed keywords into long-tail with traffic data via DataForSEO"
+              title="Look up monthly traffic for each keyword via DataForSEO; drop the zero-traffic ones"
             >
-              {suggesting ? "Searching…" : "Suggest from seeds"}
+              {suggesting ? "Looking up…" : "Get traffic stats"}
             </button>
           </div>
           <textarea
@@ -647,51 +619,10 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           />
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             {keywordsAsArray().length} keyword(s). Each row is{" "}
-            <code>keyword,monthly_volume</code>. Aim for 3+ word phrases at
-            300+/mo so each post can plausibly hit 300+ visits.
+            <code>keyword,monthly_volume</code>. Click <em>Get traffic
+            stats</em> to look up volumes via DataForSEO and drop the
+            zero-traffic phrases.
           </p>
-
-          {suggestions.length > 0 && (
-            <div className="mt-3 rounded border border-[var(--color-border)] p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-                  Suggestions
-                </span>
-                <button
-                  type="button"
-                  className="text-xs underline"
-                  onClick={addAllSuggestions}
-                >
-                  Add all
-                </button>
-              </div>
-              <ul className="space-y-1">
-                {suggestions.map((s) => (
-                  <li
-                    key={s.keyword}
-                    className="flex items-center justify-between gap-2 text-sm"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => addSuggestion(s)}
-                      className="flex-1 text-left hover:underline"
-                      title={`Add as "${s.keyword},${s.searchVolume}"`}
-                    >
-                      <span className="font-mono">
-                        + {s.keyword},{s.searchVolume}
-                      </span>
-                    </button>
-                    <span className="shrink-0 text-xs text-[var(--color-muted)] tabular-nums">
-                      {s.cpcUsd != null && s.cpcUsd > 0 && (
-                        <>${s.cpcUsd.toFixed(2)} CPC</>
-                      )}
-                      {s.competition && <> · {s.competition.toLowerCase()}</>}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
