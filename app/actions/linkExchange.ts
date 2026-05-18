@@ -556,6 +556,77 @@ export async function suggestLongTailKeywords(
 }
 
 // ------------------------------------------------------------
+// deleteAutoblog — remove just the autoblog config (lx_site row) for
+// a project, leaving the project (and any audits, social config, etc.)
+// intact. The cascade on lx_site_pkey kills downstream rows
+// (lx_keyword, lx_article, lx_site_page, sp_site_account).
+// ------------------------------------------------------------
+export async function deleteAutoblog(input: {
+  projectId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", input.projectId)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found." };
+
+  // Service role — lx_site delete cascades into child tables that
+  // user-scoped RLS can't traverse cleanly.
+  const svc = serviceClient();
+  const { error } = await svc
+    .from("lx_site")
+    .delete()
+    .eq("project_id", input.projectId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/projects", "layout");
+  return { ok: true };
+}
+
+// ------------------------------------------------------------
+// deleteProject — remove the project row; ON DELETE CASCADE wipes
+// lx_site (and its children), audits, sp_site_account, etc.
+// ------------------------------------------------------------
+export async function deleteProject(input: {
+  projectId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const svc = serviceClient();
+  // Confirm ownership on the user client first; service-role does
+  // the actual delete (cascade is wide).
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", input.projectId)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found." };
+
+  const { error } = await svc
+    .from("projects")
+    .delete()
+    .eq("id", input.projectId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  revalidatePath("/projects", "layout");
+  return { ok: true };
+}
+
+// ------------------------------------------------------------
 // pause / resume
 // ------------------------------------------------------------
 export async function setSitePaused(paused: boolean): Promise<Ok | Err> {
