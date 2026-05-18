@@ -15,7 +15,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const [{ data: profile }, sites, cookieStore] = await Promise.all([
     supabase
       .from("profiles")
-      .select("display_name, email, credits_balance")
+      .select("display_name, email, credits_balance, is_admin")
       .eq("id", user.id)
       .maybeSingle(),
     listUserSites(),
@@ -43,6 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/autoblog">Autoblog</Link>
             <Link href="/social">Social</Link>
             <SitePicker sites={sites} currentId={currentSiteId} />
+            {profile?.is_admin && <Link href="/admin">Admin</Link>}
             <Link href="/settings">Settings</Link>
             <Link
               href="/settings/billing"
