@@ -446,7 +446,6 @@ type FilterTier = {
 const FILTER_TIERS: FilterTier[] = [
   { label: "long-tail · ≥300/mo · 3+ words", minVolume: 300, minWords: 3 },
   { label: "broader · ≥100/mo · 2+ words", minVolume: 100, minWords: 2 },
-  { label: "permissive · ≥50/mo · any length", minVolume: 50, minWords: 1 },
 ];
 
 // Stopwords stripped when tokenizing a long seed into subseeds, so
