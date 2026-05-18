@@ -134,8 +134,15 @@ export class DataForSeoClient {
     minWords?: number;
     limit?: number;
   }): Promise<DfsResult> {
+    // Labs endpoints require a location (unlike Google Ads
+    // keywords_for_keywords where it defaults to worldwide). The API's
+    // error in this case is misleading — it complains about an
+    // "Invalid Field: 'location_name'" when neither field is sent.
+    // 2840 = United States, "en" = English.
     const payload: any = {
       keywords: seeds.slice(0, 200),
+      location_code: opts?.locationCode ?? 2840,
+      language_code: opts?.languageCode ?? "en",
       closely_variants: opts?.closelyVariants ?? false,
       limit: Math.min(opts?.limit ?? 100, 1000),
       // DataForSEO Labs filters use [field, op, value] triples joined
@@ -148,8 +155,6 @@ export class DataForSeoClient {
       ],
       order_by: ["keyword_info.search_volume,desc"],
     };
-    if (opts?.locationCode) payload.location_code = opts.locationCode;
-    if (opts?.languageCode) payload.language_code = opts.languageCode;
     return this.postLabs("/v3/dataforseo_labs/google/keyword_ideas/live", [payload], opts?.minWords);
   }
 
