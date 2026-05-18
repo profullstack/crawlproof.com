@@ -172,10 +172,17 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     }
     applyProfile(enrich.profile);
 
-    // 3. DataForSEO traffic lookup on the long-tail candidates Anthropic
-    // just produced. Anything <100/mo gets dropped from the textarea.
+    // 3. DataForSEO Labs keyword_ideas expansion. We feed it Anthropic's
+    // BROAD seed_keywords (3-6 head terms like "web security") and let
+    // DFS fan out into hundreds of related long-tail phrases — one
+    // blog wants a fat keyword list, not 5-15. Anthropic's narrower
+    // `keywords` field is a fallback when no seeds came back.
+    const expansionSeeds =
+      enrich.profile.seedKeywords.length > 0
+        ? enrich.profile.seedKeywords
+        : enrich.profile.keywords;
     setSuggesting(true);
-    const traffic = await suggestLongTailKeywords(enrich.profile.keywords);
+    const traffic = await suggestLongTailKeywords(expansionSeeds);
     setSuggesting(false);
     if (traffic.ok && traffic.suggestions.length > 0) {
       setKeywords(
@@ -183,9 +190,9 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       );
       setNotice(`Auto-filled — ${traffic.tier}.`);
     } else if (traffic.ok) {
-      setNotice("Auto-filled. No keywords met the traffic threshold yet.");
+      setNotice("Auto-filled. No long-tail keywords met the traffic threshold.");
     } else {
-      setWarning(`Editorial filled, but traffic lookup failed (${traffic.error}).`);
+      setWarning(`Editorial filled, but keyword expansion failed (${traffic.error}).`);
     }
 
     setAutoFilling(false);
