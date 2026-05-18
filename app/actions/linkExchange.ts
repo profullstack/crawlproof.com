@@ -236,6 +236,8 @@ export type SiteInput = {
   niche: string;
   targetAudiences: string;
   description: string;
+  // Comma-separated 1-3 word head terms for DataForSEO expansion.
+  seedKeywords: string;
   // Comma-separated. parseList() into a text[].
   keywords: string;
   seoTitle: string;
@@ -293,6 +295,7 @@ export async function createOrUpdateSite(
   const niche = clean(input.niche, MAX.niche) || null;
   const description = clean(input.description, MAX.description);
   const audiences = parseAudiences(input.targetAudiences);
+  const seedKeywords = parseList(input.seedKeywords, 6, 40);
   // Keywords use parseKeywordRows so each row keeps its `,<volume>` hint.
   // Allow up to ~80 chars per row to fit "keyword phrase here,12345".
   const keywords = parseKeywordRows(input.keywords, MAX.keywords, MAX.keyword + 20);
@@ -347,6 +350,7 @@ export async function createOrUpdateSite(
       niche,
       target_audiences: audiences,
       description,
+      seed_keywords: seedKeywords,
       keywords,
       seo_title: seoTitle,
       seo_description: seoDescription,
@@ -385,6 +389,7 @@ export async function createOrUpdateSite(
       niche,
       target_audiences: audiences,
       description,
+      seed_keywords: seedKeywords,
       keywords,
       seo_title: seoTitle,
       seo_description: seoDescription,
@@ -416,19 +421,14 @@ export async function createOrUpdateSite(
 }
 
 // ------------------------------------------------------------
-// suggestLongTailKeywords — DataForSEO-backed long-tail expansion.
+// suggestLongTailKeywords — DataForSEO Labs "Keyword Ideas" expansion.
 //
-// We tier the filters because narrow niches (CTEM, dev-tooling, etc.)
-// rarely have many phrases at the ideal 300/mo + 3 words threshold.
-// First try the ideal tier; if empty, relax to 100/mo + 2 words, then
-// 50/mo + any. The response includes which tier we landed on so the UI
-// can show "no 300/mo phrases, here's the 100/mo set" instead of just
-// returning empty.
-//
-// We also pre-tokenize long seed phrases ("threat intelligence and
-// CTEM security operations") into 2-3 word subphrases. DFS's expansion
-// works on terms people actually search, so a 6-word phrase returns
-// near-nothing; the subphrases give it real signal to work with.
+// Seeds are BROAD head terms ("web security", "cyber security"), not
+// the user's narrow long-tail keywords. Anthropic's enrichment fills
+// seed_keywords during Fetch metadata; the user can edit them. DFS
+// Labs then expands those broad terms into ~100 ideas with monthly
+// search volumes, and we filter to long-tail (≥3 words) at ≥100/mo,
+// preferring ≥300/mo when available.
 // ------------------------------------------------------------
 export type KeywordSuggestion = {
   keyword: string;
@@ -448,38 +448,6 @@ const FILTER_TIERS: FilterTier[] = [
   { label: "broader · ≥100/mo · 2+ words", minVolume: 100, minWords: 2 },
 ];
 
-// Stopwords stripped when tokenizing a long seed into subseeds, so
-// "threat intelligence and CTEM security operations" yields the useful
-// chunks ("threat intelligence", "CTEM security operations") instead
-// of dragging "and" into a subphrase that nobody searches for.
-const SEED_STOPWORDS = new Set([
-  "and", "or", "the", "a", "an", "of", "for", "to", "in", "on", "with", "by",
-]);
-
-function tokenizeSeed(seed: string): string[] {
-  const tokens = seed
-    .toLowerCase()
-    .split(/\s+/)
-    .map((t) => t.replace(/[^\w-]/g, ""))
-    .filter(Boolean);
-  if (tokens.length <= 3) return [seed.trim()];
-
-  // Walk left-to-right, breaking on stopwords. The original seed
-  // is also kept (DFS sometimes finds an exact match).
-  const out: string[] = [seed.trim()];
-  let buf: string[] = [];
-  for (const t of tokens) {
-    if (SEED_STOPWORDS.has(t)) {
-      if (buf.length >= 1) out.push(buf.join(" "));
-      buf = [];
-    } else {
-      buf.push(t);
-    }
-  }
-  if (buf.length >= 1) out.push(buf.join(" "));
-  return out;
-}
-
 export async function suggestLongTailKeywords(
   seeds: string[],
 ): Promise<
@@ -491,18 +459,24 @@ export async function suggestLongTailKeywords(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const rawSeeds = (seeds ?? [])
-    .map((s) => (typeof s === "string" ? s.trim() : ""))
-    .filter((s) => s.length >= 2 && s.length <= MAX.keyword);
-  if (rawSeeds.length === 0) {
-    return { ok: false, error: "Enter at least one seed keyword or niche." };
+  // Each seed must be a short head term (1-3 words). We trim, drop
+  // sentence-length phrases, lowercase, and dedupe before sending.
+  const cleanedSeeds = Array.from(
+    new Set(
+      (seeds ?? [])
+        .map((s) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+        .filter(
+          (s) => s.length >= 2 && s.length <= 80 && s.split(/\s+/).length <= 4,
+        ),
+    ),
+  ).slice(0, 20);
+  if (cleanedSeeds.length === 0) {
+    return {
+      ok: false,
+      error:
+        "Need 1-4 word head terms as seeds (e.g. 'web security'). Run Fetch metadata or add to seed keywords.",
+    };
   }
-
-  // Expand each seed into subseeds (tokenize long phrases), then dedupe.
-  // DFS caps at 20 keywords per call; 10 is plenty for the UI use-case.
-  const expandedSeeds = Array.from(
-    new Set(rawSeeds.flatMap(tokenizeSeed).map((s) => s.toLowerCase())),
-  ).slice(0, 10);
 
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
@@ -517,12 +491,17 @@ export async function suggestLongTailKeywords(
   const dfs = new DataForSeoClient(login, password);
 
   try {
-    const res = await dfs.keywordsForKeywords(expandedSeeds, {
-      sortBy: "search_volume",
+    // One Labs call covers a much wider net than keywords_for_keywords:
+    // up to 1000 ideas, sorted by volume server-side. We ask for 200
+    // with min_volume=100 pushed to the API, then apply our tier
+    // logic on top so the UI can label which tier landed.
+    const res = await dfs.keywordIdeas(cleanedSeeds, {
+      limit: 200,
+      minVolume: 100,
+      closelyVariants: false,
     });
     const cleaned = filterOutliers(res.rows);
 
-    // Try each tier in order; stop at the first that returns matches.
     let matched: typeof cleaned = [];
     let tierUsed = FILTER_TIERS[FILTER_TIERS.length - 1].label;
     for (const tier of FILTER_TIERS) {

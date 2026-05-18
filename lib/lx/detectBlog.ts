@@ -375,6 +375,7 @@ const ProfileLLMOutput = z.object({
   niche: z.string().min(2).max(120),
   target_audiences: z.array(z.string().min(2).max(80)).min(1).max(6),
   description: z.string().min(40).max(800),
+  seed_keywords: z.array(z.string().min(2).max(40)).min(3).max(6),
   keywords: z.array(z.string().min(2).max(60)).min(5).max(15),
   seo_title: z.string().min(10).max(70),
   seo_description: z.string().min(50).max(160),
@@ -388,6 +389,7 @@ const SYSTEM_PROMPT = [
   "  niche — 2-6 word phrase describing the topical area (e.g. 'cybersecurity for SaaS', 'home-coffee gear reviews').",
   "  target_audiences — 2-4 short audience labels (e.g. 'security engineers', 'CTOs', 'home barista hobbyists').",
   "  description — 2-3 sentences describing what the site does and the tone to write in. Address the AI writer in second person ('You are writing for…').",
+  "  seed_keywords — 3-6 BROAD 1-3 word head terms that a keyword research tool can expand. These feed DataForSEO's keyword-ideas API, so they must be common search terms with real volume (e.g. 'web security', 'cyber security', 'penetration testing'), NOT long-tail phrases. Lowercase.",
   "  keywords — 5-15 SEO keyword phrases. Strongly prefer 3-5 word long-tail phrases (e.g. 'soc2 compliance for startups' over 'soc2'); long-tail converts and ranks faster. Lowercase, no quotes.",
   "  seo_title — a 50-60 character page <title> for the blog homepage. Brand-included, keyword-rich, human-readable.",
   "  seo_description — a 140-160 character meta description for the blog homepage. Active voice, ends with a soft CTA.",
@@ -443,6 +445,7 @@ export type EnrichmentResult = {
   niche: string;
   targetAudiences: string[];
   description: string;
+  seedKeywords: string[];
   keywords: string[];
   seoTitle: string;
   seoDescription: string;
@@ -499,6 +502,7 @@ export async function enrichBlogProfile(
         niche: parsed.niche,
         targetAudiences: parsed.target_audiences,
         description: parsed.description,
+        seedKeywords: parsed.seed_keywords,
         keywords: parsed.keywords,
         seoTitle: parsed.seo_title,
         seoDescription: parsed.seo_description,

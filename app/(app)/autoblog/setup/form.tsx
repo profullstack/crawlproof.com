@@ -21,6 +21,7 @@ type Existing = {
   niche: string | null;
   target_audiences: string[];
   description: string;
+  seed_keywords: string[];
   keywords: string[];
   seo_title: string | null;
   seo_description: string | null;
@@ -68,6 +69,9 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     (initial?.target_audiences ?? []).join(", "),
   );
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [seedKeywords, setSeedKeywords] = useState(
+    (initial?.seed_keywords ?? []).join(", "),
+  );
   const [keywords, setKeywords] = useState(
     (initial?.keywords ?? []).join("\n"),
   );
@@ -188,6 +192,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     niche: string;
     targetAudiences: string[];
     description: string;
+    seedKeywords: string[];
     keywords: string[];
     seoTitle: string;
     seoDescription: string;
@@ -197,6 +202,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     setNiche(p.niche);
     setAudiences(p.targetAudiences.join(", "));
     setDescription(p.description);
+    setSeedKeywords(p.seedKeywords.join(", "));
     setKeywords(p.keywords.join("\n"));
     setSeoTitle(p.seoTitle);
     setSeoDescription(p.seoDescription);
@@ -220,15 +226,18 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   }
 
   async function onSuggestKeywords() {
-    const seeds = Array.from(
-      new Set(
-        [niche.trim(), ...keywordsAsArray().map(keywordNameFromRow)].filter(
-          Boolean,
-        ),
-      ),
-    );
+    // DFS expansion runs on BROAD head terms from seed_keywords. We
+    // intentionally don't include the user's long-tail keywords as
+    // seeds — they're already specific, expanding from them tends to
+    // return nothing.
+    const seeds = seedKeywords
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (seeds.length === 0) {
-      setError("Add a niche or at least one keyword to use as a seed.");
+      setError(
+        "Add seed keywords first (1-3 word head terms). Run Fetch metadata to auto-generate them.",
+      );
       return;
     }
     setError(null);
@@ -320,6 +329,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         niche,
         targetAudiences: audiences,
         description,
+        seedKeywords,
         keywords,
         seoTitle,
         seoDescription,
@@ -597,6 +607,22 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           />
         </div>
         <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Seed keywords (comma-separated, 1-3 word head terms)
+          </label>
+          <input
+            className="input mt-1 font-mono text-sm"
+            type="text"
+            placeholder="web security, cyber security, penetration testing"
+            value={seedKeywords}
+            onChange={(e) => setSeedKeywords(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            Broad terms DataForSEO expands into long-tail. Auto-filled by
+            Fetch metadata; edit freely.
+          </p>
+        </div>
+        <div>
           <div className="flex items-center justify-between gap-2">
             <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
               Keywords — one CSV row per line: <code>keyword,monthly_volume</code>
@@ -606,9 +632,9 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
               className="btn text-xs"
               onClick={onSuggestKeywords}
               disabled={suggesting}
-              title="Suggest keywords with traffic data from DataForSEO"
+              title="Expand seed keywords into long-tail with traffic data via DataForSEO"
             >
-              {suggesting ? "Searching…" : "Suggest from DataForSEO"}
+              {suggesting ? "Searching…" : "Suggest from seeds"}
             </button>
           </div>
           <textarea
