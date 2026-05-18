@@ -17,9 +17,9 @@ function fmtDate(iso: string | null): string {
 export default async function AutoblogArticlePage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string; articleId: string }>;
 }) {
-  const { id } = await params;
+  const { id: projectId, articleId } = await params;
 
   const supabase = await createClient();
   const {
@@ -30,11 +30,17 @@ export default async function AutoblogArticlePage({
   const { data: article } = await supabase
     .from("lx_article")
     .select(
-      "id, title, slug, meta_description, content_html, image_url, tags, internal_links, status, published_at, created_at, webhook_response_code, webhook_attempts, webhook_last_error, webhook_delivery_id, lx_site!inner(user_id, domain, blog_root_url)",
+      "id, title, slug, meta_description, content_html, image_url, tags, internal_links, status, published_at, created_at, webhook_response_code, webhook_attempts, webhook_last_error, webhook_delivery_id, lx_site!inner(user_id, project_id, domain, blog_root_url)",
     )
-    .eq("id", id)
+    .eq("id", articleId)
     .maybeSingle();
-  if (!article || (article as any).lx_site?.user_id !== user.id) notFound();
+  if (
+    !article ||
+    (article as any).lx_site?.user_id !== user.id ||
+    (article as any).lx_site?.project_id !== projectId
+  ) {
+    notFound();
+  }
 
   const site = (article as any).lx_site as {
     domain: string;
@@ -47,7 +53,7 @@ export default async function AutoblogArticlePage({
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <Link
-          href="/autoblog/history"
+          href={`/projects/${projectId}/autoblog/history`}
           className="text-sm text-[var(--color-muted)]"
         >
           ← Article history

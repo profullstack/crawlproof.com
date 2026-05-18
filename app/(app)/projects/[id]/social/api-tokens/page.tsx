@@ -14,7 +14,12 @@ type TokenRow = {
   created_at: string;
 };
 
-export default async function ApiTokensPage() {
+export default async function ApiTokensPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id: projectId } = await params;
   const supabase = await createClient();
   const {
     data: { user },
@@ -30,7 +35,10 @@ export default async function ApiTokensPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
-        <Link href="/social/setup" className="text-sm text-[var(--color-muted)]">
+        <Link
+          href={`/projects/${projectId}/social/setup`}
+          className="text-sm text-[var(--color-muted)]"
+        >
           ← Social
         </Link>
         <h1 className="mt-4 text-3xl font-bold">API tokens</h1>

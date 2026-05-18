@@ -37,6 +37,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/projects/new">New</Link>
+            {/* Both link to legacy roots that resolve the current
+                project from the picker cookie and 302 to the correct
+                /projects/[id]/(autoblog|social) sub-tab. */}
             <Link href="/autoblog">Autoblog</Link>
             <Link href="/social">Social</Link>
             <SitePicker sites={sites} currentId={currentSiteId} />

@@ -5,7 +5,12 @@ import { RunNowButton } from "@/components/run-now-button";
 import type { ProjectStatus } from "@/app/actions/projects";
 import type { Engine } from "@/lib/credits";
 
-export type ProjectShellTab = "overview" | "performance" | "scans";
+export type ProjectShellTab =
+  | "overview"
+  | "performance"
+  | "scans"
+  | "autoblog"
+  | "social";
 
 type ProjectLite = {
   id: string;
@@ -24,6 +29,8 @@ const TABS: { id: ProjectShellTab; label: string; href: (id: string) => string }
     href: (id) => `/projects/${id}/performance`,
   },
   { id: "scans", label: "Scans", href: (id) => `/projects/${id}/scans` },
+  { id: "autoblog", label: "Autoblog", href: (id) => `/projects/${id}/autoblog` },
+  { id: "social", label: "Social", href: (id) => `/projects/${id}/social` },
 ];
 
 // Shared shell for the three project tab pages. Renders the breadcrumb,

@@ -936,7 +936,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           <button
             type="button"
             className="btn"
-            onClick={() => router.push("/autoblog")}
+            onClick={() => router.back()}
           >
             Cancel
           </button>

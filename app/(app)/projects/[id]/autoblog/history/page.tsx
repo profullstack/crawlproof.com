@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentSite } from "@/lib/lx/currentSite";
+import { getProjectById } from "@/lib/lx/currentSite";
 import { RetryButton } from "../actions";
 
 export const metadata = { title: "Autoblog · History" };
@@ -15,17 +15,25 @@ function fmtDate(iso: string | null): string {
   }
 }
 
-export default async function AutoblogHistoryPage() {
+export default async function AutoblogHistoryPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id: projectId } = await params;
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const site = (await getCurrentSite("id, domain")) as
-    | { id: string; domain: string }
-    | null;
-  if (!site) redirect("/autoblog/setup");
+  const project = await getProjectById(projectId, {
+    siteColumns: "id, domain",
+    projectColumns: "id, name, url",
+  });
+  if (!project) notFound();
+  const site = project.lx_site as { id: string; domain: string } | null;
+  if (!site) redirect(`/projects/${projectId}/autoblog/setup`);
 
   const { data: articles } = await supabase
     .from("lx_article")
@@ -39,7 +47,10 @@ export default async function AutoblogHistoryPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <Link href="/autoblog" className="text-sm text-[var(--color-muted)]">
+        <Link
+          href={`/projects/${projectId}/autoblog`}
+          className="text-sm text-[var(--color-muted)]"
+        >
           ← Autoblog
         </Link>
         <h1 className="mt-2 text-3xl font-bold">Article history</h1>
@@ -66,7 +77,7 @@ export default async function AutoblogHistoryPage() {
               <tr key={a.id} className="align-top">
                 <td className="py-3 pr-4">
                   <Link
-                    href={`/autoblog/articles/${a.id}`}
+                    href={`/projects/${projectId}/autoblog/articles/${a.id}`}
                     className="font-medium hover:underline"
                   >
                     {a.title}

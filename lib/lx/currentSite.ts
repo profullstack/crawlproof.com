@@ -98,6 +98,37 @@ export async function getCurrentSite<T extends string = "*">(
   };
 }
 
+// Fetch a specific project (and its autoblog config) by id, scoped to
+// the signed-in user. Mirrors getCurrentProject's shape so the same
+// normalize logic applies. Use this from project sub-tab pages
+// (/projects/[id]/autoblog, /projects/[id]/social, …) where the id
+// comes from the URL rather than the picker cookie.
+export async function getProjectById(
+  projectId: string,
+  opts: { siteColumns?: string; projectColumns?: string } = {},
+): Promise<
+  | (Record<string, unknown> & { id: string; lx_site: Record<string, unknown> | null })
+  | null
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const projectColumns = opts.projectColumns ?? "id, name, url";
+  const siteColumns = opts.siteColumns ?? "*";
+  const select = `${projectColumns}, lx_site(${siteColumns})`;
+
+  const { data } = await supabase
+    .from("projects")
+    .select(select)
+    .eq("id", projectId)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  return data ? normalizeProject(data as unknown as Record<string, unknown>) : null;
+}
+
 export async function getCurrentProject(opts: {
   siteColumns?: string;
   projectColumns?: string;

@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentSite } from "@/lib/lx/currentSite";
+import { getProjectById } from "@/lib/lx/currentSite";
 import { SetupForm } from "./form";
 
 export const metadata = { title: "Autoblog · Setup" };
@@ -10,26 +10,36 @@ const SITE_COLUMNS =
   "id, domain, blog_root_url, sitemap_url, niche, target_audiences, description, seed_keywords, keywords, seo_title, seo_description, tone, competitors, webhook_url, webhook_secret, daily_article_count, publish_days, publish_hour, internal_links_per_article, backlinks_enabled, external_links_per_article, status";
 
 export default async function AutoblogSetupPage({
+  params,
   searchParams,
 }: {
+  params: Promise<{ id: string }>;
   searchParams: Promise<{ new?: string }>;
 }) {
+  const { id: projectId } = await params;
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  // ?new=1 forces the discover wizard, used by "+ New site" in the
-  // picker. Otherwise resolve the active site via the picker cookie.
-  const params = await searchParams;
-  const isNew = params?.new === "1";
-  const site = isNew ? null : await getCurrentSite(SITE_COLUMNS);
+  const project = await getProjectById(projectId, {
+    siteColumns: SITE_COLUMNS,
+    projectColumns: "id, name, url",
+  });
+  if (!project) notFound();
+
+  const sp = await searchParams;
+  const isNew = sp?.new === "1";
+  const site = isNew ? null : project.lx_site;
 
   return (
     <div className="mx-auto max-w-2xl">
-      <Link href="/dashboard" className="text-sm text-[var(--color-muted)]">
-        ← Dashboard
+      <Link
+        href={`/projects/${projectId}/autoblog`}
+        className="text-sm text-[var(--color-muted)]"
+      >
+        ← Autoblog
       </Link>
       <h1 className="mt-4 text-3xl font-bold">
         {site ? "Autoblog settings" : "Set up Autoblog"}

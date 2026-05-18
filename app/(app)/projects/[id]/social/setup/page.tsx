@@ -25,10 +25,13 @@ type AccountRow = {
 };
 
 export default async function SocialSetupPage({
+  params,
   searchParams,
 }: {
+  params: Promise<{ id: string }>;
   searchParams: SetupSearchParams;
 }) {
+  const { id: projectId } = await params;
   const supabase = await createClient();
   const {
     data: { user },
@@ -48,12 +51,15 @@ export default async function SocialSetupPage({
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
-        <Link href="/dashboard" className="text-sm text-[var(--color-muted)]">
-          ← Dashboard
+        <Link
+          href={`/projects/${projectId}/social`}
+          className="text-sm text-[var(--color-muted)]"
+        >
+          ← Social
         </Link>
         <h1 className="mt-4 text-3xl font-bold">Social accounts</h1>
         <Link
-          href="/social/api-tokens"
+          href={`/projects/${projectId}/social/api-tokens`}
           className="float-right text-sm text-[var(--color-muted)] hover:underline"
         >
           API tokens →
