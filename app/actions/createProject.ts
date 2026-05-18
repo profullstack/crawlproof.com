@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
+import { setCurrentSite } from "@/lib/lx/currentSite";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -43,6 +44,9 @@ export async function createProject(input: {
     .single();
   if (error || !data) return { ok: false, error: error?.message ?? "Failed." };
 
+  // Make the new project the active one so autoblog/social tabs land
+  // on it without an extra picker click.
+  await setCurrentSite(data.id);
   revalidatePath("/dashboard");
   return { ok: true, id: data.id };
 }

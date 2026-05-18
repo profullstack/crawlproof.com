@@ -7,7 +7,7 @@ import type { SiteSummary } from "@/lib/lx/currentSite";
 
 // The agency-tier site picker. Renders as a small dropdown in the nav.
 // Single-site users still see it (showing their one site), so the
-// "+ New site" path is discoverable from day one. ≥2 sites flips it
+// "+ New project" path is discoverable from day one. ≥2 sites flips it
 // into a proper picker.
 export function SitePicker({
   sites,
@@ -25,10 +25,10 @@ export function SitePicker({
   if (sites.length === 0) {
     return (
       <a
-        href="/sites/new"
+        href="/projects/new"
         className="text-xs uppercase tracking-wider text-[var(--color-muted)] hover:text-[var(--color-fg)]"
       >
-        + Add site
+        + Add project
       </a>
     );
   }
@@ -84,11 +84,11 @@ export function SitePicker({
           ))}
           <div className="my-1 border-t border-[var(--color-border)]/50" />
           <a
-            href="/sites/new"
+            href="/projects/new"
             className="block px-3 py-2 text-xs text-[var(--color-muted)] hover:bg-[var(--color-border)]/30 hover:text-[var(--color-fg)]"
             onClick={() => setOpen(false)}
           >
-            + New site
+            + New project
           </a>
         </div>
       )}
