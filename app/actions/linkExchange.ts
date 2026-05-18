@@ -88,6 +88,41 @@ function parseList(
     .map((s) => s.slice(0, itemMax));
 }
 
+// Find an existing project row for (owner, domain), or create one.
+// Centralizes the projects+lx_site unification: any code path that
+// mints an lx_site row first goes through this to attach to (or
+// create) the canonical projects row.
+async function findOrCreateProject(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  domain: string,
+  name: string | null,
+): Promise<{ id: string } | { error: string }> {
+  const url = `https://${domain}`;
+  const { data: existing } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("owner_id", userId)
+    .eq("url", url)
+    .maybeSingle();
+  if (existing) return { id: existing.id as string };
+
+  const { data: created, error } = await supabase
+    .from("projects")
+    .insert({
+      owner_id: userId,
+      name: name ?? domain,
+      url,
+      schedule: "off",
+    })
+    .select("id")
+    .single();
+  if (error || !created) {
+    return { error: error?.message ?? "Could not create project." };
+  }
+  return { id: created.id as string };
+}
+
 // Keywords textarea: one CSV row per line, `<keyword>,<monthly_volume>`.
 // We store the row verbatim so the volume hint persists; downstream
 // consumers split on the first comma to recover just the keyword.
@@ -153,15 +188,22 @@ export async function createSite(input: {
 
   const name = clean(input.name, MAX.niche) || null;
 
-  // Reject duplicates per-user — same domain already added.
+  // Find or create the canonical project for this (owner, domain).
+  // lx_site is now 1:1 with projects, so we attach to the existing
+  // project if there is one — even if it predated autoblog.
+  const proj = await findOrCreateProject(supabase, user.id, domain, name);
+  if ("error" in proj) return { ok: false, error: proj.error };
+
+  // Reject duplicates per-project — same domain already has an
+  // lx_site shell (1:1 constraint would catch this, but a clean
+  // error beats a Postgres unique-violation).
   const { data: existing } = await supabase
     .from("lx_site")
     .select("id")
-    .eq("user_id", user.id)
-    .eq("domain", domain)
+    .eq("project_id", proj.id)
     .maybeSingle();
   if (existing) {
-    await setCurrentSite(existing.id as string);
+    await setCurrentSite(proj.id);
     revalidatePath("/dashboard");
     return { ok: true, siteId: existing.id as string };
   }
@@ -170,10 +212,9 @@ export async function createSite(input: {
     .from("lx_site")
     .insert({
       user_id: user.id,
+      project_id: proj.id,
       domain,
       url: `https://${domain}`,
-      // name lives in lx_site if the column exists; harmless coalesce
-      // because supabase ignores unknown columns when not strict-mode.
       name,
       // Everything autoblog-shaped stays null until the user
       // explicitly configures it on /autoblog/setup.
@@ -188,7 +229,7 @@ export async function createSite(input: {
     return { ok: false, error: error?.message ?? "Could not add site." };
   }
 
-  await setCurrentSite(inserted.id as string);
+  await setCurrentSite(proj.id);
   revalidatePath("/dashboard");
   return { ok: true, siteId: inserted.id as string };
 }
@@ -320,68 +361,62 @@ export async function createOrUpdateSite(
     return { ok: false, error: "Pick at least one publishing day." };
   }
 
-  // Multi-site: if siteId is provided, edit that one; verify
-  // ownership. Otherwise, this is a create.
-  let existing: { id: string } | null = null;
-  if (input.siteId) {
-    const { data } = await supabase
-      .from("lx_site")
-      .select("id")
-      .eq("id", input.siteId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!data) return { ok: false, error: "Site not found." };
-    existing = data as { id: string };
-  }
-
   const nextAt = nextPublishAt(publishDays, publishHour);
 
-  if (existing) {
-    const { data: prev } = await supabase
-      .from("lx_site")
-      .select("sitemap_url")
-      .eq("id", existing.id)
-      .maybeSingle();
-    const updatePayload: Record<string, unknown> = {
-      domain,
-      url: `https://${domain}`,
-      blog_root_url: blogRootUrl,
-      sitemap_url: sitemapUrl,
-      niche,
-      target_audiences: audiences,
-      description,
-      seed_keywords: seedKeywords,
-      keywords,
-      seo_title: seoTitle,
-      seo_description: seoDescription,
-      tone,
-      competitors,
-      webhook_url: webhookUrl,
-      webhook_secret: webhookSecret,
-      daily_article_count: dailyArticleCount,
-      publish_days: publishDays,
-      publish_hour: publishHour,
-      internal_links_per_article: internalLinks,
-      backlinks_enabled: backlinksEnabled,
-      external_links_per_article: externalLinks,
-      next_publish_at: nextAt?.toISOString() ?? null,
-    };
+  // Get or mint the project this autoblog config belongs to.
+  const proj = await findOrCreateProject(supabase, user.id, domain, niche);
+  if ("error" in proj) return { ok: false, error: proj.error };
+
+  // The 1:1 lx_site<-project constraint means re-saving for an existing
+  // project must go through the update path. Catch the race: if a
+  // lx_site already exists for this project but the caller didn't pass
+  // siteId, treat it as an update.
+  const { data: existingByProject } = await supabase
+    .from("lx_site")
+    .select("id")
+    .eq("project_id", proj.id)
+    .maybeSingle();
+
+  if (existingByProject) {
     const { error } = await supabase
       .from("lx_site")
-      .update(updatePayload)
-      .eq("id", existing.id);
+      .update({
+        domain,
+        url: `https://${domain}`,
+        blog_root_url: blogRootUrl,
+        sitemap_url: sitemapUrl,
+        niche,
+        target_audiences: audiences,
+        description,
+        seed_keywords: seedKeywords,
+        keywords,
+        seo_title: seoTitle,
+        seo_description: seoDescription,
+        tone,
+        competitors,
+        webhook_url: webhookUrl,
+        webhook_secret: webhookSecret,
+        daily_article_count: dailyArticleCount,
+        publish_days: publishDays,
+        publish_hour: publishHour,
+        internal_links_per_article: internalLinks,
+        backlinks_enabled: backlinksEnabled,
+        external_links_per_article: externalLinks,
+        next_publish_at: nextAt?.toISOString() ?? null,
+      })
+      .eq("id", existingByProject.id);
     if (error) return { ok: false, error: error.message };
-    if (prev?.sitemap_url !== sitemapUrl) {
-      await enqueueSitemapCrawl(existing.id);
-    }
+    await enqueueSitemapCrawl(existingByProject.id as string);
+    await setCurrentSite(proj.id);
     revalidatePath("/autoblog");
-    return { ok: true, siteId: existing.id };
+    return { ok: true, siteId: existingByProject.id as string };
   }
 
   const { data: inserted, error } = await supabase
     .from("lx_site")
     .insert({
       user_id: user.id,
+      project_id: proj.id,
       domain,
       url: `https://${domain}`,
       blog_root_url: blogRootUrl,
@@ -413,9 +448,7 @@ export async function createOrUpdateSite(
   }
 
   await enqueueSitemapCrawl(inserted.id);
-  // Multi-site: a fresh create becomes the active site so the user
-  // doesn't have to manually pick it from the picker after onboarding.
-  await setCurrentSite(inserted.id);
+  await setCurrentSite(proj.id);
   revalidatePath("/autoblog");
   return { ok: true, siteId: inserted.id };
 }

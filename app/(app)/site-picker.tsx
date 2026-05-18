@@ -69,7 +69,14 @@ export function SitePicker({
                 (s.id === current?.id ? "text-[var(--color-accent)]" : "")
               }
             >
-              <div className="truncate">{s.name || s.domain}</div>
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="truncate">{s.name || s.domain}</span>
+                {s.hasAutoblog && (
+                  <span className="shrink-0 rounded bg-[var(--color-accent)]/15 px-1 py-0.5 text-[9px] uppercase tracking-wider text-[var(--color-accent)]">
+                    autoblog
+                  </span>
+                )}
+              </div>
               {s.name && s.name !== s.domain && (
                 <div className="truncate text-[10px] text-[var(--color-muted)]">{s.domain}</div>
               )}
