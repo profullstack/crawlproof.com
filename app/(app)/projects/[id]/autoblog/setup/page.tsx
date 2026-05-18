@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProjectById } from "@/lib/lx/currentSite";
@@ -34,20 +33,14 @@ export default async function AutoblogSetupPage({
   const site = isNew ? null : project.lx_site;
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <Link
-        href={`/projects/${projectId}/autoblog`}
-        className="text-sm text-[var(--color-muted)]"
-      >
-        ← Autoblog
-      </Link>
-      <h1 className="mt-4 text-3xl font-bold">
+    <div className="max-w-3xl">
+      <h2 className="text-xl font-bold">
         {site ? "Autoblog settings" : "Set up Autoblog"}
-      </h1>
-      <p className="mt-2 text-[var(--color-muted)]">
+      </h2>
+      <p className="mt-2 text-sm text-[var(--color-muted)]">
         We auto-generate a daily SEO blog post for your site and POST it to
-        your webhook. You handle publishing. Link Exchange ships later — for now,
-        articles include internal links from your sitemap only.
+        your webhook. You handle publishing. Link Exchange ships later —
+        for now, articles include internal links from your sitemap only.
       </p>
       <SetupForm projectId={projectId} initial={(site as any) ?? null} />
     </div>

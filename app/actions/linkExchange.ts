@@ -276,6 +276,12 @@ export type SiteInput = {
   // Optional: when set, update that specific site (multi-site agency
   // model). When unset, create a new lx_site row.
   siteId?: string;
+  // The project this autoblog config belongs to. When set we look up
+  // the project directly by id (verifying ownership) instead of
+  // matching on domain — fixes the bug where saving from
+  // /projects/A/autoblog/setup with a domain that matched some other
+  // project would attach the lx_site to that other project.
+  projectId?: string;
   domain: string;
   blogRootUrl: string;
   sitemapUrl: string;
@@ -368,9 +374,27 @@ export async function createOrUpdateSite(
 
   const nextAt = nextPublishAt(publishDays, publishHour);
 
-  // Get or mint the project this autoblog config belongs to.
-  const proj = await findOrCreateProject(supabase, user.id, domain, niche);
-  if ("error" in proj) return { ok: false, error: proj.error };
+  // Resolve the project. When projectId is given (called from
+  // /projects/[id]/autoblog/setup) we use that directly and verify
+  // ownership — the domain field becomes pure metadata for the lx_site
+  // row, not a project-matching key. Without projectId, fall back to
+  // the old find-or-create-by-domain path so the legacy entry points
+  // (e.g. the wizard before a project exists) keep working.
+  let proj: { id: string };
+  if (input.projectId) {
+    const { data: owned } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", input.projectId)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (!owned) return { ok: false, error: "Project not found." };
+    proj = { id: owned.id as string };
+  } else {
+    const found = await findOrCreateProject(supabase, user.id, domain, niche);
+    if ("error" in found) return { ok: false, error: found.error };
+    proj = found;
+  }
 
   // The 1:1 lx_site<-project constraint means re-saving for an existing
   // project must go through the update path. Catch the race: if a
