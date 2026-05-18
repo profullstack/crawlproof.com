@@ -73,8 +73,7 @@ export async function connectBluesky(input: {
     return { ok: false, error: error?.message ?? "Could not save account." };
   }
 
-  revalidatePath("/social");
-  revalidatePath("/social/setup");
+  revalidatePath("/projects", "layout");
   return { ok: true, accountId: data.id };
 }
 
@@ -128,8 +127,7 @@ export async function connectDiscord(input: {
     return { ok: false, error: error?.message ?? "Could not save account." };
   }
 
-  revalidatePath("/social");
-  revalidatePath("/social/setup");
+  revalidatePath("/projects", "layout");
   return { ok: true, accountId: data.id };
 }
 
@@ -204,8 +202,7 @@ export async function connectTelegram(input: {
     return { ok: false, error: error?.message ?? "Could not save account." };
   }
 
-  revalidatePath("/social");
-  revalidatePath("/social/setup");
+  revalidatePath("/projects", "layout");
   return { ok: true, accountId: data.id };
 }
 
@@ -228,8 +225,7 @@ export async function disconnectAccount(
     .eq("id", accountId)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/social");
-  revalidatePath("/social/setup");
+  revalidatePath("/projects", "layout");
   return { ok: true };
 }
 
@@ -276,7 +272,7 @@ export async function createApiToken(input: {
     return { ok: false, error: error?.message ?? "Could not save token." };
   }
 
-  revalidatePath("/social/api-tokens");
+  revalidatePath("/projects", "layout");
   return { ok: true, id: data.id, token: minted.plaintext, prefix: minted.prefix };
 }
 
@@ -297,7 +293,7 @@ export async function revokeApiToken(tokenId: string): Promise<Ok | Err> {
     .eq("id", tokenId)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/social/api-tokens");
+  revalidatePath("/projects", "layout");
   return { ok: true };
 }
 
@@ -325,7 +321,7 @@ export async function postNow(
     source: "manual",
   });
   if (!result.ok) return { ok: false, error: result.error };
-  revalidatePath("/social");
+  revalidatePath("/projects", "layout");
   return { ok: true, postId: result.postId, webUrl: result.webUrl };
 }
 
