@@ -19,6 +19,11 @@ type Existing = {
   niche: string | null;
   target_audiences: string[];
   description: string;
+  keywords: string[];
+  seo_title: string | null;
+  seo_description: string | null;
+  tone: string | null;
+  competitors: string[];
   webhook_url: string | null;
   webhook_secret: string | null;
   daily_article_count: number;
@@ -61,6 +66,15 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     (initial?.target_audiences ?? []).join(", "),
   );
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [keywords, setKeywords] = useState(
+    (initial?.keywords ?? []).join(", "),
+  );
+  const [seoTitle, setSeoTitle] = useState(initial?.seo_title ?? "");
+  const [seoDescription, setSeoDescription] = useState(initial?.seo_description ?? "");
+  const [tone, setTone] = useState(initial?.tone ?? "");
+  const [competitors, setCompetitors] = useState(
+    (initial?.competitors ?? []).join(", "),
+  );
   const [webhookUrl, setWebhookUrl] = useState(initial?.webhook_url ?? "");
   const [webhookSecret, setWebhookSecret] = useState<string>(
     initial?.webhook_secret ?? "",
@@ -162,10 +176,51 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       setStep("review");
       return;
     }
-    setNiche(res.profile.niche);
-    setAudiences(res.profile.targetAudiences.join(", "));
-    setDescription(res.profile.description);
+    applyProfile(res.profile);
     setStep("review");
+  }
+
+  function applyProfile(p: {
+    niche: string;
+    targetAudiences: string[];
+    description: string;
+    keywords: string[];
+    seoTitle: string;
+    seoDescription: string;
+    tone: string;
+    competitors: string[];
+  }) {
+    setNiche(p.niche);
+    setAudiences(p.targetAudiences.join(", "));
+    setDescription(p.description);
+    setKeywords(p.keywords.join(", "));
+    setSeoTitle(p.seoTitle);
+    setSeoDescription(p.seoDescription);
+    setTone(p.tone);
+    setCompetitors(p.competitors.join(", "));
+  }
+
+  async function onFetchMetadata() {
+    if (!blogRoot.trim()) {
+      setError("Set a blog URL first.");
+      return;
+    }
+    setError(null);
+    setWarning(null);
+    setNotice(null);
+    setEnriching(true);
+    const res = await enrichFromUrls({
+      blogUrl: blogRoot.trim(),
+      feedUrl: feedUrl.trim() || null,
+      sitemapUrl: sitemap.trim() || null,
+    });
+    setEnriching(false);
+    if (!res.ok) {
+      setWarning(`Couldn't fetch metadata (${res.error}).`);
+      return;
+    }
+    applyProfile(res.profile);
+    setNotice("Metadata fetched.");
   }
 
   function toggleDay(n: number) {
@@ -185,6 +240,11 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         niche,
         targetAudiences: audiences,
         description,
+        keywords,
+        seoTitle,
+        seoDescription,
+        tone,
+        competitors,
         webhookUrl,
         webhookSecret,
         dailyArticleCount: dailyCount,
@@ -407,9 +467,20 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
 
       {/* Editorial profile */}
       <section className="space-y-3">
-        <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          Editorial profile
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Editorial profile
+          </h2>
+          <button
+            type="button"
+            className="btn text-xs"
+            onClick={onFetchMetadata}
+            disabled={enriching}
+            title="Re-run AI enrichment on the blog URL above"
+          >
+            {enriching ? "Fetching…" : "Fetch metadata"}
+          </button>
+        </div>
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Niche
@@ -443,6 +514,73 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
             placeholder="One paragraph: what the site does, who it's for, what tone to use."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Keywords (comma-separated, 5–15)
+          </label>
+          <input
+            className="input mt-1"
+            type="text"
+            placeholder="zero trust, soc2 compliance, kubernetes security, …"
+            value={keywords}
+            onChange={(e) => setKeywords(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Tone (comma-separated descriptors)
+          </label>
+          <input
+            className="input mt-1"
+            type="text"
+            placeholder="technical, irreverent, no-fluff"
+            value={tone}
+            onChange={(e) => setTone(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            SEO title (50–60 chars)
+          </label>
+          <input
+            className="input mt-1"
+            type="text"
+            maxLength={70}
+            placeholder="Acme — security tooling for engineering teams"
+            value={seoTitle}
+            onChange={(e) => setSeoTitle(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {seoTitle.length} / 60
+          </p>
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            SEO description (140–160 chars)
+          </label>
+          <textarea
+            className="input mt-1 min-h-[4rem]"
+            maxLength={160}
+            placeholder="One or two sentences that show up in search results. Active voice, soft CTA."
+            value={seoDescription}
+            onChange={(e) => setSeoDescription(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {seoDescription.length} / 160
+          </p>
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Competitors (comma-separated, up to 5)
+          </label>
+          <input
+            className="input mt-1"
+            type="text"
+            placeholder="stripe.com, segment.com, datadog.com"
+            value={competitors}
+            onChange={(e) => setCompetitors(e.target.value)}
           />
         </div>
       </section>

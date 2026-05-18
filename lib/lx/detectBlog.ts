@@ -375,6 +375,11 @@ const ProfileLLMOutput = z.object({
   niche: z.string().min(2).max(120),
   target_audiences: z.array(z.string().min(2).max(80)).min(1).max(6),
   description: z.string().min(40).max(800),
+  keywords: z.array(z.string().min(2).max(60)).min(5).max(15),
+  seo_title: z.string().min(10).max(70),
+  seo_description: z.string().min(50).max(160),
+  tone: z.string().min(3).max(120),
+  competitors: z.array(z.string().min(3).max(120)).min(0).max(5),
 });
 
 const SYSTEM_PROMPT = [
@@ -383,6 +388,11 @@ const SYSTEM_PROMPT = [
   "  niche — 2-6 word phrase describing the topical area (e.g. 'cybersecurity for SaaS', 'home-coffee gear reviews').",
   "  target_audiences — 2-4 short audience labels (e.g. 'security engineers', 'CTOs', 'home barista hobbyists').",
   "  description — 2-3 sentences describing what the site does and the tone to write in. Address the AI writer in second person ('You are writing for…').",
+  "  keywords — 5-15 short SEO keyword phrases (1-4 words each) the site should rank for. Mix head and long-tail. Lowercase.",
+  "  seo_title — a 50-60 character page <title> for the blog homepage. Brand-included, keyword-rich, human-readable.",
+  "  seo_description — a 140-160 character meta description for the blog homepage. Active voice, ends with a soft CTA.",
+  "  tone — 3-6 short tone descriptors comma-separated (e.g. 'technical, irreverent, no-fluff' or 'warm, practical, beginner-friendly').",
+  "  competitors — 0-5 well-known sites in the same niche (domain or brand name, e.g. 'stripe.com', 'Indie Hackers'). Empty array if uncertain.",
   "Be specific. Do not write marketing fluff. If you cannot tell, say so honestly in the description.",
 ].join("\n");
 
@@ -433,6 +443,11 @@ export type EnrichmentResult = {
   niche: string;
   targetAudiences: string[];
   description: string;
+  keywords: string[];
+  seoTitle: string;
+  seoDescription: string;
+  tone: string;
+  competitors: string[];
 };
 
 export async function enrichBlogProfile(
@@ -484,6 +499,11 @@ export async function enrichBlogProfile(
         niche: parsed.niche,
         targetAudiences: parsed.target_audiences,
         description: parsed.description,
+        keywords: parsed.keywords,
+        seoTitle: parsed.seo_title,
+        seoDescription: parsed.seo_description,
+        tone: parsed.tone,
+        competitors: parsed.competitors,
       },
     };
   } catch (err) {

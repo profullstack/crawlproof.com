@@ -25,6 +25,13 @@ const MAX = {
   audiences: 6,
   description: 2000,
   webhookSecret: 512,
+  keyword: 60,
+  keywords: 15,
+  seoTitle: 70,
+  seoDescription: 160,
+  tone: 120,
+  competitor: 120,
+  competitors: 5,
 };
 
 function clean(s: unknown, max: number): string {
@@ -63,6 +70,19 @@ function parseAudiences(input: string): string[] {
     .filter(Boolean)
     .slice(0, MAX.audiences)
     .map((s) => s.slice(0, MAX.audience));
+}
+
+function parseList(
+  input: string,
+  maxItems: number,
+  itemMax: number,
+): string[] {
+  return clean(input, maxItems * (itemMax + 2))
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .map((s) => s.slice(0, itemMax));
 }
 
 // ------------------------------------------------------------
@@ -201,6 +221,13 @@ export type SiteInput = {
   niche: string;
   targetAudiences: string;
   description: string;
+  // Comma-separated. parseList() into a text[].
+  keywords: string;
+  seoTitle: string;
+  seoDescription: string;
+  tone: string;
+  // Comma-separated. parseList() into a text[].
+  competitors: string;
   webhookUrl: string;
   webhookSecret: string;
   dailyArticleCount: number;
@@ -251,6 +278,11 @@ export async function createOrUpdateSite(
   const niche = clean(input.niche, MAX.niche) || null;
   const description = clean(input.description, MAX.description);
   const audiences = parseAudiences(input.targetAudiences);
+  const keywords = parseList(input.keywords, MAX.keywords, MAX.keyword);
+  const seoTitle = clean(input.seoTitle, MAX.seoTitle) || null;
+  const seoDescription = clean(input.seoDescription, MAX.seoDescription) || null;
+  const tone = clean(input.tone, MAX.tone) || null;
+  const competitors = parseList(input.competitors, MAX.competitors, MAX.competitor);
 
   const dailyArticleCount = Math.max(1, Math.min(5, Math.floor(input.dailyArticleCount || 1)));
   const publishHour = Math.max(0, Math.min(23, Math.floor(input.publishHour ?? 9)));
@@ -298,6 +330,11 @@ export async function createOrUpdateSite(
       niche,
       target_audiences: audiences,
       description,
+      keywords,
+      seo_title: seoTitle,
+      seo_description: seoDescription,
+      tone,
+      competitors,
       webhook_url: webhookUrl,
       webhook_secret: webhookSecret,
       daily_article_count: dailyArticleCount,
@@ -331,6 +368,11 @@ export async function createOrUpdateSite(
       niche,
       target_audiences: audiences,
       description,
+      keywords,
+      seo_title: seoTitle,
+      seo_description: seoDescription,
+      tone,
+      competitors,
       webhook_url: webhookUrl,
       webhook_secret: webhookSecret,
       daily_article_count: dailyArticleCount,
