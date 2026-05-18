@@ -77,11 +77,23 @@ function parseList(
   maxItems: number,
   itemMax: number,
 ): string[] {
-  // Accept either newline- or comma-separated. Keywords UI uses newlines
-  // (one per line); other fields stay comma-separated. Splitting on both
-  // is forgiving without changing the saved data model.
+  // Accept either newline- or comma-separated for free-text list fields
+  // (competitors, etc.). Keywords use parseKeywordRows() instead — they
+  // store one CSV row per line so commas inside a row are preserved.
   return clean(input, maxItems * (itemMax + 2))
     .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .map((s) => s.slice(0, itemMax));
+}
+
+// Keywords textarea: one CSV row per line, `<keyword>,<monthly_volume>`.
+// We store the row verbatim so the volume hint persists; downstream
+// consumers split on the first comma to recover just the keyword.
+function parseKeywordRows(input: string, maxItems: number, itemMax: number): string[] {
+  return clean(input, maxItems * (itemMax + 2))
+    .split("\n")
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, maxItems)
@@ -281,7 +293,9 @@ export async function createOrUpdateSite(
   const niche = clean(input.niche, MAX.niche) || null;
   const description = clean(input.description, MAX.description);
   const audiences = parseAudiences(input.targetAudiences);
-  const keywords = parseList(input.keywords, MAX.keywords, MAX.keyword);
+  // Keywords use parseKeywordRows so each row keeps its `,<volume>` hint.
+  // Allow up to ~80 chars per row to fit "keyword phrase here,12345".
+  const keywords = parseKeywordRows(input.keywords, MAX.keywords, MAX.keyword + 20);
   const seoTitle = clean(input.seoTitle, MAX.seoTitle) || null;
   const seoDescription = clean(input.seoDescription, MAX.seoDescription) || null;
   const tone = clean(input.tone, MAX.tone) || null;
@@ -404,10 +418,17 @@ export async function createOrUpdateSite(
 // ------------------------------------------------------------
 // suggestLongTailKeywords — DataForSEO-backed long-tail expansion.
 //
-// Filters: ≥ MIN_VOLUME monthly searches AND ≥ 3 words per phrase.
-// The PRD's keyword-scheduler pipeline (researchKeywords) keeps a
-// MIN_VOLUME of 50 for breadth; here we target 300/mo so the form's
-// suggestions reflect terms that can plausibly drive 300+ visits.
+// We tier the filters because narrow niches (CTEM, dev-tooling, etc.)
+// rarely have many phrases at the ideal 300/mo + 3 words threshold.
+// First try the ideal tier; if empty, relax to 100/mo + 2 words, then
+// 50/mo + any. The response includes which tier we landed on so the UI
+// can show "no 300/mo phrases, here's the 100/mo set" instead of just
+// returning empty.
+//
+// We also pre-tokenize long seed phrases ("threat intelligence and
+// CTEM security operations") into 2-3 word subphrases. DFS's expansion
+// works on terms people actually search, so a 6-word phrase returns
+// near-nothing; the subphrases give it real signal to work with.
 // ------------------------------------------------------------
 export type KeywordSuggestion = {
   keyword: string;
@@ -416,28 +437,73 @@ export type KeywordSuggestion = {
   competition: "LOW" | "MEDIUM" | "HIGH" | null;
 };
 
-const MIN_LONG_TAIL_VOLUME = 300;
-const MIN_LONG_TAIL_WORDS = 3;
+type FilterTier = {
+  label: string;
+  minVolume: number;
+  minWords: number;
+};
+
+const FILTER_TIERS: FilterTier[] = [
+  { label: "long-tail · ≥300/mo · 3+ words", minVolume: 300, minWords: 3 },
+  { label: "broader · ≥100/mo · 2+ words", minVolume: 100, minWords: 2 },
+  { label: "permissive · ≥50/mo · any length", minVolume: 50, minWords: 1 },
+];
+
+// Stopwords stripped when tokenizing a long seed into subseeds, so
+// "threat intelligence and CTEM security operations" yields the useful
+// chunks ("threat intelligence", "CTEM security operations") instead
+// of dragging "and" into a subphrase that nobody searches for.
+const SEED_STOPWORDS = new Set([
+  "and", "or", "the", "a", "an", "of", "for", "to", "in", "on", "with", "by",
+]);
+
+function tokenizeSeed(seed: string): string[] {
+  const tokens = seed
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^\w-]/g, ""))
+    .filter(Boolean);
+  if (tokens.length <= 3) return [seed.trim()];
+
+  // Walk left-to-right, breaking on stopwords. The original seed
+  // is also kept (DFS sometimes finds an exact match).
+  const out: string[] = [seed.trim()];
+  let buf: string[] = [];
+  for (const t of tokens) {
+    if (SEED_STOPWORDS.has(t)) {
+      if (buf.length >= 1) out.push(buf.join(" "));
+      buf = [];
+    } else {
+      buf.push(t);
+    }
+  }
+  if (buf.length >= 1) out.push(buf.join(" "));
+  return out;
+}
 
 export async function suggestLongTailKeywords(
   seeds: string[],
-): Promise<Ok<{ suggestions: KeywordSuggestion[] }> | Err> {
+): Promise<
+  Ok<{ suggestions: KeywordSuggestion[]; tier: string }> | Err
+> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const cleanedSeeds = Array.from(
-    new Set(
-      (seeds ?? [])
-        .map((s) => (typeof s === "string" ? s.trim() : ""))
-        .filter((s) => s.length >= 2 && s.length <= MAX.keyword),
-    ),
-  ).slice(0, 5);
-  if (cleanedSeeds.length === 0) {
+  const rawSeeds = (seeds ?? [])
+    .map((s) => (typeof s === "string" ? s.trim() : ""))
+    .filter((s) => s.length >= 2 && s.length <= MAX.keyword);
+  if (rawSeeds.length === 0) {
     return { ok: false, error: "Enter at least one seed keyword or niche." };
   }
+
+  // Expand each seed into subseeds (tokenize long phrases), then dedupe.
+  // DFS caps at 20 keywords per call; 10 is plenty for the UI use-case.
+  const expandedSeeds = Array.from(
+    new Set(rawSeeds.flatMap(tokenizeSeed).map((s) => s.toLowerCase())),
+  ).slice(0, 10);
 
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
@@ -452,24 +518,34 @@ export async function suggestLongTailKeywords(
   const dfs = new DataForSeoClient(login, password);
 
   try {
-    const res = await dfs.keywordsForKeywords(cleanedSeeds, {
+    const res = await dfs.keywordsForKeywords(expandedSeeds, {
       sortBy: "search_volume",
     });
     const cleaned = filterOutliers(res.rows);
-    const longTail = cleaned.filter((r) => {
-      const vol = r.search_volume ?? 0;
-      const words = r.keyword.trim().split(/\s+/).length;
-      return vol >= MIN_LONG_TAIL_VOLUME && words >= MIN_LONG_TAIL_WORDS;
-    });
-    // Sort by volume desc, cap at 30 so the UI stays readable.
-    longTail.sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0));
-    const suggestions: KeywordSuggestion[] = longTail.slice(0, 30).map((r) => ({
+
+    // Try each tier in order; stop at the first that returns matches.
+    let matched: typeof cleaned = [];
+    let tierUsed = FILTER_TIERS[FILTER_TIERS.length - 1].label;
+    for (const tier of FILTER_TIERS) {
+      matched = cleaned.filter((r) => {
+        const vol = r.search_volume ?? 0;
+        const words = r.keyword.trim().split(/\s+/).length;
+        return vol >= tier.minVolume && words >= tier.minWords;
+      });
+      if (matched.length > 0) {
+        tierUsed = tier.label;
+        break;
+      }
+    }
+
+    matched.sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0));
+    const suggestions: KeywordSuggestion[] = matched.slice(0, 30).map((r) => ({
       keyword: r.keyword,
       searchVolume: r.search_volume ?? 0,
       cpcUsd: r.cpc ?? null,
       competition: r.competition,
     }));
-    return { ok: true, suggestions };
+    return { ok: true, suggestions, tier: tierUsed };
   } catch (err) {
     return {
       ok: false,

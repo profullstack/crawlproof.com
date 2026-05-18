@@ -204,16 +204,28 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     setCompetitors(p.competitors.join(", "));
   }
 
+  // Each line is a CSV row "<keyword>,<volume>". For seed-building and
+  // dedupe we only care about the keyword half (everything before the
+  // first comma).
   function keywordsAsArray(): string[] {
     return keywords
-      .split(/[\n,]/)
+      .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
   }
 
+  function keywordNameFromRow(row: string): string {
+    const idx = row.indexOf(",");
+    return (idx === -1 ? row : row.slice(0, idx)).trim();
+  }
+
   async function onSuggestKeywords() {
     const seeds = Array.from(
-      new Set([niche.trim(), ...keywordsAsArray()].filter(Boolean)),
+      new Set(
+        [niche.trim(), ...keywordsAsArray().map(keywordNameFromRow)].filter(
+          Boolean,
+        ),
+      ),
     );
     if (seeds.length === 0) {
       setError("Add a niche or at least one keyword to use as a seed.");
@@ -232,26 +244,35 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     }
     setSuggestions(res.suggestions);
     if (res.suggestions.length === 0) {
-      setNotice("No long-tail keywords found at 300+/mo for those seeds.");
+      setNotice("No keyword suggestions found for those seeds.");
     } else {
       setNotice(
-        `${res.suggestions.length} long-tail suggestion(s). Click to add.`,
+        `${res.suggestions.length} suggestion(s) — ${res.tier}. Click to add.`,
       );
     }
   }
 
+  function formatRow(s: KeywordSuggestion): string {
+    return `${s.keyword},${s.searchVolume}`;
+  }
+
   function addSuggestion(s: KeywordSuggestion) {
-    const existing = new Set(keywordsAsArray().map((k) => k.toLowerCase()));
+    const existing = new Set(
+      keywordsAsArray().map((row) => keywordNameFromRow(row).toLowerCase()),
+    );
     if (existing.has(s.keyword.toLowerCase())) return;
-    setKeywords((prev) => (prev.trim() ? `${prev.trim()}\n${s.keyword}` : s.keyword));
+    const row = formatRow(s);
+    setKeywords((prev) => (prev.trim() ? `${prev.trim()}\n${row}` : row));
     setSuggestions((prev) => prev.filter((x) => x.keyword !== s.keyword));
   }
 
   function addAllSuggestions() {
-    const existing = new Set(keywordsAsArray().map((k) => k.toLowerCase()));
+    const existing = new Set(
+      keywordsAsArray().map((row) => keywordNameFromRow(row).toLowerCase()),
+    );
     const fresh = suggestions
       .filter((s) => !existing.has(s.keyword.toLowerCase()))
-      .map((s) => s.keyword);
+      .map(formatRow);
     if (fresh.length === 0) return;
     setKeywords((prev) =>
       prev.trim() ? `${prev.trim()}\n${fresh.join("\n")}` : fresh.join("\n"),
@@ -578,34 +599,37 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         <div>
           <div className="flex items-center justify-between gap-2">
             <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-              Keywords (one per line)
+              Keywords — one CSV row per line: <code>keyword,monthly_volume</code>
             </label>
             <button
               type="button"
               className="btn text-xs"
               onClick={onSuggestKeywords}
               disabled={suggesting}
-              title="Fetch long-tail (3+ words, ≥300 monthly searches) via DataForSEO"
+              title="Suggest keywords with traffic data from DataForSEO"
             >
-              {suggesting ? "Searching…" : "Find long-tail keywords"}
+              {suggesting ? "Searching…" : "Suggest from DataForSEO"}
             </button>
           </div>
           <textarea
             className="input mt-1 min-h-[8rem] font-mono text-sm"
-            placeholder={"long-tail keyword phrase one\nlong-tail keyword phrase two\n…"}
+            placeholder={
+              "soc2 compliance for startups,1200\nzero trust network access,2400\nkubernetes runtime security,720"
+            }
             value={keywords}
             onChange={(e) => setKeywords(e.target.value)}
           />
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            {keywordsAsArray().length} keyword(s). Prefer 3+ word long-tail
-            phrases that can plausibly hit 300+ monthly visits.
+            {keywordsAsArray().length} keyword(s). Each row is{" "}
+            <code>keyword,monthly_volume</code>. Aim for 3+ word phrases at
+            300+/mo so each post can plausibly hit 300+ visits.
           </p>
 
           {suggestions.length > 0 && (
             <div className="mt-3 rounded border border-[var(--color-border)] p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-                  Suggestions — long-tail, ≥300/mo
+                  Suggestions
                 </span>
                 <button
                   type="button"
@@ -625,14 +649,15 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
                       type="button"
                       onClick={() => addSuggestion(s)}
                       className="flex-1 text-left hover:underline"
-                      title="Add to keywords"
+                      title={`Add as "${s.keyword},${s.searchVolume}"`}
                     >
-                      <span className="font-mono">+ {s.keyword}</span>
+                      <span className="font-mono">
+                        + {s.keyword},{s.searchVolume}
+                      </span>
                     </button>
                     <span className="shrink-0 text-xs text-[var(--color-muted)] tabular-nums">
-                      {s.searchVolume.toLocaleString()}/mo
                       {s.cpcUsd != null && s.cpcUsd > 0 && (
-                        <> · ${s.cpcUsd.toFixed(2)} CPC</>
+                        <>${s.cpcUsd.toFixed(2)} CPC</>
                       )}
                       {s.competition && <> · {s.competition.toLowerCase()}</>}
                     </span>
