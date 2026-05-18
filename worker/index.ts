@@ -61,7 +61,7 @@ async function processLxSitemap(siteId: string) {
 
 async function processLxGenerate(
   siteId: string,
-  opts: { skipDeliver?: boolean } = {},
+  opts: { skipDeliver?: boolean; manual?: boolean } = {},
 ) {
   if (!openai) {
     console.error(`[worker] lx generate ${siteId}: OPENAI_API_KEY not set`);
@@ -76,7 +76,11 @@ async function processLxGenerate(
   );
   try {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const r = await generateArticle(siteId, { supabase, openai, anthropic });
+    const r = await generateArticle(
+      siteId,
+      { supabase, openai, anthropic },
+      { manual: !!opts.manual },
+    );
     if (r.skipped) {
       console.log(`[worker] lx generate ${siteId} skipped: ${r.skipped}`);
     } else if (r.ok && r.articleId) {
@@ -622,7 +626,7 @@ const server = http.createServer(async (req, res) => {
     let body = "";
     req.on("data", (chunk: Buffer) => (body += chunk.toString()));
     req.on("end", () => {
-      let payload: { siteId?: string; preview?: boolean };
+      let payload: { siteId?: string; preview?: boolean; manual?: boolean };
       try {
         payload = JSON.parse(body || "{}");
       } catch {
@@ -637,9 +641,10 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(202, { "content-type": "application/json" });
       res.end(JSON.stringify({ accepted: true }));
-      processLxGenerate(payload.siteId, { skipDeliver: !!payload.preview }).catch((e) =>
-        console.error("[worker] lx generate unhandled", e),
-      );
+      processLxGenerate(payload.siteId, {
+        skipDeliver: !!payload.preview,
+        manual: !!payload.manual,
+      }).catch((e) => console.error("[worker] lx generate unhandled", e));
     });
     return;
   }

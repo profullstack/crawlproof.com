@@ -14,7 +14,42 @@ async function call(path: string): Promise<{ ok: boolean; error?: string }> {
   }
 }
 
-export function DashboardActions({ paused }: { paused: boolean }) {
+// Wait up to ~90s for a new article to land in lx_article (created_at >
+// `since`). Returns the article id or null on timeout. The dashboard
+// generate button uses this to auto-redirect once the worker is done,
+// so users don't sit on a "queued" message wondering what to do.
+async function waitForNewArticle(
+  since: Date,
+  signal: AbortSignal,
+  maxMs = 120_000,
+): Promise<string | null> {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    if (signal.aborted) return null;
+    try {
+      const res = await fetch(
+        `/api/lx/articles/latest?since=${encodeURIComponent(since.toISOString())}`,
+        { cache: "no-store", signal },
+      );
+      if (res.status === 200) {
+        const json = (await res.json()) as { ok?: boolean; article?: { id: string } };
+        if (json.ok && json.article?.id) return json.article.id;
+      }
+    } catch {
+      // transient — keep polling
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return null;
+}
+
+export function DashboardActions({
+  paused,
+  projectId,
+}: {
+  paused: boolean;
+  projectId: string;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
@@ -35,6 +70,31 @@ export function DashboardActions({ paused }: { paused: boolean }) {
         }
       })
       .finally(() => setBusy(null));
+  }
+
+  async function generateArticleNow() {
+    setBusy("article");
+    setNotice("Generating… this takes ~30–60s.");
+    setError(null);
+    const since = new Date();
+    const r = await call("/api/lx/articles/generate");
+    if (!r.ok) {
+      setBusy(null);
+      setNotice(null);
+      setError(r.error ?? "Could not queue article.");
+      return;
+    }
+    const controller = new AbortController();
+    const articleId = await waitForNewArticle(since, controller.signal);
+    setBusy(null);
+    if (articleId) {
+      router.push(`/projects/${projectId}/autoblog/articles/${articleId}`);
+    } else {
+      setNotice(
+        "Still generating. Check the 'Previews waiting on Publish' section in a moment.",
+      );
+      router.refresh();
+    }
   }
 
   function togglePause() {
@@ -78,13 +138,7 @@ export function DashboardActions({ paused }: { paused: boolean }) {
           type="button"
           className="btn"
           disabled={busy !== null}
-          onClick={() =>
-            run(
-              "article",
-              "/api/lx/articles/generate",
-              "Article generation queued.",
-            )
-          }
+          onClick={generateArticleNow}
         >
           {busy === "article" ? "Generating…" : "Generate article now"}
         </button>

@@ -850,7 +850,7 @@ export async function previewNow(input: {
     };
   }
 
-  await enqueueArticleGenerate(site.id, { preview: true });
+  await enqueueArticleGenerate(site.id, { preview: true, manual: true });
   revalidatePath("/projects", "layout");
   return { ok: true };
 }

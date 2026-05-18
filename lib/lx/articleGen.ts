@@ -193,14 +193,22 @@ function buildUserPrompt(input: {
 async function pickKeyword(
   supabase: SupabaseClient<any>,
   siteId: string,
+  opts: { manual?: boolean } = {},
 ): Promise<KeywordRow | null> {
-  const today = new Date().toISOString().slice(0, 10);
-  const { data } = await supabase
+  // The cron loop respects scheduled_for so it produces one post per due
+  // slot. Manual "Generate now" / "Preview next post" clicks intentionally
+  // bypass that filter — otherwise the button silently no-ops whenever the
+  // earliest queued slot is in the future.
+  let q = supabase
     .from("lx_keyword")
     .select("id, keyword, scheduled_for")
     .eq("site_id", siteId)
-    .eq("status", "queued")
-    .lte("scheduled_for", today)
+    .eq("status", "queued");
+  if (!opts.manual) {
+    const today = new Date().toISOString().slice(0, 10);
+    q = q.lte("scheduled_for", today);
+  }
+  const { data } = await q
     .order("scheduled_for", { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -314,6 +322,7 @@ export async function generateArticle(
     openai: OpenAI;
     anthropic: Anthropic;
   },
+  opts: { manual?: boolean } = {},
 ): Promise<GenerateArticleResult> {
   const { supabase, openai, anthropic } = deps;
 
@@ -328,7 +337,7 @@ export async function generateArticle(
   if (site.status !== "active") return { ok: false, error: `site is ${site.status}` };
   const typedSite = site as SiteRow & { status: string };
 
-  const keyword = await pickKeyword(supabase, siteId);
+  const keyword = await pickKeyword(supabase, siteId, { manual: opts.manual });
   if (!keyword) return { ok: true, skipped: "no-queued-keyword" };
 
   const claimed = await claimKeyword(supabase, keyword.id);

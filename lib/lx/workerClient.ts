@@ -13,9 +13,13 @@ export async function enqueueKeywordResearch(siteId: string): Promise<void> {
 
 export async function enqueueArticleGenerate(
   siteId: string,
-  opts: { preview?: boolean } = {},
+  opts: { preview?: boolean; manual?: boolean } = {},
 ): Promise<void> {
-  await postToWorker("/lx/article-generate", { siteId, preview: !!opts.preview });
+  await postToWorker("/lx/article-generate", {
+    siteId,
+    preview: !!opts.preview,
+    manual: !!opts.manual,
+  });
 }
 
 export async function enqueueArticleDeliver(articleId: string): Promise<void> {

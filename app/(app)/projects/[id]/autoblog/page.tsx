@@ -265,7 +265,7 @@ export default async function AutoblogDashboardPage({
         </dl>
       </section>
 
-      <DashboardActions paused={site.status === "paused"} />
+      <DashboardActions paused={site.status === "paused"} projectId={projectId} />
 
       {/* Upcoming */}
       <section>

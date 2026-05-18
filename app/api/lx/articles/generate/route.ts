@@ -33,6 +33,10 @@ export async function POST() {
     );
   }
 
-  await enqueueArticleGenerate(site.id);
+  // The button is a manual "generate now" — bypass the cron's
+  // scheduled_for filter so it actually produces something when the
+  // earliest queued slot is in the future. Default behavior (preview=true)
+  // leaves the article in 'ready' state for review before publish.
+  await enqueueArticleGenerate(site.id, { manual: true, preview: true });
   return NextResponse.json({ ok: true });
 }
