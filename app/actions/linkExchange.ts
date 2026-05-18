@@ -9,6 +9,7 @@ import { nextPublishAt } from "@/lib/lx/schedule";
 import {
   enqueueSitemapCrawl,
   enqueueArticleGenerate,
+  enqueueArticleDeliver,
 } from "@/lib/lx/workerClient";
 import { setCurrentSite, getCurrentSite } from "@/lib/lx/currentSite";
 import {
@@ -721,12 +722,13 @@ export async function generateSchedule(input: {
 }
 
 // ------------------------------------------------------------
-// publishNow — enqueue an immediate article generation for this
-// project's autoblog. The worker picks the next queued keyword and
-// runs the full embed → write → image → webhook pipeline. Used as a
-// "test the wiring" button on the setup page.
+// previewNow — enqueue an immediate article generation that STOPS at
+// status='ready' (no webhook deliver). Used as the "preview the next
+// post before publishing" button on the setup page. The user can
+// review on /autoblog/articles/<id> and explicitly click Publish to
+// deliver via webhook.
 // ------------------------------------------------------------
-export async function publishNow(input: {
+export async function previewNow(input: {
   projectId: string;
 }): Promise<Ok | Err> {
   const supabase = await createClient();
@@ -753,7 +755,43 @@ export async function publishNow(input: {
     };
   }
 
-  await enqueueArticleGenerate(site.id);
+  await enqueueArticleGenerate(site.id, { preview: true });
+  revalidatePath("/projects", "layout");
+  return { ok: true };
+}
+
+// ------------------------------------------------------------
+// publishArticle — fire the webhook delivery for an already-generated
+// (status='ready') article. Used by the Publish button on the
+// /autoblog/articles/<id> preview page after the user has reviewed.
+// ------------------------------------------------------------
+export async function publishArticle(input: {
+  articleId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  // Confirm ownership via the lx_article → lx_site → user_id chain
+  // before letting the user trigger a deliver.
+  const { data: article } = await supabase
+    .from("lx_article")
+    .select("id, status, lx_site!inner(user_id)")
+    .eq("id", input.articleId)
+    .maybeSingle();
+  if (!article || (article as any).lx_site?.user_id !== user.id) {
+    return { ok: false, error: "Article not found." };
+  }
+  if (article.status !== "ready") {
+    return {
+      ok: false,
+      error: `Article is in '${article.status}' state — only 'ready' articles can be published.`,
+    };
+  }
+
+  await enqueueArticleDeliver(input.articleId);
   revalidatePath("/projects", "layout");
   return { ok: true };
 }

@@ -59,7 +59,10 @@ async function processLxSitemap(siteId: string) {
   }
 }
 
-async function processLxGenerate(siteId: string) {
+async function processLxGenerate(
+  siteId: string,
+  opts: { skipDeliver?: boolean } = {},
+) {
   if (!openai) {
     console.error(`[worker] lx generate ${siteId}: OPENAI_API_KEY not set`);
     return;
@@ -68,7 +71,9 @@ async function processLxGenerate(siteId: string) {
     console.error(`[worker] lx generate ${siteId}: ANTHROPIC_API_KEY not set`);
     return;
   }
-  console.log(`[worker] lx article generate ${siteId}`);
+  console.log(
+    `[worker] lx article generate ${siteId}${opts.skipDeliver ? " (preview)" : ""}`,
+  );
   try {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const r = await generateArticle(siteId, { supabase, openai, anthropic });
@@ -76,6 +81,12 @@ async function processLxGenerate(siteId: string) {
       console.log(`[worker] lx generate ${siteId} skipped: ${r.skipped}`);
     } else if (r.ok && r.articleId) {
       console.log(`[worker] lx generate ${siteId} ok article=${r.articleId} slug=${r.slug}`);
+      if (opts.skipDeliver) {
+        // Preview mode: leave the article in status='ready' so the
+        // user can review on /autoblog/articles/<id> and click
+        // Publish when they're happy.
+        return;
+      }
       // Chain straight into delivery — the cron's "produce 1 article per
       // due slot" contract means publish should be the same job.
       const d = await deliverArticle(r.articleId, { supabase });
@@ -611,7 +622,7 @@ const server = http.createServer(async (req, res) => {
     let body = "";
     req.on("data", (chunk: Buffer) => (body += chunk.toString()));
     req.on("end", () => {
-      let payload: { siteId?: string };
+      let payload: { siteId?: string; preview?: boolean };
       try {
         payload = JSON.parse(body || "{}");
       } catch {
@@ -626,7 +637,7 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(202, { "content-type": "application/json" });
       res.end(JSON.stringify({ accepted: true }));
-      processLxGenerate(payload.siteId).catch((e) =>
+      processLxGenerate(payload.siteId, { skipDeliver: !!payload.preview }).catch((e) =>
         console.error("[worker] lx generate unhandled", e),
       );
     });

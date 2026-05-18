@@ -8,7 +8,7 @@ import {
   discoverFromHomepage,
   enrichFromUrls,
   generateSchedule,
-  publishNow,
+  previewNow,
   suggestLongTailKeywords,
 } from "@/app/actions/linkExchange";
 
@@ -307,18 +307,20 @@ export function SetupForm({
     setNotice(`Scheduled ${res.scheduled} posts over the next 30 days.`);
   }
 
-  async function onPublishNow() {
+  async function onPreviewNow() {
     setError(null);
     setWarning(null);
     setNotice(null);
     setPublishing(true);
-    const res = await publishNow({ projectId });
+    const res = await previewNow({ projectId });
     setPublishing(false);
     if (!res.ok) {
       setError(res.error);
       return;
     }
-    setNotice("Article generation enqueued. Check the autoblog tab in ~30s.");
+    setNotice(
+      "Preview generation enqueued. Open the Autoblog tab in ~30s — articles in 'ready' state are previews waiting on Publish.",
+    );
   }
 
   function toggleDay(n: number) {
@@ -892,11 +894,11 @@ export function SetupForm({
             <button
               type="button"
               className="btn"
-              onClick={onPublishNow}
+              onClick={onPreviewNow}
               disabled={publishing}
-              title="Trigger a single article generation right now to test the webhook"
+              title="Generate one article right now without delivering — review it before publishing"
             >
-              {publishing ? "Publishing…" : "Publish now (test)"}
+              {publishing ? "Generating…" : "Preview next post"}
             </button>
             <button
               type="button"

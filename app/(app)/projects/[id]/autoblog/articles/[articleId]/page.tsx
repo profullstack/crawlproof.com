@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { RetryButton } from "../../actions";
+import { PublishButton } from "./publish-button";
 
 export const metadata = { title: "Autoblog · Article" };
 
@@ -82,6 +83,15 @@ export default async function AutoblogArticlePage({
             ? `published ${fmtDate(article.published_at)}`
             : `created ${fmtDate(article.created_at)}`}
         </p>
+        {article.status === "ready" && (
+          <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-3">
+            <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
+              ⚠ Preview — this article hasn't been delivered to your webhook
+              yet. Review below and click Publish to send it.
+            </p>
+            <PublishButton articleId={article.id} />
+          </div>
+        )}
       </header>
 
       {/* Featured image */}

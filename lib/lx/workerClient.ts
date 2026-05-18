@@ -11,8 +11,11 @@ export async function enqueueKeywordResearch(siteId: string): Promise<void> {
   await postToWorker("/lx/keywords-research", { siteId });
 }
 
-export async function enqueueArticleGenerate(siteId: string): Promise<void> {
-  await postToWorker("/lx/article-generate", { siteId });
+export async function enqueueArticleGenerate(
+  siteId: string,
+  opts: { preview?: boolean } = {},
+): Promise<void> {
+  await postToWorker("/lx/article-generate", { siteId, preview: !!opts.preview });
 }
 
 export async function enqueueArticleDeliver(articleId: string): Promise<void> {
