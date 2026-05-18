@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { serviceClient } from "@/lib/supabase/service";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { detectSitemapUrl } from "@/lib/lx/sitemap";
 import { nextPublishAt } from "@/lib/lx/schedule";
@@ -674,10 +675,15 @@ export async function generateSchedule(input: {
     targetCount,
   );
 
-  // Clear out previously-queued rows so re-running this doesn't pile
-  // up duplicates. Status='published' / 'failed' stay so history is
+  // lx_keyword RLS is select-only, so user-scoped writes get rejected.
+  // We've already validated project ownership above via the user
+  // client; the writes go through the service-role client.
+  const svc = serviceClient();
+
+  // Clear previously-queued rows so re-running this doesn't pile up
+  // duplicates. Status='published' / 'failed' stay so history is
   // preserved.
-  const { error: delErr } = await supabase
+  const { error: delErr } = await svc
     .from("lx_keyword")
     .delete()
     .eq("site_id", site.id)
@@ -697,12 +703,12 @@ export async function generateSchedule(input: {
     return { ok: false, error: "No publish slots available — check publish days." };
   }
 
-  const { error: insErr } = await supabase.from("lx_keyword").insert(insertRows);
+  const { error: insErr } = await svc.from("lx_keyword").insert(insertRows);
   if (insErr) return { ok: false, error: insErr.message };
 
   // Move the site's next_publish_at to the first scheduled slot so the
   // cron picks this up on its next sweep.
-  await supabase
+  await svc
     .from("lx_site")
     .update({
       next_publish_at: slots[0]?.toISOString() ?? null,
