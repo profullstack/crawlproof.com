@@ -7,6 +7,8 @@ import {
   detectSitemap,
   discoverFromHomepage,
   enrichFromUrls,
+  generateSchedule,
+  publishNow,
   suggestLongTailKeywords,
 } from "@/app/actions/linkExchange";
 
@@ -47,7 +49,13 @@ const DAY_LABELS: Array<{ n: number; label: string }> = [
   { n: 7, label: "Sun" },
 ];
 
-export function SetupForm({ initial }: { initial: Existing | null }) {
+export function SetupForm({
+  projectId,
+  initial,
+}: {
+  projectId: string;
+  initial: Existing | null;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -272,6 +280,45 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
+  }
+
+  const [scheduling, setScheduling] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+
+  async function onGenerateSchedule() {
+    if (keywordsAsArray().length === 0) {
+      setError("No keywords to schedule. Refetch first.");
+      return;
+    }
+    setError(null);
+    setWarning(null);
+    setNotice(null);
+    setScheduling(true);
+    const res = await generateSchedule({
+      projectId,
+      keywords,
+      days: 30,
+    });
+    setScheduling(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setNotice(`Scheduled ${res.scheduled} posts over the next 30 days.`);
+  }
+
+  async function onPublishNow() {
+    setError(null);
+    setWarning(null);
+    setNotice(null);
+    setPublishing(true);
+    const res = await publishNow({ projectId });
+    setPublishing(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setNotice("Article generation enqueued. Check the autoblog tab in ~30s.");
   }
 
   function toggleDay(n: number) {
@@ -827,18 +874,38 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
         <p className="text-sm text-[var(--color-pass)]">{notice}</p>
       )}
 
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
         <button type="submit" className="btn btn-primary" disabled={pending}>
           {pending ? "Saving…" : initial ? "Save settings" : "Create Autoblog"}
         </button>
         {initial && (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => router.back()}
-          >
-            Cancel
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn"
+              onClick={onGenerateSchedule}
+              disabled={scheduling || keywordsAsArray().length === 0}
+              title="Queue up to 30 days of posts (one keyword per slot), honoring publish days"
+            >
+              {scheduling ? "Scheduling…" : "Generate 30-day schedule"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={onPublishNow}
+              disabled={publishing}
+              title="Trigger a single article generation right now to test the webhook"
+            >
+              {publishing ? "Publishing…" : "Publish now (test)"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => router.back()}
+            >
+              Cancel
+            </button>
+          </>
         )}
       </div>
     </form>

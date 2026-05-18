@@ -5,7 +5,10 @@ import { createClient } from "@/lib/supabase/server";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { detectSitemapUrl } from "@/lib/lx/sitemap";
 import { nextPublishAt } from "@/lib/lx/schedule";
-import { enqueueSitemapCrawl } from "@/lib/lx/workerClient";
+import {
+  enqueueSitemapCrawl,
+  enqueueArticleGenerate,
+} from "@/lib/lx/workerClient";
 import { setCurrentSite, getCurrentSite } from "@/lib/lx/currentSite";
 import {
   discoverBlogUrls,
@@ -570,5 +573,181 @@ export async function setSitePaused(paused: boolean): Promise<Ok | Err> {
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/autoblog");
+  return { ok: true };
+}
+
+// ------------------------------------------------------------
+// generateSchedule — turn the keywords textarea into lx_keyword rows
+// queued across the next N days (default 30), honoring publish_days
+// + publish_hour. One keyword per publish slot.
+//
+// Re-running clears any previously-queued rows for this site so we
+// don't pile up duplicates after the user edits + regenerates.
+// ------------------------------------------------------------
+async function lookupSiteForProject(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  projectId: string,
+): Promise<
+  | { id: string; publish_days: number[]; publish_hour: number; daily_article_count: number }
+  | { error: string }
+> {
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("owner_id", userId)
+    .maybeSingle();
+  if (!project) return { error: "Project not found." };
+  const { data: site } = await supabase
+    .from("lx_site")
+    .select("id, publish_days, publish_hour, daily_article_count")
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!site) return { error: "No autoblog config — save the form first." };
+  return site as {
+    id: string;
+    publish_days: number[];
+    publish_hour: number;
+    daily_article_count: number;
+  };
+}
+
+function computeScheduleSlots(
+  publishDays: number[],
+  publishHour: number,
+  perDay: number,
+  count: number,
+): Date[] {
+  const dates: Date[] = [];
+  let cursor = new Date();
+  while (dates.length < count) {
+    const next = nextPublishAt(publishDays, publishHour, cursor);
+    if (!next) break;
+    for (let i = 0; i < Math.max(1, perDay) && dates.length < count; i++) {
+      dates.push(new Date(next));
+    }
+    cursor = new Date(next.getTime() + 60_000);
+  }
+  return dates;
+}
+
+export async function generateSchedule(input: {
+  projectId: string;
+  keywords: string;
+  days?: number;
+}): Promise<Ok<{ scheduled: number }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const site = await lookupSiteForProject(supabase, user.id, input.projectId);
+  if ("error" in site) return { ok: false, error: site.error };
+
+  const rows = parseKeywordRows(input.keywords, 500, MAX.keyword + 20);
+  if (rows.length === 0) {
+    return { ok: false, error: "No keywords to schedule." };
+  }
+
+  // Each row is "<keyword>,<volume>" — split out both halves so the
+  // lx_keyword.search_volume column stays populated for downstream
+  // ranking.
+  const parsed = rows.map((row) => {
+    const idx = row.indexOf(",");
+    if (idx === -1) return { keyword: row.trim(), volume: null as number | null };
+    const k = row.slice(0, idx).trim();
+    const vRaw = row.slice(idx + 1).trim();
+    const v = /^\d+$/.test(vRaw) ? parseInt(vRaw, 10) : null;
+    return { keyword: k, volume: v };
+  }).filter((p) => p.keyword.length >= 2);
+
+  const days = Math.max(1, Math.min(90, input.days ?? 30));
+  // One slot per day per perDay-count over `days` days. Cap at the
+  // number of keywords we actually have.
+  const targetCount = Math.min(parsed.length, days * Math.max(1, site.daily_article_count));
+  const slots = computeScheduleSlots(
+    site.publish_days,
+    site.publish_hour,
+    site.daily_article_count,
+    targetCount,
+  );
+
+  // Clear out previously-queued rows so re-running this doesn't pile
+  // up duplicates. Status='published' / 'failed' stay so history is
+  // preserved.
+  const { error: delErr } = await supabase
+    .from("lx_keyword")
+    .delete()
+    .eq("site_id", site.id)
+    .eq("status", "queued");
+  if (delErr) return { ok: false, error: delErr.message };
+
+  const insertRows = parsed.slice(0, slots.length).map((p, i) => ({
+    site_id: site.id,
+    keyword: p.keyword,
+    scheduled_for: slots[i]?.toISOString().slice(0, 10) ?? null,
+    status: "queued",
+    source: "manual",
+    search_volume: p.volume,
+  }));
+
+  if (insertRows.length === 0) {
+    return { ok: false, error: "No publish slots available — check publish days." };
+  }
+
+  const { error: insErr } = await supabase.from("lx_keyword").insert(insertRows);
+  if (insErr) return { ok: false, error: insErr.message };
+
+  // Move the site's next_publish_at to the first scheduled slot so the
+  // cron picks this up on its next sweep.
+  await supabase
+    .from("lx_site")
+    .update({
+      next_publish_at: slots[0]?.toISOString() ?? null,
+      status: "active",
+    })
+    .eq("id", site.id);
+
+  revalidatePath("/projects", "layout");
+  return { ok: true, scheduled: insertRows.length };
+}
+
+// ------------------------------------------------------------
+// publishNow — enqueue an immediate article generation for this
+// project's autoblog. The worker picks the next queued keyword and
+// runs the full embed → write → image → webhook pipeline. Used as a
+// "test the wiring" button on the setup page.
+// ------------------------------------------------------------
+export async function publishNow(input: {
+  projectId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const site = await lookupSiteForProject(supabase, user.id, input.projectId);
+  if ("error" in site) return { ok: false, error: site.error };
+
+  // Verify at least one queued keyword exists; the worker silently
+  // skips when the queue is empty, which would otherwise look like
+  // success but produce nothing.
+  const { count } = await supabase
+    .from("lx_keyword")
+    .select("id", { count: "exact", head: true })
+    .eq("site_id", site.id)
+    .eq("status", "queued");
+  if (!count || count === 0) {
+    return {
+      ok: false,
+      error: "No queued keywords. Click Generate 30-day schedule first.",
+    };
+  }
+
+  await enqueueArticleGenerate(site.id);
+  revalidatePath("/projects", "layout");
   return { ok: true };
 }

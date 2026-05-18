@@ -49,7 +49,7 @@ export default async function AutoblogSetupPage({
         your webhook. You handle publishing. Link Exchange ships later — for now,
         articles include internal links from your sitemap only.
       </p>
-      <SetupForm initial={(site as any) ?? null} />
+      <SetupForm projectId={projectId} initial={(site as any) ?? null} />
     </div>
   );
 }
