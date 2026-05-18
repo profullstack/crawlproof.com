@@ -77,8 +77,11 @@ function parseList(
   maxItems: number,
   itemMax: number,
 ): string[] {
+  // Accept either newline- or comma-separated. Keywords UI uses newlines
+  // (one per line); other fields stay comma-separated. Splitting on both
+  // is forgiving without changing the saved data model.
   return clean(input, maxItems * (itemMax + 2))
-    .split(",")
+    .split(/[\n,]/)
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, maxItems)
@@ -396,6 +399,83 @@ export async function createOrUpdateSite(
   await setCurrentSite(inserted.id);
   revalidatePath("/autoblog");
   return { ok: true, siteId: inserted.id };
+}
+
+// ------------------------------------------------------------
+// suggestLongTailKeywords — DataForSEO-backed long-tail expansion.
+//
+// Filters: ≥ MIN_VOLUME monthly searches AND ≥ 3 words per phrase.
+// The PRD's keyword-scheduler pipeline (researchKeywords) keeps a
+// MIN_VOLUME of 50 for breadth; here we target 300/mo so the form's
+// suggestions reflect terms that can plausibly drive 300+ visits.
+// ------------------------------------------------------------
+export type KeywordSuggestion = {
+  keyword: string;
+  searchVolume: number;
+  cpcUsd: number | null;
+  competition: "LOW" | "MEDIUM" | "HIGH" | null;
+};
+
+const MIN_LONG_TAIL_VOLUME = 300;
+const MIN_LONG_TAIL_WORDS = 3;
+
+export async function suggestLongTailKeywords(
+  seeds: string[],
+): Promise<Ok<{ suggestions: KeywordSuggestion[] }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const cleanedSeeds = Array.from(
+    new Set(
+      (seeds ?? [])
+        .map((s) => (typeof s === "string" ? s.trim() : ""))
+        .filter((s) => s.length >= 2 && s.length <= MAX.keyword),
+    ),
+  ).slice(0, 5);
+  if (cleanedSeeds.length === 0) {
+    return { ok: false, error: "Enter at least one seed keyword or niche." };
+  }
+
+  const login = process.env.DATAFORSEO_LOGIN;
+  const password = process.env.DATAFORSEO_PASSWORD;
+  if (!login || !password) {
+    return {
+      ok: false,
+      error: "DataForSEO credentials not set (DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD).",
+    };
+  }
+
+  const { DataForSeoClient, filterOutliers } = await import("@/lib/lx/dataforseo");
+  const dfs = new DataForSeoClient(login, password);
+
+  try {
+    const res = await dfs.keywordsForKeywords(cleanedSeeds, {
+      sortBy: "search_volume",
+    });
+    const cleaned = filterOutliers(res.rows);
+    const longTail = cleaned.filter((r) => {
+      const vol = r.search_volume ?? 0;
+      const words = r.keyword.trim().split(/\s+/).length;
+      return vol >= MIN_LONG_TAIL_VOLUME && words >= MIN_LONG_TAIL_WORDS;
+    });
+    // Sort by volume desc, cap at 30 so the UI stays readable.
+    longTail.sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0));
+    const suggestions: KeywordSuggestion[] = longTail.slice(0, 30).map((r) => ({
+      keyword: r.keyword,
+      searchVolume: r.search_volume ?? 0,
+      cpcUsd: r.cpc ?? null,
+      competition: r.competition,
+    }));
+    return { ok: true, suggestions };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 // ------------------------------------------------------------

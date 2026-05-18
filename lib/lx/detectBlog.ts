@@ -388,7 +388,7 @@ const SYSTEM_PROMPT = [
   "  niche — 2-6 word phrase describing the topical area (e.g. 'cybersecurity for SaaS', 'home-coffee gear reviews').",
   "  target_audiences — 2-4 short audience labels (e.g. 'security engineers', 'CTOs', 'home barista hobbyists').",
   "  description — 2-3 sentences describing what the site does and the tone to write in. Address the AI writer in second person ('You are writing for…').",
-  "  keywords — 5-15 short SEO keyword phrases (1-4 words each) the site should rank for. Mix head and long-tail. Lowercase.",
+  "  keywords — 5-15 SEO keyword phrases. Strongly prefer 3-5 word long-tail phrases (e.g. 'soc2 compliance for startups' over 'soc2'); long-tail converts and ranks faster. Lowercase, no quotes.",
   "  seo_title — a 50-60 character page <title> for the blog homepage. Brand-included, keyword-rich, human-readable.",
   "  seo_description — a 140-160 character meta description for the blog homepage. Active voice, ends with a soft CTA.",
   "  tone — 3-6 short tone descriptors comma-separated (e.g. 'technical, irreverent, no-fluff' or 'warm, practical, beginner-friendly').",

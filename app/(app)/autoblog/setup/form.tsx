@@ -7,6 +7,8 @@ import {
   detectSitemap,
   discoverFromHomepage,
   enrichFromUrls,
+  suggestLongTailKeywords,
+  type KeywordSuggestion,
 } from "@/app/actions/linkExchange";
 
 type WizardStep = "discover" | "confirm" | "review";
@@ -67,7 +69,7 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   );
   const [description, setDescription] = useState(initial?.description ?? "");
   const [keywords, setKeywords] = useState(
-    (initial?.keywords ?? []).join(", "),
+    (initial?.keywords ?? []).join("\n"),
   );
   const [seoTitle, setSeoTitle] = useState(initial?.seo_title ?? "");
   const [seoDescription, setSeoDescription] = useState(initial?.seo_description ?? "");
@@ -101,6 +103,8 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
 
   function onDomainBlur() {
     if (!domain) return;
@@ -193,11 +197,66 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
     setNiche(p.niche);
     setAudiences(p.targetAudiences.join(", "));
     setDescription(p.description);
-    setKeywords(p.keywords.join(", "));
+    setKeywords(p.keywords.join("\n"));
     setSeoTitle(p.seoTitle);
     setSeoDescription(p.seoDescription);
     setTone(p.tone);
     setCompetitors(p.competitors.join(", "));
+  }
+
+  function keywordsAsArray(): string[] {
+    return keywords
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  async function onSuggestKeywords() {
+    const seeds = Array.from(
+      new Set([niche.trim(), ...keywordsAsArray()].filter(Boolean)),
+    );
+    if (seeds.length === 0) {
+      setError("Add a niche or at least one keyword to use as a seed.");
+      return;
+    }
+    setError(null);
+    setWarning(null);
+    setNotice(null);
+    setSuggesting(true);
+    const res = await suggestLongTailKeywords(seeds);
+    setSuggesting(false);
+    if (!res.ok) {
+      setWarning(`Couldn't fetch suggestions (${res.error}).`);
+      setSuggestions([]);
+      return;
+    }
+    setSuggestions(res.suggestions);
+    if (res.suggestions.length === 0) {
+      setNotice("No long-tail keywords found at 300+/mo for those seeds.");
+    } else {
+      setNotice(
+        `${res.suggestions.length} long-tail suggestion(s). Click to add.`,
+      );
+    }
+  }
+
+  function addSuggestion(s: KeywordSuggestion) {
+    const existing = new Set(keywordsAsArray().map((k) => k.toLowerCase()));
+    if (existing.has(s.keyword.toLowerCase())) return;
+    setKeywords((prev) => (prev.trim() ? `${prev.trim()}\n${s.keyword}` : s.keyword));
+    setSuggestions((prev) => prev.filter((x) => x.keyword !== s.keyword));
+  }
+
+  function addAllSuggestions() {
+    const existing = new Set(keywordsAsArray().map((k) => k.toLowerCase()));
+    const fresh = suggestions
+      .filter((s) => !existing.has(s.keyword.toLowerCase()))
+      .map((s) => s.keyword);
+    if (fresh.length === 0) return;
+    setKeywords((prev) =>
+      prev.trim() ? `${prev.trim()}\n${fresh.join("\n")}` : fresh.join("\n"),
+    );
+    setSuggestions([]);
   }
 
   async function onFetchMetadata() {
@@ -517,16 +576,71 @@ export function SetupForm({ initial }: { initial: Existing | null }) {
           />
         </div>
         <div>
-          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-            Keywords (comma-separated, 5–15)
-          </label>
-          <input
-            className="input mt-1"
-            type="text"
-            placeholder="zero trust, soc2 compliance, kubernetes security, …"
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              Keywords (one per line)
+            </label>
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={onSuggestKeywords}
+              disabled={suggesting}
+              title="Fetch long-tail (3+ words, ≥300 monthly searches) via DataForSEO"
+            >
+              {suggesting ? "Searching…" : "Find long-tail keywords"}
+            </button>
+          </div>
+          <textarea
+            className="input mt-1 min-h-[8rem] font-mono text-sm"
+            placeholder={"long-tail keyword phrase one\nlong-tail keyword phrase two\n…"}
             value={keywords}
             onChange={(e) => setKeywords(e.target.value)}
           />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {keywordsAsArray().length} keyword(s). Prefer 3+ word long-tail
+            phrases that can plausibly hit 300+ monthly visits.
+          </p>
+
+          {suggestions.length > 0 && (
+            <div className="mt-3 rounded border border-[var(--color-border)] p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                  Suggestions — long-tail, ≥300/mo
+                </span>
+                <button
+                  type="button"
+                  className="text-xs underline"
+                  onClick={addAllSuggestions}
+                >
+                  Add all
+                </button>
+              </div>
+              <ul className="space-y-1">
+                {suggestions.map((s) => (
+                  <li
+                    key={s.keyword}
+                    className="flex items-center justify-between gap-2 text-sm"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => addSuggestion(s)}
+                      className="flex-1 text-left hover:underline"
+                      title="Add to keywords"
+                    >
+                      <span className="font-mono">+ {s.keyword}</span>
+                    </button>
+                    <span className="shrink-0 text-xs text-[var(--color-muted)] tabular-nums">
+                      {s.searchVolume.toLocaleString()}/mo
+                      {s.cpcUsd != null && s.cpcUsd > 0 && (
+                        <> · ${s.cpcUsd.toFixed(2)} CPC</>
+                      )}
+                      {s.competition && <> · {s.competition.toLowerCase()}</>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
