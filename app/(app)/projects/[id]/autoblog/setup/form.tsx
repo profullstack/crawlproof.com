@@ -272,6 +272,41 @@ export function SetupForm({
     setCompetitors(p.competitors.join(", "));
   }
 
+  // Re-run only the DataForSEO long-tail expansion against the
+  // currently-typed seed_keywords. Lets the user iterate on seeds
+  // without re-triggering the Anthropic enrichment that would
+  // otherwise stomp niche, description, and the seed list itself.
+  async function refetchLongTailFromSeeds() {
+    const seeds = seedKeywords
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (seeds.length === 0) {
+      setError("Add at least one seed keyword first.");
+      return;
+    }
+    setError(null);
+    setWarning(null);
+    setNotice(null);
+    setSuggesting(true);
+    const traffic = await suggestLongTailKeywords(seeds);
+    setSuggesting(false);
+    if (!traffic.ok) {
+      setError(traffic.error);
+      return;
+    }
+    if (traffic.suggestions.length === 0) {
+      setWarning("No long-tail keywords met the traffic threshold for these seeds.");
+      return;
+    }
+    setKeywords(
+      traffic.suggestions.map((s) => `${s.keyword},${s.searchVolume}`).join("\n"),
+    );
+    setNotice(
+      `Refetched ${traffic.suggestions.length} long-tail keyword(s) — ${traffic.tier}.`,
+    );
+  }
+
   // Each line is a CSV row "<keyword>,<volume>". For seed-building and
   // dedupe we only care about the keyword half (everything before the
   // first comma).
@@ -612,16 +647,29 @@ export function SetupForm({
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Seed keywords (comma-separated, 1-3 word head terms)
           </label>
-          <input
-            className="input mt-1 font-mono text-sm"
-            type="text"
-            placeholder="web security, cyber security, penetration testing"
-            value={seedKeywords}
-            onChange={(e) => setSeedKeywords(e.target.value)}
-          />
+          <div className="mt-1 flex gap-2">
+            <input
+              className="input flex-1 font-mono text-sm"
+              type="text"
+              placeholder="web security, cyber security, penetration testing"
+              value={seedKeywords}
+              onChange={(e) => setSeedKeywords(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void refetchLongTailFromSeeds()}
+              disabled={suggesting || !seedKeywords.trim()}
+              title="Re-run DataForSEO long-tail expansion using the current seed keywords (does not overwrite seeds, niche, or description)"
+            >
+              {suggesting ? "Refetching…" : "Refetch keywords"}
+            </button>
+          </div>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             Broad terms DataForSEO expands into long-tail. Auto-filled by{" "}
-            <em>Refetch</em>; edit freely.
+            <em>Refetch</em>; edit freely. Hit <em>Refetch keywords</em> to
+            regenerate the long-tail list below from your current seeds without
+            touching anything else.
           </p>
         </div>
         <div>
