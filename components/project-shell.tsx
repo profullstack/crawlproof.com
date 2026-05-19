@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ScheduleToggle } from "@/components/schedule-toggle";
 import { ProjectStatusControls } from "@/components/project-status-controls";
 import { RunNowButton } from "@/components/run-now-button";
+import { ProjectHeaderLogo } from "@/components/project-header-logo";
 import type { ProjectStatus } from "@/app/actions/projects";
 import type { Engine } from "@/lib/credits";
 
@@ -19,6 +20,7 @@ type ProjectLite = {
   schedule: "off" | "daily" | "weekly" | "monthly";
   status: ProjectStatus | null;
   engines: Engine[] | null;
+  logo_url?: string | null;
 };
 
 const TABS: { id: ProjectShellTab; label: string; href: (id: string) => string }[] = [
@@ -54,7 +56,10 @@ export function ProjectShell({
         <Link href="/dashboard" className="text-sm text-[var(--color-muted)]">
           ← Dashboard
         </Link>
-        <h1 className="mt-3 text-3xl font-bold">{project.name}</h1>
+        <div className="mt-3 flex items-center gap-3">
+          <ProjectHeaderLogo url={project.logo_url ?? null} name={project.name} />
+          <h1 className="text-3xl font-bold">{project.name}</h1>
+        </div>
         <p className="mt-1 break-all text-[var(--color-muted)]">{project.url}</p>
       </div>
 

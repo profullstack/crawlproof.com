@@ -45,11 +45,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "bad since" }, { status: 400 });
   }
 
-  const { data, error } = await supabase
+  // Default to status='ready' (i.e. an article the user can actually
+  // preview/publish). The dashboard polls for this after a manual
+  // Generate; without the filter we'd return an in-flight 'generating'
+  // row and the redirect would land on an empty article page. Callers
+  // that want any new row can pass ?status=any.
+  const statusFilter = req.nextUrl.searchParams.get("status") ?? "ready";
+
+  let query = supabase
     .from("lx_article")
     .select("id, status, title, created_at")
     .eq("site_id", lxSiteId)
-    .gt("created_at", since.toISOString())
+    .gt("created_at", since.toISOString());
+  if (statusFilter !== "any") {
+    query = query.eq("status", statusFilter);
+  }
+
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

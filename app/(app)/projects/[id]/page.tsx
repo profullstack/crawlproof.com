@@ -64,6 +64,7 @@ export default async function ProjectOverviewPage({
         schedule: project.schedule,
         status: (project.status ?? "active") as ProjectStatus,
         engines: (project.engines ?? ["rule"]) as Engine[],
+        logo_url: (project as { logo_url?: string | null }).logo_url ?? null,
       }}
       currentTab="overview"
     >
