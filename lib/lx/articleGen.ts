@@ -342,19 +342,33 @@ async function findPriorArticles(
 // Generate a thematic inline image. Same style guardrails as the hero
 // image, but the prompt describes a specific section topic rather than
 // the article as a whole.
+// Shared art-direction across hero + inline images. The previous prompt
+// described WHAT to draw ("abstract geometric flows") but not HOW the
+// final pixels should look. gpt-image-1 is camera-aware; specifying
+// lens, lighting, surface treatment, and a reference aesthetic gives
+// much more legible, sharper output at the same quality tier.
+const SHARED_ART_DIRECTION = [
+  "Style: high-end editorial cover art for The Verge / Wired / MIT Tech Review.",
+  "Medium: macro photograph of a precisely-crafted physical sculpture — anodized aluminum, smoked acrylic, brushed steel, polished glass. NOT a 3D render and NOT a digital illustration.",
+  "Lighting: hard rim light from one direction plus soft fill, dramatic falloff, deep shadow occlusion, faint volumetric haze. Cinematic mood.",
+  "Palette: charcoal background (#0a0d12-ish) with one saturated accent color used sparingly (electric cyan, deep emerald, or warm amber — pick one and stick to it).",
+  "Texture: visible micro-detail, subtle film grain, real-world surface imperfections — fingerprint smudges, dust motes, anisotropic brushing, refractive caustics through glass.",
+  "Composition: rule-of-thirds, strong negative space, one clear focal element with secondary depth layers. Centered subject is BORING — offset it.",
+  "Optics: 50mm macro lens, f/2.8, shallow depth-of-field with bokeh in the far background, slight chromatic aberration at frame edges.",
+  "Strictly NO text, NO typography, NO UI mockups, NO logos, NO charts with labels, NO people, NO faces, NO stock-photo office scenes, NO generic abstract gradient blobs.",
+];
+
 async function generateInlineImage(
   openai: OpenAI,
   promptText: string,
   nicheHint: string | null,
 ): Promise<Buffer | null> {
   const prompt = [
-    `Editorial illustration for a section of a long-form technical SEO blog post.`,
-    `Section topic: ${promptText}`,
+    `Editorial section image for a long-form technical SEO article.`,
+    `Concept to evoke (do NOT depict literally — find a tactile metaphor): ${promptText}.`,
     nicheHint ? `Subject area: ${nicheHint}.` : "",
-    "Audience: engineers, operators, technical buyers.",
-    "Style: editorial, architectural, minimal. Restrained dark palette with one accent color. Abstract geometric composition (flows, nodes, layers) implying a system, workflow, or infrastructure concept.",
-    "Strictly NO text or typography of any kind. NO UI screenshots, NO logos, NO charts with labels, NO people, NO stock-photo office scenes.",
-    "3:2 aspect, slightly less cinematic than the hero — feels like a chapter divider.",
+    ...SHARED_ART_DIRECTION,
+    "Slightly more subdued than a hero — a chapter divider, not the cover. 3:2 aspect.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -378,12 +392,11 @@ async function generateImage(
   // Hero image for a pragmatic B2B / technical SEO post. Match the
   // tone of the article: operator-focused, architectural, not salesy.
   const prompt = [
-    `Hero image for a long-form technical SEO blog post titled: "${title}".`,
+    `Hero cover image for a long-form technical article titled: "${title}".`,
     nicheHint ? `Subject area: ${nicheHint}.` : "",
-    "Audience: engineers, operators, technical buyers.",
-    "Style: editorial, architectural, minimal. Restrained dark palette with one accent color. Abstract geometric composition (flows, nodes, layers) implying a system, workflow, or infrastructure topic.",
-    "Strictly NO text or typography of any kind. NO UI screenshots, NO logos, NO charts with labels, NO people, NO stock-photo office scenes.",
-    "Cinematic 3:2 hero aspect. Subtle depth, not flat.",
+    "Translate the title into a tactile physical metaphor (objects, materials, light) — do NOT illustrate the title directly. The viewer should feel the topic without needing the words.",
+    ...SHARED_ART_DIRECTION,
+    "Cinematic 3:2 magazine cover aspect. Confident, single-image composition — not a collage.",
   ]
     .filter(Boolean)
     .join(" ");
