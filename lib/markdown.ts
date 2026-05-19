@@ -28,7 +28,10 @@ async function pandocConvert(md: string): Promise<string> {
         // `<title>` inside finding strings) instead of passing them through
         // — otherwise browsers interpret a stray `<title>` inside <body> as
         // a head element and silently swallow everything after it.
-        "--from=gfm-raw_html",
+        // gfm_auto_identifiers slugifies headings with GitHub-style rules
+        // so a TOC `[Foo](#foo)` resolves against the rendered
+        // `<h2 id="foo">Foo</h2>` without us hand-wiring anchors.
+        "--from=gfm-raw_html+gfm_auto_identifiers",
         "--to=html5",
         "--no-highlight",
         "--wrap=none",
@@ -48,7 +51,41 @@ async function pandocConvert(md: string): Promise<string> {
   });
 }
 
+function slugifyHeading(input: string): string {
+  return input
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Custom heading renderer adds GitHub-style anchor IDs so the fallback
+// path (used outside the worker container, where pandoc isn't installed)
+// also resolves TOC anchor links correctly.
 const marked = new Marked({ gfm: true, breaks: false });
+marked.use({
+  renderer: {
+    heading({ tokens, depth }: { tokens: unknown[]; depth: number }) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const renderer = (marked as any).Renderer
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (this as any)
+        : null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const text = (this as any).parser.parseInline(tokens);
+      const raw = tokens
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((t: any) => (t && typeof t.raw === "string" ? t.raw : ""))
+        .join("");
+      void renderer;
+      const id = slugifyHeading(raw);
+      return `<h${depth}${id ? ` id="${id}"` : ""}>${text}</h${depth}>\n`;
+    },
+  },
+});
 
 export async function markdownToHtml(md: string): Promise<string> {
   if (await pandocAvailable()) {

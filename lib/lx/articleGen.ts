@@ -120,7 +120,7 @@ function buildSystemPrompt(): string {
     "",
     "Structure for markdown_body (do NOT include front matter / a leading H1 — title goes in the title field):",
     "- Intro: real-world problem, why now, reframe the keyword as an architecture/workflow/business decision.",
-    "- Table of Contents: markdown links to 6–8 H2 sections (each with 1–3 H3 subsections beneath when sensible).",
+    "- Table of Contents: markdown links to 6–8 H2 sections (each with 1–3 H3 subsections beneath when sensible). For each link use `[Section Title](#section-title)` where the fragment is the section title lowercased, non-alphanumerics replaced with hyphens, multiple hyphens collapsed. Do NOT append `{#id}` attributes to the headings themselves — both our markdown renderers auto-slug headings the same way.",
     "- Body sections: each H2 makes one strong point; each H3 answers a practical sub-question.",
     "- Include at least 3 blockquotes formatted `> Practical rule: …`.",
     "- Include at least one comparison table.",
@@ -697,6 +697,17 @@ export async function generateArticle(
       url ? `![${alt.replace(/[\[\]]/g, "")}](${url})` : "",
     );
   }
+
+  // Strip pandoc-style `## Heading {#anchor-id}` attributes from headings.
+  // Both our renderers (pandoc with gfm_auto_identifiers, marked with the
+  // custom heading renderer) auto-slug headings, so explicit IDs are noise.
+  // Claude sometimes emits them anyway as a TOC anchoring hint; without
+  // header_attributes enabled they leak through as visible "{#…}" text on
+  // the rendered page.
+  bodyWithImages = bodyWithImages.replace(
+    /^(#{1,6}[^\n]*?)\s*\{#[a-z0-9][a-z0-9-]*\}\s*$/gim,
+    "$1",
+  );
 
   // Render HTML.
   let html: string;
