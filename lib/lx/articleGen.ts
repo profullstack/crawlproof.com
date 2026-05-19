@@ -640,11 +640,30 @@ export async function generateArticle(
     }
     article = response.parsed_output as ArticleOutput;
   } catch (err) {
-    await failKeyword(
-      supabase,
-      keyword.id,
-      `claude error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // Anthropic monthly-cap (HTTP 400 "specified API usage limits") and
+    // generic rate-limit (HTTP 429) are transient. Marking the keyword
+    // 'failed' here permanently consumes it — when the cap resets the
+    // user is stuck with stranded rows and a dedup'd research path that
+    // never re-inserts them. Requeue instead so the keyword retries on
+    // the next worker tick once the upstream is back.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const status = (err as any)?.status;
+    const isTransient =
+      status === 429 ||
+      /specified API usage limits|usage limits|rate.?limit/i.test(errMsg);
+    if (isTransient) {
+      await supabase
+        .from("lx_keyword")
+        .update({ status: "queued" })
+        .eq("id", keyword.id);
+      await refundCredit(supabase, typedSite.user_id);
+      console.warn(
+        `[lx] keyword ${keyword.id} requeued (transient claude error): ${errMsg}`,
+      );
+      return { ok: false, error: "claude transient error" };
+    }
+    await failKeyword(supabase, keyword.id, `claude error: ${errMsg}`);
     await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "claude error" };
   }
