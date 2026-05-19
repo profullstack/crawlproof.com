@@ -499,33 +499,51 @@ export async function generateArticle(
     return { ok: false, error: "embedding failed" };
   }
 
-  // Configured site-page links plus up to MAX_PRIOR_ARTICLE_LINKS extra
-  // slots when prior posts on this blog are topically adjacent. Combined
-  // total is capped at MAX_LINK_CANDIDATES so the prompt doesn't bloat.
+  // Build the link-exchange candidate pool from three sources, ordered
+  // by SEO value: prior posts (own + sitemap-discovered) carry topical
+  // authority and inbound link equity to specific articles; pillar pages
+  // anchor entity-level signals. Deduped by URL; capped at
+  // MAX_LINK_CANDIDATES so the prompt doesn't bloat.
+  //
+  // Source 1+2: lx_site_page via pgvector RPC, one call per is_blog_post
+  // value so both pillar pages AND existing on-site blog posts surface.
   const sitePageSlots = Math.min(
     typedSite.internal_links_per_article,
     MAX_LINK_CANDIDATES,
   );
   let candidates: LabeledCandidate[] = [];
   if (sitePageSlots > 0) {
-    const { data: rpcRows, error: rpcErr } = await supabase.rpc(
-      "lx_find_internal_links",
-      {
-        p_site_id: typedSite.id,
-        p_query_embedding: queryEmbedding,
-        p_limit: sitePageSlots * 2, // overfetch so the LLM has options
-        p_is_blog_post: false,
-      },
-    );
-    if (rpcErr) console.warn("[lx] internal-link rpc failed", rpcErr.message);
-    candidates = ((rpcRows as LinkCandidate[] | null) ?? []).map((c) => ({
+    const [{ data: pillarRows, error: pillarErr }, { data: blogRows, error: blogErr }] =
+      await Promise.all([
+        supabase.rpc("lx_find_internal_links", {
+          p_site_id: typedSite.id,
+          p_query_embedding: queryEmbedding,
+          p_limit: sitePageSlots * 2,
+          p_is_blog_post: false,
+        }),
+        supabase.rpc("lx_find_internal_links", {
+          p_site_id: typedSite.id,
+          p_query_embedding: queryEmbedding,
+          p_limit: sitePageSlots * 2,
+          p_is_blog_post: true,
+        }),
+      ]);
+    if (pillarErr) console.warn("[lx] pillar-link rpc failed", pillarErr.message);
+    if (blogErr) console.warn("[lx] blog-link rpc failed", blogErr.message);
+    const pillars = ((pillarRows as LinkCandidate[] | null) ?? []).map((c) => ({
       ...c,
       kind: "site_page" as const,
     }));
+    const sitemapBlogs = ((blogRows as LinkCandidate[] | null) ?? []).map((c) => ({
+      ...c,
+      kind: "prior_post" as const,
+    }));
+    candidates = [...pillars, ...sitemapBlogs];
   }
 
-  // Backlinks to previously-generated articles on this same site. These
-  // raise topical authority over time as the blog accumulates posts.
+  // Source 3: lx_article — articles we generated ourselves. Token-overlap
+  // scoring; complements pgvector when the same post hasn't been re-crawled
+  // into lx_site_page yet.
   const priorArticles = await findPriorArticles(
     supabase,
     typedSite.id,
@@ -533,11 +551,23 @@ export async function generateArticle(
     keyword.keyword,
     typedSite.niche,
   );
-  const labeledPriors: LabeledCandidate[] = priorArticles.map((c) => ({
-    ...c,
-    kind: "prior_post" as const,
-  }));
-  candidates = [...candidates, ...labeledPriors].slice(0, MAX_LINK_CANDIDATES);
+  candidates = [
+    ...candidates,
+    ...priorArticles.map((c) => ({ ...c, kind: "prior_post" as const })),
+  ];
+
+  // Dedupe by normalized URL — the same post can appear in both lx_site_page
+  // (via sitemap crawl) and lx_article (via our generation). Preserve order
+  // (first occurrence wins) so the SEO-ranked sources stay ranked.
+  const seen = new Set<string>();
+  candidates = candidates
+    .filter((c) => {
+      const key = c.url.replace(/\/$/, "").toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_LINK_CANDIDATES);
   const linkSlots = Math.min(candidates.length, MAX_LINK_CANDIDATES);
 
   // Generate the article body.
