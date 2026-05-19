@@ -39,6 +39,26 @@ export async function POST() {
     );
   }
 
+  // Cheap upfront check so the UI surfaces "out of credits" instead of
+  // silently no-op'ing in the worker. The worker still re-checks
+  // atomically via consume_credit before generation begins.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("credits_balance")
+    .eq("id", user.id)
+    .maybeSingle();
+  const balance = (profile?.credits_balance as number | null | undefined) ?? 0;
+  if (balance < 1) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Out of credits. Buy more to generate articles.",
+        credits_balance: balance,
+      },
+      { status: 402 },
+    );
+  }
+
   // The button is a manual "generate now" — bypass the cron's
   // scheduled_for filter so it actually produces something when the
   // earliest queued slot is in the future. Default behavior (preview=true)

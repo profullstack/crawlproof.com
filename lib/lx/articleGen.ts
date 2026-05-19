@@ -34,6 +34,7 @@ const MAX_LINK_CANDIDATES = 8;
 
 type SiteRow = {
   id: string;
+  user_id: string;
   domain: string;
   blog_root_url: string;
   niche: string | null;
@@ -437,7 +438,7 @@ export async function generateArticle(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, status",
+      "id, user_id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, status",
     )
     .eq("id", siteId)
     .maybeSingle();
@@ -450,6 +451,22 @@ export async function generateArticle(
 
   const claimed = await claimKeyword(supabase, keyword.id);
   if (!claimed) return { ok: true, skipped: "claim-race" };
+
+  // Gate generation behind a credit deduction. Atomic at the SQL layer
+  // (consume_credit RPC) so two parallel generations can't both succeed
+  // when only one credit is left. Refunded on any downstream failure.
+  const { data: hasCredit } = await supabase.rpc("consume_credit", {
+    p_owner: typedSite.user_id,
+    p_count: 1,
+  });
+  if (!hasCredit) {
+    // Return the claim — the keyword can run later once credits exist.
+    await supabase
+      .from("lx_keyword")
+      .update({ status: "queued" })
+      .eq("id", keyword.id);
+    return { ok: false, error: "out of credits" };
+  }
 
   // Find internal links.
   const queryText = [
@@ -474,6 +491,7 @@ export async function generateArticle(
       keyword.id,
       `embedding failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+    await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "embedding failed" };
   }
 
@@ -558,6 +576,7 @@ export async function generateArticle(
         keyword.id,
         `claude returned no parsed_output (stop_reason=${response.stop_reason ?? "unknown"})`,
       );
+      await refundCredit(supabase, typedSite.user_id);
       return { ok: false, error: "claude empty output" };
     }
     article = response.parsed_output as ArticleOutput;
@@ -567,6 +586,7 @@ export async function generateArticle(
       keyword.id,
       `claude error: ${err instanceof Error ? err.message : String(err)}`,
     );
+    await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "claude error" };
   }
 
@@ -581,6 +601,7 @@ export async function generateArticle(
       keyword.id,
       `claude claimed links not present: ${linkCheck.missing.join(", ")}`,
     );
+    await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "internal-link validation failed" };
   }
 
@@ -650,6 +671,7 @@ export async function generateArticle(
       keyword.id,
       `markdown render failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+    await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "markdown render failed" };
   }
 
@@ -679,6 +701,7 @@ export async function generateArticle(
     .single();
   if (insErr || !inserted) {
     await failKeyword(supabase, keyword.id, `insert failed: ${insErr?.message}`);
+    await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: insErr?.message ?? "insert failed" };
   }
 
@@ -705,4 +728,30 @@ async function failKeyword(
     .from("lx_keyword")
     .update({ status: "failed" })
     .eq("id", keywordId);
+}
+
+// Bump the user's credit balance back by 1 — called when generation was
+// gated by consume_credit but then failed before producing an article.
+// Best-effort: if the balance read or update fails, we log and move on
+// rather than retry-loop. The cost is one wasted credit, not corruption.
+async function refundCredit(
+  supabase: SupabaseClient<any>,
+  ownerId: string,
+): Promise<void> {
+  const { data: prof, error: readErr } = await supabase
+    .from("profiles")
+    .select("credits_balance")
+    .eq("id", ownerId)
+    .maybeSingle();
+  if (readErr || !prof) {
+    console.warn(`[lx] credit refund: profile read failed`, readErr?.message);
+    return;
+  }
+  const { error: updErr } = await supabase
+    .from("profiles")
+    .update({ credits_balance: (prof.credits_balance ?? 0) + 1 })
+    .eq("id", ownerId);
+  if (updErr) {
+    console.warn(`[lx] credit refund update failed`, updErr.message);
+  }
 }
