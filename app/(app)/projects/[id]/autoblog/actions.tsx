@@ -18,7 +18,11 @@ async function call(path: string): Promise<{ ok: boolean; error?: string }> {
 // `since`). Returns the article id or null on timeout. The dashboard
 // generate button uses this to auto-redirect once the worker is done,
 // so users don't sit on a "queued" message wondering what to do.
+// Scoped to the current project's lx_site via projectId so users with
+// multiple projects don't poll the wrong site when the picker cookie
+// has drifted.
 async function waitForNewArticle(
+  projectId: string,
   since: Date,
   signal: AbortSignal,
   maxMs = 120_000,
@@ -28,7 +32,7 @@ async function waitForNewArticle(
     if (signal.aborted) return null;
     try {
       const res = await fetch(
-        `/api/lx/articles/latest?since=${encodeURIComponent(since.toISOString())}`,
+        `/api/lx/articles/latest?projectId=${encodeURIComponent(projectId)}&since=${encodeURIComponent(since.toISOString())}`,
         { cache: "no-store", signal },
       );
       if (res.status === 200) {
@@ -77,7 +81,9 @@ export function DashboardActions({
     setNotice("Generating… this takes ~30–60s.");
     setError(null);
     const since = new Date();
-    const r = await call("/api/lx/articles/generate");
+    const r = await call(
+      `/api/lx/articles/generate?projectId=${encodeURIComponent(projectId)}`,
+    );
     if (!r.ok) {
       setBusy(null);
       setNotice(null);
@@ -85,7 +91,11 @@ export function DashboardActions({
       return;
     }
     const controller = new AbortController();
-    const articleId = await waitForNewArticle(since, controller.signal);
+    const articleId = await waitForNewArticle(
+      projectId,
+      since,
+      controller.signal,
+    );
     setBusy(null);
     if (articleId) {
       router.push(`/projects/${projectId}/autoblog/articles/${articleId}`);

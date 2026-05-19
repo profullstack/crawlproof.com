@@ -1,14 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { enqueueArticleGenerate } from "@/lib/lx/workerClient";
-import { getCurrentSite } from "@/lib/lx/currentSite";
+import { getProjectById, getCurrentSite } from "@/lib/lx/currentSite";
 
 export const runtime = "nodejs";
 
-// Manually queue an article generation for the current site. The worker
-// will pick the next queued keyword whose scheduled_for has passed; if
-// none is due, the call is a no-op.
-export async function POST() {
+// Manually queue an article generation. Site resolution: prefer
+// ?projectId from the caller (the dashboard knows the project from the
+// URL) so users with multiple projects can't accidentally generate for
+// the wrong one when the picker cookie drifts.
+export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -17,24 +18,32 @@ export async function POST() {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const site = (await getCurrentSite("id, status")) as
-    | { id: string; status: string; lx_site_id: string | null }
-    | null;
-  if (!site) {
-    return NextResponse.json(
-      { ok: false, error: "no site configured" },
-      { status: 404 },
-    );
+  const projectIdParam = req.nextUrl.searchParams.get("projectId");
+  let lxSiteId: string | null = null;
+  let siteStatus: string | null = null;
+  if (projectIdParam) {
+    const project = await getProjectById(projectIdParam, {
+      siteColumns: "id, status",
+    });
+    const lxSite = project?.lx_site as { id?: string; status?: string } | null;
+    lxSiteId = lxSite?.id ?? null;
+    siteStatus = lxSite?.status ?? null;
+  } else {
+    const site = (await getCurrentSite("id, status")) as
+      | { id: string; status: string; lx_site_id: string | null }
+      | null;
+    lxSiteId = site?.lx_site_id ?? null;
+    siteStatus = site?.status ?? null;
   }
-  if (!site.lx_site_id) {
+  if (!lxSiteId) {
     return NextResponse.json(
       { ok: false, error: "autoblog not configured for this project" },
       { status: 400 },
     );
   }
-  if (site.status !== "active") {
+  if (siteStatus !== "active") {
     return NextResponse.json(
-      { ok: false, error: `site is ${site.status}` },
+      { ok: false, error: `site is ${siteStatus ?? "unknown"}` },
       { status: 400 },
     );
   }
@@ -63,6 +72,6 @@ export async function POST() {
   // scheduled_for filter so it actually produces something when the
   // earliest queued slot is in the future. Default behavior (preview=true)
   // leaves the article in 'ready' state for review before publish.
-  await enqueueArticleGenerate(site.lx_site_id, { manual: true, preview: true });
+  await enqueueArticleGenerate(lxSiteId, { manual: true, preview: true });
   return NextResponse.json({ ok: true });
 }
