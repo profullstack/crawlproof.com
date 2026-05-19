@@ -118,6 +118,88 @@ User-Agent:         @profullstack/autoblog/0.2`}</pre>
       </section>
 
       <section className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Example — what we POST</h2>
+        <p className="text-sm leading-relaxed">
+          Exactly what CrawlProof puts on the wire (one delivery). Treat
+          this as illustrative: <code className="font-mono">webhook-id</code>{" "}
+          and <code className="font-mono">webhook-timestamp</code> rotate
+          per attempt and the signature is recomputed against them. To
+          fire a valid signed request yourself, use the bash recipe
+          below.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`curl -X POST https://your-site.example/api/webhooks/crawlproof \\
+  -H "Authorization: Bearer cp_lx_REDACTED_TOKEN" \\
+  -H "webhook-id: 0193a8b9-d2c4-7f44-9a31-3f1c2e7b9a01" \\
+  -H "webhook-timestamp: 1779228000" \\
+  -H "webhook-signature: v1,cAt+0d6Hkx6JfTQ5o/n8j2qPjZ0wq7y0Pq0H9R8wzS4=" \\
+  -H "Content-Type: application/cloudevents+json" \\
+  -H "User-Agent: @profullstack/autoblog/0.2" \\
+  --data-binary '{
+    "specversion": "1.0",
+    "id": "0193a8b9-d2c4-7f44-9a31-3f1c2e7b9a01",
+    "type": "com.crawlproof.post.published.v1",
+    "source": "https://crawlproof.com",
+    "subject": "post:0193a8b9-d2c4-7f44-9a31-3f1c2e7b9a01",
+    "time": "2026-05-15T09:00:00.000Z",
+    "datacontenttype": "application/json",
+    "data": {
+      "post": {
+        "id": "0193a8b9-d2c4-7f44-9a31-3f1c2e7b9a01",
+        "url": "https://your-site.example/blog/how-llms-cite-sources",
+        "canonical_url": "https://your-site.example/blog/how-llms-cite-sources",
+        "title": "How LLMs decide what to cite",
+        "slug": "how-llms-cite-sources",
+        "excerpt": "Answer engines pick a small set of canonical references per topic. Here is how to be in that set.",
+        "html": "<p>Answer engines build a working set of citations per topic\\u2026</p>",
+        "markdown": "Answer engines build a working set of citations per topic\\u2026",
+        "status": "published",
+        "published_at": "2026-05-15T09:00:00.000Z",
+        "updated_at": "2026-05-15T09:00:00.000Z",
+        "author": null,
+        "tags": ["aeo", "llm-citations", "schema"],
+        "categories": [],
+        "featured_image": { "url": "https://cdn.crawlproof.com/blog/how-llms-cite.webp", "alt": "Stylized citation graph" }
+      }
+    }
+  }'`}</pre>
+
+        <h3 className="mt-6 text-lg font-bold">Send a valid signed test request</h3>
+        <p className="text-sm leading-relaxed">
+          Drop-in bash that signs a CloudEvents body with your shared
+          secret and POSTs it to your receiver. Uses only{" "}
+          <code className="font-mono">curl</code> +{" "}
+          <code className="font-mono">openssl</code> + a couple of
+          coreutils — no Node, no Python.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`# Replace these two and run.
+URL="https://your-site.example/api/webhooks/crawlproof"
+SECRET="cp_lx_REPLACE_ME"
+
+ID="$(uuidgen | tr 'A-Z' 'a-z')"
+TS="$(date +%s)"
+BODY='{"specversion":"1.0","id":"'"$ID"'","type":"com.crawlproof.post.published.v1","source":"https://crawlproof.com","subject":"post:'"$ID"'","time":"'"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'","datacontenttype":"application/json","data":{"post":{"id":"'"$ID"'","url":"'"$URL"'","canonical_url":"'"$URL"'","title":"Local test post","slug":"local-test-post","excerpt":"Verifying the autoblog webhook end-to-end from curl.","html":"<p>Hello from a signed test webhook.</p>","markdown":"Hello from a signed test webhook.","status":"published","published_at":"'"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'","updated_at":"'"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'","author":null,"tags":["test"],"categories":[],"featured_image":null}}}'
+
+SIG="v1,$(printf '%s.%s.%s' "$ID" "$TS" "$BODY" \\
+  | openssl dgst -sha256 -hmac "$SECRET" -binary \\
+  | openssl base64 -A)"
+
+curl -sS -X POST "$URL" \\
+  -H "Authorization: Bearer $SECRET" \\
+  -H "webhook-id: $ID" \\
+  -H "webhook-timestamp: $TS" \\
+  -H "webhook-signature: $SIG" \\
+  -H "Content-Type: application/cloudevents+json" \\
+  --data-binary "$BODY"`}</pre>
+        <p className="text-sm text-[var(--color-muted)]">
+          The signed string is{" "}
+          <code className="font-mono">{`{id}.{timestamp}.{body}`}</code>{" "}
+          — same bytes you put in the headers/body. If you regenerate
+          one but not the others, the signature won&apos;t match and the
+          receiver will 401 (which is the point).
+        </p>
+      </section>
+
+      <section className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Retry</h2>
         <p className="text-sm leading-relaxed">
           At-least-once delivery. On 5xx, 408, 429, or network error we
