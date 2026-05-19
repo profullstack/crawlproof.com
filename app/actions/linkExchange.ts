@@ -291,6 +291,12 @@ export type SiteInput = {
   description: string;
   // Comma-separated 1-3 word head terms for DataForSEO expansion.
   seedKeywords: string;
+  // Comma-separated tail terms ("payments", "merchant account") that the
+  // form crosses with seedKeywords client-side to build the long-tail list.
+  modifiers: string;
+  // When true, Refetch flows skip overwriting the keywords text[]. Used
+  // after a hand-curated build via seeds × modifiers.
+  preserveKeywords: boolean;
   // Comma-separated. parseList() into a text[].
   keywords: string;
   seoTitle: string;
@@ -348,7 +354,9 @@ export async function createOrUpdateSite(
   const niche = clean(input.niche, MAX.niche) || null;
   const description = clean(input.description, MAX.description);
   const audiences = parseAudiences(input.targetAudiences);
-  const seedKeywords = parseList(input.seedKeywords, 6, 40);
+  const seedKeywords = parseList(input.seedKeywords, 50, 40);
+  const modifiers = parseList(input.modifiers, 20, 40);
+  const preserveKeywords = !!input.preserveKeywords;
   // Keywords use parseKeywordRows so each row keeps its `,<volume>` hint.
   // Allow up to ~80 chars per row to fit "keyword phrase here,12345".
   const keywords = parseKeywordRows(input.keywords, MAX.keywords, MAX.keyword + 20);
@@ -419,6 +427,8 @@ export async function createOrUpdateSite(
         target_audiences: audiences,
         description,
         seed_keywords: seedKeywords,
+        modifiers,
+        preserve_keywords: preserveKeywords,
         keywords,
         seo_title: seoTitle,
         seo_description: seoDescription,
@@ -455,6 +465,8 @@ export async function createOrUpdateSite(
       target_audiences: audiences,
       description,
       seed_keywords: seedKeywords,
+      modifiers,
+      preserve_keywords: preserveKeywords,
       keywords,
       seo_title: seoTitle,
       seo_description: seoDescription,

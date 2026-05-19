@@ -23,6 +23,8 @@ type Existing = {
   target_audiences: string[];
   description: string;
   seed_keywords: string[];
+  modifiers: string[];
+  preserve_keywords: boolean;
   keywords: string[];
   seo_title: string | null;
   seo_description: string | null;
@@ -77,6 +79,12 @@ export function SetupForm({
   const [description, setDescription] = useState(initial?.description ?? "");
   const [seedKeywords, setSeedKeywords] = useState(
     (initial?.seed_keywords ?? []).join(", "),
+  );
+  const [modifiers, setModifiers] = useState(
+    (initial?.modifiers ?? []).join(", "),
+  );
+  const [preserveKeywords, setPreserveKeywords] = useState<boolean>(
+    initial?.preserve_keywords ?? false,
   );
   const [keywords, setKeywords] = useState(
     (initial?.keywords ?? []).join("\n"),
@@ -189,6 +197,16 @@ export function SetupForm({
       enrich.profile.seedKeywords.length > 0
         ? enrich.profile.seedKeywords
         : enrich.profile.keywords;
+
+    // Preserve gate — if the user has hand-curated their keyword list
+    // and ticked the box, skip the DFS call entirely. Editorial fields
+    // (niche, audiences, description, seeds, etc.) still get refreshed.
+    if (preserveKeywords) {
+      setNotice("Auto-filled editorial. Keywords preserved (uncheck to overwrite).");
+      setAutoFilling(false);
+      return;
+    }
+
     setSuggesting(true);
     const traffic = await suggestLongTailKeywords(expansionSeeds);
     setSuggesting(false);
@@ -277,6 +295,12 @@ export function SetupForm({
   // without re-triggering the Anthropic enrichment that would
   // otherwise stomp niche, description, and the seed list itself.
   async function refetchLongTailFromSeeds() {
+    if (preserveKeywords) {
+      setWarning(
+        "Preserve keywords is on — uncheck the box to overwrite the long-tail list.",
+      );
+      return;
+    }
     const seeds = seedKeywords
       .split(",")
       .map((s) => s.trim())
@@ -304,6 +328,53 @@ export function SetupForm({
     );
     setNotice(
       `Refetched ${traffic.suggestions.length} long-tail keyword(s) — ${traffic.tier}.`,
+    );
+  }
+
+  // Cross-build: seed × modifier → "seed modifier" long-tail rows.
+  // Pure client-side, no DFS call. Volume column is left blank since
+  // these are hand-built phrases; the scheduler treats blank as 0 and
+  // simply rotates through them in insertion order.
+  function buildKeywordsFromSeedsAndModifiers() {
+    const seeds = seedKeywords
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const mods = modifiers
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (seeds.length === 0) {
+      setError("Add at least one seed keyword first.");
+      return;
+    }
+    if (mods.length === 0) {
+      setError("Add at least one modifier first.");
+      return;
+    }
+
+    const rows: string[] = [];
+    const seen = new Set<string>();
+    for (const seed of seeds) {
+      for (const mod of mods) {
+        const phrase = `${seed} ${mod}`.replace(/\s+/g, " ").trim();
+        if (phrase && !seen.has(phrase)) {
+          seen.add(phrase);
+          // No volume — leave the comma-suffix off so parseKeywordRows
+          // stores the bare phrase. We can add a 0 if downstream needs
+          // one, but coinpayportal's scheduler doesn't require it.
+          rows.push(phrase);
+        }
+      }
+    }
+
+    setError(null);
+    setWarning(null);
+    setKeywords(rows.join("\n"));
+    setPreserveKeywords(true);
+    setNotice(
+      `Built ${rows.length} keyword(s) from ${seeds.length} seed(s) × ${mods.length} modifier(s). Preserve keywords turned on — Refetch will leave this list alone.`,
     );
   }
 
@@ -377,6 +448,8 @@ export function SetupForm({
         targetAudiences: audiences,
         description,
         seedKeywords,
+        modifiers,
+        preserveKeywords,
         keywords,
         seoTitle,
         seoDescription,
@@ -672,6 +745,52 @@ export function SetupForm({
             touching anything else.
           </p>
         </div>
+
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Modifiers (comma-separated tail terms)
+          </label>
+          <div className="mt-1 flex gap-2">
+            <input
+              className="input flex-1 font-mono text-sm"
+              type="text"
+              placeholder="payments, transactions, merchant account, payment gateway, payment processing"
+              value={modifiers}
+              onChange={(e) => setModifiers(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn"
+              onClick={buildKeywordsFromSeedsAndModifiers}
+              disabled={!seedKeywords.trim() || !modifiers.trim()}
+              title="Cross every seed with every modifier to build the long-tail list locally (no DataForSEO call). Turns on Preserve keywords."
+            >
+              Build from seeds × modifiers
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            Crossed with seeds locally — e.g. <code>peptide payments</code>,{" "}
+            <code>peptide merchant account</code>, …. Skips DataForSEO. Building
+            turns on <em>Preserve keywords</em> so Refetch won&apos;t overwrite
+            the list.
+          </p>
+        </div>
+
+        <div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={preserveKeywords}
+              onChange={(e) => setPreserveKeywords(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">Preserve keywords</span> — Refetch
+              flows skip the long-tail list (still refresh niche, audiences,
+              description, seeds).
+            </span>
+          </label>
+        </div>
+
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Keywords — one CSV row per line: <code>keyword,monthly_volume</code>
