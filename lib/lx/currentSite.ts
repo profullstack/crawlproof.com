@@ -88,11 +88,19 @@ export async function getCurrentSite<T extends string = "*">(
   // Existing callers expect a single flat object that *looks like* an
   // lx_site row. Merge the lx_site fields up and override id/name/url
   // with the project's so the row is project-keyed end-to-end.
+  //
+  // We also surface the *real* lx_site.id under `lx_site_id` because the
+  // worker enqueue layer keys on it directly (lx_site, lx_keyword,
+  // lx_article rows are owned by lx_site.id, not by the project). Routes
+  // that hit `enqueueArticleGenerate`/etc must use `lx_site_id`, not `id`.
   const site = (project.lx_site ?? {}) as Record<string, unknown>;
+  const lxSiteId =
+    typeof site.id === "string" && site.id.length > 0 ? site.id : null;
   return {
     ...site,
     id: project.id,
     project_id: project.id,
+    lx_site_id: lxSiteId,
     name: project.name ?? site.name ?? null,
     url: project.url ?? site.url ?? null,
   };

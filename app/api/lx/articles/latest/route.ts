@@ -18,8 +18,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const site = (await getCurrentSite("id")) as { id: string } | null;
-  if (!site) {
+  const site = (await getCurrentSite("id")) as
+    | { id: string; lx_site_id: string | null }
+    | null;
+  if (!site?.lx_site_id) {
     return NextResponse.json({ ok: false, error: "no site" }, { status: 404 });
   }
 
@@ -32,7 +34,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from("lx_article")
     .select("id, status, title, created_at")
-    .eq("site_id", site.id)
+    .eq("site_id", site.lx_site_id)
     .gt("created_at", since.toISOString())
     .order("created_at", { ascending: false })
     .limit(1)

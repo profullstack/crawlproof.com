@@ -15,12 +15,23 @@ export async function POST() {
   }
 
   const site = (await getCurrentSite("id, niche, target_audiences")) as
-    | { id: string; niche: string | null; target_audiences: string[] }
+    | {
+        id: string;
+        niche: string | null;
+        target_audiences: string[];
+        lx_site_id: string | null;
+      }
     | null;
   if (!site) {
     return NextResponse.json(
       { ok: false, error: "no site configured" },
       { status: 404 },
+    );
+  }
+  if (!site.lx_site_id) {
+    return NextResponse.json(
+      { ok: false, error: "autoblog not configured for this project" },
+      { status: 400 },
     );
   }
   if (!site.niche && (site.target_audiences ?? []).length === 0) {
@@ -30,6 +41,6 @@ export async function POST() {
     );
   }
 
-  await enqueueKeywordResearch(site.id);
+  await enqueueKeywordResearch(site.lx_site_id);
   return NextResponse.json({ ok: true });
 }

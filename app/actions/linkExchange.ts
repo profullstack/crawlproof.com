@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { detectSitemapUrl } from "@/lib/lx/sitemap";
+import type { DfsKeywordRow } from "@/lib/lx/dataforseo";
 import { nextPublishAt } from "@/lib/lx/schedule";
 import {
   enqueueSitemapCrawl,
@@ -505,7 +506,15 @@ export type KeywordSuggestion = {
 
 const MIN_VOLUME = 100;
 const MIN_WORDS = 2;
-const MAX_RESULTS = 500;
+const PER_SEED_LIMIT = 200;
+const TOTAL_RESULT_CAP = 300;
+// Common short words that shouldn't count as a relevance match — a keyword
+// matching only "for", "the" etc. would let off-niche junk slip through.
+const SEED_TOKEN_STOPLIST = new Set([
+  "the","and","for","with","you","your","that","this","from","into","over",
+  "but","not","are","was","were","has","had","have","its","off","out","its",
+  "all","any","new","get","how","why","what","who","best","top",
+]);
 
 export async function suggestLongTailKeywords(
   seeds: string[],
@@ -547,36 +556,113 @@ export async function suggestLongTailKeywords(
     };
   }
 
-  const { DataForSeoClient, filterOutliers } = await import("@/lib/lx/dataforseo");
+  const { DataForSeoClient, filterOutliers } = await import(
+    "@/lib/lx/dataforseo"
+  );
   const dfs = new DataForSeoClient(login, password);
 
-  try {
-    const res = await dfs.keywordIdeas(cleanedSeeds, {
-      limit: MAX_RESULTS,
-      minVolume: MIN_VOLUME,
-      minWords: MIN_WORDS,
-      closelyVariants: false,
-    });
-    const cleaned = filterOutliers(res.rows);
+  // Fan out one Labs call per seed instead of bundling all seeds into a
+  // single request. Bundled calls dilute relevance: a generic high-volume
+  // match on one seed token (e.g. "security" → "ADT security") drowns out
+  // long-tail rows in the niche. Per-seed calls give each seed its own
+  // top-N slice; we then aggregate + dedupe + relevance-filter.
+  function seedTokens(seed: string): string[] {
+    return seed
+      .toLowerCase()
+      .split(/[\s-]+/)
+      .map((t) => t.replace(/[^a-z0-9]/g, ""))
+      .filter((t) => t.length >= 4 && !SEED_TOKEN_STOPLIST.has(t));
+  }
 
-    // Final client-side sort (DFS already sorted by volume desc, but
-    // filterOutliers may have removed leading rows).
-    cleaned.sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0));
+  // Map of keyword → best row + which seed(s) it matched (for relevance score).
+  const aggregated = new Map<
+    string,
+    { row: DfsKeywordRow; matchedSeeds: Set<string> }
+  >();
+  let totalCost = 0;
+  const seedErrors: string[] = [];
 
-    const suggestions: KeywordSuggestion[] = cleaned.map((r) => ({
-      keyword: r.keyword,
-      searchVolume: r.search_volume ?? 0,
-      cpcUsd: r.cpc ?? null,
-      competition: r.competition,
-    }));
-    const tier = `${suggestions.length} long-tail keyword(s) from ${cleanedSeeds.length} seed(s)`;
-    return { ok: true, suggestions, tier };
-  } catch (err) {
+  for (const seed of cleanedSeeds) {
+    try {
+      const res = await dfs.keywordIdeas([seed], {
+        limit: PER_SEED_LIMIT,
+        minVolume: MIN_VOLUME,
+        minWords: MIN_WORDS,
+        closelyVariants: false,
+      });
+      totalCost += res.cost;
+
+      // Relevance gate: the returned keyword must contain at least one
+      // substantive token from the seed it was generated from. Stops
+      // off-niche junk like "michigan sex offenders list" from sneaking
+      // in on a "security" seed.
+      const tokens = seedTokens(seed);
+      const relevant = tokens.length === 0
+        ? res.rows
+        : res.rows.filter((r) => {
+            const kw = r.keyword.toLowerCase();
+            return tokens.some((t) => kw.includes(t));
+          });
+
+      for (const r of relevant) {
+        const key = r.keyword.toLowerCase();
+        const existing = aggregated.get(key);
+        if (existing) {
+          existing.matchedSeeds.add(seed);
+          // Keep the higher-volume row in case the same keyword surfaced
+          // with different metrics in different per-seed responses.
+          if ((r.search_volume ?? 0) > (existing.row.search_volume ?? 0)) {
+            existing.row = r;
+          }
+        } else {
+          aggregated.set(key, { row: r, matchedSeeds: new Set([seed]) });
+        }
+      }
+    } catch (err) {
+      seedErrors.push(
+        `"${seed}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  if (aggregated.size === 0) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error:
+        seedErrors.length > 0
+          ? `No keywords found. Errors: ${seedErrors.join("; ")}`
+          : "No keywords found above the volume threshold.",
     };
   }
+
+  // Filter outliers across the aggregated pool (preserves variance-based
+  // junk detection that filterOutliers does within a single response).
+  const rowsOnly = Array.from(aggregated.values()).map((v) => v.row);
+  const filtered = filterOutliers(rowsOnly);
+
+  // Re-attach the matchedSeeds count after outlier filtering so the
+  // ranker can prefer keywords that match multiple seeds.
+  type Ranked = { row: DfsKeywordRow; matches: number };
+  const ranked: Ranked[] = filtered
+    .map((r) => ({
+      row: r,
+      matches: aggregated.get(r.keyword.toLowerCase())?.matchedSeeds.size ?? 1,
+    }))
+    .sort((a, b) => {
+      // Keywords matching multiple seeds first, then by volume.
+      if (b.matches !== a.matches) return b.matches - a.matches;
+      return (b.row.search_volume ?? 0) - (a.row.search_volume ?? 0);
+    })
+    .slice(0, TOTAL_RESULT_CAP);
+
+  const suggestions: KeywordSuggestion[] = ranked.map(({ row }) => ({
+    keyword: row.keyword,
+    searchVolume: row.search_volume ?? 0,
+    cpcUsd: row.cpc ?? null,
+    competition: row.competition,
+  }));
+  const tier = `${suggestions.length} long-tail keyword(s) from ${cleanedSeeds.length} seed(s) · ${totalCost > 0 ? `$${totalCost.toFixed(3)}` : "free (cached)"}${seedErrors.length > 0 ? ` · ${seedErrors.length} seed error(s)` : ""}`;
+  return { ok: true, suggestions, tier };
 }
 
 // ------------------------------------------------------------

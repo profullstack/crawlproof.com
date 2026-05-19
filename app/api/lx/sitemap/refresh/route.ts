@@ -14,11 +14,19 @@ export async function POST() {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const site = (await getCurrentSite("id")) as { id: string } | null;
+  const site = (await getCurrentSite("id")) as
+    | { id: string; lx_site_id: string | null }
+    | null;
   if (!site) {
     return NextResponse.json(
       { ok: false, error: "no site configured" },
       { status: 404 },
+    );
+  }
+  if (!site.lx_site_id) {
+    return NextResponse.json(
+      { ok: false, error: "autoblog not configured for this project" },
+      { status: 400 },
     );
   }
 
@@ -27,8 +35,8 @@ export async function POST() {
   await supabase
     .from("lx_site")
     .update({ sitemap_status: "queued" })
-    .eq("id", site.id);
+    .eq("id", site.lx_site_id);
 
-  await enqueueSitemapCrawl(site.id);
+  await enqueueSitemapCrawl(site.lx_site_id);
   return NextResponse.json({ ok: true });
 }

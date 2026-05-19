@@ -18,12 +18,18 @@ export async function POST() {
   }
 
   const site = (await getCurrentSite("id, status")) as
-    | { id: string; status: string }
+    | { id: string; status: string; lx_site_id: string | null }
     | null;
   if (!site) {
     return NextResponse.json(
       { ok: false, error: "no site configured" },
       { status: 404 },
+    );
+  }
+  if (!site.lx_site_id) {
+    return NextResponse.json(
+      { ok: false, error: "autoblog not configured for this project" },
+      { status: 400 },
     );
   }
   if (site.status !== "active") {
@@ -37,6 +43,6 @@ export async function POST() {
   // scheduled_for filter so it actually produces something when the
   // earliest queued slot is in the future. Default behavior (preview=true)
   // leaves the article in 'ready' state for review before publish.
-  await enqueueArticleGenerate(site.id, { manual: true, preview: true });
+  await enqueueArticleGenerate(site.lx_site_id, { manual: true, preview: true });
   return NextResponse.json({ ok: true });
 }
