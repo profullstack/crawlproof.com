@@ -851,7 +851,7 @@ export function SetupForm({
             id="webhookSecret"
             className="input mt-1 font-mono text-xs"
             type="text"
-            placeholder="cp_lx_…"
+            placeholder="<secret-key>"
             required
             value={webhookSecret}
             onChange={(e) => setWebhookSecret(e.target.value)}
