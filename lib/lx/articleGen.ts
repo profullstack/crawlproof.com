@@ -26,6 +26,11 @@ const EMBED_MODEL = "text-embedding-3-small";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const IMAGE_MODEL = "gpt-image-1";
 const IMAGE_SIZE = "1536x1024";
+// gpt-image-1 quality tier: low ($0.011), medium ($0.042), high ($0.167)
+// per image at 1536x1024. We pay the premium tier on hero + 3 inline
+// (~$0.67/article) for visibly sharper textures and better composition
+// — readers spot AI-art at low/medium quality immediately.
+const IMAGE_QUALITY: "low" | "medium" | "high" | "auto" = "high";
 const BUCKET = "lx-article-images";
 
 // Cap on input to the LLM so a malicious or oversized sitemap can't
@@ -355,6 +360,7 @@ async function generateInlineImage(
     model: IMAGE_MODEL,
     prompt,
     size: IMAGE_SIZE,
+    quality: IMAGE_QUALITY,
     n: 1,
   });
   const b64 = res.data?.[0]?.b64_json;
@@ -383,6 +389,7 @@ async function generateImage(
     model: IMAGE_MODEL,
     prompt,
     size: IMAGE_SIZE,
+    quality: IMAGE_QUALITY,
     n: 1,
   });
   const b64 = res.data?.[0]?.b64_json;
