@@ -87,15 +87,37 @@ marked.use({
   },
 });
 
+// Strip target/rel from anchor tags pointing at in-page anchors
+// (`href="#..."` — TOC links and similar). Claude sometimes emits TOC
+// items as raw `<a href="#x" target="_blank">…</a>` HTML inside the
+// markdown body; both pandoc (with -raw_html) and marked pass through
+// inline HTML differently, and we don't want a TOC entry to spawn a
+// new tab. External links are left alone.
+function dropTargetOnAnchorLinks(html: string): string {
+  return html.replace(
+    /<a\b([^>]*\bhref\s*=\s*(?:"#[^"]*"|'#[^']*'|#[^\s>]+)[^>]*)>/gi,
+    (_match, attrs: string) => {
+      const cleaned = attrs
+        .replace(/\s+target\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/gi, "")
+        .replace(/\s+rel\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/gi, "");
+      return `<a${cleaned}>`;
+    },
+  );
+}
+
 export async function markdownToHtml(md: string): Promise<string> {
+  let html: string;
   if (await pandocAvailable()) {
     try {
-      return await pandocConvert(md);
+      html = await pandocConvert(md);
     } catch (err) {
       console.warn("[markdown] pandoc failed, falling back to marked", err);
+      html = marked.parse(md, { async: false }) as string;
     }
+  } else {
+    html = marked.parse(md, { async: false }) as string;
   }
-  return marked.parse(md, { async: false }) as string;
+  return dropTargetOnAnchorLinks(html);
 }
 
 // Decorate raw status emoji from the audit Markdown so they render as proper

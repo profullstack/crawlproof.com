@@ -44,6 +44,15 @@ export default async function DashboardPage({
     countByStatus(supabase, user!.id),
   ]);
 
+  // Per-project autoblog/social enablement. Autoblog is "on" when the
+  // project has an lx_site row in status=active; social is "on" when at
+  // least one social account is linked at the project level.
+  const projectIds = (projects ?? []).map((p) => p.id);
+  const [autoblogIds, socialIds] = await Promise.all([
+    fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
+    fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
+  ]);
+
   return (
     <div className="space-y-10">
       <section className="flex items-center justify-between">
@@ -94,7 +103,23 @@ export default async function DashboardPage({
                 <Link href={`/projects/${p.id}`} className="block">
                   <div className="flex items-center justify-between gap-3">
                     <div className="font-semibold">{p.name}</div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {autoblogIds.has(p.id) && (
+                        <span
+                          className="badge badge-pass"
+                          title="Autoblog campaign is active for this project"
+                        >
+                          Autoblog on
+                        </span>
+                      )}
+                      {socialIds.has(p.id) && (
+                        <span
+                          className="badge badge-pass"
+                          title="At least one social account is connected"
+                        >
+                          Social on
+                        </span>
+                      )}
                       <span className="badge">{p.schedule}</span>
                       {p.status !== "active" && (
                         <span
@@ -157,6 +182,19 @@ export default async function DashboardPage({
       </section>
     </div>
   );
+}
+
+async function fetchEnabledProjectIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: "lx_site" | "sp_site_account",
+  projectIds: string[],
+  filters: Record<string, string> = {},
+): Promise<Set<string>> {
+  if (projectIds.length === 0) return new Set();
+  let q = supabase.from(table).select("project_id").in("project_id", projectIds);
+  for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
+  const { data } = await q;
+  return new Set((data ?? []).map((r: { project_id: string }) => r.project_id));
 }
 
 async function countByStatus(

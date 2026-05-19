@@ -75,11 +75,11 @@ const ArticleSchema = z.object({
   meta_description: z.string().min(50).max(160),
   excerpt: z.string().min(50).max(240),
   tags: z.array(z.string().min(2).max(40)).min(5).max(8),
-  // 5,000-22,000 chars ≈ 1,000-3,300 words. Without an upper bound Claude
+  // 7,500-32,000 chars ≈ 1,500-4,800 words. Without an upper bound Claude
   // occasionally produces 70k+ chars, which can't be parsed back as JSON
   // inside max_tokens. The cap is the hard rail; the system prompt asks
-  // for 2,200-3,200 words.
-  markdown_body: z.string().min(5000).max(22000),
+  // for 3,200-4,500 words.
+  markdown_body: z.string().min(7500).max(32000),
   used_internal_link_urls: z.array(z.string().url()).max(8),
   // Inline-image slots placed at section boundaries inside markdown_body
   // as `<!--INLINE_IMAGE_N-->` markers (N = 1..INLINE_IMAGE_COUNT). Each
@@ -147,7 +147,9 @@ function buildSystemPrompt(): string {
     "- excerpt: ≤240 characters.",
     "- 5–8 lowercase tags related to the topic.",
     "",
-    "Length: STRICTLY 2,200–3,200 words. Hard cap on markdown_body is ~22,000 characters — outputs over that are rejected. Prioritize depth and usefulness over word count, and edit ruthlessly to stay within the bound.",
+    "Length: STRICTLY 3,200–4,500 words. Hard cap on markdown_body is ~32,000 characters — outputs over that are rejected. Prioritize depth and usefulness; expand with concrete examples, code/config snippets, and edge cases rather than padding.",
+    "",
+    "TOC + anchors: emit the table of contents as plain markdown anchor links — `- [Section title](#section-id)` — NEVER as raw `<a>` HTML and NEVER with `target=\"_blank\"`. TOC links jump within the same page; opening them in a new tab is a bug.",
     "",
     "Internal links: insert each provided URL inline exactly once as a standard markdown `[anchor](url)` link where the surrounding sentence is genuinely about that URL's topic. Never create a \"Further reading\" list. Never invent URLs — use only those provided. Link candidates may include both site pages AND prior blog posts on this same site — treat both the same way (inline contextual anchor; the prior posts are clearly labeled in the candidate list).",
     "",
@@ -582,12 +584,12 @@ export async function generateArticle(
   try {
     const stream = anthropic.messages.stream({
       model: CLAUDE_MODEL,
-      // 2,200–3,200 words ≈ ~12k–18k output tokens. JSON escape overhead
+      // 3,200–4,500 words ≈ ~18k–25k output tokens. JSON escape overhead
       // for markdown (every \n + every " in code blocks gets escaped)
-      // can push that another 30%. 32k gives meaningful headroom so the
+      // can push that another 30%. 48k gives meaningful headroom so the
       // model isn't truncated mid-string — which manifests as
       // "Unterminated string in JSON" on parse.
-      max_tokens: 32000,
+      max_tokens: 48000,
       thinking: { type: "disabled" },
       output_config: {
         effort: "medium",
