@@ -21,6 +21,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod/v4";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { markdownToHtml } from "../markdown";
+import {
+  findExchangeCandidates,
+  type ExchangeCandidate,
+} from "./exchangeMatcher";
 
 const EMBED_MODEL = "text-embedding-3-small";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
@@ -46,6 +50,8 @@ type SiteRow = {
   target_audiences: string[];
   description: string;
   internal_links_per_article: number;
+  backlinks_enabled: boolean;
+  external_links_per_article: number;
 };
 
 type KeywordRow = {
@@ -81,6 +87,10 @@ const ArticleSchema = z.object({
   // for 3,200-4,500 words.
   markdown_body: z.string().min(7500).max(32000),
   used_internal_link_urls: z.array(z.string().url()).max(8),
+  // Exchange (cross-site) backlinks selected by the Phase 3 matcher.
+  // Empty array means the matcher returned no eligible candidates for
+  // this topic, OR the site has not opted into the exchange.
+  used_exchange_link_urls: z.array(z.string().url()).max(8).default([]),
   // Inline-image slots placed at section boundaries inside markdown_body
   // as `<!--INLINE_IMAGE_N-->` markers (N = 1..INLINE_IMAGE_COUNT). Each
   // entry supplies the alt text + an image-generation prompt; we render
@@ -175,8 +185,10 @@ function buildUserPrompt(input: {
   keyword: string;
   candidates: LabeledCandidate[];
   linkSlots: number;
+  exchangeCandidates: ExchangeCandidate[];
+  exchangeSlots: number;
 }): string {
-  const { site, keyword, candidates, linkSlots } = input;
+  const { site, keyword, candidates, linkSlots, exchangeCandidates, exchangeSlots } = input;
   const brand = site.domain;
   const niche = site.niche?.trim() || "B2B / technical SaaS";
   const audiences = site.target_audiences.length
@@ -200,6 +212,16 @@ function buildUserPrompt(input: {
     ? `Insert EXACTLY ${linkSlots} of the following internal links inline as standard markdown links, where each fits naturally in the surrounding sentence. Pick the ${linkSlots} most relevant — do not include the others. Do not invent additional URLs. PRIOR POST candidates are previously published articles on this same blog; linking back to them is preferred when their topic is genuinely adjacent.`
     : "Internal-link slots: 0. Return used_internal_link_urls: [] and do not link out.";
 
+  const exchangeList = exchangeCandidates
+    .map(
+      (c, i) =>
+        `${i + 1}. [PARTNER BLOG: ${c.domain}] ${c.url}\n   Title: ${c.title}\n   About: ${c.meta_description ?? "(no description)"}`,
+    )
+    .join("\n");
+  const exchangeSlotLine = exchangeSlots > 0 && exchangeCandidates.length > 0
+    ? `Insert UP TO ${Math.min(exchangeSlots, exchangeCandidates.length)} of the following external partner-blog links inline as standard markdown links, where each fits naturally in a sentence whose topic genuinely overlaps. Pick the most relevant — skip any that don't fit; do not force a link. Do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
+    : "External-link slots: 0. Return used_exchange_link_urls: [] and do not link out.";
+
   return [
     "Runtime inputs:",
     `- Site/brand: ${brand}`,
@@ -216,6 +238,11 @@ function buildUserPrompt(input: {
     linkSlotLine,
     "",
     linkList || "(none — return used_internal_link_urls: [])",
+    "",
+    "External partner-blog backlinks (link out to other blogs in the network where topically relevant — these are NOT internal):",
+    exchangeSlotLine,
+    "",
+    exchangeList || "(none available — return used_exchange_link_urls: [])",
     "",
     "Now write the blog post. Return the JSON object only.",
   ]
@@ -464,7 +491,7 @@ export async function generateArticle(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, user_id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, status",
+      "id, user_id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, backlinks_enabled, external_links_per_article, status",
     )
     .eq("id", siteId)
     .maybeSingle();
@@ -592,6 +619,25 @@ export async function generateArticle(
     .slice(0, MAX_LINK_CANDIDATES);
   const linkSlots = Math.min(candidates.length, MAX_LINK_CANDIDATES);
 
+  // Source 4: Phase 3 link-exchange candidates — articles on OTHER
+  // opted-in sites in the network whose topic overlaps. Only requested
+  // when this site has explicitly opted in via backlinks_enabled and
+  // configured external_links_per_article > 0.
+  const exchangeSlots = typedSite.backlinks_enabled
+    ? Math.max(0, typedSite.external_links_per_article)
+    : 0;
+  const exchangeCandidates = await findExchangeCandidates(supabase, {
+    selfSiteId: typedSite.id,
+    selfNiche: typedSite.niche,
+    keyword: keyword.keyword,
+    slots: exchangeSlots,
+  });
+  if (exchangeSlots > 0) {
+    console.log(
+      `[lx] exchange candidates for ${typedSite.id} keyword="${keyword.keyword}": ${exchangeCandidates.length}/${exchangeSlots} slots`,
+    );
+  }
+
   // Generate the article body.
   let article: ArticleOutput;
   try {
@@ -624,6 +670,8 @@ export async function generateArticle(
             keyword: keyword.keyword,
             candidates,
             linkSlots,
+            exchangeCandidates,
+            exchangeSlots,
           }),
         },
       ],
@@ -681,6 +729,38 @@ export async function generateArticle(
     );
     await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "internal-link validation failed" };
+  }
+
+  // Validate exchange links similarly. The prompt frames these as UP TO
+  // (not EXACTLY) — a 0 here just means the model judged none fit, not a
+  // failure. Only flag when the model claims a URL it didn't actually
+  // place, or claims a URL we never offered as a candidate.
+  const exchangeUrlsUsed = article.used_exchange_link_urls ?? [];
+  const offeredExchangeUrls = new Set(exchangeCandidates.map((c) => c.url));
+  const phantomExchange = exchangeUrlsUsed.filter(
+    (u) => !offeredExchangeUrls.has(u),
+  );
+  if (phantomExchange.length > 0) {
+    await failKeyword(
+      supabase,
+      keyword.id,
+      `claude used exchange URLs not in candidate list: ${phantomExchange.join(", ")}`,
+    );
+    await refundCredit(supabase, typedSite.user_id);
+    return { ok: false, error: "exchange-link validation failed" };
+  }
+  const exchangeCheck = validateInternalLinks(
+    article.markdown_body,
+    exchangeUrlsUsed,
+  );
+  if (!exchangeCheck.ok) {
+    await failKeyword(
+      supabase,
+      keyword.id,
+      `claude claimed exchange links not present: ${exchangeCheck.missing.join(", ")}`,
+    );
+    await refundCredit(supabase, typedSite.user_id);
+    return { ok: false, error: "exchange-link validation failed" };
   }
 
   // Slugify + dedupe slug.
@@ -768,6 +848,14 @@ export async function generateArticle(
   const internalLinksPayload = candidates
     .filter((c) => article.used_internal_link_urls.includes(c.url))
     .map((c) => ({ url: c.url, title: c.title ?? "" }));
+  const usedExchange = exchangeCandidates.filter((c) =>
+    exchangeUrlsUsed.includes(c.url),
+  );
+  const outboundLinksPayload = usedExchange.map((c) => ({
+    url: c.url,
+    anchor: c.title,
+    site_domain: c.domain,
+  }));
 
   const { data: inserted, error: insErr } = await supabase
     .from("lx_article")
@@ -783,7 +871,7 @@ export async function generateArticle(
       image_url: imageUrl,
       tags: article.tags,
       internal_links: internalLinksPayload,
-      outbound_links: [], // exchange disabled in v1
+      outbound_links: outboundLinksPayload,
       status: "ready",
     })
     .select("id")
@@ -792,6 +880,29 @@ export async function generateArticle(
     await failKeyword(supabase, keyword.id, `insert failed: ${insErr?.message}`);
     await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: insErr?.message ?? "insert failed" };
+  }
+
+  // Append-only lx_backlink ledger — one row per actually-placed exchange
+  // link. Best-effort: a failure here doesn't unwind the article (the
+  // article is the user's product; the ledger is internal bookkeeping).
+  if (usedExchange.length > 0) {
+    const ledgerRows = usedExchange.map((c) => ({
+      giver_site_id: typedSite.id,
+      giver_article_id: inserted.id,
+      receiver_site_id: c.site_id,
+      receiver_article_id: c.article_id,
+      target_url: c.url,
+      anchor: c.title,
+    }));
+    const { error: ledgerErr } = await supabase
+      .from("lx_backlink")
+      .insert(ledgerRows);
+    if (ledgerErr) {
+      console.warn(
+        `[lx] backlink ledger insert failed for article ${inserted.id}:`,
+        ledgerErr.message,
+      );
+    }
   }
 
   // Transition the keyword off 'generating' once the article row exists.
