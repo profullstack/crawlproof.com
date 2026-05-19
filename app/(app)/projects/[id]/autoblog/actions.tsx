@@ -14,40 +14,6 @@ async function call(path: string): Promise<{ ok: boolean; error?: string }> {
   }
 }
 
-// Poll lx_article for a new row in status='ready' created after `since`.
-// Returns the article id or null on timeout. Scoped to the current
-// project's lx_site via projectId so users with multiple projects don't
-// poll the wrong site when the picker cookie has drifted.
-//
-// Window is generous (5 min): the worker's "30-60s" ballpark is a best
-// case — LLM + sitemap + embeddings can push it past 2 min, and a short
-// window meant the dashboard would give up before the article landed.
-async function waitForNewArticle(
-  projectId: string,
-  since: Date,
-  signal: AbortSignal,
-  maxMs = 300_000,
-): Promise<string | null> {
-  const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    if (signal.aborted) return null;
-    try {
-      const res = await fetch(
-        `/api/lx/articles/latest?projectId=${encodeURIComponent(projectId)}&since=${encodeURIComponent(since.toISOString())}`,
-        { cache: "no-store", signal },
-      );
-      if (res.status === 200) {
-        const json = (await res.json()) as { ok?: boolean; article?: { id: string } };
-        if (json.ok && json.article?.id) return json.article.id;
-      }
-    } catch {
-      // transient — keep polling
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-  return null;
-}
-
 export function DashboardActions({
   paused,
   projectId,
@@ -79,39 +45,26 @@ export function DashboardActions({
 
   async function generateArticleNow() {
     setBusy("article");
-    setNotice("Generating… this can take 1–3 minutes.");
+    setNotice(null);
     setError(null);
-    const since = new Date();
     const r = await call(
       `/api/lx/articles/generate?projectId=${encodeURIComponent(projectId)}`,
     );
+    setBusy(null);
     if (!r.ok) {
-      setBusy(null);
-      setNotice(null);
       setError(r.error ?? "Could not queue article.");
       return;
     }
-    const controller = new AbortController();
-    const articleId = await waitForNewArticle(
-      projectId,
-      since,
-      controller.signal,
+    // Don't poll from the client — the amber Previews section above
+    // owns the in-flight state via the page's lx_keyword query, and
+    // AutoblogAutoRefresh re-fetches every few seconds while anything
+    // is generating. We just kick the first refresh so the worker's
+    // 'generating' claim shows up immediately instead of after the
+    // next interval tick.
+    setNotice(
+      "Queued — the preview will appear in the section above when it's ready (1–3 minutes).",
     );
-    setBusy(null);
-    if (articleId) {
-      // Stay on the dashboard so the new preview link appears at the
-      // top with the rest of the queue. Redirecting away was confusing
-      // when users wanted to compare multiple previews; the link in the
-      // amber "Previews waiting on Publish" section goes to the same
-      // place when they're ready to review.
-      setNotice("Preview ready — see the section at the top.");
-      router.refresh();
-    } else {
-      setNotice(
-        "Still generating. Refresh this page in a minute to see the preview at the top.",
-      );
-      router.refresh();
-    }
+    router.refresh();
   }
 
   function togglePause() {

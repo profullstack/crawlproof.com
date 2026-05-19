@@ -6,6 +6,7 @@ import { DashboardActions } from "./actions";
 import { Countdown } from "./countdown";
 import { checkAutoblogReadiness, readinessLabel } from "@/lib/lx/readiness";
 import { DeleteAutoblogButton } from "./delete-autoblog-button";
+import { AutoblogAutoRefresh } from "./auto-refresh";
 
 export const metadata = { title: "Autoblog" };
 
@@ -89,6 +90,7 @@ export default async function AutoblogDashboardPage({
     { data: upcoming },
     { data: recent },
     { data: previews },
+    { data: inFlight },
   ] = await Promise.all([
     supabase
       .from("lx_keyword")
@@ -128,7 +130,20 @@ export default async function AutoblogDashboardPage({
       .eq("status", "ready")
       .order("created_at", { ascending: false })
       .limit(10),
+    // Keywords actively being turned into articles. The autoblog worker
+    // sets status='generating' the moment it claims a keyword and only
+    // flips it off ('published' on success, 'failed' on error) once
+    // generation resolves. Surfacing this count lets the page show a
+    // live in-flight indicator instead of looking identical pre- and
+    // post-click.
+    supabase
+      .from("lx_keyword")
+      .select("id, keyword")
+      .eq("site_id", site.id)
+      .eq("status", "generating")
+      .order("scheduled_for", { ascending: true }),
   ]);
+  const inFlightCount = (inFlight ?? []).length;
 
   const readiness = await readinessPromise;
 
@@ -193,14 +208,20 @@ export default async function AutoblogDashboardPage({
       )}
 
       {/* Generated articles awaiting Publish — always visible so the
-         user has a known destination after clicking Generate. Renders an
-         empty-state when nothing's in 'ready' yet, keeping the section
-         predictable on the page. */}
+         user has a known destination after clicking Generate. Shows three
+         distinct states so the page is the source of truth post-click
+         instead of relying on a client-side poller: in-flight (keyword
+         claimed by worker), previews ready, or empty. AutoblogAutoRefresh
+         re-fetches on an interval while anything is in flight so the page
+         transitions to "ready" without a manual reload. */}
+      <AutoblogAutoRefresh active={inFlightCount > 0} />
       <section className="rounded border border-amber-500/40 bg-amber-500/5 p-4">
         <h2 className="text-sm font-bold text-amber-600 dark:text-amber-400">
           {(previews ?? []).length > 0
             ? `⚠ ${previews!.length} preview${previews!.length === 1 ? "" : "s"} waiting on Publish`
-            : "Previews waiting on Publish"}
+            : inFlightCount > 0
+              ? `⏳ ${inFlightCount} generating now`
+              : "Previews waiting on Publish"}
         </h2>
         {(previews ?? []).length > 0 ? (
           <>
@@ -223,12 +244,36 @@ export default async function AutoblogDashboardPage({
                 </li>
               ))}
             </ul>
+            {inFlightCount > 0 && (
+              <p className="mt-3 text-xs text-[var(--color-muted)]">
+                Plus {inFlightCount} more generating — this page will refresh
+                when {inFlightCount === 1 ? "it lands" : "they land"}.
+              </p>
+            )}
+          </>
+        ) : inFlightCount > 0 ? (
+          <>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Generation takes 1–3 minutes (LLM + image + embeddings). This
+              page is auto-refreshing — the preview link will appear here
+              the moment it's ready.
+            </p>
+            <ul className="mt-3 space-y-1 text-sm">
+              {(inFlight ?? []).map((k: any) => (
+                <li key={k.id} className="text-[var(--color-muted)]">
+                  <span className="font-medium text-[var(--foreground)]">
+                    {k.keyword}
+                  </span>{" "}
+                  <span className="badge badge-warn ml-1">generating</span>
+                </li>
+              ))}
+            </ul>
           </>
         ) : (
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             No previews yet. Click <em>Generate article now</em> below to
-            produce one — it'll appear here in ~60–90 seconds, then you can
-            review and publish.
+            produce one — it usually takes 1–3 minutes. The preview will
+            appear here automatically when it's ready.
           </p>
         )}
       </section>
