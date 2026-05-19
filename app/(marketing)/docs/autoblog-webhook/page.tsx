@@ -47,7 +47,7 @@ export default function AutoblogWebhookDocsPage() {
         </ul>
 
         <h3 className="mt-6 text-lg font-bold">Headers</h3>
-        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`Authorization:      Bearer cp_lx_<your-secret>          # token from /autoblog/setup
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`Authorization:      Bearer <secret-key>                  # token from /autoblog/setup
 webhook-id:         <event uuid>                        # stable across retries
 webhook-timestamp:  <unix seconds>                       # delivery time
 webhook-signature:  v1,<base64 HMAC-SHA256>              # signs id.timestamp.body
@@ -128,7 +128,7 @@ User-Agent:         @profullstack/autoblog/0.2`}</pre>
           below.
         </p>
         <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`curl -X POST https://your-site.example/api/webhooks/crawlproof \\
-  -H "Authorization: Bearer cp_lx_REDACTED_TOKEN" \\
+  -H "Authorization: Bearer <secret-key>" \\
   -H "webhook-id: 0193a8b9-d2c4-7f44-9a31-3f1c2e7b9a01" \\
   -H "webhook-timestamp: 1779228000" \\
   -H "webhook-signature: v1,cAt+0d6Hkx6JfTQ5o/n8j2qPjZ0wq7y0Pq0H9R8wzS4=" \\
@@ -173,7 +173,7 @@ User-Agent:         @profullstack/autoblog/0.2`}</pre>
         </p>
         <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`# Replace these two and run.
 URL="https://your-site.example/api/webhooks/crawlproof"
-SECRET="cp_lx_REPLACE_ME"
+SECRET="<secret-key>"
 
 ID="$(uuidgen | tr 'A-Z' 'a-z')"
 TS="$(date +%s)"
