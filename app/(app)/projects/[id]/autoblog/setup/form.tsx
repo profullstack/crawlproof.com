@@ -202,7 +202,9 @@ export function SetupForm({
     // and ticked the box, skip the DFS call entirely. Editorial fields
     // (niche, audiences, description, seeds, etc.) still get refreshed.
     if (preserveKeywords) {
-      setNotice("Auto-filled editorial. Keywords preserved (uncheck to overwrite).");
+      setNotice(
+        "Auto-filled editorial. Seeds + long-tail preserved (uncheck to overwrite).",
+      );
       setAutoFilling(false);
       return;
     }
@@ -282,8 +284,13 @@ export function SetupForm({
     setNiche(p.niche);
     setAudiences(p.targetAudiences.join(", "));
     setDescription(p.description);
-    setSeedKeywords(p.seedKeywords.join(", "));
-    setKeywords(p.keywords.join("\n"));
+    // Preserve gate: when on, the user's hand-curated seeds and the
+    // long-tail list both survive Refetch. Niche/audiences/description
+    // still refresh.
+    if (!preserveKeywords) {
+      setSeedKeywords(p.seedKeywords.join(", "));
+      setKeywords(p.keywords.join("\n"));
+    }
     setSeoTitle(p.seoTitle);
     setSeoDescription(p.seoDescription);
     setTone(p.tone);
@@ -785,8 +792,8 @@ export function SetupForm({
             />
             <span>
               <span className="font-medium">Preserve keywords</span> — Refetch
-              flows skip the long-tail list (still refresh niche, audiences,
-              description, seeds).
+              flows skip the seed list and the long-tail list (still refresh
+              niche, audiences, description).
             </span>
           </label>
         </div>
