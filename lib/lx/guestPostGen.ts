@@ -245,7 +245,10 @@ export async function generateGuestPost(
     })(),
     ...article.inline_image_prompts.map(async (p, i) => {
       try {
-        const bytes = await generateInlineImage(openai, p.prompt, target.niche);
+        const bytes = await generateInlineImage(openai, p.prompt, target.niche, {
+          kind: (p as { kind?: string }).kind,
+          labels: (p as { labels?: string[] }).labels,
+        });
         if (bytes) {
           inlineImageUrls[i] = await uploadImage(
             supabase,
