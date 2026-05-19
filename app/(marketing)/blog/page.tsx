@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { posts } from "@/lib/blog/posts";
+import { loadAllPosts } from "@/lib/blog/posts";
 
 export const metadata = {
   title: "Blog",
@@ -14,7 +14,12 @@ export const metadata = {
   },
 };
 
-export default function BlogIndex() {
+// ISR — blog ingest fires asynchronously via /api/webhooks/{outrank,crawlproof};
+// 60s is small enough that newly-published posts surface quickly.
+export const revalidate = 60;
+
+export default async function BlogIndex() {
+  const all = await loadAllPosts();
   return (
     <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
       <h1 className="text-4xl font-extrabold">Blog</h1>
@@ -22,7 +27,7 @@ export default function BlogIndex() {
         Notes on AEO, AI crawlers, and how to make sites legible to LLMs.
       </p>
       <ul className="mt-10 space-y-6">
-        {posts.map((p) => (
+        {all.map((p) => (
           <li key={p.slug} className="card p-5">
             <Link href={`/blog/${p.slug}`} className="block">
               <h2 className="text-xl font-bold">{p.title}</h2>

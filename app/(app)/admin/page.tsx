@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { GrantCreditsForm } from "./form";
+import { IntegrationsManager } from "./integrations-form";
 
 export const metadata = {
   title: "Admin · Crawlproof",
@@ -36,13 +37,21 @@ export default async function AdminPage() {
   // Recent grants — admins see everything; loaded via service client
   // so we get the granted_by email join cheaply.
   const svc = serviceClient();
-  const { data: recentRaw } = await svc
-    .from("admin_credit_grants")
-    .select(
-      "id, recipient_email, credits, reason, created_at, granted_by:profiles!admin_credit_grants_granted_by_fkey(email)",
-    )
-    .order("created_at", { ascending: false })
-    .limit(20);
+  const [{ data: recentRaw }, { data: integrationsRaw }] = await Promise.all([
+    svc
+      .from("admin_credit_grants")
+      .select(
+        "id, recipient_email, credits, reason, created_at, granted_by:profiles!admin_credit_grants_granted_by_fkey(email)",
+      )
+      .order("created_at", { ascending: false })
+      .limit(20),
+    svc
+      .from("autoblog_integrations")
+      .select(
+        "id, name, kind, access_token, created_at, last_used_at, request_count",
+      )
+      .order("created_at", { ascending: false }),
+  ]);
   const recent: GrantRow[] = (recentRaw ?? []).map((r: any) => ({
     id: r.id,
     recipient_email: r.recipient_email,
@@ -65,6 +74,21 @@ export default async function AdminPage() {
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Grant credits</h2>
         <GrantCreditsForm />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Autoblog integrations</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Bearer tokens for inbound autoblog webhooks (Outrank, Crawlproof).
+          The bearer doubles as the HMAC secret per the{" "}
+          <a className="underline" href="/docs/autoblog-webhook">
+            autoblog webhook
+          </a>{" "}
+          contract.
+        </p>
+        <div className="mt-4">
+          <IntegrationsManager initial={integrationsRaw ?? []} />
+        </div>
       </section>
 
       <section>
