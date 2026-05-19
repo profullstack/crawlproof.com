@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   createIntegration,
@@ -31,9 +31,16 @@ const KIND_META: Record<IntegrationKind, { label: string; defaultName: string; w
   },
 };
 
-function webhookUrlFor(kind: IntegrationKind): string {
-  if (typeof window === "undefined") return KIND_META[kind].webhookPath;
-  return `${window.location.origin}${KIND_META[kind].webhookPath}`;
+function useWebhookOrigin(): string {
+  // Resolve window.location.origin after mount so SSR and the first
+  // client render emit identical HTML. Reading window directly in the
+  // render body causes a hydration mismatch under React 19, which Next
+  // 15+/16 treats as a hard client-side crash.
+  const [origin, setOrigin] = useState("");
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+  return origin;
 }
 
 export function IntegrationsManager({
@@ -46,6 +53,7 @@ export function IntegrationsManager({
   const [items, setItems] = useState<Integration[]>(initial);
   const [kind, setKind] = useState<IntegrationKind>("crawlproof");
   const [name, setName] = useState(KIND_META.crawlproof.defaultName);
+  const origin = useWebhookOrigin();
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +107,7 @@ export function IntegrationsManager({
         </h3>
         <div className="mt-2 space-y-2">
           {(Object.keys(KIND_META) as IntegrationKind[]).map((k) => {
-            const url = webhookUrlFor(k);
+            const url = `${origin}${KIND_META[k].webhookPath}`;
             return (
               <div key={k}>
                 <div className="mb-1 text-sm font-medium">{KIND_META[k].label}</div>
