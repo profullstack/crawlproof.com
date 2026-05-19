@@ -112,7 +112,7 @@ export default async function AutoblogDashboardPage({
       .eq("site_id", site.id)
       .eq("status", "queued")
       .order("scheduled_for", { ascending: true })
-      .limit(7),
+      .limit(30),
     supabase
       .from("lx_article")
       .select(
