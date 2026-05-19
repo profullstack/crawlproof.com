@@ -68,10 +68,10 @@ type LinkCandidate = {
   distance: number;
 };
 
-const INLINE_IMAGE_COUNT = 3;
+export const INLINE_IMAGE_COUNT = 3;
 const MAX_PRIOR_ARTICLE_LINKS = 3;
 
-const ArticleSchema = z.object({
+export const ArticleSchema = z.object({
   title: z.string().min(10).max(180),
   slug: z
     .string()
@@ -120,7 +120,7 @@ export function slugify(input: string, max = 80): string {
     .replace(/-+$/g, "");
 }
 
-function buildSystemPrompt(): string {
+export function buildSystemPrompt(): string {
   return [
     "You are writing a long-form SEO blog post in the practical, operator-focused style of ThreatCrush and CoinPayPortal: pragmatic B2B/technical voice, strong opening pain point, the topic reframed as an architecture/workflow problem (not a definition), table of contents, H2/H3 sections, practical rules in blockquotes, bullets/tables, implementation advice, soft product CTA near the end.",
     "",
@@ -301,7 +301,7 @@ async function claimKeyword(
   return !!data;
 }
 
-async function uniqueSlug(
+export async function uniqueSlug(
   supabase: SupabaseClient<any>,
   siteId: string,
   base: string,
@@ -397,7 +397,7 @@ const SHARED_ART_DIRECTION = [
   "Strictly NO text, NO typography, NO UI mockups, NO logos, NO charts with labels, NO people, NO faces, NO stock-photo office scenes, NO generic abstract gradient blobs.",
 ];
 
-async function generateInlineImage(
+export async function generateInlineImage(
   openai: OpenAI,
   promptText: string,
   nicheHint: string | null,
@@ -423,7 +423,7 @@ async function generateInlineImage(
   return Buffer.from(b64, "base64");
 }
 
-async function generateImage(
+export async function generateImage(
   openai: OpenAI,
   title: string,
   nicheHint: string | null,
@@ -451,7 +451,7 @@ async function generateImage(
   return Buffer.from(b64, "base64");
 }
 
-async function uploadImage(
+export async function uploadImage(
   supabase: SupabaseClient<any>,
   siteId: string,
   slug: string,
@@ -949,7 +949,7 @@ async function failKeyword(
 // gated by consume_credit but then failed before producing an article.
 // Best-effort: if the balance read or update fails, we log and move on
 // rather than retry-loop. The cost is one wasted credit, not corruption.
-async function refundCredit(
+export async function refundCredit(
   supabase: SupabaseClient<any>,
   ownerId: string,
 ): Promise<void> {

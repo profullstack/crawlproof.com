@@ -15,10 +15,13 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [opps, setOpps] = useState<Opportunity[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function find() {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(
         `/api/lx/guest-posts/opportunities?projectId=${encodeURIComponent(projectId)}`,
@@ -34,6 +37,35 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function generate(opp: Opportunity, topic: string) {
+    const key = `${opp.partner_site_id}:${topic}`;
+    setGenerating(key);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(
+        `/api/lx/guest-posts/generate?projectId=${encodeURIComponent(projectId)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ targetSiteId: opp.partner_site_id, topic }),
+        },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        setError(json?.error ?? "Could not generate guest post.");
+      } else {
+        setNotice(
+          `Guest post queued for ${opp.partner_domain} on "${topic}". Generation takes 1–3 minutes; it will land on the partner blog once delivered.`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(null);
     }
   }
 
@@ -57,6 +89,9 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
         </button>
       </div>
 
+      {notice && (
+        <p className="text-sm text-[var(--color-pass)]">{notice}</p>
+      )}
       {error && (
         <p className="text-sm text-[var(--color-fail)]">{error}</p>
       )}
@@ -100,10 +135,27 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
                   <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
                     Suggested topics
                   </p>
-                  <ul className="ml-4 list-disc space-y-0.5 text-sm">
-                    {o.suggested_topics.map((t) => (
-                      <li key={t}>{t}</li>
-                    ))}
+                  <ul className="space-y-1.5 text-sm">
+                    {o.suggested_topics.map((t) => {
+                      const key = `${o.partner_site_id}:${t}`;
+                      const isBusy = generating === key;
+                      return (
+                        <li
+                          key={t}
+                          className="flex items-center justify-between gap-2"
+                        >
+                          <span className="flex-1">{t}</span>
+                          <button
+                            type="button"
+                            className="btn text-xs"
+                            disabled={generating !== null}
+                            onClick={() => generate(o, t)}
+                          >
+                            {isBusy ? "Queuing…" : "Generate this"}
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ) : (

@@ -26,6 +26,20 @@ export async function enqueueArticleDeliver(articleId: string): Promise<void> {
   await postToWorker("/lx/article-deliver", { articleId });
 }
 
+export async function enqueueGuestPostGenerate(
+  authorSiteId: string,
+  targetSiteId: string,
+  topic: string,
+  opts: { preview?: boolean } = {},
+): Promise<void> {
+  await postToWorker("/lx/guest-post-generate", {
+    authorSiteId,
+    targetSiteId,
+    topic,
+    preview: !!opts.preview,
+  });
+}
+
 async function postToWorker(path: string, body: unknown): Promise<void> {
   if (!env.workerUrl) return;
   try {

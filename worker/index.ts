@@ -59,6 +59,46 @@ async function processLxSitemap(siteId: string) {
   }
 }
 
+async function processLxGuestPost(payload: {
+  authorSiteId: string;
+  targetSiteId: string;
+  topic: string;
+  skipDeliver?: boolean;
+}) {
+  if (!openai) {
+    console.error(`[worker] lx guest-post: OPENAI_API_KEY not set`);
+    return;
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error(`[worker] lx guest-post: ANTHROPIC_API_KEY not set`);
+    return;
+  }
+  const { authorSiteId, targetSiteId, topic, skipDeliver } = payload;
+  console.log(
+    `[worker] lx guest-post author=${authorSiteId} target=${targetSiteId} topic="${topic}"`,
+  );
+  try {
+    const { generateGuestPost } = await import("../lib/lx/guestPostGen");
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const r = await generateGuestPost(
+      { authorSiteId, targetSiteId, topic },
+      { supabase, openai, anthropic },
+    );
+    if (!r.ok) {
+      console.warn(`[worker] lx guest-post failed: ${r.error}`);
+      return;
+    }
+    console.log(`[worker] lx guest-post ok article=${r.articleId} slug=${r.slug}`);
+    if (skipDeliver || !r.articleId) return;
+    const d = await deliverArticle(r.articleId, { supabase });
+    console.log(
+      `[worker] lx guest-post deliver ${r.articleId} status=${d.status} code=${d.responseCode ?? "-"} attempts=${d.attempts}${d.error ? ` error=${d.error}` : ""}`,
+    );
+  } catch (err) {
+    console.error(`[worker] lx guest-post crashed`, err);
+  }
+}
+
 async function processLxGenerate(
   siteId: string,
   opts: { skipDeliver?: boolean; manual?: boolean } = {},
@@ -645,6 +685,44 @@ const server = http.createServer(async (req, res) => {
         skipDeliver: !!payload.preview,
         manual: !!payload.manual,
       }).catch((e) => console.error("[worker] lx generate unhandled", e));
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/lx/guest-post-generate") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: {
+        authorSiteId?: string;
+        targetSiteId?: string;
+        topic?: string;
+        preview?: boolean;
+      };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+        return;
+      }
+      if (!payload.authorSiteId || !payload.targetSiteId || !payload.topic) {
+        res.writeHead(400);
+        res.end("authorSiteId, targetSiteId, topic required");
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      processLxGuestPost({
+        authorSiteId: payload.authorSiteId,
+        targetSiteId: payload.targetSiteId,
+        topic: payload.topic,
+        skipDeliver: !!payload.preview,
+      }).catch((e) => console.error("[worker] lx guest-post unhandled", e));
     });
     return;
   }
