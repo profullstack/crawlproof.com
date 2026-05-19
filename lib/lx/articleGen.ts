@@ -506,9 +506,14 @@ export async function generateArticle(
     return { ok: false, error: insErr?.message ?? "insert failed" };
   }
 
+  // Transition the keyword off 'generating' once the article row exists.
+  // 'published' is a misnomer in preview mode (the article is in 'ready'),
+  // but it's the terminal status the schema allows and the sweep won't
+  // touch it. Without this update the sweep at lxSweep() would eventually
+  // reset the keyword to 'queued' and produce duplicate articles.
   await supabase
     .from("lx_keyword")
-    .update({ article_id: inserted.id })
+    .update({ article_id: inserted.id, status: "published" })
     .eq("id", keyword.id);
 
   return { ok: true, articleId: inserted.id, slug: finalSlug };
