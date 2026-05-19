@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { serviceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
@@ -132,6 +133,11 @@ export async function POST(req: NextRequest) {
       integration_id: integration.id,
     });
   } catch {}
+
+  // Burst the ISR cache so the new posts surface immediately. Skip
+  // per-slug paths — Outrank batches multiple articles per webhook,
+  // and revalidating the index covers them all.
+  revalidatePath("/blog");
 
   return NextResponse.json({
     message: "Webhook processed successfully",

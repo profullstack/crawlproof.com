@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { verifyAndParse } from "@profullstack/autoblog";
 import { gatePost } from "@profullstack/autoblog/quality";
 import { serviceClient } from "@/lib/supabase/service";
@@ -112,6 +113,11 @@ export async function POST(req: NextRequest) {
   } catch {
     // best-effort counter — ingestion already succeeded
   }
+
+  // Burst the ISR cache so the new post surfaces immediately instead
+  // of waiting up to 60s for the next revalidate.
+  revalidatePath("/blog");
+  revalidatePath(`/blog/${post.slug}`);
 
   return NextResponse.json({
     message: "Webhook processed successfully",
