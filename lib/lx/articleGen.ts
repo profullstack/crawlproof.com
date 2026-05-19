@@ -56,6 +56,9 @@ type LinkCandidate = {
   distance: number;
 };
 
+const INLINE_IMAGE_COUNT = 3;
+const MAX_PRIOR_ARTICLE_LINKS = 3;
+
 const ArticleSchema = z.object({
   title: z.string().min(10).max(180),
   slug: z
@@ -68,6 +71,20 @@ const ArticleSchema = z.object({
   tags: z.array(z.string().min(2).max(40)).min(5).max(8),
   markdown_body: z.string().min(5000),
   used_internal_link_urls: z.array(z.string().url()).max(8),
+  // Inline-image slots placed at section boundaries inside markdown_body
+  // as `<!--INLINE_IMAGE_N-->` markers (N = 1..INLINE_IMAGE_COUNT). Each
+  // entry supplies the alt text + an image-generation prompt; we render
+  // them after the article body is back and substitute the markers with
+  // `![alt](url)` before HTML conversion.
+  inline_image_prompts: z
+    .array(
+      z.object({
+        alt: z.string().min(5).max(200),
+        prompt: z.string().min(20).max(500),
+      }),
+    )
+    .min(INLINE_IMAGE_COUNT)
+    .max(INLINE_IMAGE_COUNT),
 });
 
 type ArticleOutput = z.infer<typeof ArticleSchema>;
@@ -122,7 +139,9 @@ function buildSystemPrompt(): string {
     "",
     "Length: 2,200–3,200 words. Prioritize depth and usefulness over word count.",
     "",
-    "Internal links: insert each provided URL inline exactly once as a standard markdown `[anchor](url)` link where the surrounding sentence is genuinely about that URL's topic. Never create a \"Further reading\" list. Never invent URLs — use only those provided.",
+    "Internal links: insert each provided URL inline exactly once as a standard markdown `[anchor](url)` link where the surrounding sentence is genuinely about that URL's topic. Never create a \"Further reading\" list. Never invent URLs — use only those provided. Link candidates may include both site pages AND prior blog posts on this same site — treat both the same way (inline contextual anchor; the prior posts are clearly labeled in the candidate list).",
+    "",
+    `Inline images: place exactly ${INLINE_IMAGE_COUNT} placeholder lines of the form '<!--INLINE_IMAGE_1-->', '<!--INLINE_IMAGE_2-->', '<!--INLINE_IMAGE_3-->' (each on its own line, in numeric order) inside markdown_body. Place each marker on a blank line immediately after a major H2 boundary, distributed across the body — never inside the intro, the TOC, a blockquote, a table, or inside the final '### Try {brand}' CTA block. In inline_image_prompts return exactly ${INLINE_IMAGE_COUNT} objects in the same 1→${INLINE_IMAGE_COUNT} order: each with a short alt text describing what the image shows for accessibility, and an image generation prompt for that section's topic (abstract editorial style, no text/typography/logos/people).`,
     "",
     "Output: strict JSON matching the schema. The markdown_body is the article body only.",
   ].join("\n");
@@ -137,10 +156,12 @@ function brandOneLiner(site: SiteRow): string {
   return (m ? m[0] : desc).trim().slice(0, 200);
 }
 
+type LabeledCandidate = LinkCandidate & { kind: "site_page" | "prior_post" };
+
 function buildUserPrompt(input: {
   site: SiteRow;
   keyword: string;
-  candidates: LinkCandidate[];
+  candidates: LabeledCandidate[];
   linkSlots: number;
 }): string {
   const { site, keyword, candidates, linkSlots } = input;
@@ -158,13 +179,13 @@ function buildUserPrompt(input: {
     .slice(0, MAX_LINK_CANDIDATES)
     .map(
       (c, i) =>
-        `${i + 1}. ${c.url}\n   Title: ${c.title ?? "(untitled)"}\n   About: ${
+        `${i + 1}. [${c.kind === "prior_post" ? "PRIOR POST" : "SITE PAGE"}] ${c.url}\n   Title: ${c.title ?? "(untitled)"}\n   About: ${
           c.description ?? "(no description)"
         }`,
     )
     .join("\n");
   const linkSlotLine = linkSlots > 0
-    ? `Insert EXACTLY ${linkSlots} of the following internal links inline as standard markdown links, where each fits naturally in the surrounding sentence. Pick the ${linkSlots} most relevant — do not include the others. Do not invent additional URLs.`
+    ? `Insert EXACTLY ${linkSlots} of the following internal links inline as standard markdown links, where each fits naturally in the surrounding sentence. Pick the ${linkSlots} most relevant — do not include the others. Do not invent additional URLs. PRIOR POST candidates are previously published articles on this same blog; linking back to them is preferred when their topic is genuinely adjacent.`
     : "Internal-link slots: 0. Return used_internal_link_urls: [] and do not link out.";
 
   return [
@@ -247,6 +268,93 @@ async function uniqueSlug(
   }
   // Unlikely fallback — append a timestamp.
   return `${base}-${Date.now().toString(36).slice(-4)}`;
+}
+
+// Find previously-generated articles on the same site to backlink into the
+// current post. No embedding column on lx_article, so we use token-overlap
+// scoring on (title + meta_description + tags) vs (current keyword + niche).
+// Cheap, deterministic, and good enough until the article volume grows
+// enough to justify on-write embeddings.
+async function findPriorArticles(
+  supabase: SupabaseClient<any>,
+  siteId: string,
+  blogRootUrl: string,
+  currentKeyword: string,
+  niche: string | null,
+): Promise<LinkCandidate[]> {
+  const { data: rows } = await supabase
+    .from("lx_article")
+    .select("id, title, slug, meta_description, tags")
+    .eq("site_id", siteId)
+    .in("status", ["ready", "published"])
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (!rows || rows.length === 0) return [];
+
+  const tokenize = (s: string): Set<string> =>
+    new Set(
+      s
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 4),
+    );
+  const queryTokens = tokenize(`${currentKeyword} ${niche ?? ""}`);
+  if (queryTokens.size === 0) return [];
+
+  type Scored = {
+    row: { id: string; title: string; slug: string; meta_description: string; tags: string[] };
+    score: number;
+  };
+  const scored: Scored[] = (rows as Scored["row"][])
+    .map((r) => {
+      const tokens = tokenize(
+        `${r.title} ${r.meta_description ?? ""} ${(r.tags ?? []).join(" ")}`,
+      );
+      let score = 0;
+      for (const t of queryTokens) if (tokens.has(t)) score++;
+      return { row: r, score };
+    })
+    .filter((s) => s.score > 0);
+  scored.sort((a, b) => b.score - a.score);
+
+  const base = blogRootUrl.replace(/\/$/, "");
+  return scored.slice(0, MAX_PRIOR_ARTICLE_LINKS).map(({ row }) => ({
+    id: row.id,
+    url: `${base}/${row.slug}`,
+    title: row.title,
+    description: row.meta_description,
+    distance: 0,
+  }));
+}
+
+// Generate a thematic inline image. Same style guardrails as the hero
+// image, but the prompt describes a specific section topic rather than
+// the article as a whole.
+async function generateInlineImage(
+  openai: OpenAI,
+  promptText: string,
+  nicheHint: string | null,
+): Promise<Buffer | null> {
+  const prompt = [
+    `Editorial illustration for a section of a long-form technical SEO blog post.`,
+    `Section topic: ${promptText}`,
+    nicheHint ? `Subject area: ${nicheHint}.` : "",
+    "Audience: engineers, operators, technical buyers.",
+    "Style: editorial, architectural, minimal. Restrained dark palette with one accent color. Abstract geometric composition (flows, nodes, layers) implying a system, workflow, or infrastructure concept.",
+    "Strictly NO text or typography of any kind. NO UI screenshots, NO logos, NO charts with labels, NO people, NO stock-photo office scenes.",
+    "3:2 aspect, slightly less cinematic than the hero — feels like a chapter divider.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const res = await openai.images.generate({
+    model: IMAGE_MODEL,
+    prompt,
+    size: IMAGE_SIZE,
+    n: 1,
+  });
+  const b64 = res.data?.[0]?.b64_json;
+  if (!b64) return null;
+  return Buffer.from(b64, "base64");
 }
 
 async function generateImage(
@@ -369,18 +477,46 @@ export async function generateArticle(
     return { ok: false, error: "embedding failed" };
   }
 
-  const linkSlots = Math.min(typedSite.internal_links_per_article, MAX_LINK_CANDIDATES);
-  let candidates: LinkCandidate[] = [];
-  if (linkSlots > 0) {
-    const { data: rpcRows, error: rpcErr } = await supabase.rpc("lx_find_internal_links", {
-      p_site_id: typedSite.id,
-      p_query_embedding: queryEmbedding,
-      p_limit: linkSlots * 2, // overfetch so the LLM has options
-      p_is_blog_post: false,
-    });
+  // Configured site-page links plus up to MAX_PRIOR_ARTICLE_LINKS extra
+  // slots when prior posts on this blog are topically adjacent. Combined
+  // total is capped at MAX_LINK_CANDIDATES so the prompt doesn't bloat.
+  const sitePageSlots = Math.min(
+    typedSite.internal_links_per_article,
+    MAX_LINK_CANDIDATES,
+  );
+  let candidates: LabeledCandidate[] = [];
+  if (sitePageSlots > 0) {
+    const { data: rpcRows, error: rpcErr } = await supabase.rpc(
+      "lx_find_internal_links",
+      {
+        p_site_id: typedSite.id,
+        p_query_embedding: queryEmbedding,
+        p_limit: sitePageSlots * 2, // overfetch so the LLM has options
+        p_is_blog_post: false,
+      },
+    );
     if (rpcErr) console.warn("[lx] internal-link rpc failed", rpcErr.message);
-    candidates = (rpcRows as LinkCandidate[] | null) ?? [];
+    candidates = ((rpcRows as LinkCandidate[] | null) ?? []).map((c) => ({
+      ...c,
+      kind: "site_page" as const,
+    }));
   }
+
+  // Backlinks to previously-generated articles on this same site. These
+  // raise topical authority over time as the blog accumulates posts.
+  const priorArticles = await findPriorArticles(
+    supabase,
+    typedSite.id,
+    typedSite.blog_root_url,
+    keyword.keyword,
+    typedSite.niche,
+  );
+  const labeledPriors: LabeledCandidate[] = priorArticles.map((c) => ({
+    ...c,
+    kind: "prior_post" as const,
+  }));
+  candidates = [...candidates, ...labeledPriors].slice(0, MAX_LINK_CANDIDATES);
+  const linkSlots = Math.min(candidates.length, MAX_LINK_CANDIDATES);
 
   // Generate the article body.
   let article: ArticleOutput;
@@ -452,22 +588,62 @@ export async function generateArticle(
   const baseSlug = article.slug || slugify(article.title);
   const finalSlug = await uniqueSlug(supabase, typedSite.id, baseSlug);
 
-  // Featured image.
+  // Featured image + inline section images, generated in parallel so the
+  // 30–60s image latency stacks once instead of 4×.
   let imageUrl: string | null = null;
-  try {
-    const bytes = await generateImage(openai, article.title, typedSite.niche);
-    if (bytes) imageUrl = await uploadImage(supabase, typedSite.id, finalSlug, bytes);
-  } catch (err) {
-    console.warn(
-      "[lx] image generation failed, continuing without",
-      err instanceof Error ? err.message : err,
+  const inlineImageUrls: Array<string | null> = new Array(
+    article.inline_image_prompts.length,
+  ).fill(null);
+  await Promise.all([
+    (async () => {
+      try {
+        const bytes = await generateImage(openai, article.title, typedSite.niche);
+        if (bytes)
+          imageUrl = await uploadImage(supabase, typedSite.id, finalSlug, bytes);
+      } catch (err) {
+        console.warn(
+          "[lx] hero image generation failed, continuing without",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    })(),
+    ...article.inline_image_prompts.map(async (p, i) => {
+      try {
+        const bytes = await generateInlineImage(openai, p.prompt, typedSite.niche);
+        if (bytes) {
+          inlineImageUrls[i] = await uploadImage(
+            supabase,
+            typedSite.id,
+            `${finalSlug}-inline-${i + 1}`,
+            bytes,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[lx] inline image ${i + 1} failed, continuing without`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }),
+  ]);
+
+  // Substitute the inline-image markers in markdown. A missing/failed
+  // image strips the marker rather than leaving a visible comment.
+  let bodyWithImages = article.markdown_body;
+  for (let i = 0; i < article.inline_image_prompts.length; i++) {
+    const marker = new RegExp(`<!--\\s*INLINE_IMAGE_${i + 1}\\s*-->`, "g");
+    const url = inlineImageUrls[i];
+    const alt = article.inline_image_prompts[i]?.alt ?? "";
+    bodyWithImages = bodyWithImages.replace(
+      marker,
+      url ? `![${alt.replace(/[\[\]]/g, "")}](${url})` : "",
     );
   }
 
   // Render HTML.
   let html: string;
   try {
-    html = await markdownToHtml(article.markdown_body);
+    html = await markdownToHtml(bodyWithImages);
   } catch (err) {
     await failKeyword(
       supabase,
@@ -491,7 +667,7 @@ export async function generateArticle(
       slug: finalSlug,
       meta_description: article.meta_description,
       excerpt: article.excerpt,
-      content_markdown: article.markdown_body,
+      content_markdown: bodyWithImages,
       content_html: html,
       image_url: imageUrl,
       tags: article.tags,
