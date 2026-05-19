@@ -1,9 +1,6 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { listUserSites, CURRENT_SITE_COOKIE } from "@/lib/lx/currentSite";
-import { SitePicker } from "./site-picker";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -12,16 +9,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const [{ data: profile }, sites, cookieStore] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("display_name, email, credits_balance, is_admin")
-      .eq("id", user.id)
-      .maybeSingle(),
-    listUserSites(),
-    cookies(),
-  ]);
-  const currentSiteId = cookieStore.get(CURRENT_SITE_COOKIE)?.value ?? null;
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("display_name, email, credits_balance, is_admin")
+    .eq("id", user.id)
+    .maybeSingle();
 
   return (
     <div>
@@ -37,12 +29,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/projects/new">New</Link>
-            {/* Both link to legacy roots that resolve the current
-                project from the picker cookie and 302 to the correct
-                /projects/[id]/(autoblog|social) sub-tab. */}
-            <Link href="/autoblog">Autoblog</Link>
-            <Link href="/social">Social</Link>
-            <SitePicker sites={sites} currentId={currentSiteId} />
             {profile?.is_admin && <Link href="/admin">Admin</Link>}
             <Link href="/settings">Settings</Link>
             <Link
