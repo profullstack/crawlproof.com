@@ -9,7 +9,7 @@ export async function perplexityAudit(targetUrl: string): Promise<ClaudeAuditRes
   return oaCompatAudit(targetUrl, {
     apiKey: env.perplexityApiKey,
     baseURL: "https://api.perplexity.ai",
-    model: "sonar-pro",
+    model: "sonar-reasoning-pro",
     providerLabel: "Perplexity",
     maxOutputTokens: 32_000,
     responseFormat: aeoAuditResponseFormat(),
