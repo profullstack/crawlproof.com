@@ -11,7 +11,7 @@ export async function perplexityAudit(targetUrl: string): Promise<ClaudeAuditRes
     baseURL: "https://api.perplexity.ai",
     model: "sonar-pro",
     providerLabel: "Perplexity",
-    maxOutputTokens: 8_192,
+    maxOutputTokens: 32_000,
     responseFormat: aeoAuditResponseFormat(),
   });
 }
