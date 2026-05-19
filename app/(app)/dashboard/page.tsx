@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
+import { backfillProjectLogo } from "@/app/actions/createProject";
 
 export const metadata = { title: "Dashboard" };
 
@@ -31,7 +32,7 @@ export default async function DashboardPage({
   const [{ data: projects }, { data: audits }, counts] = await Promise.all([
     supabase
       .from("projects")
-      .select("id,name,url,schedule,next_run_at,status")
+      .select("id,name,url,schedule,next_run_at,status,logo_url")
       .eq("owner_id", user!.id)
       .eq("status", status)
       .order("created_at", { ascending: false }),
@@ -52,6 +53,16 @@ export default async function DashboardPage({
     fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
     fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
   ]);
+
+  // Lazy backfill: any project still missing a logo gets one scraped
+  // in the background on this dashboard hit. Fire-and-forget — the
+  // tile shows a letter avatar until the next render after the write
+  // lands, so a slow third-party fetch never delays the page.
+  for (const p of projects ?? []) {
+    if (!(p as { logo_url: string | null }).logo_url) {
+      void backfillProjectLogo(p.id, p.url);
+    }
+  }
 
   return (
     <div className="space-y-10">
@@ -101,8 +112,19 @@ export default async function DashboardPage({
             {projects.map((p) => (
               <li key={p.id} className="card p-4">
                 <Link href={`/projects/${p.id}`} className="block">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-semibold">{p.name}</div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ProjectLogo
+                        url={(p as { logo_url: string | null }).logo_url}
+                        name={p.name}
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold">{p.name}</div>
+                        <div className="mt-0.5 truncate text-sm text-[var(--color-muted)]">
+                          {p.url}
+                        </div>
+                      </div>
+                    </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {autoblogIds.has(p.id) && (
                         <span
@@ -133,9 +155,6 @@ export default async function DashboardPage({
                         </span>
                       )}
                     </div>
-                  </div>
-                  <div className="mt-1 truncate text-sm text-[var(--color-muted)]">
-                    {p.url}
                   </div>
                 </Link>
               </li>
@@ -181,6 +200,39 @@ export default async function DashboardPage({
         )}
       </section>
     </div>
+  );
+}
+
+function ProjectLogo({
+  url,
+  name,
+}: {
+  url: string | null;
+  name: string;
+}) {
+  const letter = (name || "?").trim().charAt(0).toUpperCase();
+  // 40px square; rounded corners; one-letter fallback when the site
+  // either has no detectable logo or backfill hasn't run yet.
+  if (!url) {
+    return (
+      <div
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--color-card)] text-sm font-semibold text-[var(--color-muted)]"
+        aria-hidden
+      >
+        {letter}
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt=""
+      width={40}
+      height={40}
+      loading="lazy"
+      className="h-10 w-10 shrink-0 rounded-md border border-[var(--color-border)] bg-white object-contain p-1"
+    />
   );
 }
 
