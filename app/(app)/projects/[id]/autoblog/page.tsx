@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProjectById } from "@/lib/lx/currentSite";
 import { DashboardActions } from "./actions";
+import { GuestPostOpportunities } from "./guest-posts";
 import { Countdown } from "./countdown";
 import { checkAutoblogReadiness, readinessLabel } from "@/lib/lx/readiness";
 import { DeleteAutoblogButton } from "./delete-autoblog-button";
@@ -334,6 +335,8 @@ export default async function AutoblogDashboardPage({
         queuedCount={queuedKeywords ?? 0}
         failedCount={failedKeywords ?? 0}
       />
+
+      <GuestPostOpportunities projectId={projectId} />
 
       {/* Upcoming */}
       <section>
