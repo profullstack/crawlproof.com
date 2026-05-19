@@ -85,6 +85,7 @@ export default async function AutoblogDashboardPage({
   const readinessPromise = checkAutoblogReadiness();
   const [
     { count: queuedKeywords },
+    { count: failedKeywords },
     { count: publishedThisMonth },
     { count: failedArticles },
     { data: upcoming },
@@ -97,6 +98,11 @@ export default async function AutoblogDashboardPage({
       .select("id", { count: "exact", head: true })
       .eq("site_id", site.id)
       .eq("status", "queued"),
+    supabase
+      .from("lx_keyword")
+      .select("id", { count: "exact", head: true })
+      .eq("site_id", site.id)
+      .eq("status", "failed"),
     supabase
       .from("lx_article")
       .select("id", { count: "exact", head: true })
@@ -322,7 +328,12 @@ export default async function AutoblogDashboardPage({
         </dl>
       </section>
 
-      <DashboardActions paused={site.status === "paused"} projectId={projectId} />
+      <DashboardActions
+        paused={site.status === "paused"}
+        projectId={projectId}
+        queuedCount={queuedKeywords ?? 0}
+        failedCount={failedKeywords ?? 0}
+      />
 
       {/* Upcoming */}
       <section>

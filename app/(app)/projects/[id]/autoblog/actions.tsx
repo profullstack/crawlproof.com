@@ -17,9 +17,13 @@ async function call(path: string): Promise<{ ok: boolean; error?: string }> {
 export function DashboardActions({
   paused,
   projectId,
+  queuedCount,
+  failedCount,
 }: {
   paused: boolean;
   projectId: string;
+  queuedCount: number;
+  failedCount: number;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -67,6 +71,30 @@ export function DashboardActions({
     router.refresh();
   }
 
+  async function regenerateQueue() {
+    const total = queuedCount + failedCount;
+    const summary =
+      total > 0
+        ? `Delete ${queuedCount} queued + ${failedCount} failed keyword${total === 1 ? "" : "s"} and spend ~$0.22 on fresh research?`
+        : "Re-run keyword research with your current niche/audiences?";
+    if (!window.confirm(`${summary}\n\nPublished keywords stay deduped so we don't regenerate the same articles.`)) {
+      return;
+    }
+    setBusy("regenerate");
+    setNotice(null);
+    setError(null);
+    const r = await call(
+      `/api/lx/keywords/regenerate?projectId=${encodeURIComponent(projectId)}`,
+    );
+    setBusy(null);
+    if (r.ok) {
+      setNotice("Queue cleared — fresh research queued.");
+      router.refresh();
+    } else {
+      setError(r.error ?? "Could not regenerate queue.");
+    }
+  }
+
   function togglePause() {
     setNotice(null);
     setError(null);
@@ -103,6 +131,15 @@ export function DashboardActions({
           }
         >
           {busy === "keywords" ? "Generating…" : "Generate keywords"}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy !== null}
+          onClick={regenerateQueue}
+          title="Clear queued + failed keywords and re-run research with your current niche/audiences/seeds."
+        >
+          {busy === "regenerate" ? "Regenerating…" : "Regenerate queue"}
         </button>
         <button
           type="button"
