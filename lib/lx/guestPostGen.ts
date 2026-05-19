@@ -30,6 +30,7 @@ import {
   ArticleSchema,
   INLINE_IMAGE_COUNT,
   buildSystemPrompt,
+  extractSectionForMarker,
   generateImage,
   generateInlineImage,
   refundCredit,
@@ -245,9 +246,11 @@ export async function generateGuestPost(
     })(),
     ...article.inline_image_prompts.map(async (p, i) => {
       try {
+        const sectionContext = extractSectionForMarker(article.markdown_body, i + 1);
         const bytes = await generateInlineImage(openai, p.prompt, target.niche, {
           kind: (p as { kind?: string }).kind,
           labels: (p as { labels?: string[] }).labels,
+          sectionContext,
         });
         if (bytes) {
           inlineImageUrls[i] = await uploadImage(

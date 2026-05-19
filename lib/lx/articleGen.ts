@@ -146,7 +146,16 @@ export function buildSystemPrompt(): string {
     "",
     "Structure for markdown_body (do NOT include front matter / a leading H1 — title goes in the title field):",
     "- Intro: real-world problem, why now, reframe the keyword as an architecture/workflow/business decision.",
-    "- Table of Contents: markdown links to 6–8 H2 sections (each with 1–3 H3 subsections beneath when sensible). For each link use `[Section Title](#section-title)` where the fragment is the section title lowercased, non-alphanumerics replaced with hyphens, multiple hyphens collapsed. Do NOT append `{#id}` attributes to the headings themselves — both our markdown renderers auto-slug headings the same way.",
+    "- Table of Contents: markdown links to 9–12 H2 sections, each with 2–4 H3 subsection links nested beneath it as an indented sublist. Example shape:",
+    "  ```",
+    "  ## Table of contents",
+    "  - [Section title 1](#section-title-1)",
+    "    - [Subsection title 1a](#subsection-title-1a)",
+    "    - [Subsection title 1b](#subsection-title-1b)",
+    "  - [Section title 2](#section-title-2)",
+    "    - [Subsection title 2a](#subsection-title-2a)",
+    "  ```",
+    "  For each link use `[Section Title](#section-title)` where the fragment is the section title lowercased, non-alphanumerics replaced with hyphens, multiple hyphens collapsed. Every H3 you list in the TOC MUST actually exist as an H3 in the body, and every body H2/H3 should appear in the TOC. Do NOT append `{#id}` attributes to the headings themselves — both our markdown renderers auto-slug headings the same way.",
     "- Body sections: each H2 makes one strong point; each H3 answers a practical sub-question.",
     "- Include at least 3 blockquotes formatted `> Practical rule: …`.",
     "- Include at least one comparison table.",
@@ -421,6 +430,73 @@ const SHARED_ART_DIRECTION = [
   "Strictly NO text, NO typography, NO UI mockups, NO logos, NO charts with labels, NO people, NO faces, NO stock-photo office scenes, NO generic abstract gradient blobs.",
 ];
 
+// Pull the section that contains the Nth inline-image marker out of
+// the article body. Walk backward from the marker to the nearest H2,
+// then forward to the next H2 (or EOF), then strip markdown noise so
+// gpt-image-1 can read the actual prose / numbers / list items. Caps
+// at 1500 chars so we leave headroom for the art-direction blob in
+// the final prompt (gpt-image-1 limits the whole prompt to ~4000).
+//
+// Exported so tests can pin the extraction behavior — wrong section
+// content means the chart renders with the wrong numbers, which is
+// the failure mode this whole helper exists to prevent.
+const MAX_SECTION_EXCERPT_LEN = 1500;
+export function extractSectionForMarker(
+  markdownBody: string,
+  markerIndex: number, // 1-based, matches the <!--INLINE_IMAGE_N--> placeholder
+): string {
+  const marker = new RegExp(`<!--\\s*INLINE_IMAGE_${markerIndex}\\s*-->`);
+  const m = marker.exec(markdownBody);
+  if (!m) return "";
+  const pos = m.index;
+
+  // Walk backward to find the H2 that opens the containing section.
+  const beforeMarker = markdownBody.slice(0, pos);
+  const h2Backward = /^##\s+([^\n]+)$/gm;
+  let lastH2Start = -1;
+  let lastH2Text = "";
+  let match: RegExpExecArray | null;
+  while ((match = h2Backward.exec(beforeMarker)) !== null) {
+    lastH2Start = match.index;
+    lastH2Text = match[1].trim();
+  }
+  if (lastH2Start === -1) return "";
+
+  // Walk forward from the H2 to the next H2 (or end of body).
+  const fromH2 = markdownBody.slice(lastH2Start);
+  const nextH2 = /\n##\s+/g;
+  nextH2.lastIndex = 3; // skip the opening H2 itself
+  const nextMatch = nextH2.exec(fromH2);
+  const sectionRaw = nextMatch ? fromH2.slice(0, nextMatch.index) : fromH2;
+
+  const cleanedHeading = lastH2Text
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .trim();
+  return cleanSectionMarkdown(sectionRaw, cleanedHeading).slice(
+    0,
+    MAX_SECTION_EXCERPT_LEN,
+  );
+}
+
+function cleanSectionMarkdown(section: string, heading: string): string {
+  // Strip noise that doesn't help the image model: image markdown,
+  // anchor-attribute braces, inline-image placeholder comments, code
+  // fences (keep their content as plain text), and excess blank lines.
+  let s = section
+    .replace(/<!--\s*INLINE_IMAGE_\d+\s*-->/g, "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")        // ![alt](url)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")     // [text](url) -> text
+    .replace(/```[a-z]*\n([\s\S]*?)```/g, "$1")  // strip fence markers, keep code text
+    .replace(/^\s*\{#[a-z0-9-]+\}\s*$/gim, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // Prepend the section heading so the image model knows what topic
+  // this section is about even if the excerpt gets truncated.
+  return `Section heading: "${heading}"\n\n${s}`;
+}
+
 // Visual-design language shared across all infographic-style inline
 // images. Keeps charts/flows/comparisons/checklists feeling like they
 // came from the same magazine even though Claude wrote each prompt
@@ -437,7 +513,12 @@ const INFOGRAPHIC_ART_DIRECTION = [
 ];
 
 function buildInlineImagePrompt(
-  spec: { prompt: string; kind: string; labels: string[] },
+  spec: {
+    prompt: string;
+    kind: string;
+    labels: string[];
+    sectionContext?: string;
+  },
   nicheHint: string | null,
 ): string {
   const labels = (spec.labels ?? []).map((l) => l.trim()).filter(Boolean);
@@ -445,15 +526,22 @@ function buildInlineImagePrompt(
     ? `Render these exact short text labels — spell them precisely, do not paraphrase: ${labels.map((l) => `"${l}"`).join(", ")}.`
     : "";
   const niche = nicheHint ? `Subject area: ${nicheHint}.` : "";
+  // Source-of-truth section text — the image model reads it for actual
+  // numbers / labels / list items instead of inventing plausible ones.
+  // For "concept" we don't pass section context: that mode is a tactile
+  // metaphor, not a literal depiction.
+  const sectionClause = spec.sectionContext && spec.kind !== "concept"
+    ? `Source content from the article section this figure illustrates — pull labels, numbers, list items, and ordering from this prose, do NOT invent your own:\n${spec.sectionContext}`
+    : "";
 
   switch (spec.kind) {
     case "chart": {
-      // Bar / column chart with 3–5 segments. Plausible illustrative numbers.
       return [
         "Editorial bar-chart infographic for a long-form technical article.",
         `Topic: ${spec.prompt}.`,
         niche,
-        `Render a simple 3–5 segment vertical bar chart (or horizontal if it fits the labels better). Each bar has a clear short label beneath/beside it and one rendered numeric value on or above the bar (percentages OK).`,
+        sectionClause,
+        "Render a simple 3–5 segment vertical bar chart (or horizontal if it fits the labels better). Each bar has a clear short label beneath/beside it and one rendered numeric value on or above the bar (percentages OK). Use values from the section content above when present; otherwise plausible illustrative numbers.",
         labelClause,
         "One bar should be visually emphasized in the accent color; the rest in charcoal.",
         ...INFOGRAPHIC_ART_DIRECTION,
@@ -466,7 +554,8 @@ function buildInlineImagePrompt(
         "Editorial process-flow diagram for a long-form technical article.",
         `Topic: ${spec.prompt}.`,
         niche,
-        "Render a left-to-right (or top-to-bottom if labels are long) sequence of 3–5 rounded-rectangle nodes connected by single arrows. Each node contains one short label. The final node is the outcome and is emphasized in the accent color.",
+        sectionClause,
+        "Render a left-to-right (or top-to-bottom if labels are long) sequence of 3–5 rounded-rectangle nodes connected by single arrows. Each node contains one short label drawn from the section content above (or the labels list). The final node is the outcome and is emphasized in the accent color.",
         labelClause,
         ...INFOGRAPHIC_ART_DIRECTION,
       ]
@@ -478,7 +567,8 @@ function buildInlineImagePrompt(
         "Editorial side-by-side comparison panel for a long-form technical article.",
         `Topic: ${spec.prompt}.`,
         niche,
-        "Render exactly two vertical columns separated by a thin vertical divider. Each column has its label as the column header and 3–4 short bullet-style items below — one icon glyph (geometric primitive, NOT emoji) next to each. The 'good' / 'after' / 'right' column gets the accent color; the other is charcoal.",
+        sectionClause,
+        "Render exactly two vertical columns separated by a thin vertical divider. Each column has its label as the column header and 3–4 short bullet-style items below — pulled from the comparison points in the section content above when possible. One icon glyph (geometric primitive, NOT emoji) next to each item. The 'good' / 'after' / 'right' column gets the accent color; the other is charcoal.",
         labelClause,
         ...INFOGRAPHIC_ART_DIRECTION,
       ]
@@ -490,7 +580,8 @@ function buildInlineImagePrompt(
         "Editorial visual checklist for a long-form technical article.",
         `Topic: ${spec.prompt}.`,
         niche,
-        "Render a stacked vertical list of 3–6 items, each prefixed with a small filled square in the accent color. Items aligned left, generous line height. No screenshot framing.",
+        sectionClause,
+        "Render a stacked vertical list of 3–6 items drawn from the actionable items in the section content above (or the labels list), each prefixed with a small filled square in the accent color. Items aligned left, generous line height. No screenshot framing.",
         labelClause,
         ...INFOGRAPHIC_ART_DIRECTION,
       ]
@@ -518,13 +609,14 @@ export async function generateInlineImage(
   openai: OpenAI,
   promptText: string,
   nicheHint: string | null,
-  opts: { kind?: string; labels?: string[] } = {},
+  opts: { kind?: string; labels?: string[]; sectionContext?: string } = {},
 ): Promise<Buffer | null> {
   const prompt = buildInlineImagePrompt(
     {
       prompt: promptText,
       kind: opts.kind ?? "concept",
       labels: opts.labels ?? [],
+      sectionContext: opts.sectionContext,
     },
     nicheHint,
   );
@@ -920,9 +1012,11 @@ export async function generateArticle(
     })(),
     ...article.inline_image_prompts.map(async (p, i) => {
       try {
+        const sectionContext = extractSectionForMarker(article.markdown_body, i + 1);
         const bytes = await generateInlineImage(openai, p.prompt, typedSite.niche, {
           kind: p.kind,
           labels: p.labels,
+          sectionContext,
         });
         if (bytes) {
           inlineImageUrls[i] = await uploadImage(
