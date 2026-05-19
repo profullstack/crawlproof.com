@@ -219,4 +219,66 @@ describe("rankExchangeCandidates", () => {
     });
     expect(out[0].url).toMatch(/^https:\/\/threatcrush\.com\/blog\/[a-z-]+$/);
   });
+
+  it("relaxed mode (minScore=0) surfaces candidates with zero topic overlap", () => {
+    // freelancing niche has no token overlap with any fixture row.
+    // Strict mode returns [] (asserted above); relaxed should return
+    // something so the early-network case isn't permanently dead.
+    const strict = rankExchangeCandidates(FIX.rows, {
+      selfSiteId: FIX.selfId,
+      selfNiche: "AI-assisted freelancing and gig work",
+      keyword: "freelancer rate cards",
+      slots: 3,
+    });
+    expect(strict).toEqual([]);
+
+    const relaxed = rankExchangeCandidates(FIX.rows, {
+      selfSiteId: FIX.selfId,
+      selfNiche: "AI-assisted freelancing and gig work",
+      keyword: "freelancer rate cards",
+      slots: 3,
+      minScore: 0,
+    });
+    expect(relaxed.length).toBeGreaterThan(0);
+    expect(relaxed.length).toBeLessThanOrEqual(3);
+  });
+
+  it("relaxed mode still dedups by giver site and respects slot cap", () => {
+    const out = rankExchangeCandidates(FIX.rows, {
+      selfSiteId: FIX.selfId,
+      selfNiche: "completely unrelated topic",
+      keyword: "nothing in common",
+      slots: 2,
+      minScore: 0,
+    });
+    expect(out.length).toBeLessThanOrEqual(2);
+    const sites = new Set(out.map((c) => c.site_id));
+    expect(sites.size).toBe(out.length); // every result a distinct giver
+  });
+
+  it("relaxed mode prefers higher-scoring candidates when both have overlap and zero-overlap exist", () => {
+    // payments keyword should still surface the crypto-payments article
+    // first even in relaxed mode, before any zero-overlap stragglers.
+    const out = rankExchangeCandidates(FIX.rows, {
+      selfSiteId: FIX.selfId,
+      selfNiche: "payments and merchant tooling",
+      keyword: "crypto checkout flows",
+      slots: 3,
+      minScore: 0,
+    });
+    expect(out[0].site_id).toBe("site-coinpay");
+  });
+
+  it("relaxed mode tolerates an empty self-token set", () => {
+    // selfNiche null + keyword that tokenizes to nothing → strict returns
+    // []; relaxed should still fall back to recency-ordered candidates.
+    const out = rankExchangeCandidates(FIX.rows, {
+      selfSiteId: FIX.selfId,
+      selfNiche: null,
+      keyword: "",
+      slots: 2,
+      minScore: 0,
+    });
+    expect(out.length).toBeGreaterThan(0);
+  });
 });

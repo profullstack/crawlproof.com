@@ -39,6 +39,13 @@ export type ExchangeCandidate = {
   meta_description: string | null;
 };
 
+// Below this many eligible articles in the network, the matcher relaxes
+// its "score > 0" requirement and will surface the freshest candidates
+// even with zero topic overlap. Once the corpus is large enough, niche
+// overlap reliably finds something for any given keyword and strict
+// mode kicks back in. Tuned to ~250 sites × ~10 articles each.
+export const RELAXED_NICHE_THRESHOLD = 2500;
+
 type RankableRow = {
   id: string;
   title: string;
@@ -92,13 +99,27 @@ export function buildArticleUrl(blogRootUrl: string, slug: string): string {
 
 export function rankExchangeCandidates(
   rows: RankableRow[],
-  input: { selfSiteId: string; selfNiche: string | null; keyword: string; slots: number },
+  input: {
+    selfSiteId: string;
+    selfNiche: string | null;
+    keyword: string;
+    slots: number;
+    // Minimum overlap score to accept. Defaults to 1 (strict — require
+    // some topical overlap). Caller passes 0 in early-network "relaxed"
+    // mode so the matcher can still find SOMETHING when the corpus is
+    // too thin for niche overlap to fire reliably.
+    minScore?: number;
+  },
 ): ExchangeCandidate[] {
   const { selfSiteId, selfNiche, keyword, slots } = input;
+  const minScore = input.minScore ?? 1;
   if (slots <= 0) return [];
 
   const selfTokens = topicTokens(keyword, selfNiche);
-  if (selfTokens.size === 0) return [];
+  // In relaxed mode (minScore = 0) we still surface candidates even if
+  // the self-token set is empty — the network's just too small to be
+  // picky. In strict mode, no self-tokens means nothing to match against.
+  if (selfTokens.size === 0 && minScore > 0) return [];
 
   const scored = rows
     .filter((r) => r.site.id !== selfSiteId)
@@ -109,7 +130,7 @@ export function rankExchangeCandidates(
         topicTokens(r.title, r.meta_description, r.site.niche),
       ),
     }))
-    .filter((s) => s.score > 0)
+    .filter((s) => s.score >= minScore)
     .sort((a, b) => b.score - a.score);
 
   const out: ExchangeCandidate[] = [];
@@ -131,18 +152,32 @@ export function rankExchangeCandidates(
   return out;
 }
 
+export type ExchangeMatchResult = {
+  candidates: ExchangeCandidate[];
+  // True when the network is below RELAXED_NICHE_THRESHOLD — we surfaced
+  // candidates without requiring topical overlap. Callers can use this
+  // to soften prompt language so the model actually uses what we found.
+  relaxed: boolean;
+  networkSize: number;
+};
+
 // Fetch + rank in one call. The PostgREST embed pulls the site columns
 // we need for filtering and URL construction in a single round-trip.
 export async function findExchangeCandidates(
   supabase: SupabaseClient<any>,
   input: { selfSiteId: string; selfNiche: string | null; keyword: string; slots: number },
-): Promise<ExchangeCandidate[]> {
-  if (input.slots <= 0) return [];
+): Promise<ExchangeMatchResult> {
+  if (input.slots <= 0) {
+    return { candidates: [], relaxed: false, networkSize: 0 };
+  }
 
   // Cap the candidate pool so a large network can't blow up the prompt
-  // or the ranking loop. slots*8 gives the ranker enough headroom to
-  // filter on niche overlap and still meet the slot count.
-  const limit = Math.max(20, input.slots * 8);
+  // or the ranking loop. In relaxed mode we widen the pull window so
+  // recency-ordering has enough variety to choose from.
+  const networkSize = await countEligibleNetworkArticles(supabase);
+  const relaxed = networkSize < RELAXED_NICHE_THRESHOLD;
+  const minScore = relaxed ? 0 : 1;
+  const limit = Math.max(20, input.slots * (relaxed ? 12 : 8));
 
   const { data, error } = await supabase
     .from("lx_article")
@@ -160,7 +195,13 @@ export async function findExchangeCandidates(
 
   if (error) {
     console.warn("[lx] exchange matcher query failed:", error.message);
-    return [];
+    return { candidates: [], relaxed, networkSize };
+  }
+
+  if (relaxed) {
+    console.log(
+      `[lx] exchange matcher running in RELAXED mode (network=${networkSize} < ${RELAXED_NICHE_THRESHOLD} eligible articles)`,
+    );
   }
   // PostgREST's `!inner` embed types come back as `site: T[]` even though
   // the runtime shape is a single object once the inner join is applied.
@@ -173,5 +214,35 @@ export async function findExchangeCandidates(
     meta_description: r.meta_description,
     site: Array.isArray(r.site) ? r.site[0] : r.site,
   })).filter((r) => r.site);
-  return rankExchangeCandidates(rows, input);
+  return {
+    candidates: rankExchangeCandidates(rows, { ...input, minScore }),
+    relaxed,
+    networkSize,
+  };
+}
+
+// Count of articles eligible to be exchanged across the whole network —
+// the denominator that decides whether the matcher is in strict or
+// relaxed mode. Counts opted-in, non-flagged, active-site rows only;
+// a backlogged or paused site shouldn't push us into strict mode just
+// by existing.
+async function countEligibleNetworkArticles(
+  supabase: SupabaseClient<any>,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("lx_article")
+    .select("id, site:lx_site!inner(backlinks_enabled, status, inappropriate_content)", {
+      count: "exact",
+      head: true,
+    })
+    .in("status", ["ready", "published"])
+    .eq("site.backlinks_enabled", true)
+    .eq("site.status", "active")
+    .eq("site.inappropriate_content", false);
+  if (error) {
+    console.warn("[lx] exchange network-size query failed:", error.message);
+    // Fail safe: treat as small network, relax matching.
+    return 0;
+  }
+  return count ?? 0;
 }

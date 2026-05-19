@@ -187,8 +187,17 @@ function buildUserPrompt(input: {
   linkSlots: number;
   exchangeCandidates: ExchangeCandidate[];
   exchangeSlots: number;
+  exchangeRelaxed?: boolean;
 }): string {
-  const { site, keyword, candidates, linkSlots, exchangeCandidates, exchangeSlots } = input;
+  const {
+    site,
+    keyword,
+    candidates,
+    linkSlots,
+    exchangeCandidates,
+    exchangeSlots,
+    exchangeRelaxed,
+  } = input;
   const brand = site.domain;
   const niche = site.niche?.trim() || "B2B / technical SaaS";
   const audiences = site.target_audiences.length
@@ -218,8 +227,11 @@ function buildUserPrompt(input: {
         `${i + 1}. [PARTNER BLOG: ${c.domain}] ${c.url}\n   Title: ${c.title}\n   About: ${c.meta_description ?? "(no description)"}`,
     )
     .join("\n");
+  const exchangeMax = Math.min(exchangeSlots, exchangeCandidates.length);
   const exchangeSlotLine = exchangeSlots > 0 && exchangeCandidates.length > 0
-    ? `Insert UP TO ${Math.min(exchangeSlots, exchangeCandidates.length)} of the following external partner-blog links inline as standard markdown links, where each fits naturally in a sentence whose topic genuinely overlaps. Pick the most relevant — skip any that don't fit; do not force a link. Do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
+    ? exchangeRelaxed
+      ? `Insert UP TO ${exchangeMax} of the following external partner-blog links. These are pre-vetted blogs in our shared content network — the network is still small, so topical overlap may be loose. Place each as a natural "Related reading from our network: [anchor](url)"-style inline reference where the surrounding paragraph allows even a tangential connection (e.g., a "for adjacent reading" aside, a comparison, or a "teams in {their niche} face similar tradeoffs" sentence). Prefer using all ${exchangeMax}; only skip a candidate if including it would make a paragraph read as obviously incoherent. Do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
+      : `Insert UP TO ${exchangeMax} of the following external partner-blog links inline as standard markdown links, where each fits naturally in a sentence whose topic genuinely overlaps. Pick the most relevant — skip any that don't fit; do not force a link. Do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
     : "External-link slots: 0. Return used_exchange_link_urls: [] and do not link out.";
 
   return [
@@ -626,15 +638,17 @@ export async function generateArticle(
   const exchangeSlots = typedSite.backlinks_enabled
     ? Math.max(0, typedSite.external_links_per_article)
     : 0;
-  const exchangeCandidates = await findExchangeCandidates(supabase, {
+  const exchangeMatch = await findExchangeCandidates(supabase, {
     selfSiteId: typedSite.id,
     selfNiche: typedSite.niche,
     keyword: keyword.keyword,
     slots: exchangeSlots,
   });
+  const exchangeCandidates = exchangeMatch.candidates;
+  const exchangeRelaxed = exchangeMatch.relaxed;
   if (exchangeSlots > 0) {
     console.log(
-      `[lx] exchange candidates for ${typedSite.id} keyword="${keyword.keyword}": ${exchangeCandidates.length}/${exchangeSlots} slots`,
+      `[lx] exchange candidates for ${typedSite.id} keyword="${keyword.keyword}": ${exchangeCandidates.length}/${exchangeSlots} slots (mode=${exchangeRelaxed ? "relaxed" : "strict"}, network=${exchangeMatch.networkSize})`,
     );
   }
 
@@ -672,6 +686,7 @@ export async function generateArticle(
             linkSlots,
             exchangeCandidates,
             exchangeSlots,
+            exchangeRelaxed,
           }),
         },
       ],
