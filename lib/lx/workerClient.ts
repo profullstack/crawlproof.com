@@ -30,13 +30,14 @@ export async function enqueueGuestPostGenerate(
   authorSiteId: string,
   targetSiteId: string,
   topic: string,
-  opts: { preview?: boolean } = {},
+  opts: { preview?: boolean; requestId?: string } = {},
 ): Promise<void> {
   await postToWorker("/lx/guest-post-generate", {
     authorSiteId,
     targetSiteId,
     topic,
     preview: !!opts.preview,
+    requestId: opts.requestId,
   });
 }
 

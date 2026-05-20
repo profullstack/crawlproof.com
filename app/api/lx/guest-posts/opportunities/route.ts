@@ -38,5 +38,17 @@ export async function POST(req: NextRequest) {
   }
 
   const opportunities = await findGuestPostOpportunities(supabase, lxSiteId);
-  return NextResponse.json({ ok: true, opportunities });
+
+  // Return the author's existing requests so the UI can flag topics
+  // already clicked (queued/generating) or locked (generated).
+  const { data: requests } = await supabase
+    .from("lx_guest_post_request")
+    .select("id, target_site_id, topic, status, article_id")
+    .eq("author_site_id", lxSiteId);
+
+  return NextResponse.json({
+    ok: true,
+    opportunities,
+    requests: requests ?? [],
+  });
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 type Opportunity = {
@@ -11,12 +12,31 @@ type Opportunity = {
   suggested_topics: string[];
 };
 
+type RequestRow = {
+  id: string;
+  target_site_id: string;
+  topic: string;
+  status: "queued" | "generating" | "generated" | "failed";
+  article_id: string | null;
+};
+
+function reqKey(targetSiteId: string, topic: string): string {
+  return `${targetSiteId}${topic}`;
+}
+
 export function GuestPostOpportunities({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [opps, setOpps] = useState<Opportunity[] | null>(null);
+  const [requests, setRequests] = useState<Map<string, RequestRow>>(new Map());
   const [error, setError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  function indexRequests(rows: RequestRow[]): Map<string, RequestRow> {
+    const m = new Map<string, RequestRow>();
+    for (const r of rows) m.set(reqKey(r.target_site_id, r.topic), r);
+    return m;
+  }
 
   async function find() {
     setBusy(true);
@@ -32,6 +52,7 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
         setError(json?.error ?? "Could not find opportunities.");
       } else {
         setOpps(json.opportunities ?? []);
+        setRequests(indexRequests(json.requests ?? []));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -41,8 +62,8 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
   }
 
   async function generate(opp: Opportunity, topic: string) {
-    const key = `${opp.partner_site_id}:${topic}`;
-    setGenerating(key);
+    const key = reqKey(opp.partner_site_id, topic);
+    setPending(key);
     setError(null);
     setNotice(null);
     try {
@@ -57,7 +78,18 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) {
         setError(json?.error ?? "Could not generate guest post.");
-      } else {
+      } else if (json.request) {
+        setRequests((prev) => {
+          const next = new Map(prev);
+          next.set(key, {
+            id: json.request.id,
+            target_site_id: opp.partner_site_id,
+            topic,
+            status: json.request.status ?? "queued",
+            article_id: json.request.article_id ?? null,
+          });
+          return next;
+        });
         setNotice(
           `Guest post queued for ${opp.partner_domain} on "${topic}". Generation takes 1–3 minutes; it will land on the partner blog once delivered.`,
         );
@@ -65,7 +97,34 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setGenerating(null);
+      setPending(null);
+    }
+  }
+
+  async function unclick(req: RequestRow) {
+    const key = reqKey(req.target_site_id, req.topic);
+    setPending(key);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(
+        `/api/lx/guest-posts/requests/${encodeURIComponent(req.id)}`,
+        { method: "DELETE" },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        setError(json?.error ?? "Could not remove request.");
+      } else {
+        setRequests((prev) => {
+          const next = new Map(prev);
+          next.delete(key);
+          return next;
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(null);
     }
   }
 
@@ -137,22 +196,23 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
                   </p>
                   <ul className="space-y-1.5 text-sm">
                     {o.suggested_topics.map((t) => {
-                      const key = `${o.partner_site_id}:${t}`;
-                      const isBusy = generating === key;
+                      const key = reqKey(o.partner_site_id, t);
+                      const req = requests.get(key);
+                      const isBusy = pending === key;
                       return (
                         <li
                           key={t}
                           className="flex items-center justify-between gap-2"
                         >
                           <span className="flex-1">{t}</span>
-                          <button
-                            type="button"
-                            className="btn text-xs"
-                            disabled={generating !== null}
-                            onClick={() => generate(o, t)}
-                          >
-                            {isBusy ? "Queuing…" : "Generate this"}
-                          </button>
+                          <TopicAction
+                            req={req}
+                            isBusy={isBusy}
+                            anyPending={pending !== null}
+                            projectId={projectId}
+                            onGenerate={() => generate(o, t)}
+                            onUnclick={() => req && unclick(req)}
+                          />
                         </li>
                       );
                     })}
@@ -169,5 +229,74 @@ export function GuestPostOpportunities({ projectId }: { projectId: string }) {
         </ul>
       )}
     </section>
+  );
+}
+
+function TopicAction({
+  req,
+  isBusy,
+  anyPending,
+  projectId,
+  onGenerate,
+  onUnclick,
+}: {
+  req: RequestRow | undefined;
+  isBusy: boolean;
+  anyPending: boolean;
+  projectId: string;
+  onGenerate: () => void;
+  onUnclick: () => void;
+}) {
+  if (!req) {
+    return (
+      <button
+        type="button"
+        className="btn text-xs"
+        disabled={anyPending}
+        onClick={onGenerate}
+      >
+        {isBusy ? "Queuing…" : "Generate this"}
+      </button>
+    );
+  }
+
+  if (req.status === "generated") {
+    return (
+      <span className="flex items-center gap-2">
+        <span className="badge badge-pass text-xs">generated</span>
+        {req.article_id && (
+          <Link
+            href={`/projects/${projectId}/autoblog/articles/${req.article_id}`}
+            className="btn text-xs"
+          >
+            View
+          </Link>
+        )}
+      </span>
+    );
+  }
+
+  const statusBadge =
+    req.status === "failed" ? (
+      <span className="badge badge-fail text-xs">failed</span>
+    ) : req.status === "generating" ? (
+      <span className="badge badge-warn text-xs">generating</span>
+    ) : (
+      <span className="badge badge-info text-xs">queued</span>
+    );
+
+  return (
+    <span className="flex items-center gap-2">
+      {statusBadge}
+      <button
+        type="button"
+        className="btn text-xs"
+        disabled={anyPending}
+        onClick={onUnclick}
+        title="Cancel this request"
+      >
+        {isBusy ? "Removing…" : "Unclick"}
+      </button>
+    </span>
   );
 }

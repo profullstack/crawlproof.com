@@ -79,6 +79,54 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  await enqueueGuestPostGenerate(authorLx.id, body.targetSiteId, body.topic);
-  return NextResponse.json({ ok: true });
+  // Record the request before enqueueing so the UI can show an
+  // indicator immediately and the user can cancel before generation
+  // completes. Unique on (author, target, topic) — if a row already
+  // exists in a non-terminal state we hand back its id instead of
+  // double-queuing. A previously 'failed' row blocks re-queue; user
+  // must delete it first (or we surface a retry path later).
+  const { data: existing } = await supabase
+    .from("lx_guest_post_request")
+    .select("id, status, article_id")
+    .eq("author_site_id", authorLx.id)
+    .eq("target_site_id", body.targetSiteId)
+    .eq("topic", body.topic)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.status === "generated") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Guest post already generated for this topic.",
+          request: existing,
+        },
+        { status: 409 },
+      );
+    }
+    // queued / generating / failed → just return the existing row.
+    return NextResponse.json({ ok: true, request: existing });
+  }
+
+  const { data: inserted, error: insErr } = await supabase
+    .from("lx_guest_post_request")
+    .insert({
+      author_site_id: authorLx.id,
+      target_site_id: body.targetSiteId,
+      topic: body.topic,
+      status: "queued",
+    })
+    .select("id, status")
+    .single();
+  if (insErr || !inserted) {
+    return NextResponse.json(
+      { ok: false, error: insErr?.message ?? "could not record request" },
+      { status: 500 },
+    );
+  }
+
+  await enqueueGuestPostGenerate(authorLx.id, body.targetSiteId, body.topic, {
+    requestId: inserted.id,
+  });
+  return NextResponse.json({ ok: true, request: inserted });
 }

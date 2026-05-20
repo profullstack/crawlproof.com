@@ -64,6 +64,7 @@ async function processLxGuestPost(payload: {
   targetSiteId: string;
   topic: string;
   skipDeliver?: boolean;
+  requestId?: string;
 }) {
   if (!openai) {
     console.error(`[worker] lx guest-post: OPENAI_API_KEY not set`);
@@ -73,10 +74,30 @@ async function processLxGuestPost(payload: {
     console.error(`[worker] lx guest-post: ANTHROPIC_API_KEY not set`);
     return;
   }
-  const { authorSiteId, targetSiteId, topic, skipDeliver } = payload;
+  const { authorSiteId, targetSiteId, topic, skipDeliver, requestId } = payload;
   console.log(
-    `[worker] lx guest-post author=${authorSiteId} target=${targetSiteId} topic="${topic}"`,
+    `[worker] lx guest-post author=${authorSiteId} target=${targetSiteId} topic="${topic}" request=${requestId ?? "-"}`,
   );
+
+  // If the request row was deleted between enqueue and processing
+  // (the user clicked "unclick"), bail out. The DELETE policy only
+  // allows non-generated rows, so a missing row here means cancel.
+  if (requestId) {
+    const { data: stillThere } = await supabase
+      .from("lx_guest_post_request")
+      .select("id")
+      .eq("id", requestId)
+      .maybeSingle();
+    if (!stillThere) {
+      console.log(`[worker] lx guest-post request ${requestId} cancelled — skipping`);
+      return;
+    }
+    await supabase
+      .from("lx_guest_post_request")
+      .update({ status: "generating" })
+      .eq("id", requestId);
+  }
+
   try {
     const { generateGuestPost } = await import("../lib/lx/guestPostGen");
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -86,9 +107,21 @@ async function processLxGuestPost(payload: {
     );
     if (!r.ok) {
       console.warn(`[worker] lx guest-post failed: ${r.error}`);
+      if (requestId) {
+        await supabase
+          .from("lx_guest_post_request")
+          .update({ status: "failed", error_text: r.error ?? "unknown" })
+          .eq("id", requestId);
+      }
       return;
     }
     console.log(`[worker] lx guest-post ok article=${r.articleId} slug=${r.slug}`);
+    if (requestId && r.articleId) {
+      await supabase
+        .from("lx_guest_post_request")
+        .update({ status: "generated", article_id: r.articleId })
+        .eq("id", requestId);
+    }
     if (skipDeliver || !r.articleId) return;
     const d = await deliverArticle(r.articleId, { supabase });
     console.log(
@@ -96,6 +129,15 @@ async function processLxGuestPost(payload: {
     );
   } catch (err) {
     console.error(`[worker] lx guest-post crashed`, err);
+    if (requestId) {
+      await supabase
+        .from("lx_guest_post_request")
+        .update({
+          status: "failed",
+          error_text: err instanceof Error ? err.message : String(err),
+        })
+        .eq("id", requestId);
+    }
   }
 }
 
@@ -702,6 +744,7 @@ const server = http.createServer(async (req, res) => {
         targetSiteId?: string;
         topic?: string;
         preview?: boolean;
+        requestId?: string;
       };
       try {
         payload = JSON.parse(body || "{}");
@@ -722,6 +765,7 @@ const server = http.createServer(async (req, res) => {
         targetSiteId: payload.targetSiteId,
         topic: payload.topic,
         skipDeliver: !!payload.preview,
+        requestId: payload.requestId,
       }).catch((e) => console.error("[worker] lx guest-post unhandled", e));
     });
     return;
