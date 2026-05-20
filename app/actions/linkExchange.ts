@@ -971,7 +971,7 @@ export async function publishArticle(input: {
   // before letting the user trigger a deliver.
   const { data: article } = await supabase
     .from("lx_article")
-    .select("id, status, lx_site!inner(user_id)")
+    .select("id, status, lx_site!lx_article_site_id_fkey!inner(user_id)")
     .eq("id", input.articleId)
     .maybeSingle();
   if (!article || (article as any).lx_site?.user_id !== user.id) {

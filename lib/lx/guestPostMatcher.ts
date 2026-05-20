@@ -195,7 +195,7 @@ export async function findGuestPostOpportunities(
   // many posts is more useful than ten with none.
   const { count: networkSize } = await supabase
     .from("lx_article")
-    .select("id, site:lx_site!inner(backlinks_enabled, status, inappropriate_content)", {
+    .select("id, site:lx_site!lx_article_site_id_fkey!inner(backlinks_enabled, status, inappropriate_content)", {
       count: "exact",
       head: true,
     })

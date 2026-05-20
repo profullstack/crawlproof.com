@@ -183,7 +183,7 @@ export async function findExchangeCandidates(
     .from("lx_article")
     .select(
       `id, title, slug, meta_description, status,
-       site:lx_site!inner(id, domain, blog_root_url, niche, status, backlinks_enabled, inappropriate_content)`,
+       site:lx_site!lx_article_site_id_fkey!inner(id, domain, blog_root_url, niche, status, backlinks_enabled, inappropriate_content)`,
     )
     .in("status", ["ready", "published"])
     .eq("site.backlinks_enabled", true)
@@ -231,7 +231,7 @@ async function countEligibleNetworkArticles(
 ): Promise<number> {
   const { count, error } = await supabase
     .from("lx_article")
-    .select("id, site:lx_site!inner(backlinks_enabled, status, inappropriate_content)", {
+    .select("id, site:lx_site!lx_article_site_id_fkey!inner(backlinks_enabled, status, inappropriate_content)", {
       count: "exact",
       head: true,
     })
