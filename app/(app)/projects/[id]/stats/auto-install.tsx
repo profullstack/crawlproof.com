@@ -38,6 +38,7 @@ export function AutoInstall({
 }: AutoInstallProps) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [rootPath, setRootPath] = useState("");
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [result, setResult] = useState<{ repo: string; result: InstallResult } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +78,7 @@ export function AutoInstall({
             owner,
             repo: name,
             installation_id: repo.installation_id,
+            root_path: rootPath.trim() || undefined,
           }),
         },
       );
@@ -171,6 +173,23 @@ export function AutoInstall({
                     </button>
                   )}
                 </div>
+
+                <details className="mt-2 text-sm">
+                  <summary className="cursor-pointer text-xs text-[var(--color-muted)]">
+                    Subdirectory (optional, for monorepos)
+                  </summary>
+                  <input
+                    type="text"
+                    value={rootPath}
+                    onChange={(e) => setRootPath(e.target.value)}
+                    placeholder="apps/web"
+                    className="mt-2 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+                  />
+                  <p className="mt-1 text-xs text-[var(--color-muted)]">
+                    Leave blank to auto-detect. Set if your site lives in a
+                    monorepo subdir like <code>apps/web</code>.
+                  </p>
+                </details>
 
                 <ul className="mt-3 max-h-72 overflow-y-auto divide-y divide-[var(--color-border)] rounded-md border border-[var(--color-border)]">
                   {filtered.length === 0 ? (
