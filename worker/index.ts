@@ -335,6 +335,21 @@ async function processJob(job: Job) {
 
     console.log(`[worker] audit ${auditId} complete, score=${score}`);
 
+    // AEO Score time-series: roll up siblings in the scan_run into a
+    // single project_scores row. Runs for every completed audit but the
+    // UNIQUE(project_id, scan_run_id) constraint ensures exactly one row
+    // per scan_run survives.
+    if (audit.project_id && audit.scan_run_id) {
+      try {
+        await recordProjectScoreIfReady({
+          projectId: audit.project_id as string,
+          scanRunId: audit.scan_run_id as string,
+        });
+      } catch (err) {
+        console.error("[worker] project_scores write failed", err);
+      }
+    }
+
     // Email path. Solo scans get a per-engine PDF; multi-engine scans get
     // ONE summary email after every sibling reaches a terminal state.
     if (pdfEmail) {
@@ -418,6 +433,58 @@ type SiblingRow = {
   failed_reason: string | null;
   created_at: string;
 };
+
+// Insert one project_scores row per (project, scan_run) once all sibling
+// audits in the run reach a terminal state. The aggregate is the mean of
+// the completed engines' scores; the components jsonb keeps the per-engine
+// breakdown so a chart can drill in. UNIQUE(project_id, scan_run_id) +
+// ON CONFLICT DO NOTHING guarantees idempotence under concurrent workers.
+async function recordProjectScoreIfReady(input: {
+  projectId: string;
+  scanRunId: string;
+}): Promise<void> {
+  const { projectId, scanRunId } = input;
+  const { data: siblings } = await supabase
+    .from("audits")
+    .select("engine, status, score")
+    .eq("scan_run_id", scanRunId);
+  const rows = (siblings ?? []) as Array<{
+    engine: string;
+    status: string;
+    score: number | null;
+  }>;
+  if (rows.length === 0) return;
+  const allTerminal = rows.every(
+    (r) => r.status === "complete" || r.status === "failed",
+  );
+  if (!allTerminal) return;
+
+  const completed = rows.filter(
+    (r) => r.status === "complete" && typeof r.score === "number",
+  );
+  // No engine produced a usable score (every sibling failed). Skip — a zero
+  // here would be misleading on the trend chart.
+  if (completed.length === 0) return;
+
+  const components: Record<string, number> = {};
+  for (const r of completed) {
+    components[r.engine] = r.score as number;
+  }
+  const overall = Math.round(
+    completed.reduce((sum, r) => sum + (r.score as number), 0) / completed.length,
+  );
+
+  const { error } = await supabase.from("project_scores").insert({
+    project_id: projectId,
+    scan_run_id: scanRunId,
+    score: overall,
+    components,
+  });
+  // 23505 = unique_violation; another worker beat us to it. Not an error.
+  if (error && (error as { code?: string }).code !== "23505") {
+    console.error("[worker] project_scores insert", error);
+  }
+}
 
 
 // Route the audit-complete email. Solo scans (single audit in the
