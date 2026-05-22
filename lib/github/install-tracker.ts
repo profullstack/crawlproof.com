@@ -11,6 +11,7 @@ import {
   getRepo,
   openPullRequest,
   putFile,
+  searchRepoCode,
 } from "./repos";
 
 interface InstallInput {
@@ -18,6 +19,10 @@ interface InstallInput {
   owner: string;
   repo: string;
   projectId: string;
+  /** Optional subdirectory inside a monorepo, e.g. "apps/web" or
+   *  "sites/sh1pt.com". Canonical candidate paths get this prefix
+   *  before being probed. Leave undefined for single-app repos. */
+  rootPath?: string;
 }
 
 export interface InstallResult {
@@ -78,6 +83,12 @@ function injectBeforeBodyClose(
   return `${prefix}${indent}  ${snippet}\n${indent}${content.slice(idx)}`;
 }
 
+/** Strip leading/trailing slashes so we can confidently join with "/". */
+function normalizeRoot(p: string | undefined): string {
+  if (!p) return "";
+  return p.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
 export async function installTracker(input: InstallInput): Promise<InstallResult> {
   const repoMeta = await getRepo({
     token: input.token,
@@ -88,9 +99,18 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   const snippet = snippetFor(input.projectId);
   const projectIdMarker = `data-site="${input.projectId}"`;
 
-  // 1. Find a candidate file that contains </body>.
-  let target: { path: string; sha: string; content: string } | null = null;
-  for (const path of CANDIDATES) {
+  const root = normalizeRoot(input.rootPath);
+  const candidates = root
+    ? CANDIDATES.map((p) => `${root}/${p}`)
+    : CANDIDATES;
+
+  // Probe a path: returns the file if it has </body> AND doesn't already
+  // have our snippet; signals "already installed" if it does.
+  type ProbeResult =
+    | { kind: "hit"; file: { path: string; sha: string; content: string } }
+    | { kind: "already"; path: string }
+    | { kind: "miss" };
+  const probe = async (path: string): Promise<ProbeResult> => {
     const file = await getFileContent({
       token: input.token,
       owner: input.owner,
@@ -98,23 +118,80 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
       path,
       ref: base,
     });
-    if (!file) continue;
+    if (!file) return { kind: "miss" };
     if (file.content.includes(projectIdMarker)) {
-      return {
-        status: "noop",
-        path: file.path,
-        detail: `Tracker already installed at ${file.path}.`,
-      };
+      return { kind: "already", path: file.path };
     }
     if (/<\/body>/i.test(file.content)) {
-      target = file;
+      return { kind: "hit", file };
+    }
+    return { kind: "miss" };
+  };
+
+  // 1. Try the canonical candidate list (optionally prefixed by rootPath).
+  let target: { path: string; sha: string; content: string } | null = null;
+  for (const path of candidates) {
+    const r = await probe(path);
+    if (r.kind === "already") {
+      return {
+        status: "noop",
+        path: r.path,
+        detail: `Tracker already installed at ${r.path}.`,
+      };
+    }
+    if (r.kind === "hit") {
+      target = r.file;
       break;
     }
   }
 
+  // 2. Fallback: ask GitHub's code search for any file containing </body>
+  //    in this repo. Handles monorepos (e.g. apps/web/app/layout.tsx,
+  //    sites/foo/app/layout.tsx) and non-standard frameworks
+  //    (SvelteKit src/app.html, Remix app/root.tsx, ...).
   if (!target) {
+    try {
+      const hits = await searchRepoCode({
+        token: input.token,
+        owner: input.owner,
+        repo: input.repo,
+        query: "</body>",
+      });
+      // If a root path is configured, prefer hits inside it.
+      const ordered = root
+        ? [
+            ...hits.filter((h) => h.path.startsWith(root + "/")),
+            ...hits.filter((h) => !h.path.startsWith(root + "/")),
+          ]
+        : hits;
+      for (const hit of ordered) {
+        const r = await probe(hit.path);
+        if (r.kind === "already") {
+          return {
+            status: "noop",
+            path: r.path,
+            detail: `Tracker already installed at ${r.path}.`,
+          };
+        }
+        if (r.kind === "hit") {
+          target = r.file;
+          break;
+        }
+      }
+    } catch (err) {
+      // Code search failure is non-fatal — fall through to the error
+      // path below with a clearer message.
+      console.warn("[install-tracker] code search failed:", err);
+    }
+  }
+
+  if (!target) {
+    const probed = candidates.join(", ");
+    const hint = root
+      ? `Looked under root "${root}". Try a different root path or open an issue with your repo layout.`
+      : "Monorepo? Set a root path on the project's Repos tab to point at the app directory (e.g. apps/web).";
     throw new Error(
-      `No template file with </body> found. Looked in: ${CANDIDATES.join(", ")}.`,
+      `No template file with </body> found in ${input.owner}/${input.repo}. Probed canonical paths: ${probed}. ${hint}`,
     );
   }
 
