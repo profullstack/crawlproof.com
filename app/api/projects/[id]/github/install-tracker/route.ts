@@ -15,6 +15,9 @@ const bodySchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
   installation_id: z.number().int().positive(),
+  /** Optional subdirectory inside the repo where the app lives,
+   *  e.g. "apps/web" or "sites/sh1pt.com". */
+  root_path: z.string().max(500).optional(),
 });
 
 export async function POST(
@@ -94,6 +97,7 @@ export async function POST(
       owner: body.owner,
       repo: body.repo,
       projectId,
+      rootPath: body.root_path,
     });
     await finalize({
       status: result.status,

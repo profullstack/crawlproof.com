@@ -59,17 +59,35 @@ const CANDIDATES: string[] = [
 
 const BRANCH_PREFIX = "crawlproof/install-stats-tracker";
 
-function snippetFor(projectId: string): string {
+function rawScriptTag(projectId: string): string {
   return `<script data-site="${projectId}" src="${env.siteUrl.replace(/\/$/, "")}/stats.js" async></script>`;
+}
+
+function nextScriptTag(projectId: string): string {
+  return `<Script data-site="${projectId}" src="${env.siteUrl.replace(/\/$/, "")}/stats.js" strategy="afterInteractive" />`;
+}
+
+/**
+ * Choose the right snippet shape for a target file. For Next.js TSX/JSX
+ * layouts we use the <Script> component (next/script) — idiomatic and
+ * avoids hydration warnings about an inline <script>. Everything else
+ * gets a plain HTML <script> tag.
+ */
+function snippetForPath(projectId: string, path: string): string {
+  return /\.(tsx|jsx)$/.test(path)
+    ? nextScriptTag(projectId)
+    : rawScriptTag(projectId);
 }
 
 /**
  * Return content with the snippet inserted before the first </body>, or
- * null if there's no </body> in the file.
+ * null if there's no </body> in the file. Adds `import Script from "next/script"`
+ * at the top of TSX/JSX files when needed.
  */
 function injectBeforeBodyClose(
   content: string,
   snippet: string,
+  path: string,
 ): string | null {
   const re = /<\/body>/i;
   const match = content.match(re);
@@ -80,7 +98,36 @@ function injectBeforeBodyClose(
   const prefix = content.slice(0, idx);
   const lineStart = prefix.lastIndexOf("\n") + 1;
   const indent = prefix.slice(lineStart).match(/^\s*/)?.[0] ?? "";
-  return `${prefix}${indent}  ${snippet}\n${indent}${content.slice(idx)}`;
+  let updated = `${prefix}${indent}  ${snippet}\n${indent}${content.slice(idx)}`;
+
+  // For Next.js layouts: add `import Script from "next/script"` if it
+  // isn't already imported. Skip if the file already pulls Script in
+  // from any source.
+  if (/\.(tsx|jsx)$/.test(path) && /<Script\b/.test(snippet)) {
+    if (!/from\s+["']next\/script["']/.test(updated)) {
+      updated = addNextScriptImport(updated);
+    }
+  }
+  return updated;
+}
+
+/**
+ * Insert `import Script from "next/script";` after the last top-level
+ * import statement. Falls back to the top of the file if none.
+ */
+function addNextScriptImport(content: string): string {
+  const importLine = `import Script from "next/script";\n`;
+  // Find the line index of the LAST line that starts with `import `.
+  const lines = content.split("\n");
+  let lastImportLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^import\b/.test(lines[i])) lastImportLine = i;
+  }
+  if (lastImportLine === -1) {
+    return importLine + content;
+  }
+  lines.splice(lastImportLine + 1, 0, importLine.replace(/\n$/, ""));
+  return lines.join("\n");
 }
 
 /** Strip leading/trailing slashes so we can confidently join with "/". */
@@ -96,7 +143,6 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     repo: input.repo,
   });
   const base = repoMeta.default_branch;
-  const snippet = snippetFor(input.projectId);
   const projectIdMarker = `data-site="${input.projectId}"`;
 
   const root = normalizeRoot(input.rootPath);
@@ -195,8 +241,10 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     );
   }
 
-  // 2. Compute the new content.
-  const updated = injectBeforeBodyClose(target.content, snippet);
+  // Compute the new content. Snippet shape (Next.js <Script> vs raw
+  // <script>) depends on the target file extension.
+  const snippet = snippetForPath(input.projectId, target.path);
+  const updated = injectBeforeBodyClose(target.content, snippet, target.path);
   if (!updated) {
     throw new Error(
       `Could not locate </body> in ${target.path} after second pass.`,
@@ -234,7 +282,7 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     head: branch,
     base,
     title: "Add CrawlProof stats tracker",
-    body: prBody(input.projectId, target.path),
+    body: prBody(input.projectId, target.path, snippet),
   });
 
   return {
@@ -247,16 +295,21 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   };
 }
 
-function prBody(projectId: string, path: string): string {
+function prBody(projectId: string, path: string, snippet: string): string {
+  const isNextScript = /<Script\b/.test(snippet);
+  void projectId;
+  const importNote = isNextScript
+    ? "\n\nThe diff also imports `Script` from `next/script` if it wasn't already imported.\n"
+    : "";
   return `This PR adds the [CrawlProof](https://crawlproof.com) stats tracker to your site.
 
 **What it does:** counts pageviews by source — AI engine referrals (ChatGPT, Perplexity, Claude, Gemini…) and AI crawler hits (GPTBot, ClaudeBot, PerplexityBot…). No cookies. No PII. Rolls up to a daily counter on the CrawlProof Stats tab for your project.
 
 **What changed:** one line added to \`${path}\`, just before \`</body>\`:
 
-\`\`\`html
-<script data-site="${projectId}" src="${env.siteUrl}/stats.js" async></script>
-\`\`\`
+\`\`\`${isNextScript ? "tsx" : "html"}
+${snippet}
+\`\`\`${importNote}
 
 **Docs:** ${env.siteUrl}/docs/stats-tracker
 **Disable:** flip the tracker off on your CrawlProof project Stats tab and the script becomes a no-op (or remove this line).`;
