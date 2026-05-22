@@ -83,6 +83,16 @@ export default async function AutoblogArticlePage({
             ? `published ${fmtDate(article.published_at)}`
             : `created ${fmtDate(article.created_at)}`}
         </p>
+        {article.status === "published" && (
+          <a
+            href={`${site.blog_root_url.replace(/\/$/, "")}/${article.slug}`}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent)] underline-offset-2 hover:underline"
+          >
+            View on {site.domain} ↗
+          </a>
+        )}
         {article.status === "ready" && (
           <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-3">
             <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
