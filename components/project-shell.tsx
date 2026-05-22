@@ -10,6 +10,7 @@ export type ProjectShellTab =
   | "overview"
   | "performance"
   | "scans"
+  | "stats"
   | "autoblog"
   | "social";
 
@@ -31,6 +32,7 @@ const TABS: { id: ProjectShellTab; label: string; href: (id: string) => string }
     href: (id) => `/projects/${id}/performance`,
   },
   { id: "scans", label: "Scans", href: (id) => `/projects/${id}/scans` },
+  { id: "stats", label: "Stats", href: (id) => `/projects/${id}/stats` },
   { id: "autoblog", label: "Autoblog", href: (id) => `/projects/${id}/autoblog` },
   { id: "social", label: "Social", href: (id) => `/projects/${id}/social` },
 ];
