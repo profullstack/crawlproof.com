@@ -11,7 +11,9 @@ import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { applyFix } from "@/lib/github/apply-fix";
 
 export const runtime = "nodejs";
-export const maxDuration = 120; // Claude calls can take a while.
+// Agentic mode runs up to 20 Claude tool turns; each turn ~5s. Worst
+// case is ~2 minutes, but realistic fixes finish in 20-40s.
+export const maxDuration = 300;
 
 const bodySchema = z.object({
   owner: z.string().min(1),
@@ -19,6 +21,8 @@ const bodySchema = z.object({
   installation_id: z.number().int().positive(),
   audit_id: z.string().uuid(),
   finding_key: z.string().min(1),
+  /** Optional starting hint for monorepos (e.g. "apps/web"). */
+  root_path: z.string().max(500).optional(),
 });
 
 export async function POST(
@@ -164,6 +168,7 @@ export async function POST(
         evidence: (finding as { evidence: unknown }).evidence,
       },
       targetUrl: (audit as { target_url: string }).target_url,
+      rootPath: body.root_path,
     });
 
     // A "noop" result still consumed the credit because we did call
