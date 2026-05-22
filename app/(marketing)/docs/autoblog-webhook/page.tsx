@@ -20,10 +20,22 @@ export default function AutoblogWebhookDocsPage() {
       </p>
       <p className="mt-3 text-[var(--color-muted)]">
         The easiest receiver is{" "}
-        <code className="font-mono">@profullstack/autoblog</code>: its{" "}
-        <code>verifyAndParse</code> helper validates the bearer + signature
-        + envelope in a single call and hands you a normalized{" "}
-        <code>Post</code> object.
+        <code className="font-mono">@profullstack/autoblog</code> (v0.3.0,{" "}
+        <a
+          className="underline"
+          href="https://www.npmjs.com/package/@profullstack/autoblog"
+          target="_blank"
+          rel="noreferrer"
+        >
+          npm
+        </a>
+        ): its <code>verifyAndParse</code> helper validates the bearer +
+        signature + envelope in a single call and hands you a normalized{" "}
+        <code>Post</code> object. v0.3 also covers two adjacent
+        delivery protocols — <strong>W3C Micropub</strong> (push posts to
+        a Micropub endpoint on your CMS) and <strong>W3C ActivityPub</strong>{" "}
+        (federate to the fediverse) — so you can pick whichever
+        protocol matches your stack.
       </p>
 
       <section className="mt-10 space-y-3">
@@ -52,7 +64,7 @@ webhook-id:         <event uuid>                        # stable across retries
 webhook-timestamp:  <unix seconds>                       # delivery time
 webhook-signature:  v1,<base64 HMAC-SHA256>              # signs id.timestamp.body
 Content-Type:       application/cloudevents+json
-User-Agent:         @profullstack/autoblog/0.2`}</pre>
+User-Agent:         @profullstack/autoblog/0.3`}</pre>
         <p className="text-sm text-[var(--color-muted)]">
           The bearer is a secret you generate on your receiver site (e.g.
           a per-source token from your blog's admin page) and paste into{" "}
