@@ -1,0 +1,110 @@
+// POST /api/projects/[id]/github/install-tracker
+// Body: { owner: string, repo: string, installation_id: number }
+// Opens a PR on the chosen repo that adds the stats.js script tag.
+
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { createClient } from "@/lib/supabase/server";
+import { serviceClient } from "@/lib/supabase/service";
+import { getOrMintInstallationToken } from "@/lib/github/installations";
+import { installTracker } from "@/lib/github/install-tracker";
+
+export const runtime = "nodejs";
+
+const bodySchema = z.object({
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  installation_id: z.number().int().positive(),
+});
+
+export async function POST(
+  request: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id: projectId } = await ctx.params;
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body;
+  try {
+    body = bodySchema.parse(await request.json());
+  } catch {
+    return NextResponse.json({ error: "Bad request" }, { status: 400 });
+  }
+
+  // Ownership check on the project.
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id, owner_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project || project.owner_id !== user.id) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Ownership check on the installation.
+  const { data: installation } = await supabase
+    .from("github_installations")
+    .select("installation_id")
+    .eq("installation_id", body.installation_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!installation) {
+    return NextResponse.json(
+      { error: "Installation not connected to this account" },
+      { status: 403 },
+    );
+  }
+
+  const svc = serviceClient();
+
+  // Record the run row up front so we have something to update on failure.
+  const { data: run } = await (svc as any)
+    .from("project_pr_runs")
+    .insert({
+      project_id: projectId,
+      owner_id: user.id,
+      kind: "install_tracker",
+      installation_id: body.installation_id,
+      repo_owner: body.owner,
+      repo_name: body.repo,
+      status: "running",
+    })
+    .select("id")
+    .single();
+  const runId = run?.id as string | undefined;
+
+  async function finalize(patch: Record<string, unknown>) {
+    if (!runId) return;
+    await (svc as any)
+      .from("project_pr_runs")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("id", runId);
+  }
+
+  try {
+    const token = await getOrMintInstallationToken(body.installation_id);
+    const result = await installTracker({
+      token,
+      owner: body.owner,
+      repo: body.repo,
+      projectId,
+    });
+    await finalize({
+      status: result.status,
+      pr_url: result.prUrl ?? null,
+      pr_number: result.prNumber ?? null,
+      branch_name: result.branch ?? null,
+    });
+    return NextResponse.json({ data: result });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await finalize({ status: "failed", error: msg });
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
