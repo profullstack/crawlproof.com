@@ -65,6 +65,7 @@ export default async function ProjectStatsPage({
   const { data: { user } } = await supabase.auth.getUser();
   const installations: Array<{ installation_id: number; account_login: string }> = [];
   const ghRepos: Array<{ full_name: string; installation_id: number }> = [];
+  let boundRepos: Array<{ full_name: string; installation_id: number }> = [];
   if (ghConfigured && user) {
     const { data: rows } = await supabase
       .from("github_installations")
@@ -86,6 +87,18 @@ export default async function ProjectStatsPage({
         // show the error.
       }
     }
+    const { data: boundData } = await supabase
+      .from("project_repos")
+      .select("installation_id, repo_owner, repo_name")
+      .eq("project_id", id);
+    boundRepos = ((boundData ?? []) as Array<{
+      installation_id: number;
+      repo_owner: string;
+      repo_name: string;
+    }>).map((b) => ({
+      full_name: `${b.repo_owner}/${b.repo_name}`,
+      installation_id: b.installation_id,
+    }));
   }
 
   return (
@@ -122,6 +135,7 @@ export default async function ProjectStatsPage({
                   projectId={id}
                   installations={installations}
                   repos={ghRepos}
+                  boundRepos={boundRepos}
                   notConfigured={!ghConfigured}
                 />
               </div>

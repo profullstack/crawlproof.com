@@ -15,7 +15,10 @@ interface Repo {
 interface AutoInstallProps {
   projectId: string;
   installations: Installation[];
+  /** All repos across all installations the user has connected. */
   repos: Repo[];
+  /** Repos already bound to this project (subset of repos by full_name). */
+  boundRepos: Repo[];
   /** True when no GH App is configured at all on this deployment. */
   notConfigured: boolean;
 }
@@ -30,6 +33,7 @@ export function AutoInstall({
   projectId,
   installations,
   repos,
+  boundRepos,
   notConfigured,
 }: AutoInstallProps) {
   const [open, setOpen] = useState(false);
@@ -37,6 +41,9 @@ export function AutoInstall({
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [result, setResult] = useState<{ repo: string; result: InstallResult } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // When repos are bound to the project, start narrow; let users opt
+  // into the global list by toggling.
+  const [showAll, setShowAll] = useState(boundRepos.length === 0);
 
   // ESC closes the modal.
   useEffect(() => {
@@ -48,11 +55,12 @@ export function AutoInstall({
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  const source = showAll ? repos : boundRepos;
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return repos;
-    return repos.filter((r) => r.full_name.toLowerCase().includes(needle));
-  }, [q, repos]);
+    if (!needle) return source;
+    return source.filter((r) => r.full_name.toLowerCase().includes(needle));
+  }, [q, source]);
 
   async function run(repo: Repo) {
     setError(null);
@@ -143,13 +151,26 @@ export function AutoInstall({
                   template file, inject the script tag, and open a PR.
                 </p>
 
-                <input
-                  type="text"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder={`Filter ${repos.length} repos…`}
-                  className="mt-3 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
-                />
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <input
+                    type="text"
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder={`Filter ${source.length} repo${source.length === 1 ? "" : "s"}…`}
+                    className="w-full max-w-xs rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+                  />
+                  {boundRepos.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAll((v) => !v)}
+                      className="text-xs text-[var(--color-muted)] underline hover:text-[var(--color-foreground)]"
+                    >
+                      {showAll
+                        ? `Show ${boundRepos.length} bound repo${boundRepos.length === 1 ? "" : "s"}`
+                        : `Browse all ${repos.length} repos`}
+                    </button>
+                  )}
+                </div>
 
                 <ul className="mt-3 max-h-72 overflow-y-auto divide-y divide-[var(--color-border)] rounded-md border border-[var(--color-border)]">
                   {filtered.length === 0 ? (
