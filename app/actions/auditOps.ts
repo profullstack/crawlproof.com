@@ -141,6 +141,11 @@ export async function retryAudit(input: {
       // of clearing it, otherwise the row update fails.
       summary: {},
       report_markdown: null,
+      // Restart the clock. Both the engine-card LiveElapsed counter and
+      // the worker's auditStuckSweep key off created_at; without this
+      // a retry would render "46m 23s" the instant it queued and the
+      // sweep would flip it back to failed within a minute.
+      created_at: new Date().toISOString(),
     })
     .eq("id", input.auditId)
     .eq("status", "failed");
