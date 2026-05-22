@@ -235,7 +235,15 @@ export async function generateGuestPost(
   await Promise.all([
     (async () => {
       try {
-        const bytes = await generateImage(openai, article.title, target.niche);
+        const bytes = await generateImage(openai, {
+          title: article.title,
+          excerpt: article.excerpt,
+          metaDescription: article.meta_description,
+          tags: article.tags,
+          niche: target.niche,
+          audiences: target.target_audiences,
+          brand: target.domain ?? null,
+        });
         if (bytes) imageUrl = await uploadImage(supabase, target.id, finalSlug, bytes);
       } catch (err) {
         console.warn(
