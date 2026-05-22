@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
-import { buildScanRunMarkdown, type SummaryRow } from "@/lib/audit/summary-markdown";
+import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
 
 export const dynamic = "force-dynamic";
 
@@ -45,27 +45,16 @@ export async function GET(
     return new Response("Report not ready yet.", { status: 425 });
   }
 
-  if (own.scan_run_id) {
-    const { data: siblings } = await svc
-      .from("audits")
-      .select(
-        "id, engine, status, score, share_token, summary, report_markdown, failed_reason, created_at",
-      )
-      .eq("scan_run_id", own.scan_run_id)
-      .order("created_at", { ascending: true });
-    const rows = (siblings ?? []) as SummaryRow[];
-    if (rows.length > 1) {
-      const md = buildScanRunMarkdown({ targetUrl: own.target_url, rows });
-      return new Response(md, {
-        headers: {
-          "content-type": "text/markdown; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      });
-    }
-  }
-
-  return new Response(own.report_markdown, {
+  // Shared with the on-page Report tab so what you see equals what you
+  // grab — multi-engine runs return the consolidated doc, solo runs
+  // return just this audit's markdown.
+  const md =
+    (await loadConsolidatedOrSoloMarkdown(svc, {
+      scan_run_id: own.scan_run_id,
+      target_url: own.target_url,
+      report_markdown: own.report_markdown,
+    })) ?? own.report_markdown;
+  return new Response(md, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
       "cache-control": "no-store",

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { ENGINES, type Engine } from "@/lib/credits";
 
 export type SummaryRow = {
@@ -102,4 +103,29 @@ export function buildScanRunMarkdown(input: {
     .join("\n");
 
   return exec + perEngine;
+}
+
+/**
+ * Pick the right Markdown to surface for a single audit row: the
+ * consolidated multi-engine doc when this audit is part of a run with
+ * siblings, otherwise just the audit's own report. Keeps the on-screen
+ * Report tab in lockstep with the Download / Copy buttons that already
+ * use buildScanRunMarkdown — same input, same output, no surprise diff
+ * between what you see and what you grab.
+ */
+export async function loadConsolidatedOrSoloMarkdown(
+  sb: SupabaseClient<any>,
+  audit: { scan_run_id: string | null; target_url: string; report_markdown: string | null },
+): Promise<string | null> {
+  if (!audit.scan_run_id) return audit.report_markdown;
+  const { data: siblings } = await sb
+    .from("audits")
+    .select(
+      "id, engine, status, score, share_token, summary, report_markdown, failed_reason, created_at",
+    )
+    .eq("scan_run_id", audit.scan_run_id)
+    .order("created_at", { ascending: true });
+  const rows = (siblings ?? []) as SummaryRow[];
+  if (rows.length <= 1) return audit.report_markdown;
+  return buildScanRunMarkdown({ targetUrl: audit.target_url, rows });
 }

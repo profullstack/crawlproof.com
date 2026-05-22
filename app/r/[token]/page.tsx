@@ -12,6 +12,7 @@ import { ShareBanner } from "@/components/share-banner";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import type { Finding } from "@/lib/audit/types";
+import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -186,6 +187,16 @@ export default async function PublicReportPage({
   const audit = (auditRows as PublicAuditRow[] | null)?.[0];
   if (!audit) notFound();
 
+  // The public RPC doesn't surface scan_run_id (intentionally — owner
+  // metadata). Pull it via the share_token so we can collapse siblings
+  // into the same consolidated Markdown the prompt.md download uses.
+  const { data: scanLink } = await svc
+    .from("audits")
+    .select("scan_run_id")
+    .eq("share_token", token)
+    .maybeSingle();
+  const auditScanRunId = (scanLink?.scan_run_id ?? null) as string | null;
+
   const seo = await loadSeoAudit(token);
   const canonicalUrl = `${env.siteUrl.replace(/\/$/, "")}/r/${token}`;
 
@@ -235,7 +246,20 @@ export default async function PublicReportPage({
         {audit.status === "complete" && audit.report_markdown ? (
           <ViewTabs
             rawMarkdownUrl={viewerSignedIn ? `/r/${token}/prompt.md` : undefined}
-            markdownView={<MarkdownView markdown={audit.report_markdown} />}
+            markdownView={
+              <MarkdownView
+                markdown={
+                  // Use the same consolidated/solo logic as the
+                  // /r/<token>/prompt.md download so the on-page Report
+                  // tab matches what the user grabs via Download.
+                  (await loadConsolidatedOrSoloMarkdown(svc, {
+                    scan_run_id: auditScanRunId,
+                    target_url: audit.target_url,
+                    report_markdown: audit.report_markdown,
+                  })) ?? audit.report_markdown
+                }
+              />
+            }
             structuredView={
               <ReportView
                 audit={audit as AuditRow}
