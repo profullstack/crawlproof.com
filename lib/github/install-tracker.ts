@@ -23,6 +23,10 @@ interface InstallInput {
    *  "sites/sh1pt.com". Canonical candidate paths get this prefix
    *  before being probed. Leave undefined for single-app repos. */
   rootPath?: string;
+  /** Explicit target file (e.g. "apps/web/app/layout.tsx"). When set,
+   *  discovery is skipped — we install at exactly this path. Used by
+   *  the UI's confirmation step so the user picks the file. */
+  targetPath?: string;
 }
 
 export interface InstallResult {
@@ -136,6 +140,175 @@ function normalizeRoot(p: string | undefined): string {
   return p.replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
+// Ranks a candidate path. Higher is better. The picker uses this to
+// surface the right file by default instead of (say) the boilerplate
+// under examples/. Tuned for monorepos where the production app lives
+// at apps/* or sites/*.
+function rankCandidatePath(path: string, repoName: string): number {
+  let score = 0;
+  // Strong negatives — almost never the live site's template.
+  if (/(^|\/)(boilerplates?|examples?|templates?|samples?|fixtures?|__tests__|tests?|spec|stories|playground|sandbox|demo|node_modules)(\/|$)/i.test(path)) {
+    score -= 100;
+  }
+  // Penalize markdown / docs paths just in case.
+  if (/(^|\/)(docs?|documentation)(\/|$)/i.test(path)) score -= 20;
+  // Likely a real app dir.
+  if (/(^|\/)apps\//i.test(path)) score += 30;
+  if (/(^|\/)sites\//i.test(path)) score += 30;
+  if (/(^|\/)web(\/|$)/i.test(path)) score += 20;
+  // Repo-name match boosts (e.g. sites/sh1pt.com beats sites/foo when
+  // repo is "sh1pt").
+  const lower = path.toLowerCase();
+  const nameLower = repoName.toLowerCase();
+  if (lower.includes(nameLower)) score += 25;
+  // Root-level template files always come first when present.
+  if (!path.includes("/")) score += 50;
+  // Next.js App Router is more common than Pages — slight nudge.
+  if (/\/app\/layout\.(tsx|jsx)$/.test(path)) score += 10;
+  // Shorter paths slightly preferred (closer to root = more canonical).
+  score -= path.length * 0.05;
+  return score;
+}
+
+export interface InstallCandidate {
+  path: string;
+  /** Score from rankCandidatePath — debug / explainer. */
+  score: number;
+  /** Bytes of the file; helps the UI hint at "is this a real app file?". */
+  sizeBytes?: number;
+}
+
+/**
+ * Probe + rank all the candidate template files in a repo. Returns the
+ * list sorted best-first so the UI can show the top pick with the rest
+ * as alternatives.
+ */
+export async function findInstallCandidates(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  rootPath?: string;
+}): Promise<InstallCandidate[]> {
+  const repoMeta = await getRepo({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+  });
+  const ref = repoMeta.default_branch;
+  const root = normalizeRoot(input.rootPath);
+  const canonical = root ? CANDIDATES.map((p) => `${root}/${p}`) : CANDIDATES;
+
+  const found = new Map<string, { sizeBytes?: number }>();
+
+  // Probe the canonical list — cheap, no rate limit on contents API.
+  for (const path of canonical) {
+    const file = await getFileContent({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      path,
+      ref,
+    });
+    if (file && /<\/body>/i.test(file.content)) {
+      found.set(file.path, { sizeBytes: file.content.length });
+    }
+  }
+
+  // Expand with code search hits — handles monorepos / unusual layouts.
+  try {
+    const hits = await searchRepoCode({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      query: "</body>",
+    });
+    for (const h of hits) {
+      if (!found.has(h.path)) found.set(h.path, {});
+    }
+  } catch {
+    // Search is a fallback; tolerate failure.
+  }
+
+  const ranked: InstallCandidate[] = [...found.entries()].map(([path, meta]) => ({
+    path,
+    score: rankCandidatePath(path, input.repo),
+    sizeBytes: meta.sizeBytes,
+  }));
+  ranked.sort((a, b) => b.score - a.score);
+  return ranked;
+}
+
+/**
+ * Generate the would-be diff preview for installing the tracker at a
+ * specific path. Used by the UI to confirm before opening the PR.
+ */
+export async function previewInstallAtPath(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  path: string;
+  projectId: string;
+}): Promise<
+  | { status: "already_installed"; path: string }
+  | {
+      status: "ready";
+      path: string;
+      snippet: string;
+      before: string;
+      after: string;
+      addsImport: boolean;
+    }
+  | { status: "not_a_template"; path: string; reason: string }
+> {
+  const repoMeta = await getRepo({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+  });
+  const file = await getFileContent({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+    path: input.path,
+    ref: repoMeta.default_branch,
+  });
+  if (!file) {
+    return { status: "not_a_template", path: input.path, reason: "File not found." };
+  }
+  const projectIdMarker = `data-site="${input.projectId}"`;
+  if (file.content.includes(projectIdMarker)) {
+    return { status: "already_installed", path: file.path };
+  }
+  if (!/<\/body>/i.test(file.content)) {
+    return {
+      status: "not_a_template",
+      path: file.path,
+      reason: "No </body> tag in this file.",
+    };
+  }
+  const snippet = snippetForPath(input.projectId, file.path);
+  const after = injectBeforeBodyClose(file.content, snippet, file.path);
+  if (!after) {
+    return {
+      status: "not_a_template",
+      path: file.path,
+      reason: "Couldn't locate </body> after injection pass.",
+    };
+  }
+  const addsImport =
+    /\.(tsx|jsx)$/.test(file.path) &&
+    /<Script\b/.test(snippet) &&
+    !/from\s+["']next\/script["']/.test(file.content);
+  return {
+    status: "ready",
+    path: file.path,
+    snippet,
+    before: file.content,
+    after,
+    addsImport,
+  };
+}
+
 export async function installTracker(input: InstallInput): Promise<InstallResult> {
   const repoMeta = await getRepo({
     token: input.token,
@@ -174,9 +347,30 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     return { kind: "miss" };
   };
 
-  // 1. Try the canonical candidate list (optionally prefixed by rootPath).
   let target: { path: string; sha: string; content: string } | null = null;
-  for (const path of candidates) {
+
+  // If the caller pinned an explicit targetPath, skip discovery
+  // entirely — that's the path we install at. The UI uses this after
+  // the user confirms the file shown in the preview step.
+  if (input.targetPath) {
+    const r = await probe(input.targetPath);
+    if (r.kind === "already") {
+      return {
+        status: "noop",
+        path: r.path,
+        detail: `Tracker already installed at ${r.path}.`,
+      };
+    }
+    if (r.kind !== "hit") {
+      throw new Error(
+        `Couldn't install at "${input.targetPath}": file not found or has no </body> tag.`,
+      );
+    }
+    target = r.file;
+  }
+
+  // 1. Try the canonical candidate list (optionally prefixed by rootPath).
+  for (const path of !target ? candidates : []) {
     const r = await probe(path);
     if (r.kind === "already") {
       return {
