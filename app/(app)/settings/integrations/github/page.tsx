@@ -77,6 +77,26 @@ export default async function GithubSettingsPage({
     .order("account_login", { ascending: true });
   const installations: InstallationView[] = (rows ?? []) as InstallationRow[];
 
+  // Projects this user owns — fuels the per-repo "Bind to project" picker.
+  const { data: projectsData } = await supabase
+    .from("projects")
+    .select("id, name")
+    .eq("owner_id", user.id)
+    .order("name", { ascending: true });
+  const projects = (projectsData ?? []) as Array<{ id: string; name: string }>;
+
+  // Every project_repos row this user can see (RLS scopes to their projects).
+  const { data: bindingsData } = await supabase
+    .from("project_repos")
+    .select("id, project_id, installation_id, repo_owner, repo_name");
+  const bindings = (bindingsData ?? []) as Array<{
+    id: string;
+    project_id: string;
+    installation_id: number;
+    repo_owner: string;
+    repo_name: string;
+  }>;
+
   // For each installation, pull the live repo list. Use the service
   // client for token caching writes; safe because we already verified
   // the rows belong to this user via the auth-scoped read above.
@@ -204,7 +224,14 @@ export default async function GithubSettingsPage({
                 </p>
               ) : (
                 <div className="mt-4">
-                  <ReposFilter repos={inst.repos ?? []} />
+                  <ReposFilter
+                    repos={inst.repos ?? []}
+                    installationId={inst.installation_id}
+                    projects={projects}
+                    bindings={bindings.filter(
+                      (b) => b.installation_id === inst.installation_id,
+                    )}
+                  />
                 </div>
               )}
             </section>
