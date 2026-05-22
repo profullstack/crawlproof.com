@@ -882,6 +882,49 @@ async function sweep() {
   for (const row of data) await processJob({ auditId: row.id });
 }
 
+// Recover audits orphaned by a worker crash or by an upstream LLM that
+// opened a connection then never delivered. Worst case the new
+// 90s × 3-attempt budget caps a healthy in-flight call around 4.5
+// minutes; anything still in `running` past 7 minutes is stuck.
+// Flip to failed + refund so the user sees a result and can retry.
+const AUDIT_STUCK_AFTER_MS = 7 * 60 * 1000;
+async function auditStuckSweep() {
+  const cutoff = new Date(Date.now() - AUDIT_STUCK_AFTER_MS).toISOString();
+  const { data: stuck, error: stuckErr } = await supabase
+    .from("audits")
+    .select("id, engine, owner_id")
+    .eq("status", "running")
+    .is("aborted_at", null)
+    .lt("created_at", cutoff);
+  if (stuckErr) {
+    console.warn("[worker] audit stuck sweep", stuckErr.message);
+    return;
+  }
+  if (!stuck || stuck.length === 0) return;
+
+  const now = new Date().toISOString();
+  for (const row of stuck) {
+    const { data: flipped } = await supabase
+      .from("audits")
+      .update({
+        status: "failed",
+        failed_reason: "Engine timed out (no response in 7 minutes)",
+        completed_at: now,
+      })
+      .eq("id", row.id)
+      .eq("status", "running")
+      .is("aborted_at", null)
+      .select("id")
+      .maybeSingle();
+    if (!flipped) continue;
+    const cost = ENGINES[row.engine as Engine]?.cost ?? 0;
+    if (cost > 0 && row.owner_id) {
+      await refundCredits(supabase, row.owner_id, cost);
+    }
+    console.log(`[worker] audit ${row.id} stuck — flipped to failed + refunded`);
+  }
+}
+
 // Recover lx jobs orphaned by a worker crash. Two failure modes:
 //   * lx_article stuck in 'publishing' — atomic claim flipped it but the
 //     delivery loop never reached a terminal state. Reset to 'ready' so
@@ -927,6 +970,10 @@ async function lxSweep() {
 
 setInterval(() => sweep().catch(() => {}), 60_000);
 setInterval(() => lxSweep().catch((e) => console.error("[worker] lx sweep", e)), 60_000);
+setInterval(
+  () => auditStuckSweep().catch((e) => console.error("[worker] audit stuck sweep", e)),
+  60_000,
+);
 
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to

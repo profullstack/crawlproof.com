@@ -5,6 +5,7 @@ import {
   AbortAuditButton,
   RetryAuditButton,
 } from "@/components/audit-row-actions";
+import { LiveElapsed } from "@/components/live-elapsed";
 
 export type RunAudit = {
   id: string;
@@ -259,14 +260,22 @@ function EngineCard({
       {audit.status === "failed" && audit.failed_reason && (
         <p className="mt-3 break-words text-xs text-[var(--color-fail)]">
           {audit.failed_reason}
+          {durationMs !== null && (
+            <span className="ml-2 text-[var(--color-muted)]">
+              (ran {formatDuration(durationMs)})
+            </span>
+          )}
         </p>
       )}
 
       {pending && (
-        <p className="mt-3 text-xs text-[var(--color-muted)]">
-          {audit.status === "queued"
-            ? "Waiting for a worker to pick this up"
-            : "Auditing your site…"}
+        <p className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--color-muted)]">
+          <span>
+            {audit.status === "queued"
+              ? "Waiting for a worker to pick this up"
+              : "Auditing your site…"}
+          </span>
+          <LiveElapsed startedAt={audit.created_at} />
         </p>
       )}
 

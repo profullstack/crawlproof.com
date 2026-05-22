@@ -128,14 +128,15 @@ export async function oaCompatAudit(
   // DashScope / Moonshot occasionally stall mid-completion. The OpenAI SDK
   // default would let a job sit for ~10 minutes, blocking the credit and
   // confusing the user — cap each request and fail fast instead.
-  // SDK retries 429 / 5xx with Retry-After-aware exponential backoff.
-  // 4 retries handles transient Gemini Pro RPM hiccups without giving up
-  // immediately. Timeout caps each individual attempt at 4 minutes.
+  // Was 4-min timeout × 5 attempts (20 min worst case) before a 149K-char
+  // homepage scan caused a 10+ min stall against Kimi. Tightened to
+  // 90s per attempt × 3 attempts (~4.5 min worst case) so the user sees
+  // a real failure they can retry instead of an indefinite spinner.
   const client = new OpenAI({
     apiKey: cfg.apiKey,
     baseURL: cfg.baseURL,
-    timeout: 4 * 60 * 1000,
-    maxRetries: 4,
+    timeout: 90 * 1000,
+    maxRetries: 2,
   });
 
   console.log(
