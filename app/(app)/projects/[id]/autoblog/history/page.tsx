@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProjectById } from "@/lib/lx/currentSite";
-import { RetryButton } from "../actions";
+import { RetryButton, RepublishButton } from "../actions";
 
 export const metadata = { title: "Autoblog · History" };
 
@@ -116,7 +116,11 @@ export default async function AutoblogHistoryPage({
                   {a.published_at ? fmtDate(a.published_at) : "—"}
                 </td>
                 <td className="py-3">
-                  {a.status === "failed" ? <RetryButton articleId={a.id} /> : null}
+                  {a.status === "failed" ? (
+                    <RetryButton articleId={a.id} />
+                  ) : a.status === "published" ? (
+                    <RepublishButton articleId={a.id} />
+                  ) : null}
                 </td>
               </tr>
             ))}

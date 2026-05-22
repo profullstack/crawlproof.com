@@ -192,3 +192,39 @@ export function RetryButton({ articleId }: { articleId: string }) {
     </div>
   );
 }
+
+export function RepublishButton({ articleId }: { articleId: string }) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function onClick() {
+    if (
+      !window.confirm(
+        "Re-fire delivery for this published article? Useful if the receiver's blog row was deleted or you want to refresh the live copy. The receiver upserts on (source, source_id) so this replaces rather than duplicates.",
+      )
+    )
+      return;
+    setPending(true);
+    setErr(null);
+    const r = await call(`/api/lx/articles/${articleId}/republish`);
+    setPending(false);
+    if (r.ok) router.refresh();
+    else setErr(r.error ?? "Republish failed.");
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        className="btn text-xs"
+        disabled={pending}
+        onClick={onClick}
+        title="Re-deliver the webhook for this article"
+      >
+        {pending ? "Republishing…" : "Republish"}
+      </button>
+      {err && <span className="text-xs text-[var(--color-fail)]">{err}</span>}
+    </div>
+  );
+}
