@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { EnginesPanel } from "@/components/engines-panel";
+import { AeoScoreTrend } from "@/components/aeo-score-trend";
 import { ProjectShell } from "@/components/project-shell";
 import { DeleteProjectButton } from "./delete-project-button";
 import { ScoreBadge } from "@/components/score-badge";
@@ -74,6 +75,8 @@ export default async function ProjectOverviewPage({
           url={project.url}
           defaultEngines={(project.engines ?? ["rule"]) as Engine[]}
         />
+
+        <AeoScoreTrend projectId={project.id} />
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Metric
