@@ -292,13 +292,11 @@ function EngineCard({
         {projectId && pending && (
           <AbortAuditButton projectId={projectId} auditId={audit.id} />
         )}
-        {projectId &&
-          audit.status === "failed" &&
-          // Aborted audits are intentionally not retry-able — the user
-          // surrendered the result + got a refund.
-          audit.failed_reason !== "Aborted by user" && (
-            <RetryAuditButton projectId={projectId} auditId={audit.id} />
-          )}
+        {projectId && audit.status === "failed" && (
+          // Both natural failures and user-aborts can retry. Both
+          // refund on failure; retry re-charges a fresh credit.
+          <RetryAuditButton projectId={projectId} auditId={audit.id} />
+        )}
       </div>
     </article>
   );

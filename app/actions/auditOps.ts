@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
-import { refundCredit } from "@/lib/rateLimit";
+import { consumeCredit, refundCredit } from "@/lib/rateLimit";
 import { ENGINES, type Engine } from "@/lib/credits";
 import { env } from "@/lib/env";
 
@@ -76,11 +76,10 @@ export async function abortAudit(input: {
 }
 
 /**
- * Re-queue a failed audit. Resets state and pings the worker. Does NOT
- * recharge credits — the failed run already consumed the credit and the
- * retry is part of "you paid for one result, eventually". Aborted
- * audits (failed_reason="Aborted by user") are NOT retry-able — the
- * user-side abort intentionally surrendered the result + refund.
+ * Re-queue a failed audit (natural failure OR user-aborted). Both
+ * failure paths refund the credit, so retry always re-charges before
+ * re-queueing. Clears aborted_at and failed_reason so the row looks
+ * like a fresh attempt.
  */
 export async function retryAudit(input: {
   projectId: string;
@@ -104,7 +103,7 @@ export async function retryAudit(input: {
   const svc = serviceClient();
   const { data: audit } = await svc
     .from("audits")
-    .select("id, status, scan_run_id, aborted_at, failed_reason")
+    .select("id, engine, status, scan_run_id, aborted_at, failed_reason")
     .eq("id", input.auditId)
     .eq("project_id", input.projectId)
     .maybeSingle();
@@ -115,11 +114,19 @@ export async function retryAudit(input: {
       error: `Audit is '${audit.status}' — only failed audits can be retried.`,
     };
   }
-  if (audit.aborted_at) {
-    return {
-      ok: false,
-      error: "Aborted audits can't be retried; start a new scan.",
-    };
+
+  // Both failure paths refund: worker auto-refunds natural failures,
+  // abortAudit refunds user-aborted ones. So retry always re-charges.
+  // Rule engine is free.
+  const cost = ENGINES[audit.engine as Engine]?.cost ?? 0;
+  if (cost > 0) {
+    const charged = await consumeCredit(user.id, cost);
+    if (!charged.ok) {
+      return {
+        ok: false,
+        error: `Not enough credits to retry this engine (${cost} required).`,
+      };
+    }
   }
 
   const { error: resetErr } = await svc
@@ -128,13 +135,18 @@ export async function retryAudit(input: {
       status: "queued",
       failed_reason: null,
       completed_at: null,
+      aborted_at: null,
       score: null,
       summary: null,
       report_markdown: null,
     })
     .eq("id", input.auditId)
     .eq("status", "failed");
-  if (resetErr) return { ok: false, error: resetErr.message };
+  if (resetErr) {
+    // Refund the credit we just spent — the reset didn't take.
+    if (cost > 0) await refundCredit(user.id, cost);
+    return { ok: false, error: resetErr.message };
+  }
 
   // Fire-and-forget worker ping; the sweep loop will pick this up
   // anyway if the HTTP enqueue misses.

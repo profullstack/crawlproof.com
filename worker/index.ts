@@ -360,14 +360,51 @@ async function processJob(job: Job) {
     }
   } catch (err) {
     console.error("[worker] audit failed", auditId, err);
-    await supabase
+    // Mark failed only if the row wasn't already aborted by the user.
+    // The user-abort path already wrote failed + Aborted by user +
+    // refunded; we don't want to clobber that reason or double-refund.
+    const { data: updated } = await supabase
       .from("audits")
       .update({
         status: "failed",
         failed_reason: err instanceof Error ? err.message : String(err),
       })
-      .eq("id", auditId);
+      .eq("id", auditId)
+      .is("aborted_at", null)
+      .select("engine, owner_id")
+      .maybeSingle();
+    if (updated) {
+      // Natural failure (network, LLM timeout, etc.) — engine didn't
+      // produce a result, so refund the credit. ENGINES[engine].cost is
+      // 0 for the rule engine, so paid engines net to 0 (paid 1 to
+      // queue, refunded 1 on failure).
+      const cost = ENGINES[updated.engine as Engine]?.cost ?? 0;
+      if (cost > 0 && updated.owner_id) {
+        await refundCredits(supabase, updated.owner_id, cost);
+      }
+    }
   }
+}
+
+// Inline refund — the worker can't reach the Next.js rateLimit helper
+// directly because the helper imports the server-only serviceClient.
+// Same write the in-app refundCredit does (add to profiles.credits_balance).
+async function refundCredits(
+  sb: typeof supabase,
+  ownerId: string,
+  count: number,
+): Promise<void> {
+  if (count <= 0) return;
+  const { data: prof } = await sb
+    .from("profiles")
+    .select("credits_balance")
+    .eq("id", ownerId)
+    .maybeSingle();
+  if (!prof) return;
+  await sb
+    .from("profiles")
+    .update({ credits_balance: (prof.credits_balance ?? 0) + count })
+    .eq("id", ownerId);
 }
 
 type SiblingRow = {
