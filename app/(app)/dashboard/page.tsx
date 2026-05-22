@@ -49,9 +49,10 @@ export default async function DashboardPage({
   // project has an lx_site row in status=active; social is "on" when at
   // least one social account is linked at the project level.
   const projectIds = (projects ?? []).map((p) => p.id);
-  const [autoblogIds, socialIds] = await Promise.all([
+  const [autoblogIds, socialIds, latestPosts] = await Promise.all([
     fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
     fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
+    fetchLatestBlogPostByProject(supabase, projectIds),
   ]);
 
   // Lazy backfill: any project still missing a logo gets one scraped
@@ -157,6 +158,21 @@ export default async function DashboardPage({
                     </div>
                   </div>
                 </Link>
+                {latestPosts.get(p.id) && (
+                  <div className="mt-2 truncate text-xs text-[var(--color-muted)]">
+                    Last blog post:{" "}
+                    <a
+                      href={latestPosts.get(p.id)!.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-[var(--color-fg)]"
+                    >
+                      {new Date(
+                        latestPosts.get(p.id)!.publishedAt,
+                      ).toLocaleDateString()}
+                    </a>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -234,6 +250,48 @@ function ProjectLogo({
       className="h-10 w-10 shrink-0 rounded-md border border-[var(--color-border)] bg-white object-contain p-1"
     />
   );
+}
+
+type LatestPost = { url: string; publishedAt: string };
+
+async function fetchLatestBlogPostByProject(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectIds: string[],
+): Promise<Map<string, LatestPost>> {
+  const out = new Map<string, LatestPost>();
+  if (projectIds.length === 0) return out;
+
+  const { data: sites } = await supabase
+    .from("lx_site")
+    .select("id, project_id, blog_root_url")
+    .in("project_id", projectIds);
+  if (!sites || sites.length === 0) return out;
+
+  const siteToProject = new Map<string, { projectId: string; blogRoot: string }>();
+  for (const s of sites as { id: string; project_id: string; blog_root_url: string }[]) {
+    siteToProject.set(s.id, { projectId: s.project_id, blogRoot: s.blog_root_url });
+  }
+
+  const { data: articles } = await supabase
+    .from("lx_article")
+    .select("site_id, slug, published_at")
+    .in("site_id", Array.from(siteToProject.keys()))
+    .eq("status", "published")
+    .not("published_at", "is", null)
+    .order("published_at", { ascending: false });
+  if (!articles) return out;
+
+  for (const a of articles as { site_id: string; slug: string; published_at: string }[]) {
+    const site = siteToProject.get(a.site_id);
+    if (!site) continue;
+    if (out.has(site.projectId)) continue;
+    const root = site.blogRoot.replace(/\/$/, "");
+    out.set(site.projectId, {
+      url: `${root}/${a.slug}`,
+      publishedAt: a.published_at,
+    });
+  }
+  return out;
 }
 
 async function fetchEnabledProjectIds(
