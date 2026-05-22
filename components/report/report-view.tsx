@@ -14,14 +14,22 @@ export type AuditRow = {
   share_token?: string | null;
 };
 
+interface FixContext {
+  projectId: string;
+  auditId: string;
+  repos: Array<{ full_name: string; installation_id: number }>;
+}
+
 export function ReportView({
   audit,
   findings,
   ownerActions,
+  fixContext,
 }: {
   audit: AuditRow;
   findings: Finding[];
   ownerActions?: React.ReactNode;
+  fixContext?: FixContext;
 }) {
   const dataFound = ((audit.summary as { dataFound?: unknown[] })?.dataFound ?? []) as Array<{
     dataPoint: string;
@@ -79,7 +87,10 @@ export function ReportView({
           }
           return (
             <SectionShell key={s} index={i + 1} title={s}>
-              <SectionFindings findings={sectionFindings} />
+              <SectionFindings
+                findings={sectionFindings}
+                fixContext={fixContext}
+              />
             </SectionShell>
           );
         })}
