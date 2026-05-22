@@ -7,11 +7,15 @@ import crypto from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { getLinkedinAuthorizeUrl } from "@/lib/sp/platforms/linkedin";
+import { requirePlatformEnv } from "@/lib/sp/require-env";
 
 const STATE_COOKIE = "sp_linkedin_state";
 const STATE_TTL_S = 600;
 
 export async function GET() {
+  const notConfigured = requirePlatformEnv("linkedin");
+  if (notConfigured) return notConfigured;
+
   const supabase = await createClient();
   const {
     data: { user },

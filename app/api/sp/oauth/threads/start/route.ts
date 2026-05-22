@@ -5,11 +5,15 @@ import crypto from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { getThreadsAuthorizeUrl } from "@/lib/sp/platforms/threads";
+import { requirePlatformEnv } from "@/lib/sp/require-env";
 
 const STATE_COOKIE = "sp_threads_state";
 const STATE_TTL_S = 600;
 
 export async function GET() {
+  const notConfigured = requirePlatformEnv("threads");
+  if (notConfigured) return notConfigured;
+
   const supabase = await createClient();
   const {
     data: { user },
