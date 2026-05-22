@@ -176,6 +176,55 @@ export async function putFile(input: {
   return (await res.json()) as PutFileResponse;
 }
 
+interface CodeSearchHit {
+  name: string;
+  path: string;
+  repository?: { full_name: string };
+}
+
+interface CodeSearchResponse {
+  total_count: number;
+  items: CodeSearchHit[];
+}
+
+/**
+ * Find files in a repo whose contents match a literal substring. Uses
+ * the GitHub Code Search API so we can locate template files in
+ * monorepos / non-standard layouts where the canonical paths miss.
+ *
+ * Note: the search index lags writes by minutes, so a freshly-pushed
+ * file may not appear immediately. For our use case (instrumenting an
+ * existing site) that's fine.
+ */
+export async function searchRepoCode(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  query: string;
+  /** Optional path qualifier, e.g. "*.tsx" or "app/". */
+  extension?: string;
+  perPage?: number;
+}): Promise<CodeSearchHit[]> {
+  // The search API needs the substring inside quotes when it contains
+  // special characters. Build q="</body>" repo:owner/name
+  const q = [
+    `"${input.query}"`,
+    `repo:${input.owner}/${input.repo}`,
+    input.extension ? `extension:${input.extension}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const res = await gh(
+    `/search/code?q=${encodeURIComponent(q)}&per_page=${input.perPage ?? 30}`,
+    { token: input.token },
+  );
+  if (!res.ok) {
+    throw new Error(`searchRepoCode ${res.status}: ${await res.text()}`);
+  }
+  const body = (await res.json()) as CodeSearchResponse;
+  return body.items ?? [];
+}
+
 interface PullRequest {
   number: number;
   html_url: string;
