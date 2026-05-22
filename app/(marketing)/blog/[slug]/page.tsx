@@ -46,6 +46,12 @@ export default async function BlogPost({
 
   return (
     <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
+      <a
+        href="/blog"
+        className="inline-flex items-center text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+      >
+        ← Back to posts
+      </a>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
