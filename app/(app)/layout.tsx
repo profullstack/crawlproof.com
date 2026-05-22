@@ -21,10 +21,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link
             href="/dashboard"
-            className="flex shrink-0 items-center gap-2 font-bold"
+            className="flex shrink-0 items-center"
+            aria-label="CrawlProof — Dashboard"
           >
-            <span className="inline-block size-2 rounded-full bg-[var(--color-accent)]" />
-            CrawlProof
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.svg"
+              alt="CrawlProof"
+              className="h-16 w-auto"
+              width={320}
+              height={64}
+            />
           </Link>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
