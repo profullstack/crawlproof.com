@@ -137,7 +137,9 @@ export async function retryAudit(input: {
       completed_at: null,
       aborted_at: null,
       score: null,
-      summary: null,
+      // audits.summary is NOT NULL — reset to an empty object instead
+      // of clearing it, otherwise the row update fails.
+      summary: {},
       report_markdown: null,
     })
     .eq("id", input.auditId)
