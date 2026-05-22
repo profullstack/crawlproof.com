@@ -414,20 +414,33 @@ async function findPriorArticles(
 // Generate a thematic inline image. Same style guardrails as the hero
 // image, but the prompt describes a specific section topic rather than
 // the article as a whole.
-// Shared art-direction across hero + inline images. The previous prompt
-// described WHAT to draw ("abstract geometric flows") but not HOW the
-// final pixels should look. gpt-image-1 is camera-aware; specifying
-// lens, lighting, surface treatment, and a reference aesthetic gives
-// much more legible, sharper output at the same quality tier.
+// Shared art-direction across hero + concept-mode inline images.
+//
+// Previously this said "macro photo of an anodized-aluminum sculpture"
+// which is exactly why output looked like cold geometric shapes — the
+// model was doing what it was told. New direction is engagement-first:
+// scroll-stopping editorial photography that could ship as a magazine
+// cover or a Twitter share card, with concrete subject matter (people
+// at work, dramatic scenes, expressive moments) instead of abstract
+// metallic objects. Mix subjects across articles so the blog index
+// doesn't feel like one repeated style.
 const SHARED_ART_DIRECTION = [
-  "Style: high-end editorial cover art for The Verge / Wired / MIT Tech Review.",
-  "Medium: macro photograph of a precisely-crafted physical sculpture — anodized aluminum, smoked acrylic, brushed steel, polished glass. NOT a 3D render and NOT a digital illustration.",
-  "Lighting: hard rim light from one direction plus soft fill, dramatic falloff, deep shadow occlusion, faint volumetric haze. Cinematic mood.",
-  "Palette: charcoal background (#0a0d12-ish) with one saturated accent color used sparingly (electric cyan, deep emerald, or warm amber — pick one and stick to it).",
-  "Texture: visible micro-detail, subtle film grain, real-world surface imperfections — fingerprint smudges, dust motes, anisotropic brushing, refractive caustics through glass.",
-  "Composition: rule-of-thirds, strong negative space, one clear focal element with secondary depth layers. Centered subject is BORING — offset it.",
-  "Optics: 50mm macro lens, f/2.8, shallow depth-of-field with bokeh in the far background, slight chromatic aberration at frame edges.",
-  "Strictly NO text, NO typography, NO UI mockups, NO logos, NO charts with labels, NO people, NO faces, NO stock-photo office scenes, NO generic abstract gradient blobs.",
+  // Reference: visual benchmarks people stop scrolling for.
+  "Style benchmark: a Time Magazine / National Geographic / Bloomberg Businessweek / The Verge feature-cover photograph. Editorial photojournalism, not abstract digital art. Should feel like a published photograph, not a render.",
+  // Subject diversity — break the "geometric metal sculpture" default.
+  "Subject: pick the most cinematic option that fits the topic — a person at work with the topic visible in their environment (engineer at a screen, operator in a control room, hands on a keyboard with code reflected in glasses, a researcher at a whiteboard); OR a dramatic scene that evokes the topic (a server room glowing in low light, a city at dusk seen through a window, a single object spotlit on a desk surrounded by cluttered notes); OR a close-up of a real-world workspace artifact (open laptop, well-worn notebook, coffee-ringed printout, glowing terminal). Vary across articles. Faces and hands are welcome — they drive engagement.",
+  // Lighting: cinematic but believable.
+  "Lighting: cinematic chiaroscuro — one strong directional light source (window, monitor glow, desk lamp) with deep falloff into shadow, plus a subtle warm or cool fill. Mood is contemplative-intense, not corporate-bright. Volumetric light particles welcome.",
+  // Palette: richer and varied per piece.
+  "Palette: pick ONE coherent palette per image and commit to it — options include teal+amber (Hollywood thriller), emerald+ink (technical noir), cyan+vermilion (cyberpunk editorial), warm sepia+ember (archive-document feel), or cold blue+single accent (datacenter twilight). Avoid pastel washes and avoid pure black backgrounds; mid-tones with bright highlights are the goal.",
+  // Texture: real-world grit.
+  "Texture: real-world imperfection — fingerprints on screens, dust in light shafts, paper grain, fabric fibers, skin pores, lens flare, mild film grain. The viewer should feel they could touch the surfaces.",
+  // Composition: cinematic.
+  "Composition: cinematic 3:2, rule-of-thirds with a clear single subject of focus and one or two supporting depth layers. Off-center compositions. Strong foreground/background separation via depth of field. Negative space used intentionally, not as a default.",
+  // Optics: editorial portraiture not macro abstract.
+  "Optics: 35mm or 50mm prime, f/1.8–f/2.8, shallow depth of field, gentle bokeh, slight lens vignetting. Not over-sharpened — film-like microcontrast.",
+  // Hard NOs (kept tight).
+  "Strictly NO: typography or UI mockups in the foreground, no logos, no chart-with-labels overlays, no generic abstract gradient blobs, no AI-art clichés (perfectly symmetric robots, melting clocks, glowing brains), no stock-photo handshake shots, no cliché 'man in suit pointing at hologram' compositions. Text-free pixels — the surrounding article copy provides the headline.",
 ];
 
 // Pull the section that contains the Nth inline-image marker out of
@@ -632,19 +645,52 @@ export async function generateInlineImage(
   return Buffer.from(b64, "base64");
 }
 
+export type HeroImageMeta = {
+  title: string;
+  excerpt?: string | null;
+  metaDescription?: string | null;
+  tags?: string[] | null;
+  niche?: string | null;
+  audiences?: string[] | null;
+  brand?: string | null;
+};
+
 export async function generateImage(
   openai: OpenAI,
-  title: string,
-  nicheHint: string | null,
+  meta: HeroImageMeta,
 ): Promise<Buffer | null> {
-  // Hero image for a pragmatic B2B / technical SEO post. Match the
-  // tone of the article: operator-focused, architectural, not salesy.
+  // Hero image. The thumbnail on /blog AND the OG card on every share —
+  // it has to stop a scroll on a phone. Aim for an editorial cover that
+  // a magazine art director would approve: a clear human or scene
+  // subject, dramatic light, one striking color combination.
+  //
+  // We feed the model the actual article metadata (title, lede,
+  // tags, audience) so it has more to anchor on than the bare headline.
+  // Without the lede, gpt-image-1 collapses every abstract title into
+  // the same generic geometric render.
+  const lede = (meta.excerpt || meta.metaDescription || "").trim();
+  const tagList = (meta.tags ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const audienceList = (meta.audiences ?? [])
+    .map((a) => a.trim())
+    .filter(Boolean)
+    .slice(0, 3);
   const prompt = [
-    `Hero cover image for a long-form technical article titled: "${title}".`,
-    nicheHint ? `Subject area: ${nicheHint}.` : "",
-    "Translate the title into a tactile physical metaphor (objects, materials, light) — do NOT illustrate the title directly. The viewer should feel the topic without needing the words.",
+    `Hero cover photograph for a long-form technical feature titled: "${meta.title}".`,
+    lede ? `What the piece is actually about: ${lede}` : "",
+    tagList.length > 0 ? `Topic tags: ${tagList.join(", ")}.` : "",
+    meta.niche ? `Subject area: ${meta.niche}.` : "",
+    audienceList.length > 0
+      ? `Audience the piece is for: ${audienceList.join("; ")}. If you place a person in the frame, they should plausibly belong to that audience (clothing, environment, tools).`
+      : "",
+    meta.brand
+      ? `Publication: ${meta.brand} — operator-focused technical journalism, not corporate marketing.`
+      : "",
+    "Pick the single most cinematic, scroll-stopping visual that fits the topic — preferably a real-feeling moment (a person at work, a charged scene, a single dramatic object lit in context) rather than abstract geometric shapes. Make it look like a published feature-story photograph, NOT an AI-generated abstract pattern.",
     ...SHARED_ART_DIRECTION,
-    "Cinematic 3:2 magazine cover aspect. Confident, single-image composition — not a collage.",
+    "Cinematic 3:2 magazine cover aspect. Single-image composition with a clear focal subject; never a collage. Must read well as a 320×213px social-card thumbnail.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -1000,7 +1046,15 @@ export async function generateArticle(
   await Promise.all([
     (async () => {
       try {
-        const bytes = await generateImage(openai, article.title, typedSite.niche);
+        const bytes = await generateImage(openai, {
+          title: article.title,
+          excerpt: article.excerpt,
+          metaDescription: article.meta_description,
+          tags: article.tags,
+          niche: typedSite.niche,
+          audiences: typedSite.target_audiences,
+          brand: typedSite.domain ?? null,
+        });
         if (bytes)
           imageUrl = await uploadImage(supabase, typedSite.id, finalSlug, bytes);
       } catch (err) {
