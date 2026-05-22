@@ -97,11 +97,23 @@ export async function generateMetadata({
       siteName: "CrawlProof",
       publishedTime: audit.created_at,
       modifiedTime: audit.completed_at ?? audit.created_at,
+      // Page-level openGraph replaces the layout block wholesale — no
+      // merging — so the banner has to be re-declared here or X/social
+      // previews end up with no thumbnail.
+      images: [
+        {
+          url: "/banner.png",
+          width: 1200,
+          height: 630,
+          alt: `CrawlProof AEO audit for ${host}`,
+        },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title: `AEO audit for ${host}${scoreLabel}`,
       description,
+      images: ["/banner.png"],
     },
     other: {
       "article:section": "AEO Audit",
