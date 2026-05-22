@@ -1,10 +1,11 @@
-// Apply a CrawlProof audit fix as a GitHub pull request. Loads relevant
-// repo files, asks Claude to produce a patched version that addresses
-// the specific check, commits the changes on a branch, opens a PR.
+// Apply a CrawlProof audit fix as a GitHub pull request, with Claude
+// driving the change via tool use. Claude can list directories, read
+// files, search code, and stage file writes; the loop runs until Claude
+// calls the `done` tool or hits the iteration cap. Then we commit the
+// staged writes on a branch and open the PR.
 //
-// Credit accounting: callers consume 1 credit BEFORE invoking this and
-// refund on any failure. The implementation here is purely the GitHub +
-// LLM dance; billing lives in the API route.
+// Credit accounting lives in the API route; this function just runs the
+// tool loop and pushes the PR.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "@/lib/env";
@@ -12,9 +13,10 @@ import {
   createBranch,
   getFileContent,
   getRepo,
+  listRepoDirectory,
   openPullRequest,
   putFile,
-  type FileContent,
+  searchRepoCode,
 } from "./repos";
 
 interface FindingInput {
@@ -32,6 +34,8 @@ interface ApplyFixInput {
   repo: string;
   finding: FindingInput;
   targetUrl: string;
+  /** Optional subdirectory hint (e.g. "apps/web") to start exploration in. */
+  rootPath?: string;
 }
 
 export interface ApplyFixResult {
@@ -43,148 +47,143 @@ export interface ApplyFixResult {
   detail: string;
 }
 
-// Heuristic candidate files per finding family. We probe these on the
-// repo's default branch; missing files are silently skipped. Claude
-// receives only the files we successfully fetch.
-const CANDIDATES_BY_PREFIX: Record<string, string[]> = {
-  "robots.": [
-    "public/robots.txt",
-    "static/robots.txt",
-    "robots.txt",
-    "app/robots.txt",
-    "app/robots.ts",
-  ],
-  "llms.": [
-    "public/llms.txt",
-    "static/llms.txt",
-    "llms.txt",
-    "app/llms.txt",
-    "app/llms.txt/route.ts",
-  ],
-  "schema.": [
-    "app/layout.tsx",
-    "app/layout.jsx",
-    "src/app/layout.tsx",
-    "pages/_document.tsx",
-    "pages/_document.jsx",
-    "src/layouts/Layout.astro",
-    "index.html",
-    "public/index.html",
-  ],
-  "meta.": [
-    "app/layout.tsx",
-    "app/layout.jsx",
-    "src/app/layout.tsx",
-    "pages/_document.tsx",
-    "src/layouts/Layout.astro",
-    "index.html",
-    "public/index.html",
-  ],
-  "positioning.": [
-    "app/page.tsx",
-    "app/page.jsx",
-    "src/app/page.tsx",
-    "pages/index.tsx",
-    "pages/index.jsx",
-    "src/pages/index.astro",
-    "index.html",
-    "public/index.html",
-  ],
-  "sitemap.": [
-    "public/sitemap.xml",
-    "static/sitemap.xml",
-    "app/sitemap.ts",
-    "app/sitemap.xml",
-  ],
-};
+// Hard limits keep worst-case cost bounded.
+const MAX_ITERATIONS = 20;
+const MAX_FILE_READ_BYTES = 50_000;
+const MAX_FILE_WRITE_BYTES = 100_000;
+const MAX_TOTAL_WRITE_BYTES = 200_000;
+const MAX_DIR_ENTRIES = 100;
 
-const FALLBACK_CANDIDATES = [
-  "app/layout.tsx",
-  "app/layout.jsx",
-  "src/app/layout.tsx",
-  "pages/_document.tsx",
-  "src/layouts/Layout.astro",
-  "index.html",
-  "public/index.html",
+// Paths Claude shouldn't touch — keeps it focused on app code.
+const BLOCKED_PATH_PATTERNS = [
+  /^\./, // dotfiles / dotdirs (.git, .github, etc.)
+  /(^|\/)node_modules(\/|$)/,
+  /(^|\/)dist(\/|$)/,
+  /(^|\/)build(\/|$)/,
+  /(^|\/)\.next(\/|$)/,
+  /(^|\/)\.cache(\/|$)/,
+  /(^|\/)coverage(\/|$)/,
+  /\.lock$/,
+  /pnpm-lock\.yaml$/,
+  /package-lock\.json$/,
+  /yarn\.lock$/,
 ];
 
-function candidatesFor(checkKey: string): string[] {
-  for (const prefix of Object.keys(CANDIDATES_BY_PREFIX)) {
-    if (checkKey.startsWith(prefix)) return CANDIDATES_BY_PREFIX[prefix];
-  }
-  return FALLBACK_CANDIDATES;
+function isPathBlocked(path: string): boolean {
+  const normalized = path.replace(/^\/+/, "");
+  return BLOCKED_PATH_PATTERNS.some((re) => re.test(normalized));
 }
 
-async function loadCandidateFiles(input: {
-  token: string;
-  owner: string;
-  repo: string;
-  ref: string;
-  paths: string[];
-}): Promise<FileContent[]> {
-  const found: FileContent[] = [];
-  for (const path of input.paths) {
-    const f = await getFileContent({
-      token: input.token,
-      owner: input.owner,
-      repo: input.repo,
-      path,
-      ref: input.ref,
-    });
-    if (f) found.push(f);
-  }
-  return found;
-}
+const TOOLS: Anthropic.Tool[] = [
+  {
+    name: "list_directory",
+    description:
+      "List the immediate children of a directory in the repository. Use an empty string for the repo root.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Repository path. Empty string for root.",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "read_file",
+    description:
+      "Read a file's contents from the default branch. Returns null if the file doesn't exist. Large files are truncated.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Repository path to the file." },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "search_code",
+    description:
+      "Search the repository for files containing a literal substring. Useful for finding components, configs, or markup patterns across an unfamiliar repo.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: 'Literal substring to find (e.g. "</body>", "JSON-LD", "robots").',
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "write_file",
+    description:
+      "Stage a file change. Writes the full new contents (not a diff). Use the same path you read; for new files, pick a canonical location for the framework. Writes are buffered and only land if you eventually call done().",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Repository path to write." },
+        content: {
+          type: "string",
+          description: "Full new contents of the file.",
+        },
+      },
+      required: ["path", "content"],
+    },
+  },
+  {
+    name: "done",
+    description:
+      "Call this when the fix is complete (or you've determined the finding can't be fixed from the repo). Provide a short summary that will appear in the pull request body.",
+    input_schema: {
+      type: "object",
+      properties: {
+        summary: {
+          type: "string",
+          description:
+            "What changed and why, in 1-3 sentences. If no fix was possible, explain why.",
+        },
+      },
+      required: ["summary"],
+    },
+  },
+];
 
-const MAX_FILE_BYTES = 50_000; // Truncate huge files; Claude's window has limits.
+function buildSystemPrompt(owner: string, repo: string): string {
+  return `You are CrawlProof's automated fixer for AEO (Answer Engine Optimization) audit findings. The user has approved one specific finding to be fixed via a pull request on the repository ${owner}/${repo}.
 
-function truncate(s: string): string {
-  if (s.length <= MAX_FILE_BYTES) return s;
-  return s.slice(0, MAX_FILE_BYTES) + "\n\n[…truncated for brevity…]";
-}
-
-interface ClaudePatchResponse {
-  files: { path: string; content: string }[];
-  explanation: string;
-}
-
-async function askClaude(input: {
-  finding: FindingInput;
-  files: FileContent[];
-  targetUrl: string;
-  owner: string;
-  repo: string;
-}): Promise<ClaudePatchResponse> {
-  if (!env.anthropicApiKey) {
-    throw new Error("ANTHROPIC_API_KEY not configured.");
-  }
-  const client = new Anthropic({ apiKey: env.anthropicApiKey });
-
-  const fileBlocks = input.files
-    .map(
-      (f) =>
-        `<file path="${f.path}">\n${truncate(f.content)}\n</file>`,
-    )
-    .join("\n\n");
-
-  const systemPrompt = `You are CrawlProof's automated fixer for AEO (Answer Engine Optimization) audits. The user has approved one specific finding to be fixed via a pull request against their repository ${input.owner}/${input.repo}.
-
-You return a JSON object with the EXACT shape:
-{
-  "files": [{ "path": string, "content": string }],
-  "explanation": string
-}
+You have these tools:
+- list_directory(path) — explore the project structure.
+- read_file(path) — read a file. Large files are truncated.
+- search_code(query) — find files containing a literal substring across the repo.
+- write_file(path, content) — STAGE a file change. Writes are buffered; nothing leaves the system until you call done(). Use the full new file contents (not a diff).
+- done(summary) — signal completion.
 
 Rules:
-- ONLY include files you are actually changing. Do NOT echo unchanged files.
-- The "content" is the FULL new file content (not a diff). Preserve everything you don't intend to change byte-for-byte.
-- Prefer a minimal, surgical change. The PR should be reviewable in under a minute.
-- If you cannot fix the finding from the files provided, return { "files": [], "explanation": "..." } describing what's missing.
-- Do not invent files. Only edit files that exist in the input, or create a file that's clearly canonical for the framework (e.g., public/robots.txt for a robots fix, app/llms.txt/route.ts for a Next.js llms.txt).
-- Match the project's existing style (quotes, indentation, framework conventions).
-- Output ONLY the JSON object, no markdown fences, no commentary.`;
+1. **Be surgical.** Make the minimum change that addresses the finding. Don't refactor unrelated code, restyle untouched lines, or rename variables you don't need to.
+2. **Understand before you write.** Use list_directory + read_file to learn the project's structure and conventions before staging any change.
+3. **Match the existing style** — quotes, indentation, framework idioms (e.g. Next.js \`<Script>\` from next/script, not raw \`<script>\`).
+4. **Don't touch generated / vendored files.** Anything under .git/, node_modules/, dist/, build/, .next/, .cache/, coverage/, or any lockfile is off-limits.
+5. **One coherent change.** All write_file calls become one PR. Don't open multiple parallel fixes.
+6. **Always call done().** If you finish, call done with a summary. If the finding can't be fixed from this repo (e.g. it's about live HTTP headers, DNS, or third-party services), call done explaining why — that closes the loop cleanly without an empty PR.
 
-  const userPrompt = `Target site: ${input.targetUrl}
+Hard limits:
+- Up to ${MAX_ITERATIONS} tool turns.
+- Files larger than ${MAX_FILE_READ_BYTES} bytes are truncated when read.
+- Each write must be under ${MAX_FILE_WRITE_BYTES} bytes; total writes across the run under ${MAX_TOTAL_WRITE_BYTES} bytes.`;
+}
+
+function buildUserPrompt(input: {
+  finding: FindingInput;
+  targetUrl: string;
+  defaultBranch: string;
+  rootPath?: string;
+}): string {
+  return `Target site: ${input.targetUrl}
+Default branch: ${input.defaultBranch}${input.rootPath ? `\nUser hint: the site code lives under \`${input.rootPath}\` — start there.` : ""}
+
 Audit finding to fix:
 - Check key: ${input.finding.check_key}
 - Section: ${input.finding.section}
@@ -193,77 +192,213 @@ Audit finding to fix:
 - Detail: ${input.finding.detail ?? "(none)"}
 - Evidence: ${JSON.stringify(input.finding.evidence)}
 
-Relevant repository files (default branch):
+Start exploring. When ready, stage changes with write_file and call done().`;
+}
 
-${fileBlocks || "(no candidate files found in repo — propose a new file to address the finding)"}
+interface RunState {
+  writes: Map<string, string>;
+  totalWriteBytes: number;
+  explanation: string;
+  doneReached: boolean;
+}
 
-Return the JSON object now.`;
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max) + `\n\n[…truncated at ${max} bytes…]`;
+}
 
-  const res = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 8000,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
+async function executeTool(
+  name: string,
+  input: Record<string, unknown>,
+  ctx: {
+    token: string;
+    owner: string;
+    repo: string;
+    ref: string;
+    state: RunState;
+  },
+): Promise<string> {
+  try {
+    if (name === "list_directory") {
+      const path = String(input.path ?? "");
+      if (path && isPathBlocked(path)) {
+        return `Refused: path "${path}" is blocked (generated / vendored).`;
+      }
+      const entries = await listRepoDirectory({
+        token: ctx.token,
+        owner: ctx.owner,
+        repo: ctx.repo,
+        path,
+        ref: ctx.ref,
+      });
+      if (!entries) return `Not a directory (or doesn't exist): ${path || "/"}`;
+      const trimmed = entries.slice(0, MAX_DIR_ENTRIES);
+      const lines = trimmed.map(
+        (e) => `${e.type === "dir" ? "d" : "f"} ${e.path}${e.size != null ? ` (${e.size}b)` : ""}`,
+      );
+      if (entries.length > MAX_DIR_ENTRIES) {
+        lines.push(`… ${entries.length - MAX_DIR_ENTRIES} more entries omitted`);
+      }
+      return lines.join("\n");
+    }
 
-  // Concatenate all text blocks. The model is instructed to return JSON
-  // only; if it slips in prose we still try to find the JSON.
-  const textParts = res.content
-    .filter((c) => c.type === "text")
-    .map((c) => (c as { type: "text"; text: string }).text)
-    .join("");
-  const jsonStart = textParts.indexOf("{");
-  const jsonEnd = textParts.lastIndexOf("}");
-  if (jsonStart < 0 || jsonEnd < 0) {
-    throw new Error(`Claude response missing JSON: ${textParts.slice(0, 200)}`);
+    if (name === "read_file") {
+      const path = String(input.path ?? "");
+      if (isPathBlocked(path)) {
+        return `Refused: path "${path}" is blocked (generated / vendored).`;
+      }
+      const file = await getFileContent({
+        token: ctx.token,
+        owner: ctx.owner,
+        repo: ctx.repo,
+        path,
+        ref: ctx.ref,
+      });
+      if (!file) return `File not found: ${path}`;
+      return truncate(file.content, MAX_FILE_READ_BYTES);
+    }
+
+    if (name === "search_code") {
+      const query = String(input.query ?? "");
+      if (!query) return "Empty query.";
+      const hits = await searchRepoCode({
+        token: ctx.token,
+        owner: ctx.owner,
+        repo: ctx.repo,
+        query,
+      });
+      if (hits.length === 0) return `No matches for "${query}".`;
+      return hits
+        .slice(0, 30)
+        .map((h) => h.path)
+        .join("\n");
+    }
+
+    if (name === "write_file") {
+      const path = String(input.path ?? "");
+      const content = String(input.content ?? "");
+      if (isPathBlocked(path)) {
+        return `Refused: path "${path}" is blocked (generated / vendored).`;
+      }
+      if (content.length > MAX_FILE_WRITE_BYTES) {
+        return `Refused: ${content.length} bytes exceeds per-file cap of ${MAX_FILE_WRITE_BYTES}.`;
+      }
+      const prevSize = ctx.state.writes.get(path)?.length ?? 0;
+      const newTotal = ctx.state.totalWriteBytes - prevSize + content.length;
+      if (newTotal > MAX_TOTAL_WRITE_BYTES) {
+        return `Refused: total write size would exceed ${MAX_TOTAL_WRITE_BYTES} bytes.`;
+      }
+      ctx.state.writes.set(path, content);
+      ctx.state.totalWriteBytes = newTotal;
+      return `Staged ${path} (${content.length} bytes). Total staged: ${ctx.state.writes.size} file(s), ${ctx.state.totalWriteBytes} bytes.`;
+    }
+
+    if (name === "done") {
+      ctx.state.explanation = String(input.summary ?? "");
+      ctx.state.doneReached = true;
+      return "Done received. The system will commit your staged writes and open the PR.";
+    }
+
+    return `Unknown tool: ${name}`;
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
-  const raw = textParts.slice(jsonStart, jsonEnd + 1);
-  const parsed = JSON.parse(raw) as ClaudePatchResponse;
-  if (!Array.isArray(parsed.files)) {
-    throw new Error("Claude response missing 'files' array");
-  }
-  return parsed;
 }
 
 const BRANCH_PREFIX = "crawlproof/fix";
 
 export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
+  if (!env.anthropicApiKey) {
+    throw new Error("ANTHROPIC_API_KEY not configured.");
+  }
+  const client = new Anthropic({ apiKey: env.anthropicApiKey });
   const repoMeta = await getRepo({
     token: input.token,
     owner: input.owner,
     repo: input.repo,
   });
-  const base = repoMeta.default_branch;
+  const ref = repoMeta.default_branch;
 
-  const candidates = candidatesFor(input.finding.check_key);
-  const files = await loadCandidateFiles({
-    token: input.token,
-    owner: input.owner,
-    repo: input.repo,
-    ref: base,
-    paths: candidates,
-  });
+  const state: RunState = {
+    writes: new Map(),
+    totalWriteBytes: 0,
+    explanation: "",
+    doneReached: false,
+  };
 
-  const patch = await askClaude({
+  const system = buildSystemPrompt(input.owner, input.repo);
+  const userPrompt = buildUserPrompt({
     finding: input.finding,
-    files,
     targetUrl: input.targetUrl,
-    owner: input.owner,
-    repo: input.repo,
+    defaultBranch: ref,
+    rootPath: input.rootPath,
   });
 
-  if (patch.files.length === 0) {
+  const messages: Anthropic.MessageParam[] = [
+    { role: "user", content: userPrompt },
+  ];
+
+  let iteration = 0;
+  while (iteration < MAX_ITERATIONS && !state.doneReached) {
+    iteration++;
+    const resp = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
+      // Cache the static system + tools block; the conversation prefix
+      // changes per iteration and isn't cached.
+      system: [
+        { type: "text", text: system, cache_control: { type: "ephemeral" } },
+      ],
+      tools: TOOLS,
+      messages,
+    });
+
+    messages.push({ role: "assistant", content: resp.content });
+
+    const toolUses = resp.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+    );
+
+    if (toolUses.length === 0) {
+      // Claude finished without calling done — capture any final text.
+      const text = resp.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      if (text) state.explanation = text;
+      break;
+    }
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const tu of toolUses) {
+      const result = await executeTool(
+        tu.name,
+        (tu.input as Record<string, unknown>) || {},
+        { token: input.token, owner: input.owner, repo: input.repo, ref, state },
+      );
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: tu.id,
+        content: result,
+      });
+    }
+    messages.push({ role: "user", content: toolResults });
+
+    if (state.doneReached) break;
+    if (resp.stop_reason === "end_turn" && toolUses.length === 0) break;
+  }
+
+  if (state.writes.size === 0) {
     return {
       status: "noop",
       detail:
-        patch.explanation ||
-        "Claude found nothing to change with the files available.",
+        state.explanation ||
+        `Claude explored the repo but didn't stage any changes after ${iteration} iteration(s).`,
     };
   }
 
-  // Index existing file shas so updates carry the sha; creates leave it.
-  const shaByPath = new Map(files.map((f) => [f.path, f.sha]));
-
+  // Commit the staged writes on a new branch.
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const safeKey = input.finding.check_key.replace(/[^a-z0-9.]/gi, "-");
   const branch = `${BRANCH_PREFIX}/${safeKey}-${ts}`;
@@ -272,22 +407,31 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     owner: input.owner,
     repo: input.repo,
     newBranch: branch,
-    fromBranch: base,
+    fromBranch: ref,
   });
 
+  // For each staged write, look up the existing sha so the PUT replaces
+  // rather than failing with "sha required".
   const changed: string[] = [];
-  for (const f of patch.files) {
+  for (const [path, content] of state.writes) {
+    const existing = await getFileContent({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      path,
+      ref,
+    });
     await putFile({
       token: input.token,
       owner: input.owner,
       repo: input.repo,
-      path: f.path,
+      path,
       branch,
       message: `Fix ${input.finding.check_key}: ${input.finding.title}`,
-      contentUtf8: f.content,
-      sha: shaByPath.get(f.path),
+      contentUtf8: content,
+      sha: existing?.sha,
     });
-    changed.push(f.path);
+    changed.push(path);
   }
 
   const pr = await openPullRequest({
@@ -295,9 +439,9 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     owner: input.owner,
     repo: input.repo,
     head: branch,
-    base,
+    base: ref,
     title: `CrawlProof fix: ${input.finding.title}`,
-    body: prBody(input.finding, patch.explanation, changed),
+    body: prBody(input.finding, state.explanation, changed, iteration),
   });
 
   return {
@@ -306,7 +450,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     prNumber: pr.number,
     branch,
     changedPaths: changed,
-    detail: `Opened PR with ${changed.length} file change(s).`,
+    detail: `Opened PR with ${changed.length} file change(s) after ${iteration} agent iteration(s).`,
   };
 }
 
@@ -314,6 +458,7 @@ function prBody(
   finding: FindingInput,
   explanation: string,
   changed: string[],
+  iterations: number,
 ): string {
   return `**CrawlProof automated fix** for the following audit finding:
 
@@ -326,11 +471,11 @@ function prBody(
 ${changed.map((p) => `- \`${p}\``).join("\n")}
 
 **Why:**
-${explanation}
+${explanation || "(no summary provided)"}
 
 ---
 
-Generated by Claude Sonnet 4.6. Review the diff before merging — automated edits are not infallible. Disagree with the change? Close the PR and apply the fix manually using the audit recommendations on your CrawlProof project page.
+Generated by Claude Sonnet 4.6 in agentic mode (${iterations} tool iteration${iterations === 1 ? "" : "s"}). Review the diff before merging — automated edits are not infallible. Disagree with the change? Close the PR and apply the fix manually using the audit recommendations on your CrawlProof project page.
 
 Docs: ${env.siteUrl}/docs/aeo-score`;
 }
