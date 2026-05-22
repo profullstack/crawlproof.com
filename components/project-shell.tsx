@@ -13,6 +13,7 @@ export type ProjectShellTab =
   | "stats"
   | "autoblog"
   | "social"
+  | "repos"
   | "getting-started";
 
 type ProjectLite = {
@@ -41,6 +42,7 @@ const TABS: { id: ProjectShellTab; label: string; href: (id: string) => string }
   { id: "stats", label: "Stats", href: (id) => `/projects/${id}/stats` },
   { id: "autoblog", label: "Autoblog", href: (id) => `/projects/${id}/autoblog` },
   { id: "social", label: "Social", href: (id) => `/projects/${id}/social` },
+  { id: "repos", label: "Repos", href: (id) => `/projects/${id}/repos` },
 ];
 
 // Shared shell for the three project tab pages. Renders the breadcrumb,

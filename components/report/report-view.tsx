@@ -18,6 +18,7 @@ interface FixContext {
   projectId: string;
   auditId: string;
   repos: Array<{ full_name: string; installation_id: number }>;
+  boundRepos: Array<{ full_name: string; installation_id: number }>;
 }
 
 export function ReportView({
