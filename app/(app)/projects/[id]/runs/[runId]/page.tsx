@@ -85,6 +85,7 @@ export default async function ScanRunPage({
       <ScanRunResults
         rows={typedRows}
         targetUrl={rows[0].target_url}
+        projectId={projectId}
         backHref={`/projects/${projectId}`}
         backLabel={project.name}
         ownerActions={
