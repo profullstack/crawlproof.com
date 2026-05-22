@@ -48,6 +48,19 @@ export function SetupDoneClient() {
     "GITHUB_APP_PRIVATE_KEY=" + JSON.stringify(secrets.pem ?? ""),
   ].join("\n");
 
+  // org-owned apps live at /organizations/<owner>/settings/apps/<slug>;
+  // personal apps live at /settings/apps/<slug>. The owner field tells
+  // us which to use.
+  const ownerLogin = secrets.owner ?? "";
+  const isOrgOwned =
+    !!ownerLogin && !!secrets.html_url && /\/apps\//.test(secrets.html_url ?? "");
+  const manageUrl = isOrgOwned
+    ? `https://github.com/organizations/${ownerLogin}/settings/apps/${secrets.slug ?? ""}`
+    : `https://github.com/settings/apps/${secrets.slug ?? ""}`;
+  const installUrl = secrets.slug
+    ? `https://github.com/apps/${secrets.slug}/installations/new`
+    : null;
+
   return (
     <div className="mt-8 space-y-6">
       <section className="card p-4">
@@ -81,22 +94,29 @@ export function SetupDoneClient() {
           </li>
           <li>Redeploy (the app reads env at boot).</li>
           <li>
-            Open{" "}
-            <a
-              className="underline"
-              href={secrets.html_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              your new GitHub App
-            </a>{" "}
-            and click <strong>Install App</strong>. Pick the repos to
-            expose.
+            Optional — open the App on GitHub to confirm the values:{" "}
+            <a className="underline" href={manageUrl} target="_blank" rel="noreferrer">
+              Manage on GitHub →
+            </a>
           </li>
-          <li>
-            GitHub will redirect back to CrawlProof and the connection
-            shows up on the GitHub settings page.
-          </li>
+          {installUrl && (
+            <li>
+              Test by installing on a sandbox repo:{" "}
+              <a
+                className="underline"
+                href={installUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Install App →
+              </a>
+              . End users do the same from their{" "}
+              <a className="underline" href="/settings/integrations/github">
+                personal GitHub settings page
+              </a>
+              .
+            </li>
+          )}
         </ol>
       </section>
 
