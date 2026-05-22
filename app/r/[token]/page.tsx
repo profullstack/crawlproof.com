@@ -9,6 +9,7 @@ import { PerformancePreview } from "@/components/report/performance-preview";
 import { LivePoller } from "@/components/report/live-poller";
 import { CopyLink } from "@/components/copy-link";
 import { ShareBanner } from "@/components/share-banner";
+import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import type { Finding } from "@/lib/audit/types";
 import { env } from "@/lib/env";
@@ -161,6 +162,14 @@ export default async function PublicReportPage({
   const { token } = await params;
   const svc = serviceClient();
 
+  // Track viewer auth so we can gate the LLM-ready prompt download to
+  // registered users while keeping the structured report itself public.
+  const session = await createClient();
+  const {
+    data: { user: viewer },
+  } = await session.auth.getUser();
+  const viewerSignedIn = !!viewer;
+
   const { data: auditRows } = await svc.rpc("get_public_audit", { token });
   const audit = (auditRows as PublicAuditRow[] | null)?.[0];
   if (!audit) notFound();
@@ -213,7 +222,7 @@ export default async function PublicReportPage({
 
         {audit.status === "complete" && audit.report_markdown ? (
           <ViewTabs
-            rawMarkdownUrl={`/r/${token}/prompt.md`}
+            rawMarkdownUrl={viewerSignedIn ? `/r/${token}/prompt.md` : undefined}
             markdownView={<MarkdownView markdown={audit.report_markdown} />}
             structuredView={
               <ReportView
