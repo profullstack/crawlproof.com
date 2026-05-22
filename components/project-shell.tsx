@@ -12,7 +12,8 @@ export type ProjectShellTab =
   | "scans"
   | "stats"
   | "autoblog"
-  | "social";
+  | "social"
+  | "getting-started";
 
 type ProjectLite = {
   id: string;
@@ -25,6 +26,11 @@ type ProjectLite = {
 };
 
 const TABS: { id: ProjectShellTab; label: string; href: (id: string) => string }[] = [
+  {
+    id: "getting-started",
+    label: "Getting Started",
+    href: (id) => `/projects/${id}/getting-started`,
+  },
   { id: "overview", label: "Overview", href: (id) => `/projects/${id}` },
   {
     id: "performance",
