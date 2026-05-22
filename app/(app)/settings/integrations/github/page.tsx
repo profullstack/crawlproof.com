@@ -139,10 +139,10 @@ export default async function GithubSettingsPage({
           </p>
           {isAdmin && (
             <Link
-              href="/settings/integrations/github/setup"
+              href="/admin/github/setup"
               className="btn btn-primary mt-4 inline-flex"
             >
-              Run one-click setup
+              Run one-click setup (admin)
             </Link>
           )}
         </section>

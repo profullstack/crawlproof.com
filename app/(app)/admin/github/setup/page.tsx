@@ -1,16 +1,19 @@
-// One-click GitHub App setup. Posts a pre-filled manifest to GitHub
-// targeting the /profullstack org. After the admin clicks "Create", GitHub
-// redirects to /api/github/setup-callback which exchanges the code and
-// hands us back the App's secrets (id, slug, client_id/secret, webhook
-// secret, PEM private key) to paste into Railway.
-//
-// Restricted to profiles.is_admin so random signed-in users can't kick
-// off a registration on the org's behalf.
+// Admin-only: register CrawlProof as a GitHub App on the profullstack
+// org via the App Manifest flow. Lives under /admin because it's a
+// one-time org-level setup, not a per-user action. Individual users
+// go to /settings/integrations/github to *install* the App on their own
+// account; this page is for the platform owner to *create* the App.
 
-import { redirect } from "next/navigation";
+import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+
+export const metadata = {
+  title: "Admin · Register GitHub App",
+  robots: { index: false, follow: false },
+};
 
 const ORG = "profullstack";
 
@@ -20,8 +23,24 @@ interface ManifestPermissions {
   metadata: "read";
 }
 
-function buildManifest() {
-  const base = env.siteUrl.replace(/\/$/, "");
+/**
+ * Derive the public base URL from the actual request, falling back to
+ * env.siteUrl. Protects against a misconfigured NEXT_PUBLIC_SITE_URL
+ * baking a broken host (e.g. 0.0.0.0:8080) into the manifest — which
+ * would route GitHub's conversion callback to a URL the admin can't
+ * reach, locking the App's secrets behind an unreachable redirect.
+ */
+async function publicBaseUrl(): Promise<string> {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  if (host && !host.startsWith("0.0.0.0") && !host.startsWith("127.0.0.1")) {
+    return `${proto}://${host}`.replace(/\/$/, "");
+  }
+  return env.siteUrl.replace(/\/$/, "");
+}
+
+function buildManifest(base: string) {
   return {
     name: "CrawlProof",
     url: base,
@@ -42,7 +61,7 @@ function buildManifest() {
   };
 }
 
-export default async function GithubAppSetupPage({
+export default async function AdminGithubSetupPage({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string }>;
@@ -51,39 +70,35 @@ export default async function GithubAppSetupPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/login?redirect=/settings/integrations/github/setup");
-
-  const { data: profile } = await supabase
+  if (!user) notFound();
+  const { data: me } = await supabase
     .from("profiles")
     .select("is_admin")
     .eq("id", user.id)
     .maybeSingle();
-  if (!profile?.is_admin) {
-    redirect("/settings/integrations/github?error=setup_admin_only");
-  }
+  if (!me?.is_admin) notFound();
 
   const { error } = await searchParams;
-  const manifest = buildManifest();
+  const base = await publicBaseUrl();
+  const manifest = buildManifest(base);
   const action = `https://github.com/organizations/${ORG}/settings/apps/new?state=${encodeURIComponent("crawlproof-setup")}`;
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
       <p className="text-sm">
-        <Link
-          href="/settings/integrations/github"
-          className="text-[var(--color-muted)] hover:underline"
-        >
-          ← GitHub settings
+        <Link href="/admin" className="text-[var(--color-muted)] hover:underline">
+          ← Admin
         </Link>
       </p>
       <h1 className="mt-2 text-3xl font-extrabold">
         Register CrawlProof as a GitHub App
       </h1>
       <p className="mt-3 text-[var(--color-muted)]">
-        One click for the org admin. Click <strong>Create GitHub App</strong>{" "}
+        One-time platform setup. Click <strong>Create GitHub App</strong>{" "}
         below, sign in to the <code>{ORG}</code> org on GitHub if prompted,
-        and confirm. GitHub will redirect you back here with the App&apos;s
-        secrets — copy them into Railway and the integration is live.
+        and confirm. GitHub redirects back here with the App&apos;s
+        secrets — copy them into Railway and the integration is live for
+        every CrawlProof user.
       </p>
 
       {error && (
@@ -107,25 +122,15 @@ export default async function GithubAppSetupPage({
           </li>
           <li>No webhook events subscribed; webhook url is set but inactive.</li>
           <li>
-            Callback URLs:{" "}
-            <code className="font-mono">
-              {env.siteUrl}/api/github/callback
-            </code>
-            ,{" "}
-            <code className="font-mono">
-              {env.siteUrl}/api/github/setup-callback
-            </code>
-            .
+            Callback URLs derived from this request&apos;s host:{" "}
+            <code className="font-mono">{base}/api/github/callback</code>,{" "}
+            <code className="font-mono">{base}/api/github/setup-callback</code>.
           </li>
         </ul>
       </section>
 
       <form action={action} method="POST" className="mt-6">
-        <input
-          type="hidden"
-          name="manifest"
-          value={JSON.stringify(manifest)}
-        />
+        <input type="hidden" name="manifest" value={JSON.stringify(manifest)} />
         <button type="submit" className="btn btn-primary">
           Create GitHub App for {ORG} →
         </button>
