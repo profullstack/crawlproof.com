@@ -10,12 +10,9 @@ export async function SiteHeader() {
   return (
     <header className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-bg)]/85 backdrop-blur">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-        <Link
-          href="/"
-          className="flex shrink-0 items-center gap-2 font-bold"
-        >
-          <span className="inline-block size-2 rounded-full bg-[var(--color-accent)]" />
-          CrawlProof
+        <Link href="/" className="flex shrink-0 items-center" aria-label="CrawlProof home">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="CrawlProof" className="h-7 w-auto" />
         </Link>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
           <Link

@@ -27,11 +27,32 @@ export const metadata: Metadata = {
     siteName: "CrawlProof",
     url: "/",
     locale: "en_US",
+    images: [{ url: "/banner.png", width: 1200, height: 630, alt: "CrawlProof" }],
   },
   twitter: {
     card: "summary_large_image",
     title: SITE_TITLE,
     description: SITE_DESC,
+    images: ["/banner.png"],
+  },
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/favicon-16.png", sizes: "16x16", type: "image/png" },
+    ],
+    shortcut: "/icons/favicon.ico",
+    apple: [
+      { url: "/icons/apple-touch-icon-180x180.png", sizes: "180x180" },
+      { url: "/icons/apple-touch-icon-152x152.png", sizes: "152x152" },
+      { url: "/icons/apple-touch-icon-144x144.png", sizes: "144x144" },
+      { url: "/icons/apple-touch-icon-120x120.png", sizes: "120x120" },
+      { url: "/icons/apple-touch-icon-114x114.png", sizes: "114x114" },
+      { url: "/icons/apple-touch-icon-76x76.png", sizes: "76x76" },
+      { url: "/icons/apple-touch-icon-72x72.png", sizes: "72x72" },
+      { url: "/icons/apple-touch-icon-60x60.png", sizes: "60x60" },
+      { url: "/icons/apple-touch-icon-57x57.png", sizes: "57x57" },
+    ],
   },
   manifest: "/manifest.webmanifest",
   appleWebApp: {

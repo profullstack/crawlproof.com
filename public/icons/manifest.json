@@ -1,11 +1,12 @@
 {
-  "name": "crawlproof",
-  "short_name": "App",
-  "description": "Your app description",
+  "name": "CrawlProof",
+  "short_name": "CrawlProof",
+  "description": "See your site the way AI crawlers do.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
   "orientation": "portrait-primary",
   "icons": [
     {
