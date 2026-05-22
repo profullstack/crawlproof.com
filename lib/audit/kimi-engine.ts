@@ -5,18 +5,20 @@ import type { ClaudeAuditResult } from "./claude-engine";
 export async function kimiAudit(targetUrl: string): Promise<ClaudeAuditResult> {
   return oaCompatAudit(targetUrl, {
     apiKey: env.moonshotApiKey,
-    // Moonshot canonical endpoint is api.moonshot.cn/v1 — the .ai mirror
-    // we were using hung on long contexts (149K-char homepage scans sat
-    // for 10+ min with no response).
-    baseURL: "https://api.moonshot.cn/v1",
-    // Model id uses hyphen, not dot. Was "kimi-k2.6"; correct id from
-    // the public docs + curl examples is "kimi-k2-6".
-    model: "kimi-k2-6",
+    // International endpoint. Pair with an api.moonshot.ai-issued key.
+    baseURL: "https://api.moonshot.ai/v1",
+    // kimi-k2-0905-preview — current K2 preview build per Moonshot's
+    // own curl example. The earlier kimi-k2.6 / kimi-k2-6 ids weren't
+    // resolving on this endpoint.
+    model: "kimi-k2-0905-preview",
     providerLabel: "Kimi",
-    // Moonshot caps max_tokens at 32768.
-    maxOutputTokens: 32_768,
-    // K2 only accepts temperature=1; any other value 400s with
-    // "invalid temperature: only 1 is allowed for this model".
-    temperature: 1,
+    // 8192 matches Moonshot's documented per-request limit for this
+    // preview build. Reports may truncate vs Claude/GPT — bump if/when
+    // the preview is replaced by a longer-output GA model.
+    maxOutputTokens: 8192,
+    // 0.3 matches Moonshot's example call for this preview build.
+    // The temperature=1 lock was specific to the kimi-k2.6 build that
+    // we're no longer hitting.
+    temperature: 0.3,
   });
 }
