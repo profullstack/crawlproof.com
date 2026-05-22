@@ -85,5 +85,22 @@ export const env = {
   // alone cannot exploit any token without this server-side value.
   // Generate with `openssl rand -base64 32`.
   spTokenPepper: process.env.SP_TOKEN_PEPPER ?? "",
+  // GitHub App — for connecting customer repos and opening automated PRs
+  // (stats.js install, applying audit fixes). Register at
+  // https://github.com/settings/apps with:
+  //   Callback URL:  {siteUrl}/api/github/callback
+  //   Webhook URL:   {siteUrl}/api/github/webhook   (optional, for later)
+  //   Permissions:   Contents (Read & write), Pull requests (Read & write),
+  //                  Metadata (Read-only)
+  // GITHUB_APP_PRIVATE_KEY is the PEM-encoded RSA private key, NEWLINES
+  // INCLUDED — paste with literal \n or upload the .pem and let Railway
+  // expand it. GITHUB_APP_SLUG is the URL slug shown in the app's
+  // GitHub URL (e.g. github.com/apps/<slug>); used to build install
+  // links.
+  githubAppId: process.env.GITHUB_APP_ID ?? "",
+  githubAppClientId: process.env.GITHUB_APP_CLIENT_ID ?? "",
+  githubAppClientSecret: process.env.GITHUB_APP_CLIENT_SECRET ?? "",
+  githubAppPrivateKey: process.env.GITHUB_APP_PRIVATE_KEY ?? "",
+  githubAppSlug: process.env.GITHUB_APP_SLUG ?? "",
   required,
 };
