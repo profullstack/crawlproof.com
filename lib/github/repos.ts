@@ -176,6 +176,44 @@ export async function putFile(input: {
   return (await res.json()) as PutFileResponse;
 }
 
+export interface DirectoryEntry {
+  type: "file" | "dir";
+  name: string;
+  path: string;
+  size?: number;
+}
+
+/**
+ * List the immediate children of a directory in a repo. Returns null
+ * for paths that don't exist (or aren't directories). Use empty string
+ * to list the repo root.
+ */
+export async function listRepoDirectory(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  path: string;
+  ref?: string;
+}): Promise<DirectoryEntry[] | null> {
+  const path = input.path.replace(/^\/+|\/+$/g, "");
+  const url = `/repos/${input.owner}/${input.repo}/contents${path ? `/${encodeURIComponent(path)}` : ""}${input.ref ? `?ref=${encodeURIComponent(input.ref)}` : ""}`;
+  const res = await gh(url, { token: input.token });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`listRepoDirectory ${res.status}: ${await res.text()}`);
+  }
+  const body = (await res.json()) as unknown;
+  if (!Array.isArray(body)) return null; // Single file, not a directory.
+  return (body as Array<{ type: string; name: string; path: string; size?: number }>)
+    .filter((e) => e.type === "file" || e.type === "dir")
+    .map((e) => ({
+      type: e.type as "file" | "dir",
+      name: e.name,
+      path: e.path,
+      size: e.size,
+    }));
+}
+
 interface CodeSearchHit {
   name: string;
   path: string;
