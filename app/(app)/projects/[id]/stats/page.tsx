@@ -7,6 +7,9 @@ import type { Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
+import { AutoInstall } from "./auto-install";
+import { getOrMintInstallationToken } from "@/lib/github/installations";
+import { listInstallationRepos } from "@/lib/github/app";
 
 type StatsRow = { bucket: string; day: string; count: number };
 
@@ -56,6 +59,35 @@ export default async function ProjectStatsPage({
   const trackerEnabled = !!(project as { tracker_enabled?: boolean })
     .tracker_enabled;
 
+  // GitHub auto-install: best-effort. If env is missing or the user has
+  // no connected installations, we just hide the button.
+  const ghConfigured = !!(env.githubAppId && env.githubAppPrivateKey);
+  const { data: { user } } = await supabase.auth.getUser();
+  const installations: Array<{ installation_id: number; account_login: string }> = [];
+  const ghRepos: Array<{ full_name: string; installation_id: number }> = [];
+  if (ghConfigured && user) {
+    const { data: rows } = await supabase
+      .from("github_installations")
+      .select("installation_id, account_login")
+      .is("removed_at", null);
+    for (const r of (rows ?? []) as Array<{ installation_id: number; account_login: string }>) {
+      installations.push(r);
+      try {
+        const token = await getOrMintInstallationToken(r.installation_id);
+        const repos = await listInstallationRepos(token);
+        for (const repo of repos) {
+          ghRepos.push({
+            full_name: repo.full_name,
+            installation_id: r.installation_id,
+          });
+        }
+      } catch {
+        // Skip this installation if listing fails; the settings page will
+        // show the error.
+      }
+    }
+  }
+
   return (
     <ProjectShell
       project={{
@@ -83,7 +115,17 @@ export default async function ProjectStatsPage({
             <TrackerToggle projectId={id} initialEnabled={trackerEnabled} />
           </div>
           {trackerEnabled && (
-            <InstallSnippet projectId={id} siteUrl={env.siteUrl} />
+            <>
+              <InstallSnippet projectId={id} siteUrl={env.siteUrl} />
+              <div className="mt-3">
+                <AutoInstall
+                  projectId={id}
+                  installations={installations}
+                  repos={ghRepos}
+                  notConfigured={!ghConfigured}
+                />
+              </div>
+            </>
           )}
         </section>
 
