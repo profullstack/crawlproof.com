@@ -1,9 +1,12 @@
-// Account-level GitHub integration page. Three states:
-//   1. Env not configured        → admin sees a "Run setup" CTA;
-//                                  non-admins see a "not configured" notice.
+// Account-level GitHub integration page (user POV — install + manage your
+// own GitHub installations). Three states:
+//   1. Env not configured        → "integration not available yet" notice.
+//                                  Admins see a small inline link to /admin.
 //   2. Configured, not connected → "Install" CTA pointing at github.com/apps/<slug>.
 //   3. Connected                 → list of installations + their repos with a
 //                                  client-side filter (sized for 200+).
+//
+// Platform-level App registration is NOT here. It lives at /admin/github/setup.
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -129,21 +132,21 @@ export default async function GithubSettingsPage({
 
       {!configured ? (
         <section className="card mt-8 p-5">
-          <h2 className="text-lg font-semibold">Integration not configured</h2>
+          <h2 className="text-lg font-semibold">
+            Integration not available yet
+          </h2>
           <p className="mt-2 text-sm text-[var(--color-muted)]">
-            CrawlProof&apos;s GitHub App credentials aren&apos;t set on this
-            deployment yet.{" "}
-            {isAdmin
-              ? "Run the one-click setup to register the App on the Profullstack org and get the values to paste into Railway."
-              : "Ask an admin to run the one-click setup from this page."}
+            The CrawlProof GitHub App isn&apos;t configured on this deployment.
+            Check back soon.
           </p>
           {isAdmin && (
-            <Link
-              href="/admin/github/setup"
-              className="btn btn-primary mt-4 inline-flex"
-            >
-              Run one-click setup (admin)
-            </Link>
+            <p className="mt-3 text-xs text-[var(--color-muted)]">
+              Admin:{" "}
+              <Link href="/admin/github/setup" className="underline">
+                register the App at /admin/github/setup
+              </Link>
+              .
+            </p>
           )}
         </section>
       ) : installations.length === 0 ? (
