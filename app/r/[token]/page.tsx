@@ -8,6 +8,7 @@ import { ViewTabs } from "@/components/report/view-tabs";
 import { PerformancePreview } from "@/components/report/performance-preview";
 import { LivePoller } from "@/components/report/live-poller";
 import { CopyLink } from "@/components/copy-link";
+import { ShareBanner } from "@/components/share-banner";
 import { serviceClient } from "@/lib/supabase/service";
 import type { Finding } from "@/lib/audit/types";
 import { env } from "@/lib/env";
@@ -192,6 +193,13 @@ export default async function PublicReportPage({
       {seo && <ReportJsonLd url={canonicalUrl} audit={seo} />}
       <SiteHeader />
       <main className="mx-auto max-w-6xl px-4 sm:px-6 py-10">
+        <ShareBanner
+          url={canonicalUrl}
+          reportTitle={audit.target_url}
+          scoreLabel={
+            typeof audit.score === "number" ? `${audit.score}/100` : undefined
+          }
+        />
         {audit.status !== "complete" && audit.status !== "failed" && (
           <div className="mb-6">
             <LivePoller id={audit.id} />

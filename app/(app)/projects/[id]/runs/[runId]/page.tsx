@@ -6,6 +6,8 @@ import { ScanRunRefresh } from "@/components/scan-run-refresh";
 import { PdfButton } from "@/components/pdf-button";
 import { CopyMarkdownButton } from "@/components/copy-markdown-button";
 import { AbortScanButton } from "@/components/abort-scan-button";
+import { ShareBanner } from "@/components/share-banner";
+import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -56,8 +58,30 @@ export default async function ScanRunPage({
     (r) => r.status === "queued" || r.status === "running",
   );
 
+  // Prefer the first complete audit's share token as the public link for
+  // this run. The dedicated multi-engine public route is a separate item;
+  // for now one public URL per run beats the private project URL people
+  // were copying out of the address bar.
+  const primaryShare = rows.find(
+    (r) => r.status === "complete" && r.share_token,
+  );
+  const publicShareUrl = primaryShare?.share_token
+    ? `${env.siteUrl.replace(/\/$/, "")}/r/${primaryShare.share_token}`
+    : null;
+  const primaryScore =
+    primaryShare && typeof primaryShare.score === "number"
+      ? `${primaryShare.score}/100`
+      : undefined;
+
   return (
     <>
+      {publicShareUrl && (
+        <ShareBanner
+          url={publicShareUrl}
+          reportTitle={rows[0].target_url}
+          scoreLabel={primaryScore}
+        />
+      )}
       <ScanRunResults
         rows={typedRows}
         targetUrl={rows[0].target_url}

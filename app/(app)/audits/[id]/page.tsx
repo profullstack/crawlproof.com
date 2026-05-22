@@ -13,6 +13,7 @@ import { LivePoller } from "@/components/report/live-poller";
 import { DiffView } from "@/components/report/diff-view";
 import { CopyLink } from "@/components/copy-link";
 import { PdfButton } from "@/components/pdf-button";
+import { ShareBanner } from "@/components/share-banner";
 import type { Finding } from "@/lib/audit/types";
 import { env } from "@/lib/env";
 
@@ -140,8 +141,21 @@ export default async function AuditPage({
     </div>
   );
 
+  const publicShareUrl = audit.share_token
+    ? `${env.siteUrl.replace(/\/$/, "")}/r/${audit.share_token}`
+    : null;
+  const scoreLabel =
+    typeof audit.score === "number" ? `${audit.score}/100` : undefined;
+
   return (
     <div className="space-y-6">
+      {publicShareUrl && (
+        <ShareBanner
+          url={publicShareUrl}
+          reportTitle={audit.target_url}
+          scoreLabel={scoreLabel}
+        />
+      )}
       {audit.status !== "complete" && audit.status !== "failed" && (
         <LivePoller id={audit.id} />
       )}
