@@ -8,11 +8,15 @@ import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { generatePkcePair } from "@/lib/sp/pkce";
 import { getXAuthorizeUrl } from "@/lib/sp/platforms/x";
+import { requirePlatformEnv } from "@/lib/sp/require-env";
 
 const STATE_COOKIE = "sp_x_state";
 const STATE_TTL_S = 600;
 
 export async function GET() {
+  const notConfigured = requirePlatformEnv("x");
+  if (notConfigured) return notConfigured;
+
   const supabase = await createClient();
   const {
     data: { user },
