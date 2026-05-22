@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   if (!code) {
     return NextResponse.redirect(
       new URL(
-        "/settings/integrations/github/setup?error=missing_code",
+        "/admin/github/setup?error=missing_code",
         request.url,
       ),
     );
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.redirect(
       new URL(
-        `/settings/integrations/github/setup/done#${params.toString()}`,
+        `/admin/github/setup/done#${params.toString()}`,
         request.url,
       ),
     );
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     const msg = err instanceof Error ? err.message : "unknown";
     return NextResponse.redirect(
       new URL(
-        `/settings/integrations/github/setup?error=${encodeURIComponent(msg)}`,
+        `/admin/github/setup?error=${encodeURIComponent(msg)}`,
         request.url,
       ),
     );

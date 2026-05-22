@@ -1,8 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
+import Link from "next/link";
 import { GrantCreditsForm } from "./form";
 import { IntegrationsManager } from "./integrations-form";
+import { env } from "@/lib/env";
 
 export const metadata = {
   title: "Admin · Crawlproof",
@@ -74,6 +76,31 @@ export default async function AdminPage() {
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Grant credits</h2>
         <GrantCreditsForm />
+      </section>
+
+      <section className="card p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold">GitHub App</h2>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              One-time platform setup. Registers CrawlProof as a GitHub
+              App on the profullstack org via the App Manifest flow, then
+              hands you the env vars to paste into Railway. Users install
+              the App from their own settings page after the env is set.
+            </p>
+          </div>
+          <Link href="/admin/github/setup" className="btn btn-primary text-sm">
+            {env.githubAppId ? "Re-register App" : "Register App"}
+          </Link>
+        </div>
+        {env.githubAppId && (
+          <p className="mt-3 text-xs text-[var(--color-muted)]">
+            Currently configured: app id <code>{env.githubAppId}</code>,
+            slug <code>{env.githubAppSlug || "(unset)"}</code>. Re-registering
+            creates a new App; the old one stays on GitHub until you
+            delete it there.
+          </p>
+        )}
       </section>
 
       <section className="card p-5">
