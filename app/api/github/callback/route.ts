@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getInstallation } from "@/lib/github/app";
 import { upsertInstallation } from "@/lib/github/installations";
+import { publicUrl } from "@/lib/request-url";
 
 export const runtime = "nodejs";
 
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
 
   if (!installationId) {
     return NextResponse.redirect(
-      new URL(`${SETTINGS_URL}?error=missing_installation_id`, request.url),
+      publicUrl(request.headers, `${SETTINGS_URL}?error=missing_installation_id`),
     );
   }
 
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     // Park them at login with this callback as the redirect.
     const back = `${SETTINGS_URL}?installation_id=${installationId}`;
     return NextResponse.redirect(
-      new URL(`/login?redirect=${encodeURIComponent(back)}`, request.url),
+      publicUrl(request.headers, `/login?redirect=${encodeURIComponent(back)}`),
     );
   }
 
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
   // don't own — there's nothing for us to persist yet.
   if (setupAction === "request") {
     return NextResponse.redirect(
-      new URL(`${SETTINGS_URL}?notice=install_requested`, request.url),
+      publicUrl(request.headers, `${SETTINGS_URL}?notice=install_requested`),
     );
   }
 
@@ -60,14 +61,14 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
     return NextResponse.redirect(
-      new URL(
+      publicUrl(
+        request.headers,
         `${SETTINGS_URL}?error=${encodeURIComponent("install_callback:" + msg)}`,
-        request.url,
       ),
     );
   }
 
   return NextResponse.redirect(
-    new URL(`${SETTINGS_URL}?connected=1`, request.url),
+    publicUrl(request.headers, `${SETTINGS_URL}?connected=1`),
   );
 }
