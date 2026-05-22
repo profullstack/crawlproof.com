@@ -7,7 +7,11 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
-import { installTracker } from "@/lib/github/install-tracker";
+import {
+  installTracker,
+  findInstallCandidates,
+  previewInstallAtPath,
+} from "@/lib/github/install-tracker";
 
 export const runtime = "nodejs";
 
@@ -18,6 +22,12 @@ const bodySchema = z.object({
   /** Optional subdirectory inside the repo where the app lives,
    *  e.g. "apps/web" or "sites/sh1pt.com". */
   root_path: z.string().max(500).optional(),
+  /** When set: skip discovery, install at this exact path. */
+  target_path: z.string().max(500).optional(),
+  /** "candidates": return ranked candidate paths (no PR).
+   *  "preview":    return the diff that would be applied at target_path.
+   *  "submit":     open the PR (default). target_path required when set. */
+  mode: z.enum(["candidates", "preview", "submit"]).optional(),
 });
 
 export async function POST(
@@ -66,7 +76,49 @@ export async function POST(
 
   const svc = serviceClient();
 
-  // Record the run row up front so we have something to update on failure.
+  // mode=candidates: just list candidate files; no PR, no run row.
+  const mode = body.mode ?? "submit";
+  if (mode === "candidates") {
+    try {
+      const token = await getOrMintInstallationToken(body.installation_id);
+      const candidates = await findInstallCandidates({
+        token,
+        owner: body.owner,
+        repo: body.repo,
+        rootPath: body.root_path,
+      });
+      return NextResponse.json({ data: { candidates } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+  }
+
+  // mode=preview: show what the install at target_path would look like.
+  if (mode === "preview") {
+    if (!body.target_path) {
+      return NextResponse.json(
+        { error: "target_path is required for preview" },
+        { status: 400 },
+      );
+    }
+    try {
+      const token = await getOrMintInstallationToken(body.installation_id);
+      const preview = await previewInstallAtPath({
+        token,
+        owner: body.owner,
+        repo: body.repo,
+        path: body.target_path,
+        projectId,
+      });
+      return NextResponse.json({ data: preview });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+  }
+
+  // mode=submit: actually open the PR. Record the run row.
   const { data: run } = await (svc as any)
     .from("project_pr_runs")
     .insert({
@@ -98,6 +150,7 @@ export async function POST(
       repo: body.repo,
       projectId,
       rootPath: body.root_path,
+      targetPath: body.target_path,
     });
     await finalize({
       status: result.status,
