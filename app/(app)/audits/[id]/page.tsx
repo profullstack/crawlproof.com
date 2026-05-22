@@ -151,6 +151,7 @@ export default async function AuditPage({
         projectId: string;
         auditId: string;
         repos: Array<{ full_name: string; installation_id: number }>;
+        boundRepos: Array<{ full_name: string; installation_id: number }>;
       }
     | undefined;
   const ghConfigured = !!(env.githubAppId && env.githubAppPrivateKey);
@@ -176,10 +177,24 @@ export default async function AuditPage({
         // Skip on token / API failure — the user can connect again later.
       }
     }
+    const projectId = (audit as { project_id: string }).project_id;
+    const { data: boundData } = await supabase
+      .from("project_repos")
+      .select("installation_id, repo_owner, repo_name")
+      .eq("project_id", projectId);
+    const boundRepos = ((boundData ?? []) as Array<{
+      installation_id: number;
+      repo_owner: string;
+      repo_name: string;
+    }>).map((b) => ({
+      full_name: `${b.repo_owner}/${b.repo_name}`,
+      installation_id: b.installation_id,
+    }));
     fixContext = {
-      projectId: (audit as { project_id: string }).project_id,
+      projectId,
       auditId: audit.id,
       repos,
+      boundRepos,
     };
   }
 

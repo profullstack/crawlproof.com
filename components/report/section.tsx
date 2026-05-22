@@ -5,6 +5,7 @@ interface FixContext {
   projectId: string;
   auditId: string;
   repos: Array<{ full_name: string; installation_id: number }>;
+  boundRepos: Array<{ full_name: string; installation_id: number }>;
 }
 
 export function SectionFindings({
@@ -65,6 +66,7 @@ function FindingRow({
                 findingKey={f.check_key}
                 findingTitle={f.title}
                 repos={fixContext!.repos}
+                boundRepos={fixContext!.boundRepos}
               />
             )}
           </div>
