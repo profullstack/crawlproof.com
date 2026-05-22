@@ -1,15 +1,14 @@
 import { notFound } from "next/navigation";
-import { findAnyPost, posts } from "@/lib/blog/posts";
+import { findAnyPost } from "@/lib/blog/posts";
 import { env } from "@/lib/env";
 
-// ISR. Static posts are prerendered via generateStaticParams; DB-backed
-// posts fall through to on-demand render and are cached for 60s.
-export const revalidate = 60;
-export const dynamicParams = true;
-
-export async function generateStaticParams() {
-  return posts.map((p) => ({ slug: p.slug }));
-}
+// Force dynamic SSR. Was ISR with revalidate=60 + generateStaticParams
+// over the static `posts` array, but once we emptied that array the
+// empty generateStaticParams return combined with the lack of explicit
+// dynamic config caused Next 16 to throw DYNAMIC_SERVER_USAGE on every
+// request. DB-backed posts render fast enough on demand; cache lives at
+// the CDN/Next data cache layer if needed.
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,
