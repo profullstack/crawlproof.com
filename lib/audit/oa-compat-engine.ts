@@ -110,6 +110,12 @@ export type OACompatConfig = {
    * its engine override pins it.
    */
   temperature?: number;
+  /**
+   * Provider-specific body fields the OpenAI SDK doesn't model — Kimi's
+   * `thinking: { type: "enabled" }`, top_p tweaks, etc. Spread into the
+   * request body verbatim.
+   */
+  extraBody?: Record<string, unknown>;
 };
 
 export async function oaCompatAudit(
@@ -148,6 +154,10 @@ export async function oaCompatAudit(
   // on slow providers (DashScope/Moonshot).
   let stream: Awaited<ReturnType<typeof client.chat.completions.create>>;
   try {
+    // Cast extras separately so the `stream: true` literal still narrows
+    // the create() return type to the streaming overload. Spreading the
+    // cast object wholesale widens it and breaks the for-await iterator.
+    const extra = cfg.extraBody as Record<string, unknown> | undefined;
     stream = await client.chat.completions.create({
       model: cfg.model,
       messages: [
@@ -161,6 +171,9 @@ export async function oaCompatAudit(
       temperature: cfg.temperature ?? 0.2,
       max_tokens: cfg.maxOutputTokens,
       stream: true,
+      // Provider extras (Kimi reasoning, top_p, etc.). The SDK accepts
+      // unknown fields and forwards them to the backend.
+      ...(extra ?? {}),
     });
   } catch (err) {
     if (err instanceof OpenAI.APIError && err.status === 429) {
