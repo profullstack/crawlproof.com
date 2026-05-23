@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import maxmind, { type CityResponse, type Reader } from "maxmind";
@@ -20,7 +19,11 @@ type GeoReaders = {
   ipv6: Reader<CityResponse> | null;
 };
 
-const require = createRequire(import.meta.url);
+const bundledPackagePath = path.join(
+  "node_modules",
+  "@ip-location-db",
+  "geolite2-city-mmdb",
+);
 let readerPromise: Promise<GeoReaders | null> | null = null;
 
 export function clientIpFromHeaders(headers: Headers) {
@@ -116,12 +119,15 @@ async function openReaders(): Promise<GeoReaders | null> {
   const explicit = await openReaderIfReadable(env.geoLite2CityDbPath);
   if (explicit) return { explicit, ipv4: null, ipv6: null };
 
-  const bundled = bundledDbPaths();
-  const [ipv4, ipv6] = await Promise.all([
-    openReaderIfReadable(bundled?.ipv4),
-    openReaderIfReadable(bundled?.ipv6),
-  ]);
-  return ipv4 || ipv6 ? { explicit: null, ipv4, ipv6 } : null;
+  for (const bundled of bundledDbPathSets()) {
+    const [ipv4, ipv6] = await Promise.all([
+      openReaderIfReadable(bundled.ipv4),
+      openReaderIfReadable(bundled.ipv6),
+    ]);
+    if (ipv4 || ipv6) return { explicit: null, ipv4, ipv6 };
+  }
+
+  return null;
 }
 
 async function openReaderIfReadable(dbPath: string | null | undefined) {
@@ -138,19 +144,18 @@ async function openReaderIfReadable(dbPath: string | null | undefined) {
   }
 }
 
-function bundledDbPaths() {
-  try {
-    const packageJson = require.resolve(
-      "@ip-location-db/geolite2-city-mmdb/package.json",
-    );
-    const root = path.dirname(packageJson);
-    return {
-      ipv4: path.join(root, "geolite2-city-ipv4.mmdb"),
-      ipv6: path.join(root, "geolite2-city-ipv6.mmdb"),
-    };
-  } catch {
-    return null;
-  }
+function bundledDbPathSets() {
+  return [
+    bundledDbPaths(path.join(process.cwd(), bundledPackagePath)),
+    bundledDbPaths(path.join(process.cwd(), ".next", "standalone", bundledPackagePath)),
+  ];
+}
+
+function bundledDbPaths(root: string) {
+  return {
+    ipv4: path.join(root, "geolite2-city-ipv4.mmdb"),
+    ipv6: path.join(root, "geolite2-city-ipv6.mmdb"),
+  };
 }
 
 function sanitizeIp(value: string | null | undefined) {
