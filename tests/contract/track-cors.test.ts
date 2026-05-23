@@ -83,6 +83,35 @@ describe("/api/track CORS", () => {
     expect(db.from).toHaveBeenCalledWith("projects");
   });
 
+  it("accepts legacy pid tracker requests", async () => {
+    const request = new Request(
+      "https://crawlproof.com/api/track?pid=1f4877e7-a912-449b-8d1c-f3c834223228",
+      {
+        method: "POST",
+        headers: {
+          origin: "https://d0rz.com",
+          referer: "https://d0rz.com/",
+          "content-type": "application/json",
+          "user-agent": "Mozilla/5.0 test",
+        },
+        body: JSON.stringify({
+          pid: "1f4877e7-a912-449b-8d1c-f3c834223228",
+          url: "https://d0rz.com/",
+          event: "pageview",
+        }),
+      },
+    );
+
+    const response = await POST(request as NextRequest);
+
+    expect(response.status).toBe(204);
+    expect(db.from).toHaveBeenCalledWith("projects");
+    expect(db.chain.eq).toHaveBeenCalledWith(
+      "id",
+      "1f4877e7-a912-449b-8d1c-f3c834223228",
+    );
+  });
+
   it("accepts DataFast-style JSON event posts", async () => {
     const request = new Request("https://crawlproof.com/api/track", {
       method: "POST",
