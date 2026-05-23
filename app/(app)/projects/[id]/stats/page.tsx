@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProjectShell } from "@/components/project-shell";
 import { bucketLabel } from "@/lib/tracker/categorize";
+import { countryNameFromCode } from "@/lib/tracker/country";
 import { env } from "@/lib/env";
 import type { Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
@@ -123,7 +124,7 @@ export default async function ProjectStatsPage({
   );
   const topCountries = topGeoItems(geoRows, (row) =>
     row.countryName || row.countryCode
-      ? `${row.countryName || row.countryCode}${row.countryCode ? ` (${row.countryCode})` : ""}`
+      ? `${row.countryName || countryNameFromCode(row.countryCode) || row.countryCode}${row.countryCode ? ` (${row.countryCode})` : ""}`
       : "",
   );
   const topCities = topGeoItems(geoRows, (row) => {
