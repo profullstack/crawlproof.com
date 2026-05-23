@@ -6,6 +6,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
+import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
+
+export const runtime = "nodejs";
 
 const bodySchema = z.object({
   site: z.string().uuid().optional(),
@@ -226,6 +229,49 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       event_target: eventTarget,
       count: 1,
     });
+  }
+
+  const geo = await lookupGeo(clientIpFromHeaders(request.headers));
+  if (geo) {
+    const { data: geoExisting } = await sb
+      .from("tracker_geo_daily_stats")
+      .select("count")
+      .eq("project_id", site)
+      .eq("day", today)
+      .eq("country_code", geo.countryCode)
+      .eq("region_code", geo.regionCode)
+      .eq("city", geo.city)
+      .eq("timezone", geo.timezone)
+      .maybeSingle();
+
+    if (geoExisting) {
+      await sb
+        .from("tracker_geo_daily_stats")
+        .update({
+          country_name: geo.countryName,
+          region_name: geo.regionName,
+          count: (geoExisting.count ?? 0) + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("project_id", site)
+        .eq("day", today)
+        .eq("country_code", geo.countryCode)
+        .eq("region_code", geo.regionCode)
+        .eq("city", geo.city)
+        .eq("timezone", geo.timezone);
+    } else {
+      await sb.from("tracker_geo_daily_stats").insert({
+        project_id: site,
+        day: today,
+        country_code: geo.countryCode,
+        country_name: geo.countryName,
+        region_code: geo.regionCode,
+        region_name: geo.regionName,
+        city: geo.city,
+        timezone: geo.timezone,
+        count: 1,
+      });
+    }
   }
 
   return ok(request);

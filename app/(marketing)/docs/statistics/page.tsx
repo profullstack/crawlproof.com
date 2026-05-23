@@ -135,8 +135,27 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
         </ul>
         <p className="text-sm leading-relaxed">
           CrawlProof stores daily aggregate rollups by source, event, page,
-          referrer host, and target label. The network request is best-effort
-          and never blocks the host page.
+          referrer host, target label, and location. The network request is
+          best-effort and never blocks the host page.
+        </p>
+      </section>
+
+      <section className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Location data</h2>
+        <p className="text-sm leading-relaxed">
+          Location charts use the free MaxMind GeoLite2 City database on the
+          server. The browser never sends an IP address, and CrawlProof does
+          not store raw IPs. The API reads the request IP from trusted proxy
+          headers, looks it up locally, and stores only daily aggregate fields:
+          country, region, city, and timezone.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`MAXMIND_LICENSE_KEY=<your-maxmind-license-key>
+MAXMIND_GEOLITE2_CITY_DB_PATH=data/GeoLite2-City.mmdb
+npm run download-geolite2`}</pre>
+        <p className="text-sm leading-relaxed">
+          The <code className="font-mono">.mmdb</code> file is local-only and
+          ignored by git. If the file is missing, tracking continues without
+          location rollups.
         </p>
       </section>
     </main>

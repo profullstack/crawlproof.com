@@ -32,6 +32,15 @@ type BoundRepo = {
   default_branch: string | null;
   added_at: string;
 };
+type GeoRow = {
+  country_code: string;
+  country_name: string;
+  region_code: string;
+  region_name: string;
+  city: string;
+  timezone: string;
+  count: number;
+};
 
 const WINDOW_DAYS = 30;
 
@@ -70,6 +79,14 @@ export default async function ProjectStatsPage({
 
   const eventRows = (eventStats ?? []) as EventRow[];
 
+  const { data: geoStats } = await supabase
+    .from("tracker_geo_daily_stats")
+    .select("country_code, country_name, region_code, region_name, city, timezone, count")
+    .eq("project_id", id)
+    .gte("day", since);
+
+  const geoRows = (geoStats ?? []) as GeoRow[];
+
   // Roll up by bucket for the table view; sort by total desc.
   const byBucket = new Map<string, number>();
   let totalAi = 0;
@@ -104,6 +121,17 @@ export default async function ProjectStatsPage({
     eventRows.filter((row) => row.event !== "pageview" && row.event_target),
     (row) => `${eventLabel(row.event)} · ${row.event_target}`,
   );
+  const topCountries = topGeoItems(geoRows, (row) =>
+    row.countryName || row.countryCode
+      ? `${row.countryName || row.countryCode}${row.countryCode ? ` (${row.countryCode})` : ""}`
+      : "",
+  );
+  const topCities = topGeoItems(geoRows, (row) => {
+    if (!row.city) return "";
+    const region = row.regionCode || row.regionName;
+    const country = row.countryCode || row.countryName;
+    return [row.city, region, country].filter(Boolean).join(", ");
+  });
 
   const trackerEnabled = !!(project as { tracker_enabled?: boolean })
     .tracker_enabled;
@@ -228,6 +256,8 @@ export default async function ProjectStatsPage({
             pages={topPages}
             referrers={topReferrers}
             actions={topActions}
+            countries={topCountries}
+            cities={topCities}
           />
         )}
       </div>
@@ -341,6 +371,39 @@ function topItems(
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
   return items.length ? items : options.fallback ?? [];
+}
+
+function topGeoItems(
+  rows: GeoRow[],
+  labelFor: (row: {
+    countryCode: string;
+    countryName: string;
+    regionCode: string;
+    regionName: string;
+    city: string;
+    timezone: string;
+    count: number;
+  }) => string,
+): TrackerListItem[] {
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const normalized = {
+      countryCode: row.country_code,
+      countryName: row.country_name,
+      regionCode: row.region_code,
+      regionName: row.region_name,
+      city: row.city,
+      timezone: row.timezone,
+      count: row.count,
+    };
+    const label = labelFor(normalized);
+    if (!label) continue;
+    map.set(label, (map.get(label) ?? 0) + row.count);
+  }
+  return Array.from(map.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
 }
 
 function eventLabel(event: string) {
