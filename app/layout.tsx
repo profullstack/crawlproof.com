@@ -133,6 +133,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   else{var x=new XMLHttpRequest();x.open("POST",ep+"?pid="+pid);x.setRequestHeader("Content-Type","application/json");x.send(d)}
 })();`}
         </Script>
+              <Script data-site="09d382f0-1b98-4d28-b360-78eaf4e030f2" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
       </body>
     </html>
   );
