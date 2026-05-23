@@ -3,6 +3,7 @@ import net from "node:net";
 import path from "node:path";
 import maxmind, { type CityResponse, type Reader } from "maxmind";
 import { env } from "@/lib/env";
+import { countryNameFromCode } from "@/lib/tracker/country";
 
 export interface GeoLocation {
   countryCode: string;
@@ -58,10 +59,15 @@ export async function lookupGeo(ip: string | null): Promise<GeoLocation | null> 
   const result = reader?.get(cleanIp) as CityResponse | FlatGeoResponse | null | undefined;
   if (!result) return null;
   const flat = result as FlatGeoResponse;
+  const countryCode = nestedCountryCode(result) || flatText(flat.country_code);
+  const countryName =
+    nestedCountryName(result) ||
+    flatText(flat.country_name) ||
+    countryNameFromCode(countryCode);
 
   return {
-    countryCode: nestedCountryCode(result) || flatText(flat.country_code),
-    countryName: nestedCountryName(result) || flatText(flat.country_name),
+    countryCode,
+    countryName,
     regionCode: nestedRegionCode(result) || flatText(flat.state1),
     regionName: nestedRegionName(result) || flatText(flat.state2),
     city: nestedCity(result) || flatText(flat.city),

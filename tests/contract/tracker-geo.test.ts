@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
+import {
+  clientIpFromHeaders,
+  lookupGeo,
+} from "@/lib/tracker/geo";
+import { countryNameFromCode } from "@/lib/tracker/country";
 
 describe("tracker geo lookup", () => {
   it("extracts the first forwarded public IP", () => {
@@ -29,6 +33,13 @@ describe("tracker geo lookup", () => {
     const geo = await lookupGeo("8.8.8.8");
 
     expect(geo?.countryCode).toBe("US");
+    expect(geo?.countryName).toBe("United States");
     expect(geo?.timezone).toBeTruthy();
+  });
+
+  it("formats full country names from country codes", () => {
+    expect(countryNameFromCode("US")).toBe("United States");
+    expect(countryNameFromCode("gb")).toBe("United Kingdom");
+    expect(countryNameFromCode("")).toBe("");
   });
 });
