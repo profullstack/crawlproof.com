@@ -217,10 +217,17 @@ export default async function ProjectStatsPage({
           </div>
           {trackerEnabled && (
             <>
-              <InstallSnippet projectId={id} siteUrl={env.siteUrl} />
+              <InstallSnippet
+                projectId={id}
+                projectName={project.name}
+                projectUrl={project.url}
+                siteUrl={env.siteUrl}
+              />
               <div className="mt-3">
                 <AutoInstall
                   projectId={id}
+                  projectName={project.name}
+                  projectUrl={project.url}
                   installations={installations}
                   repos={ghRepos}
                   boundRepos={boundRepos}
