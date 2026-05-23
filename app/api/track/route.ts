@@ -13,24 +13,37 @@ const bodySchema = z.object({
   path: z.string().max(2048).optional(),
 });
 
+function corsHeaders(request: Request) {
+  const origin = request.headers.get("origin");
+  const requestHeaders = request.headers.get("access-control-request-headers");
+  const headers: Record<string, string> = {
+    "access-control-allow-origin": origin ?? "*",
+    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-headers": requestHeaders ?? "content-type",
+    "access-control-max-age": "86400",
+    vary: "Origin",
+  };
+
+  if (origin) {
+    headers["access-control-allow-credentials"] = "true";
+  }
+
+  return headers;
+}
+
 // Always 204. Even on bad input we don't want to surface details to the
 // client — this endpoint is public and we treat it as a black hole.
-function ok() {
+function ok(request: Request) {
   return new NextResponse(null, {
     status: 204,
-    headers: { "access-control-allow-origin": "*" },
+    headers: corsHeaders(request),
   });
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, {
     status: 204,
-    headers: {
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "POST, OPTIONS",
-      "access-control-allow-headers": "content-type",
-      "access-control-max-age": "86400",
-    },
+    headers: corsHeaders(request),
   });
 }
 
@@ -40,9 +53,9 @@ export async function POST(request: NextRequest) {
     const json = await request.json();
     parsed = bodySchema.safeParse(json);
   } catch {
-    return ok();
+    return ok(request);
   }
-  if (!parsed?.success) return ok();
+  if (!parsed?.success) return ok(request);
 
   const { site } = parsed.data;
   const referrer = parsed.data.ref ?? null;
@@ -57,7 +70,7 @@ export async function POST(request: NextRequest) {
     .select("id, tracker_enabled")
     .eq("id", site)
     .maybeSingle();
-  if (!project || !project.tracker_enabled) return ok();
+  if (!project || !project.tracker_enabled) return ok(request);
 
   const { bucket } = categorize({ referrer, userAgent });
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
@@ -90,5 +103,5 @@ export async function POST(request: NextRequest) {
       .insert({ project_id: site, day: today, bucket, count: 1 });
   }
 
-  return ok();
+  return ok(request);
 }
