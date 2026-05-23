@@ -36,6 +36,7 @@ export interface InstallResult {
   branch?: string;
   path?: string;
   cspPaths?: string[];
+  replacedExistingTracker?: boolean;
   /** Human note for the UI: e.g. "Snippet already present in app/layout.tsx". */
   detail: string;
 }
@@ -149,6 +150,50 @@ function injectBeforeBodyClose(
     }
   }
   return updated;
+}
+
+function trackerTagLineRe() {
+  const origin = escapeRegExp(TRACKER_ORIGIN);
+  return new RegExp(
+    `[ \\t]*(?:(?:<Script\\b(?=[^\\n>]*\\bdata-site=["'][^"']+["'])(?=[^\\n>]*\\bsrc=["']${origin}/stats\\.js["'])[^\\n>]*\\/>)|(?:<script\\b(?=[^\\n>]*\\bdata-site=["'][^"']+["'])(?=[^\\n>]*\\bsrc=["']${origin}/stats\\.js["'])[^\\n>]*>\\s*<\\/script>))[ \\t]*(?:\\r?\\n)?`,
+    "gi",
+  );
+}
+
+function normalizeExistingTrackerSnippets(
+  content: string,
+  snippet: string,
+  projectId: string,
+  path: string,
+): { updated: string | null; path: string; replacedExistingTracker: boolean } | null {
+  const re = trackerTagLineRe();
+  const matches = [...content.matchAll(re)];
+  if (matches.length === 0) return null;
+
+  const projectMarkerRe = new RegExp(
+    `\\bdata-site=["']${escapeRegExp(projectId)}["']`,
+  );
+  const hasCurrent = matches.some((match) => projectMarkerRe.test(match[0]));
+  if (hasCurrent && matches.length === 1) {
+    return { updated: null, path, replacedExistingTracker: false };
+  }
+
+  let kept = false;
+  let updated = content.replace(re, (match) => {
+    if (kept) return "";
+    kept = true;
+    const indent = match.match(/^[ \t]*/)?.[0] ?? "";
+    const newline = match.match(/\r?\n$/)?.[0] ?? "";
+    return `${indent}${snippet}${newline}`;
+  });
+
+  if (/\.(tsx|jsx)$/.test(path) && /<Script\b/.test(snippet)) {
+    if (!/from\s+["']next\/script["']/.test(updated)) {
+      updated = addNextScriptImport(updated);
+    }
+  }
+
+  return { updated, path, replacedExistingTracker: true };
 }
 
 /**
@@ -300,14 +345,15 @@ export async function previewInstallAtPath(input: {
   projectId: string;
 }): Promise<
   | { status: "already_installed"; path: string }
-  | {
-      status: "ready";
-      path: string;
-      snippet: string;
-      before: string;
-      after: string;
-      addsImport: boolean;
-    }
+    | {
+        status: "ready";
+        path: string;
+        snippet: string;
+        before: string;
+        after: string;
+        addsImport: boolean;
+        replacedExistingTracker: boolean;
+      }
   | { status: "not_a_template"; path: string; reason: string }
 > {
   const repoMeta = await getRepo({
@@ -325,8 +371,28 @@ export async function previewInstallAtPath(input: {
   if (!file) {
     return { status: "not_a_template", path: input.path, reason: "File not found." };
   }
-  const projectIdMarker = `data-site="${input.projectId}"`;
-  if (file.content.includes(projectIdMarker)) {
+  const snippet = snippetForPath(input.projectId, file.path);
+  const normalized = normalizeExistingTrackerSnippets(
+    file.content,
+    snippet,
+    input.projectId,
+    file.path,
+  );
+  if (normalized?.updated) {
+    return {
+      status: "ready",
+      path: file.path,
+      snippet,
+      before: file.content,
+      after: normalized.updated,
+      addsImport:
+        /\.(tsx|jsx)$/.test(file.path) &&
+        /<Script\b/.test(snippet) &&
+        !/from\s+["']next\/script["']/.test(file.content),
+      replacedExistingTracker: true,
+    };
+  }
+  if (normalized) {
     return { status: "already_installed", path: file.path };
   }
   if (!/<\/body>/i.test(file.content)) {
@@ -336,7 +402,6 @@ export async function previewInstallAtPath(input: {
       reason: "No </body> tag in this file.",
     };
   }
-  const snippet = snippetForPath(input.projectId, file.path);
   const after = injectBeforeBodyClose(file.content, snippet, file.path);
   if (!after) {
     return {
@@ -356,6 +421,7 @@ export async function previewInstallAtPath(input: {
     before: file.content,
     after,
     addsImport,
+    replacedExistingTracker: false,
   };
 }
 
@@ -479,7 +545,6 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     repo: input.repo,
   });
   const base = repoMeta.default_branch;
-  const projectIdMarker = `data-site="${input.projectId}"`;
 
   const root = normalizeRoot(input.rootPath);
   const candidates = candidatePaths(root);
@@ -487,7 +552,16 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   // Probe a path: returns the file if it has </body> AND doesn't already
   // have our snippet; signals "already installed" if it does.
   type ProbeResult =
-    | { kind: "hit"; file: { path: string; sha: string; content: string } }
+    | {
+        kind: "hit";
+        file: {
+          path: string;
+          sha: string;
+          content: string;
+          updated?: string;
+          replacedExistingTracker?: boolean;
+        };
+      }
     | { kind: "already"; path: string }
     | { kind: "miss" };
   const probe = async (path: string): Promise<ProbeResult> => {
@@ -499,7 +573,24 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
       ref: base,
     });
     if (!file) return { kind: "miss" };
-    if (file.content.includes(projectIdMarker)) {
+    const snippet = snippetForPath(input.projectId, file.path);
+    const normalized = normalizeExistingTrackerSnippets(
+      file.content,
+      snippet,
+      input.projectId,
+      file.path,
+    );
+    if (normalized?.updated) {
+      return {
+        kind: "hit",
+        file: {
+          ...file,
+          updated: normalized.updated,
+          replacedExistingTracker: true,
+        },
+      };
+    }
+    if (normalized) {
       return { kind: "already", path: file.path };
     }
     if (/<\/body>/i.test(file.content)) {
@@ -508,7 +599,13 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     return { kind: "miss" };
   };
 
-  let target: { path: string; sha: string; content: string } | null = null;
+  let target: {
+    path: string;
+    sha: string;
+    content: string;
+    updated?: string;
+    replacedExistingTracker?: boolean;
+  } | null = null;
   let alreadyInstalledPath: string | null = null;
 
   // If the caller pinned an explicit targetPath, skip discovery
@@ -590,7 +687,9 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   // Compute the new content. Snippet shape (Next.js <Script> vs raw
   // <script>) depends on the target file extension.
   const snippet = target ? snippetForPath(input.projectId, target.path) : null;
-  const updated = target
+  const updated = target?.updated
+    ? target.updated
+    : target
     ? injectBeforeBodyClose(target.content, snippet!, target.path)
     : null;
   if (target && !updated) {
@@ -684,8 +783,11 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     branch,
     path: target?.path ?? alreadyInstalledPath ?? undefined,
     cspPaths,
+    replacedExistingTracker: !!target?.replacedExistingTracker,
     detail: target
-      ? `Inserted snippet before </body> in ${target.path}.${cspDetail}`
+      ? target.replacedExistingTracker
+        ? `Replaced existing CrawlProof tracker snippet in ${target.path}.${cspDetail}`
+        : `Inserted snippet before </body> in ${target.path}.${cspDetail}`
       : `Tracker already installed at ${alreadyInstalledPath}.${cspDetail}`,
   };
 }

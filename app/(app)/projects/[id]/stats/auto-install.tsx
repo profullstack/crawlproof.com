@@ -16,6 +16,8 @@ interface Repo {
 
 interface AutoInstallProps {
   projectId: string;
+  projectName: string;
+  projectUrl: string;
   installations: Installation[];
   repos: Repo[];
   boundRepos: Repo[];
@@ -35,6 +37,7 @@ interface PreviewReady {
   before: string;
   after: string;
   addsImport: boolean;
+  replacedExistingTracker: boolean;
 }
 interface PreviewAlready {
   status: "already_installed";
@@ -63,6 +66,8 @@ type Step =
 
 export function AutoInstall({
   projectId,
+  projectName,
+  projectUrl,
   installations,
   repos,
   boundRepos,
@@ -124,6 +129,14 @@ export function AutoInstall({
     );
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    if (
+      body.mode === "preview" &&
+      json.data?.status === "ready" &&
+      typeof json.data.snippet === "string" &&
+      !json.data.snippet.includes(projectId)
+    ) {
+      throw new Error("Preview returned a tracker snippet for the wrong project.");
+    }
     return json.data;
   }
 
@@ -215,6 +228,19 @@ export function AutoInstall({
               >
                 Close
               </button>
+            </div>
+            <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs">
+              <p>
+                <span className="text-[var(--color-muted)]">Project:</span>{" "}
+                <strong>{projectName}</strong>{" "}
+                <span className="text-[var(--color-muted)]">({projectUrl})</span>
+              </p>
+              <p className="mt-1 font-mono">
+                <span className="font-sans text-[var(--color-muted)]">
+                  Stats key:
+                </span>{" "}
+                {projectId}
+              </p>
             </div>
 
             {/* STEP 1: pick repo */}
@@ -400,7 +426,9 @@ export function AutoInstall({
                 {step.preview.status === "ready" && (
                   <>
                     <p className="mt-4 text-sm font-medium">
-                      The PR will add this line before <code>&lt;/body&gt;</code>:
+                      {step.preview.replacedExistingTracker
+                        ? "The PR will replace existing CrawlProof tracker tags with this project key:"
+                        : "The PR will add this line before the closing body tag:"}
                     </p>
                     <pre className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs">
                       {step.preview.snippet}
