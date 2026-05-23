@@ -13,6 +13,7 @@ export const runtime = "nodejs";
 const bodySchema = z.object({
   site: z.string().uuid().optional(),
   websiteId: z.string().uuid().optional(),
+  pid: z.string().uuid().optional(),
   event: z.string().max(80).optional(),
   type: z.string().max(80).optional(),
   ref: z.string().max(2048).nullable().optional(),
@@ -108,6 +109,7 @@ function payloadFromUrl(request: Request) {
   return bodySchema.safeParse({
     site: textOrUndefined(url.searchParams.get("site")),
     websiteId: textOrUndefined(url.searchParams.get("websiteId")),
+    pid: textOrUndefined(url.searchParams.get("pid")),
     event: textOrUndefined(url.searchParams.get("event")),
     type: textOrUndefined(url.searchParams.get("type")),
     ref: textOrNull(url.searchParams.get("ref")),
@@ -135,7 +137,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
     : payloadFromUrl(request);
   if (!parsed.success) return ok(request);
 
-  const site = parsed.data.site ?? parsed.data.websiteId;
+  const site = parsed.data.site ?? parsed.data.websiteId ?? parsed.data.pid;
   if (!site) return ok(request);
 
   const event = cleanEvent(parsed.data.event ?? parsed.data.type);
