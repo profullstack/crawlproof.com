@@ -24,15 +24,23 @@ const require = createRequire(import.meta.url);
 let readerPromise: Promise<GeoReaders | null> | null = null;
 
 export function clientIpFromHeaders(headers: Headers) {
-  const forwardedFor = headers.get("x-forwarded-for");
-  const firstForwarded = forwardedFor?.split(",")[0]?.trim();
-  return (
-    sanitizeIp(headers.get("cf-connecting-ip")) ??
-    sanitizeIp(headers.get("x-real-ip")) ??
-    sanitizeIp(firstForwarded) ??
-    sanitizeIp(headers.get("x-client-ip")) ??
-    null
-  );
+  const forwardedFor = headers
+    .get("x-forwarded-for")
+    ?.split(",")
+    .map((value) => value.trim());
+  const candidates = [
+    headers.get("cf-connecting-ip"),
+    headers.get("x-real-ip"),
+    ...(forwardedFor ?? []),
+    headers.get("x-client-ip"),
+  ];
+
+  for (const candidate of candidates) {
+    const ip = sanitizeIp(candidate);
+    if (ip && !isPrivateOrLocalIp(ip)) return ip;
+  }
+
+  return null;
 }
 
 export async function lookupGeo(ip: string | null): Promise<GeoLocation | null> {
