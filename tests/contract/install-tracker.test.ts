@@ -17,7 +17,7 @@ const github = vi.hoisted(() => {
     }),
     searchRepoCode: vi.fn(async () => []),
     createBranch: vi.fn(async () => ({ created: true })),
-    putFile: vi.fn(async ({ path }: { path: string }) => ({
+    putFile: vi.fn(async ({ path }: { path: string; contentUtf8: string }) => ({
       content: { sha: `new-sha-${path}`, path },
       commit: { sha: "commit-sha" },
     })),
@@ -38,7 +38,11 @@ vi.mock("@/lib/github/repos", () => ({
   openPullRequest: github.openPullRequest,
 }));
 
-import { findInstallCandidates } from "@/lib/github/install-tracker";
+import {
+  findInstallCandidates,
+  installTracker,
+  patchCspForTracker,
+} from "@/lib/github/install-tracker";
 
 describe("install tracker candidate discovery", () => {
   beforeEach(() => {
@@ -46,6 +50,9 @@ describe("install tracker candidate discovery", () => {
     github.getRepo.mockClear();
     github.getFileContent.mockClear();
     github.searchRepoCode.mockClear();
+    github.createBranch.mockClear();
+    github.putFile.mockClear();
+    github.openPullRequest.mockClear();
   });
 
   it("finds apps/web/src/app/layout.tsx without relying on code search", async () => {
@@ -84,6 +91,64 @@ describe("install tracker candidate discovery", () => {
     );
     expect(github.getFileContent).not.toHaveBeenCalledWith(
       expect.objectContaining({ path: "apps/web/apps/web/src/app/layout.tsx" }),
+    );
+  });
+
+  it("patches CSP directives for the tracker origin", () => {
+    const before = `const csp = [
+  "default-src 'self'",
+  "script-src 'self' https://datafa.st",
+  "connect-src 'self' https://datafa.st",
+].join('; ');`;
+
+    const after = patchCspForTracker(before);
+
+    expect(after).toContain(
+      "script-src 'self' https://datafa.st http://localhost:3000",
+    );
+    expect(after).toContain(
+      "connect-src 'self' https://datafa.st http://localhost:3000",
+    );
+    expect(patchCspForTracker(after!)).toBeNull();
+  });
+
+  it("opens a CSP-only PR when the tracker snippet is already installed", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      `export default function RootLayout({ children }) {
+  return <html><body>{children}<Script data-site="project-id" src="http://localhost:3000/stats.js" strategy="afterInteractive" /></body></html>;
+}
+`,
+    );
+    github.files.set(
+      "next.config.mjs",
+      `const SECURITY_HEADERS = [{
+  key: 'Content-Security-Policy',
+  value: [
+    "default-src 'self'",
+    "script-src 'self' https://datafa.st",
+    "connect-src 'self' https://datafa.st",
+  ].join('; '),
+}];`,
+    );
+
+    const result = await installTracker({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      projectId: "project-id",
+      targetPath: "app/layout.tsx",
+    });
+
+    expect(result.status).toBe("opened");
+    expect(result.cspPaths).toEqual(["next.config.mjs"]);
+    expect(github.putFile).toHaveBeenCalledTimes(1);
+    expect(github.putFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "next.config.mjs",
+        message: "Allow CrawlProof stats in CSP",
+        contentUtf8: expect.stringContaining("http://localhost:3000"),
+      }),
     );
   });
 });

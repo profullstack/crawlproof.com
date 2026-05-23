@@ -42,6 +42,17 @@ export default function StatisticsDocsPage() {
           Put the tag in your app shell, layout, root template, or site-wide
           footer. Do not add API keys, auth tokens, cookies, or user ids.
         </p>
+        <p className="text-sm leading-relaxed">
+          If your site uses a strict Content Security Policy, allow{" "}
+          <code className="font-mono">https://crawlproof.com</code> in{" "}
+          <code className="font-mono">script-src</code> and{" "}
+          <code className="font-mono">connect-src</code>. The GitHub
+          auto-installer patches common CSP files such as{" "}
+          <code className="font-mono">next.config.*</code>,{" "}
+          <code className="font-mono">vercel.json</code>,{" "}
+          <code className="font-mono">netlify.toml</code>, and{" "}
+          <code className="font-mono">_headers</code> when it opens the PR.
+        </p>
       </section>
 
       <section className="mt-10 space-y-3">
