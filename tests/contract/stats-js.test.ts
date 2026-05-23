@@ -7,8 +7,12 @@ describe("/stats.js", () => {
     const script = await response.text();
 
     expect(script).toContain("credentials: 'omit'");
-    expect(script).toContain("mode: 'no-cors'");
-    expect(script).toContain("method: 'GET'");
+    expect(script).toContain("mode: 'cors'");
+    expect(script).toContain("method: 'POST'");
+    expect(script).toContain("headers: { 'Content-Type': 'application/json' }");
+    expect(script).toContain("websiteId: siteId");
+    expect(script).toContain("visitorId: visitorId");
+    expect(script).toContain("sessionId: sessionId");
     expect(script).not.toContain("sendBeacon");
   });
 

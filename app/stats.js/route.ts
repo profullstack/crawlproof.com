@@ -18,8 +18,26 @@ const snippet = `(function(){
     var siteId = s && s.dataset && s.dataset.site;
     if (!siteId) return;
     var endpoint = ${JSON.stringify(env.siteUrl)} + '/api/track';
-    function enc(v) { return encodeURIComponent(v == null ? '' : String(v)); }
     function pageUrl() { return location.origin + location.pathname + location.search; }
+    function uuid(prefix) {
+      try {
+        if (crypto && crypto.randomUUID) return prefix + crypto.randomUUID();
+      } catch (_) {}
+      return prefix + Math.random().toString(16).slice(2) + '-' + Date.now().toString(16);
+    }
+    function storedId(key, prefix) {
+      try {
+        var existing = sessionStorage.getItem(key);
+        if (existing) return existing;
+        var id = uuid(prefix);
+        sessionStorage.setItem(key, id);
+        return id;
+      } catch (_) {
+        return uuid(prefix);
+      }
+    }
+    var visitorId = storedId('crawlproof.visitor', 'v');
+    var sessionId = storedId('crawlproof.session', 's');
     function labelFor(el) {
       try {
         return el.getAttribute('data-cp-label')
@@ -34,18 +52,32 @@ const snippet = `(function(){
     }
     function send(eventName, target) {
       try {
-        var url = endpoint
-          + '?site=' + enc(siteId)
-          + '&event=' + enc(eventName || 'pageview')
-          + '&url=' + enc(pageUrl())
-          + '&ref=' + enc(document.referrer || '')
-          + '&target=' + enc(target || '')
-          + '&t=' + enc(Date.now());
-        fetch(url, {
-          method: 'GET',
+        var payload = {
+          websiteId: siteId,
+          site: siteId,
+          domain: location.hostname,
+          href: pageUrl(),
+          referrer: document.referrer || null,
+          viewport: {
+            width: Math.max(0, window.innerWidth || 0),
+            height: Math.max(0, window.innerHeight || 0)
+          },
+          visitorId: visitorId,
+          sessionId: sessionId,
+          language: navigator.language || '',
+          timezone: (window.Intl && Intl.DateTimeFormat) ? Intl.DateTimeFormat().resolvedOptions().timeZone : '',
+          screenWidth: screen && screen.width ? screen.width : 0,
+          screenHeight: screen && screen.height ? screen.height : 0,
+          type: eventName || 'pageview',
+          target: target || ''
+        };
+        fetch(endpoint, {
+          method: 'POST',
           keepalive: true,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
           credentials: 'omit',
-          mode: 'no-cors',
+          mode: 'cors',
           cache: 'no-store'
         }).catch(function(){});
       } catch (_) {}
