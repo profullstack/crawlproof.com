@@ -25,6 +25,13 @@ type EventRow = {
   event_target: string;
   count: number;
 };
+type BoundRepo = {
+  id: string;
+  full_name: string;
+  installation_id: number;
+  default_branch: string | null;
+  added_at: string;
+};
 
 const WINDOW_DAYS = 30;
 
@@ -106,8 +113,12 @@ export default async function ProjectStatsPage({
   const ghConfigured = !!(env.githubAppId && env.githubAppPrivateKey);
   const { data: { user } } = await supabase.auth.getUser();
   const installations: Array<{ installation_id: number; account_login: string }> = [];
-  const ghRepos: Array<{ full_name: string; installation_id: number }> = [];
-  let boundRepos: Array<{ full_name: string; installation_id: number }> = [];
+  const ghRepos: Array<{
+    full_name: string;
+    installation_id: number;
+    default_branch?: string | null;
+  }> = [];
+  let boundRepos: BoundRepo[] = [];
   if (ghConfigured && user) {
     const { data: rows } = await supabase
       .from("github_installations")
@@ -122,6 +133,7 @@ export default async function ProjectStatsPage({
           ghRepos.push({
             full_name: repo.full_name,
             installation_id: r.installation_id,
+            default_branch: repo.default_branch,
           });
         }
       } catch {
@@ -131,15 +143,21 @@ export default async function ProjectStatsPage({
     }
     const { data: boundData } = await supabase
       .from("project_repos")
-      .select("installation_id, repo_owner, repo_name")
+      .select("id, installation_id, repo_owner, repo_name, default_branch, added_at")
       .eq("project_id", id);
     boundRepos = ((boundData ?? []) as Array<{
+      id: string;
       installation_id: number;
       repo_owner: string;
       repo_name: string;
+      default_branch: string | null;
+      added_at: string;
     }>).map((b) => ({
+      id: b.id,
       full_name: `${b.repo_owner}/${b.repo_name}`,
       installation_id: b.installation_id,
+      default_branch: b.default_branch,
+      added_at: b.added_at,
     }));
   }
 
@@ -183,6 +201,9 @@ export default async function ProjectStatsPage({
               </div>
             </>
           )}
+          {ghConfigured && (
+            <ConnectedRepos projectId={id} repos={boundRepos} />
+          )}
         </section>
 
         <div className="grid gap-3 sm:grid-cols-3">
@@ -211,6 +232,54 @@ export default async function ProjectStatsPage({
         )}
       </div>
     </ProjectShell>
+  );
+}
+
+function ConnectedRepos({
+  projectId,
+  repos,
+}: {
+  projectId: string;
+  repos: BoundRepo[];
+}) {
+  return (
+    <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">Connected repos</h3>
+          <p className="text-xs text-[var(--color-muted)]">
+            These repos stay attached to this project and appear first in GitHub actions.
+          </p>
+        </div>
+        <a
+          href={`/projects/${projectId}/repos`}
+          className="text-xs text-[var(--color-muted)] underline hover:text-[var(--color-fg)]"
+        >
+          Manage repos
+        </a>
+      </div>
+
+      {repos.length === 0 ? (
+        <p className="mt-3 text-sm text-[var(--color-muted)]">
+          No repo connected yet. Install via GitHub or add one on the Repos tab.
+        </p>
+      ) : (
+        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          {repos.map((repo) => (
+            <li
+              key={repo.id}
+              className="rounded border border-[var(--color-border)] px-3 py-2"
+            >
+              <p className="truncate text-sm font-medium">{repo.full_name}</p>
+              <p className="text-xs text-[var(--color-muted)]">
+                {repo.default_branch ?? "default branch"} · connected{" "}
+                {new Date(repo.added_at).toLocaleDateString()}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

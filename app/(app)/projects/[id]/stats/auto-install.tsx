@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 interface Installation {
   installation_id: number;
@@ -10,6 +11,7 @@ interface Installation {
 interface Repo {
   full_name: string;
   installation_id: number;
+  default_branch?: string | null;
 }
 
 interface AutoInstallProps {
@@ -65,6 +67,7 @@ export function AutoInstall({
   boundRepos,
   notConfigured,
 }: AutoInstallProps) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>({ kind: "pick-repo" });
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +116,7 @@ export function AutoInstall({
           owner,
           repo: name,
           installation_id: repo.installation_id,
+          default_branch: repo.default_branch ?? undefined,
           ...body,
         }),
       },
@@ -170,6 +174,7 @@ export function AutoInstall({
         target_path: path,
       });
       setStep({ kind: "done", result, repo });
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submit failed");
     } finally {

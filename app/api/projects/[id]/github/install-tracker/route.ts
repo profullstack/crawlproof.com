@@ -24,6 +24,7 @@ const bodySchema = z.object({
   root_path: z.string().max(500).optional(),
   /** When set: skip discovery, install at this exact path. */
   target_path: z.string().max(500).optional(),
+  default_branch: z.string().max(200).optional(),
   /** "candidates": return ranked candidate paths (no PR).
    *  "preview":    return the diff that would be applied at target_path.
    *  "submit":     open the PR (default). target_path required when set. */
@@ -158,6 +159,17 @@ export async function POST(
       pr_number: result.prNumber ?? null,
       branch_name: result.branch ?? null,
     });
+    await (svc as any).from("project_repos").upsert(
+      {
+        project_id: projectId,
+        installation_id: body.installation_id,
+        repo_owner: body.owner,
+        repo_name: body.repo,
+        default_branch: body.default_branch ?? null,
+        added_by: user.id,
+      },
+      { onConflict: "project_id,repo_owner,repo_name" },
+    );
     return NextResponse.json({ data: result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
