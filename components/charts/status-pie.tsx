@@ -38,8 +38,14 @@ export function StatusPie({ counts }: { counts: StatusCounts }) {
         <h3 className="font-semibold">Findings by status</h3>
         <span className="text-xs text-[var(--color-muted)]">{total} total</span>
       </div>
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-56 min-h-56 min-w-0">
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          minWidth={0}
+          minHeight={224}
+          initialDimension={{ width: 320, height: 224 }}
+        >
           <PieChart>
             <Pie
               data={data}

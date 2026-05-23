@@ -25,8 +25,14 @@ export function ScoreTrend({ data }: { data: TrendPoint[] }) {
           {data.length} run{data.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-56 min-h-56 min-w-0">
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          minWidth={0}
+          minHeight={224}
+          initialDimension={{ width: 320, height: 224 }}
+        >
           <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: -16 }}>
             <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} />
             <XAxis

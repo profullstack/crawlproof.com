@@ -4,12 +4,12 @@ import { CREDIT_PACKS, ENGINES, discountPct, dollars, perScanCents } from "@/lib
 export const metadata = {
   title: "Pricing",
   description:
-    "Pay only for what you scan. $1 per credit, 1 credit per audit, with volume discounts up to 50% off — no subscription, credits never expire.",
+    "Rule-based AEO scans are free up to the daily limit. AI-model scans cost 1 credit each, with volume discounts up to 50% off.",
   alternates: { canonical: "/pricing" },
   openGraph: {
     title: "Pricing · CrawlProof",
     description:
-      "Pay only for what you scan. $1 per credit, 1 credit per audit, volume discounts to 50%.",
+      "Rule-based scans are free up to the daily limit. AI-model scans cost 1 credit each, volume discounts to 50%.",
     url: "/pricing",
   },
 };
@@ -19,9 +19,9 @@ export default function PricingPage() {
     <main className="mx-auto max-w-6xl px-4 sm:px-6 py-16">
       <h1 className="text-center text-4xl font-extrabold">Pay per scan</h1>
       <p className="mx-auto mt-2 max-w-2xl text-center text-[var(--color-muted)]">
-        <strong>1 credit = 1 scan = $1.</strong> Pay with crypto via CoinPay.
-        No subscription, no expiry. Scheduled scans (weekly) deduct 1 credit
-        each time they run.
+        Rule-based scans are free up to the daily limit. AI-model scans cost{" "}
+        <strong>1 credit each</strong>. Buy credits with crypto via CoinPay;
+        no subscription, no expiry.
       </p>
       <div className="mx-auto mt-8 grid max-w-6xl gap-4 md:grid-cols-2 lg:grid-cols-3">
         {(Object.keys(ENGINES) as Array<keyof typeof ENGINES>).map((k) => {
@@ -76,9 +76,9 @@ export default function PricingPage() {
                 )}
               </div>
               <div className="mt-1 text-sm text-[var(--color-muted)]">
-                {p.credits} scan{p.credits === 1 ? "" : "s"} ·{" "}
+                {p.credits} credit{p.credits === 1 ? "" : "s"} ·{" "}
                 <span className="font-mono text-xs">
-                  {dollars(perScanCents(p))}/scan
+                  {dollars(perScanCents(p))}/credit
                 </span>
               </div>
               <Link
@@ -93,7 +93,8 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-center text-xs text-[var(--color-muted)]">
-        Sign-ups include 3 free credits. Anonymous visitors get 10 free scans per day per IP.
+        Sign-ups include 3 free credits for paid AI-model scans. Anonymous visitors get 10
+        free rule-based scans per day per IP.
       </p>
     </main>
   );

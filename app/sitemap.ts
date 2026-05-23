@@ -44,6 +44,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       .from("audits")
       .select("share_token, completed_at, created_at")
       .is("owner_id", null)
+      .eq("listed_public", true)
       .eq("status", "complete")
       .not("share_token", "is", null)
       .order("completed_at", { ascending: false })
