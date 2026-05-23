@@ -35,6 +35,7 @@ export interface InstallResult {
   prNumber?: number;
   branch?: string;
   path?: string;
+  cspPaths?: string[];
   /** Human note for the UI: e.g. "Snippet already present in app/layout.tsx". */
   detail: string;
 }
@@ -72,13 +73,38 @@ const COMMON_MONOREPO_CANDIDATES: string[] = [
 ];
 
 const BRANCH_PREFIX = "crawlproof/install-stats-tracker";
+const TRACKER_ORIGIN = env.siteUrl.replace(/\/$/, "");
+
+const CSP_CANDIDATES = [
+  "next.config.js",
+  "next.config.mjs",
+  "next.config.cjs",
+  "next.config.ts",
+  "next.config.mts",
+  "vercel.json",
+  "netlify.toml",
+  "_headers",
+  "public/_headers",
+  "static/_headers",
+  "middleware.ts",
+  "middleware.js",
+  "src/middleware.ts",
+  "src/middleware.js",
+  "proxy.ts",
+  "proxy.js",
+  "src/proxy.ts",
+  "src/proxy.js",
+];
+
+const CSP_PATH_RE =
+  /(^|\/)(next\.config\.(?:[cm]?[jt]s|mts)|vercel\.json|netlify\.toml|_headers|(?:src\/)?(?:middleware|proxy)\.[jt]s)$/i;
 
 function rawScriptTag(projectId: string): string {
-  return `<script data-site="${projectId}" src="${env.siteUrl.replace(/\/$/, "")}/stats.js" async></script>`;
+  return `<script data-site="${projectId}" src="${TRACKER_ORIGIN}/stats.js" async></script>`;
 }
 
 function nextScriptTag(projectId: string): string {
-  return `<Script data-site="${projectId}" src="${env.siteUrl.replace(/\/$/, "")}/stats.js" strategy="afterInteractive" />`;
+  return `<Script data-site="${projectId}" src="${TRACKER_ORIGIN}/stats.js" strategy="afterInteractive" />`;
 }
 
 /**
@@ -154,6 +180,13 @@ function candidatePaths(root: string): string[] {
   const paths = root
     ? CANDIDATES.map((p) => `${root}/${p}`)
     : [...CANDIDATES, ...COMMON_MONOREPO_CANDIDATES];
+  return [...new Set(paths)];
+}
+
+function cspCandidatePaths(root: string): string[] {
+  const paths = root
+    ? CSP_CANDIDATES.map((p) => `${root}/${p}`)
+    : CSP_CANDIDATES;
   return [...new Set(paths)];
 }
 
@@ -326,6 +359,119 @@ export async function previewInstallAtPath(input: {
   };
 }
 
+function addSourceToDirective(content: string, directive: string, source: string) {
+  const re = new RegExp(
+    `(${directive}\\b[^;"\`\\n\\r]*)(?=[;"\`\\n\\r]|$)`,
+    "gi",
+  );
+  let changed = false;
+  const next = content.replace(re, (match) => {
+    if (new RegExp(`(^|\\s)${escapeRegExp(source)}(?=\\s|$)`).test(match)) {
+      return match;
+    }
+    changed = true;
+    return `${match.trimEnd()} ${source}`;
+  });
+  return changed ? next : content;
+}
+
+function hasDirective(content: string, directive: string) {
+  return new RegExp(`${directive}\\b`, "i").test(content);
+}
+
+function looksLikeCsp(content: string) {
+  return /Content-Security-Policy|script-src|script-src-elem|default-src|connect-src/i.test(
+    content,
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Patch a common CSP string/config file so CrawlProof can load the tracker
+ * script and post events. This is intentionally conservative: it only edits
+ * files that already look like CSP config, and only appends our origin to
+ * existing directives. If a site has no connect-src, default-src is the
+ * fallback for fetch, so we add the origin there too.
+ */
+export function patchCspForTracker(content: string): string | null {
+  if (!looksLikeCsp(content)) return null;
+
+  let updated = content;
+  if (hasDirective(updated, "script-src")) {
+    updated = addSourceToDirective(updated, "script-src", TRACKER_ORIGIN);
+  } else if (hasDirective(updated, "default-src")) {
+    updated = addSourceToDirective(updated, "default-src", TRACKER_ORIGIN);
+  }
+
+  if (hasDirective(updated, "script-src-elem")) {
+    updated = addSourceToDirective(updated, "script-src-elem", TRACKER_ORIGIN);
+  }
+
+  if (hasDirective(updated, "connect-src")) {
+    updated = addSourceToDirective(updated, "connect-src", TRACKER_ORIGIN);
+  } else if (hasDirective(updated, "default-src")) {
+    updated = addSourceToDirective(updated, "default-src", TRACKER_ORIGIN);
+  }
+
+  return updated === content ? null : updated;
+}
+
+async function findCspPatchTargets(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  ref: string;
+  root: string;
+}) {
+  const found = new Map<
+    string,
+    { path: string; sha: string; content: string; updated: string }
+  >();
+
+  const tryPath = async (path: string) => {
+    if (!CSP_PATH_RE.test(path)) return;
+    if (found.has(path)) return;
+    const file = await getFileContent({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      path,
+      ref: input.ref,
+    });
+    if (!file) return;
+    const updated = patchCspForTracker(file.content);
+    if (updated) {
+      found.set(file.path, { ...file, updated });
+    }
+  };
+
+  for (const path of cspCandidatePaths(input.root)) {
+    await tryPath(path);
+  }
+
+  try {
+    const hits = await searchRepoCode({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      query: "Content-Security-Policy",
+      perPage: 20,
+    });
+    for (const hit of hits) {
+      if (input.root && !hit.path.startsWith(`${input.root}/`)) continue;
+      await tryPath(hit.path);
+    }
+  } catch {
+    // Code search is a best-effort fallback; canonical paths still cover
+    // common Next/Vercel/Netlify setups.
+  }
+
+  return [...found.values()];
+}
+
 export async function installTracker(input: InstallInput): Promise<InstallResult> {
   const repoMeta = await getRepo({
     token: input.token,
@@ -363,6 +509,7 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   };
 
   let target: { path: string; sha: string; content: string } | null = null;
+  let alreadyInstalledPath: string | null = null;
 
   // If the caller pinned an explicit targetPath, skip discovery
   // entirely — that's the path we install at. The UI uses this after
@@ -370,29 +517,22 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   if (input.targetPath) {
     const r = await probe(input.targetPath);
     if (r.kind === "already") {
-      return {
-        status: "noop",
-        path: r.path,
-        detail: `Tracker already installed at ${r.path}.`,
-      };
+      alreadyInstalledPath = r.path;
     }
-    if (r.kind !== "hit") {
+    if (r.kind === "miss") {
       throw new Error(
         `Couldn't install at "${input.targetPath}": file not found or has no </body> tag.`,
       );
     }
-    target = r.file;
+    if (r.kind === "hit") target = r.file;
   }
 
   // 1. Try the canonical candidate list (optionally prefixed by rootPath).
   for (const path of !target ? candidates : []) {
     const r = await probe(path);
     if (r.kind === "already") {
-      return {
-        status: "noop",
-        path: r.path,
-        detail: `Tracker already installed at ${r.path}.`,
-      };
+      alreadyInstalledPath = r.path;
+      break;
     }
     if (r.kind === "hit") {
       target = r.file;
@@ -422,11 +562,8 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
       for (const hit of ordered) {
         const r = await probe(hit.path);
         if (r.kind === "already") {
-          return {
-            status: "noop",
-            path: r.path,
-            detail: `Tracker already installed at ${r.path}.`,
-          };
+          alreadyInstalledPath = r.path;
+          break;
         }
         if (r.kind === "hit") {
           target = r.file;
@@ -440,7 +577,7 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     }
   }
 
-  if (!target) {
+  if (!target && !alreadyInstalledPath) {
     const probed = candidates.join(", ");
     const hint = root
       ? `Looked under root "${root}". Try a different root path or open an issue with your repo layout.`
@@ -452,12 +589,32 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
 
   // Compute the new content. Snippet shape (Next.js <Script> vs raw
   // <script>) depends on the target file extension.
-  const snippet = snippetForPath(input.projectId, target.path);
-  const updated = injectBeforeBodyClose(target.content, snippet, target.path);
-  if (!updated) {
+  const snippet = target ? snippetForPath(input.projectId, target.path) : null;
+  const updated = target
+    ? injectBeforeBodyClose(target.content, snippet!, target.path)
+    : null;
+  if (target && !updated) {
     throw new Error(
       `Could not locate </body> in ${target.path} after second pass.`,
     );
+  }
+
+  const cspPatches = await findCspPatchTargets({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+    ref: base,
+    root,
+  });
+
+  if (!target && cspPatches.length === 0) {
+    return {
+      status: "noop",
+      path: alreadyInstalledPath ?? undefined,
+      detail: alreadyInstalledPath
+        ? `Tracker already installed at ${alreadyInstalledPath}. No CSP updates needed.`
+        : "Tracker already installed. No CSP updates needed.",
+    };
   }
 
   // 3. Create a fresh branch off default.
@@ -472,16 +629,31 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   });
 
   // 4. Push the edit.
-  await putFile({
-    token: input.token,
-    owner: input.owner,
-    repo: input.repo,
-    path: target.path,
-    branch,
-    message: "Add CrawlProof stats tracker",
-    contentUtf8: updated,
-    sha: target.sha,
-  });
+  if (target && updated) {
+    await putFile({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      path: target.path,
+      branch,
+      message: "Add CrawlProof stats tracker",
+      contentUtf8: updated,
+      sha: target.sha,
+    });
+  }
+
+  for (const patch of cspPatches) {
+    await putFile({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      path: patch.path,
+      branch,
+      message: "Allow CrawlProof stats in CSP",
+      contentUtf8: patch.updated,
+      sha: patch.sha,
+    });
+  }
 
   // 5. Open the PR.
   const pr = await openPullRequest({
@@ -490,35 +662,61 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     repo: input.repo,
     head: branch,
     base,
-    title: "Add CrawlProof stats tracker",
-    body: prBody(input.projectId, target.path, snippet),
+    title: target
+      ? "Add CrawlProof stats tracker"
+      : "Allow CrawlProof stats tracker",
+    body: prBody({
+      path: target?.path ?? alreadyInstalledPath ?? null,
+      snippet,
+      cspPaths: cspPatches.map((patch) => patch.path),
+      alreadyInstalled: !target,
+    }),
   });
 
+  const cspPaths = cspPatches.map((patch) => patch.path);
+  const cspDetail = cspPaths.length
+    ? ` Patched CSP in ${cspPaths.join(", ")}.`
+    : "";
   return {
     status: "opened",
     prUrl: pr.html_url,
     prNumber: pr.number,
     branch,
-    path: target.path,
-    detail: `Inserted snippet before </body> in ${target.path}.`,
+    path: target?.path ?? alreadyInstalledPath ?? undefined,
+    cspPaths,
+    detail: target
+      ? `Inserted snippet before </body> in ${target.path}.${cspDetail}`
+      : `Tracker already installed at ${alreadyInstalledPath}.${cspDetail}`,
   };
 }
 
-function prBody(projectId: string, path: string, snippet: string): string {
-  const isNextScript = /<Script\b/.test(snippet);
-  void projectId;
+function prBody(input: {
+  path: string | null;
+  snippet: string | null;
+  cspPaths: string[];
+  alreadyInstalled: boolean;
+}): string {
+  const isNextScript = !!input.snippet && /<Script\b/.test(input.snippet);
   const importNote = isNextScript
     ? "\n\nThe diff also imports `Script` from `next/script` if it wasn't already imported.\n"
+    : "";
+  const snippetBlock = input.snippet && input.path
+    ? `**What changed:** one line added to \`${input.path}\`, just before \`</body>\`:
+
+\`\`\`${isNextScript ? "tsx" : "html"}
+${input.snippet}
+\`\`\`${importNote}`
+    : `**What changed:** the tracker snippet was already present in \`${input.path ?? "the selected template"}\`, so this PR only updates CSP.`;
+  const cspBlock = input.cspPaths.length
+    ? `\n\n**CSP:** allows \`${TRACKER_ORIGIN}\` in ${input.cspPaths
+        .map((path) => `\`${path}\``)
+        .join(", ")} so the browser can load \`/stats.js\` and send events to \`/api/track\`.`
     : "";
   return `This PR adds the [CrawlProof](https://crawlproof.com) stats tracker to your site.
 
 **What it does:** counts pageviews by source — AI engine referrals (ChatGPT, Perplexity, Claude, Gemini…) and AI crawler hits (GPTBot, ClaudeBot, PerplexityBot…). No cookies. No PII. Rolls up to a daily counter on the CrawlProof Stats tab for your project.
 
-**What changed:** one line added to \`${path}\`, just before \`</body>\`:
-
-\`\`\`${isNextScript ? "tsx" : "html"}
-${snippet}
-\`\`\`${importNote}
+${snippetBlock}${cspBlock}
 
 **Docs:** ${env.siteUrl}/docs/stats-tracker
 **Disable:** flip the tracker off on your CrawlProof project Stats tab and the script becomes a no-op (or remove this line).`;

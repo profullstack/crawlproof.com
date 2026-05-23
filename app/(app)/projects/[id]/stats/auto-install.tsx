@@ -52,6 +52,7 @@ interface SubmitOk {
   prUrl?: string;
   detail: string;
   path?: string;
+  cspPaths?: string[];
 }
 
 type Step =
@@ -386,7 +387,8 @@ export function AutoInstall({
                 {step.preview.status === "already_installed" && (
                   <div className="mt-4 rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-sm">
                     Tracker already installed at{" "}
-                    <code>{step.preview.path}</code>. Nothing to do.
+                    <code>{step.preview.path}</code>. CrawlProof can still
+                    open a PR if common CSP config needs the tracker origin.
                   </div>
                 )}
                 {step.preview.status === "not_a_template" && (
@@ -427,7 +429,8 @@ export function AutoInstall({
                   >
                     ← back
                   </button>
-                  {step.preview.status === "ready" && (
+                  {(step.preview.status === "ready" ||
+                    step.preview.status === "already_installed") && (
                     <button
                       type="button"
                       disabled={busy}
@@ -462,6 +465,11 @@ export function AutoInstall({
                     >
                       Open PR →
                     </a>
+                  )}
+                  {!!step.result.cspPaths?.length && (
+                    <p className="mt-2 text-xs text-[var(--color-muted)]">
+                      CSP updated in {step.result.cspPaths.join(", ")}.
+                    </p>
                   )}
                 </div>
                 <button
