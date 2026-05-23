@@ -344,7 +344,7 @@ export function AutoInstall({
                       type="text"
                       value={manualPath}
                       onChange={(e) => setManualPath(e.target.value)}
-                      placeholder="apps/web/app/layout.tsx"
+                      placeholder="apps/web/src/app/layout.tsx"
                       className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm font-mono"
                     />
                     <button

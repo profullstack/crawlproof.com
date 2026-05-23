@@ -23,7 +23,7 @@ interface InstallInput {
    *  "sites/sh1pt.com". Canonical candidate paths get this prefix
    *  before being probed. Leave undefined for single-app repos. */
   rootPath?: string;
-  /** Explicit target file (e.g. "apps/web/app/layout.tsx"). When set,
+  /** Explicit target file (e.g. "apps/web/src/app/layout.tsx"). When set,
    *  discovery is skipped — we install at exactly this path. Used by
    *  the UI's confirmation step so the user picks the file. */
   targetPath?: string;
@@ -59,6 +59,16 @@ const CANDIDATES: string[] = [
   "index.html",
   "public/index.html",
   "src/index.html",
+];
+
+// Extra whole-repo probes for common monorepos. These only apply when
+// rootPath is blank; when the user sets rootPath="apps/web", the base
+// candidates above already expand to apps/web/src/app/layout.tsx.
+const COMMON_MONOREPO_CANDIDATES: string[] = [
+  "apps/web/app/layout.tsx",
+  "apps/web/app/layout.jsx",
+  "apps/web/src/app/layout.tsx",
+  "apps/web/src/app/layout.jsx",
 ];
 
 const BRANCH_PREFIX = "crawlproof/install-stats-tracker";
@@ -140,6 +150,13 @@ function normalizeRoot(p: string | undefined): string {
   return p.replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
+function candidatePaths(root: string): string[] {
+  const paths = root
+    ? CANDIDATES.map((p) => `${root}/${p}`)
+    : [...CANDIDATES, ...COMMON_MONOREPO_CANDIDATES];
+  return [...new Set(paths)];
+}
+
 // Ranks a candidate path. Higher is better. The picker uses this to
 // surface the right file by default instead of (say) the boilerplate
 // under examples/. Tuned for monorepos where the production app lives
@@ -196,7 +213,7 @@ export async function findInstallCandidates(input: {
   });
   const ref = repoMeta.default_branch;
   const root = normalizeRoot(input.rootPath);
-  const canonical = root ? CANDIDATES.map((p) => `${root}/${p}`) : CANDIDATES;
+  const canonical = candidatePaths(root);
 
   const found = new Map<string, { sizeBytes?: number }>();
 
@@ -319,9 +336,7 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   const projectIdMarker = `data-site="${input.projectId}"`;
 
   const root = normalizeRoot(input.rootPath);
-  const candidates = root
-    ? CANDIDATES.map((p) => `${root}/${p}`)
-    : CANDIDATES;
+  const candidates = candidatePaths(root);
 
   // Probe a path: returns the file if it has </body> AND doesn't already
   // have our snippet; signals "already installed" if it does.
