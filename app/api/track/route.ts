@@ -8,12 +8,29 @@ import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
 
 const bodySchema = z.object({
-  site: z.string().uuid(),
+  site: z.string().uuid().optional(),
+  websiteId: z.string().uuid().optional(),
   event: z.string().max(80).optional(),
+  type: z.string().max(80).optional(),
   ref: z.string().max(2048).nullable().optional(),
+  referrer: z.string().max(2048).nullable().optional(),
   url: z.string().max(2048).optional(),
+  href: z.string().max(2048).optional(),
   path: z.string().max(2048).optional(),
+  domain: z.string().max(255).optional(),
   target: z.string().max(255).optional(),
+  language: z.string().max(64).optional(),
+  timezone: z.string().max(128).optional(),
+  visitorId: z.string().max(128).optional(),
+  sessionId: z.string().max(128).optional(),
+  viewport: z
+    .object({
+      width: z.number().int().nonnegative().optional(),
+      height: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+  screenWidth: z.number().int().nonnegative().optional(),
+  screenHeight: z.number().int().nonnegative().optional(),
 });
 
 function corsHeaders(request: Request) {
@@ -46,6 +63,10 @@ function ok(request: Request) {
 
 function textOrNull(value: string | null | undefined) {
   return value && value.trim() ? value : null;
+}
+
+function textOrUndefined(value: string | null | undefined) {
+  return value && value.trim() ? value : undefined;
 }
 
 function cleanEvent(value: string | null | undefined) {
@@ -82,12 +103,17 @@ function hostFromUrl(value: string | null | undefined) {
 function payloadFromUrl(request: Request) {
   const url = new URL(request.url);
   return bodySchema.safeParse({
-    site: url.searchParams.get("site"),
-    event: textOrNull(url.searchParams.get("event")),
+    site: textOrUndefined(url.searchParams.get("site")),
+    websiteId: textOrUndefined(url.searchParams.get("websiteId")),
+    event: textOrUndefined(url.searchParams.get("event")),
+    type: textOrUndefined(url.searchParams.get("type")),
     ref: textOrNull(url.searchParams.get("ref")),
-    url: textOrNull(url.searchParams.get("url")),
-    path: textOrNull(url.searchParams.get("path")),
-    target: textOrNull(url.searchParams.get("target")),
+    referrer: textOrNull(url.searchParams.get("referrer")),
+    url: textOrUndefined(url.searchParams.get("url")),
+    href: textOrUndefined(url.searchParams.get("href")),
+    path: textOrUndefined(url.searchParams.get("path")),
+    domain: textOrUndefined(url.searchParams.get("domain")),
+    target: textOrUndefined(url.searchParams.get("target")),
   });
 }
 
@@ -106,13 +132,18 @@ async function ingest(request: NextRequest, parseBody: boolean) {
     : payloadFromUrl(request);
   if (!parsed.success) return ok(request);
 
-  const { site } = parsed.data;
-  const event = cleanEvent(parsed.data.event);
+  const site = parsed.data.site ?? parsed.data.websiteId;
+  if (!site) return ok(request);
+
+  const event = cleanEvent(parsed.data.event ?? parsed.data.type);
   const eventTarget = cleanTarget(parsed.data.target);
   const referrer =
-    textOrNull(parsed.data.ref) ?? textOrNull(request.headers.get("referer"));
+    textOrNull(parsed.data.ref) ??
+    textOrNull(parsed.data.referrer) ??
+    textOrNull(request.headers.get("referer"));
   const pageUrl =
     textOrNull(parsed.data.url) ??
+    textOrNull(parsed.data.href) ??
     textOrNull(parsed.data.path) ??
     textOrNull(request.headers.get("referer"));
   const pagePath = cleanPage(pageUrl) ?? "";

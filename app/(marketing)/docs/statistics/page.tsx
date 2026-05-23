@@ -91,7 +91,8 @@ export default function Layout({ children }) {
         <p className="text-sm leading-relaxed">
           Each request includes the project id, event name, current URL,
           current page&apos;s <code className="font-mono">document.referrer</code>,
-          and a small target label when available. The server reads{" "}
+          viewport, language, timezone, anonymous tab-scoped visitor/session
+          ids, and a small target label when available. The server reads{" "}
           <code className="font-mono">User-Agent</code> and{" "}
           <code className="font-mono">Referer</code> from the HTTP request.
         </p>
@@ -123,6 +124,10 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
         <ul className="list-disc pl-5 text-sm leading-relaxed">
           <li>No cookies.</li>
           <li>No localStorage.</li>
+          <li>
+            Session ids use <code className="font-mono">sessionStorage</code>{" "}
+            when available and reset when the tab session ends.
+          </li>
           <li>No fingerprinting.</li>
           <li>No auth tokens or API keys in the browser.</li>
           <li>No user ids required.</li>
