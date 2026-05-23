@@ -10,6 +10,15 @@ describe("tracker geo lookup", () => {
     expect(clientIpFromHeaders(headers)).toBe("8.8.8.8");
   });
 
+  it("skips private proxy IPs before forwarded public IPs", () => {
+    const headers = new Headers({
+      "x-real-ip": "10.0.0.12",
+      "x-forwarded-for": "192.168.1.25, 8.8.8.8",
+    });
+
+    expect(clientIpFromHeaders(headers)).toBe("8.8.8.8");
+  });
+
   it("ignores local and private addresses", async () => {
     await expect(lookupGeo("127.0.0.1")).resolves.toBeNull();
     await expect(lookupGeo("10.0.0.1")).resolves.toBeNull();
