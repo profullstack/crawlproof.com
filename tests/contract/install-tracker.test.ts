@@ -151,4 +151,75 @@ describe("install tracker candidate discovery", () => {
       }),
     );
   });
+
+  it("replaces an existing CrawlProof tracker for a different project", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      `import Script from "next/script";
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        {children}
+        <Script data-site="old-project-id" src="http://localhost:3000/stats.js" strategy="afterInteractive" />
+      </body>
+    </html>
+  );
+}
+`,
+    );
+
+    const result = await installTracker({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      projectId: "new-project-id",
+      targetPath: "app/layout.tsx",
+    });
+
+    expect(result.status).toBe("opened");
+    expect(github.putFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "app/layout.tsx",
+        contentUtf8: expect.stringContaining('data-site="new-project-id"'),
+      }),
+    );
+    const written = github.putFile.mock.calls[0][0].contentUtf8;
+    expect(written).not.toContain("old-project-id");
+  });
+
+  it("removes duplicate CrawlProof tracker snippets when the current project is present", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      `import Script from "next/script";
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        {children}
+        <Script data-site="old-project-id" src="http://localhost:3000/stats.js" strategy="afterInteractive" />
+        <Script data-site="new-project-id" src="http://localhost:3000/stats.js" strategy="afterInteractive" />
+      </body>
+    </html>
+  );
+}
+`,
+    );
+
+    const result = await installTracker({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      projectId: "new-project-id",
+      targetPath: "app/layout.tsx",
+    });
+
+    expect(result.status).toBe("opened");
+    const written = github.putFile.mock.calls[0][0].contentUtf8;
+    expect(written).toContain('data-site="new-project-id"');
+    expect(written).not.toContain("old-project-id");
+    expect(written.match(/stats\.js/g)).toHaveLength(1);
+  });
 });
