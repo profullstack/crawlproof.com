@@ -9,8 +9,11 @@ import { categorize } from "@/lib/tracker/categorize";
 
 const bodySchema = z.object({
   site: z.string().uuid(),
+  event: z.string().max(80).optional(),
   ref: z.string().max(2048).nullable().optional(),
+  url: z.string().max(2048).optional(),
   path: z.string().max(2048).optional(),
+  target: z.string().max(255).optional(),
 });
 
 function corsHeaders(request: Request) {
@@ -18,9 +21,10 @@ function corsHeaders(request: Request) {
   const requestHeaders = request.headers.get("access-control-request-headers");
   const headers: Record<string, string> = {
     "access-control-allow-origin": origin ?? "*",
-    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": requestHeaders ?? "content-type",
     "access-control-max-age": "86400",
+    "cache-control": "no-store",
     vary: "Origin",
   };
 
@@ -40,25 +44,79 @@ function ok(request: Request) {
   });
 }
 
-export async function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, {
-    status: 204,
-    headers: corsHeaders(request),
+function textOrNull(value: string | null | undefined) {
+  return value && value.trim() ? value : null;
+}
+
+function cleanEvent(value: string | null | undefined) {
+  const raw = textOrNull(value)?.toLowerCase() ?? "pageview";
+  const clean = raw.replace(/[^a-z0-9_.:-]+/g, "_").slice(0, 80);
+  return clean || "pageview";
+}
+
+function cleanPage(value: string | null | undefined) {
+  const raw = textOrNull(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return (url.pathname || "/").slice(0, 2048);
+  } catch {
+    return raw.startsWith("/") ? raw.split(/[?#]/, 1)[0].slice(0, 2048) : null;
+  }
+}
+
+function cleanTarget(value: string | null | undefined) {
+  return textOrNull(value)?.replace(/\s+/g, " ").slice(0, 255) ?? "";
+}
+
+function hostFromUrl(value: string | null | undefined) {
+  const raw = textOrNull(value);
+  if (!raw) return null;
+  try {
+    return new URL(raw).hostname.toLowerCase().replace(/^www\./, "").slice(0, 255);
+  } catch {
+    return null;
+  }
+}
+
+function payloadFromUrl(request: Request) {
+  const url = new URL(request.url);
+  return bodySchema.safeParse({
+    site: url.searchParams.get("site"),
+    event: textOrNull(url.searchParams.get("event")),
+    ref: textOrNull(url.searchParams.get("ref")),
+    url: textOrNull(url.searchParams.get("url")),
+    path: textOrNull(url.searchParams.get("path")),
+    target: textOrNull(url.searchParams.get("target")),
   });
 }
 
-export async function POST(request: NextRequest) {
-  let parsed;
+async function payloadFromBody(request: Request) {
   try {
     const json = await request.json();
-    parsed = bodySchema.safeParse(json);
+    return bodySchema.safeParse(json);
   } catch {
-    return ok(request);
+    return payloadFromUrl(request);
   }
-  if (!parsed?.success) return ok(request);
+}
+
+async function ingest(request: NextRequest, parseBody: boolean) {
+  const parsed = parseBody
+    ? await payloadFromBody(request)
+    : payloadFromUrl(request);
+  if (!parsed.success) return ok(request);
 
   const { site } = parsed.data;
-  const referrer = parsed.data.ref ?? null;
+  const event = cleanEvent(parsed.data.event);
+  const eventTarget = cleanTarget(parsed.data.target);
+  const referrer =
+    textOrNull(parsed.data.ref) ?? textOrNull(request.headers.get("referer"));
+  const pageUrl =
+    textOrNull(parsed.data.url) ??
+    textOrNull(parsed.data.path) ??
+    textOrNull(request.headers.get("referer"));
+  const pagePath = cleanPage(pageUrl) ?? "";
+  const referrerHost = hostFromUrl(referrer) ?? "";
   const userAgent = request.headers.get("user-agent");
 
   const sb = serviceClient();
@@ -103,5 +161,56 @@ export async function POST(request: NextRequest) {
       .insert({ project_id: site, day: today, bucket, count: 1 });
   }
 
+  const { data: eventExisting } = await sb
+    .from("tracker_event_daily_stats")
+    .select("count")
+    .eq("project_id", site)
+    .eq("day", today)
+    .eq("event", event)
+    .eq("page_path", pagePath)
+    .eq("referrer_host", referrerHost)
+    .eq("event_target", eventTarget)
+    .maybeSingle();
+
+  if (eventExisting) {
+    await sb
+      .from("tracker_event_daily_stats")
+      .update({
+        count: (eventExisting.count ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("project_id", site)
+      .eq("day", today)
+      .eq("event", event)
+      .eq("page_path", pagePath)
+      .eq("referrer_host", referrerHost)
+      .eq("event_target", eventTarget);
+  } else {
+    await sb.from("tracker_event_daily_stats").insert({
+      project_id: site,
+      day: today,
+      event,
+      page_path: pagePath,
+      referrer_host: referrerHost,
+      event_target: eventTarget,
+      count: 1,
+    });
+  }
+
   return ok(request);
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders(request),
+  });
+}
+
+export async function GET(request: NextRequest) {
+  return ingest(request, false);
+}
+
+export async function POST(request: NextRequest) {
+  return ingest(request, true);
 }

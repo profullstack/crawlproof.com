@@ -18,37 +18,98 @@ const snippet = `(function(){
     var siteId = s && s.dataset && s.dataset.site;
     if (!siteId) return;
     var endpoint = ${JSON.stringify(env.siteUrl)} + '/api/track';
-    function send() {
-      var body = JSON.stringify({
-        site: siteId,
-        ref: document.referrer || null,
-        path: location.pathname + location.search,
-      });
+    function enc(v) { return encodeURIComponent(v == null ? '' : String(v)); }
+    function pageUrl() { return location.origin + location.pathname + location.search; }
+    function labelFor(el) {
       try {
-        fetch(endpoint, {
-          method: 'POST',
+        return el.getAttribute('data-cp-label')
+          || el.getAttribute('aria-label')
+          || el.getAttribute('title')
+          || el.getAttribute('id')
+          || (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 120)
+          || el.tagName.toLowerCase();
+      } catch (_) {
+        return '';
+      }
+    }
+    function send(eventName, target) {
+      try {
+        var url = endpoint
+          + '?site=' + enc(siteId)
+          + '&event=' + enc(eventName || 'pageview')
+          + '&url=' + enc(pageUrl())
+          + '&ref=' + enc(document.referrer || '')
+          + '&target=' + enc(target || '')
+          + '&t=' + enc(Date.now());
+        fetch(url, {
+          method: 'GET',
           keepalive: true,
-          headers: { 'Content-Type': 'application/json' },
-          body: body,
           credentials: 'omit',
-          mode: 'no-cors'
+          mode: 'no-cors',
+          cache: 'no-store'
         }).catch(function(){});
       } catch (_) {}
     }
-    if (document.readyState === 'complete') send();
-    else window.addEventListener('load', send, { once: true });
+    window.crawlproof = window.crawlproof || {};
+    window.crawlproof.track = function(name, target) { send(name || 'custom', target || ''); };
+
+    if (document.readyState === 'complete') send('pageview');
+    else window.addEventListener('load', function(){ send('pageview'); }, { once: true });
+
+    document.addEventListener('click', function(e) {
+      try {
+        var el = e.target && e.target.closest && e.target.closest('a,button,input[type="button"],input[type="submit"],[role="button"],[data-track],[data-cp-track]');
+        if (!el) return;
+        var name = el.getAttribute('data-cp-track') || el.getAttribute('data-track');
+        if (name) { send(name, labelFor(el)); return; }
+        if (el.tagName === 'A') {
+          var href = el.getAttribute('href') || '';
+          if (!href || href.charAt(0) === '#') return;
+          var a = new URL(href, location.href);
+          if (el.hasAttribute('download') || /\\.(pdf|zip|csv|xlsx?|docx?|pptx?|mp[34]|mov|avi|dmg|pkg|exe)$/i.test(a.pathname)) send('download_click', a.pathname);
+          else if (a.hostname && a.hostname !== location.hostname) send('outbound_click', a.hostname + a.pathname);
+          else send('internal_click', a.pathname || labelFor(el));
+          return;
+        }
+        send('button_click', labelFor(el));
+      } catch (_) {}
+    }, true);
+
+    document.addEventListener('submit', function(e){
+      var form = e.target;
+      send('form_submit', form && (form.getAttribute('name') || form.getAttribute('id') || form.getAttribute('action') || 'form'));
+    }, true);
+
+    var scrollMarks = {};
+    function onScroll() {
+      try {
+        var doc = document.documentElement;
+        var max = Math.max(1, doc.scrollHeight - innerHeight);
+        var pct = Math.floor((scrollY / max) * 100);
+        var marks = [25, 50, 75, 100];
+        for (var i = 0; i < marks.length; i++) {
+          if (pct >= marks[i] && !scrollMarks[marks[i]]) {
+            scrollMarks[marks[i]] = true;
+            send('scroll_' + marks[i]);
+          }
+        }
+      } catch (_) {}
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+
     // SPA: re-emit on history changes.
     var lastPath = location.pathname + location.search;
     function onNav() {
       var p = location.pathname + location.search;
       if (p === lastPath) return;
       lastPath = p;
-      send();
+      scrollMarks = {};
+      send('pageview');
     }
     var ps = history.pushState;
-    history.pushState = function(){ ps.apply(this, arguments); onNav(); };
+    history.pushState = function(){ var r = ps.apply(this, arguments); onNav(); return r; };
     var rs = history.replaceState;
-    history.replaceState = function(){ rs.apply(this, arguments); onNav(); };
+    history.replaceState = function(){ var r = rs.apply(this, arguments); onNav(); return r; };
     window.addEventListener('popstate', onNav);
   } catch (_) {}
 })();`;

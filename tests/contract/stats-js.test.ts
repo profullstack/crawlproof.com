@@ -8,6 +8,18 @@ describe("/stats.js", () => {
 
     expect(script).toContain("credentials: 'omit'");
     expect(script).toContain("mode: 'no-cors'");
+    expect(script).toContain("method: 'GET'");
     expect(script).not.toContain("sendBeacon");
+  });
+
+  it("tracks framework router changes and custom events through a global API", async () => {
+    const response = await GET();
+    const script = await response.text();
+
+    expect(script).toContain("window.crawlproof.track");
+    expect(script).toContain("history.pushState");
+    expect(script).toContain("history.replaceState");
+    expect(script).toContain("popstate");
+    expect(script).toContain("data-cp-track");
   });
 });

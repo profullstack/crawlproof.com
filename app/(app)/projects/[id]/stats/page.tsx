@@ -5,6 +5,11 @@ import { bucketLabel } from "@/lib/tracker/categorize";
 import { env } from "@/lib/env";
 import type { Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
+import {
+  TrackerAnalytics,
+  type TrackerDailyPoint,
+  type TrackerListItem,
+} from "@/components/charts/tracker-analytics";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { AutoInstall } from "./auto-install";
@@ -12,6 +17,14 @@ import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
 type StatsRow = { bucket: string; day: string; count: number };
+type EventRow = {
+  day: string;
+  event: string;
+  page_path: string;
+  referrer_host: string;
+  event_target: string;
+  count: number;
+};
 
 const WINDOW_DAYS = 30;
 
@@ -41,6 +54,15 @@ export default async function ProjectStatsPage({
 
   const rows = (stats ?? []) as StatsRow[];
 
+  const { data: eventStats } = await supabase
+    .from("tracker_event_daily_stats")
+    .select("day, event, page_path, referrer_host, event_target, count")
+    .eq("project_id", id)
+    .gte("day", since)
+    .order("day", { ascending: false });
+
+  const eventRows = (eventStats ?? []) as EventRow[];
+
   // Roll up by bucket for the table view; sort by total desc.
   const byBucket = new Map<string, number>();
   let totalAi = 0;
@@ -55,6 +77,26 @@ export default async function ProjectStatsPage({
   }
   const buckets = Array.from(byBucket.entries()).sort((a, b) => b[1] - a[1]);
   const grandTotal = buckets.reduce((s, [, n]) => s + n, 0);
+  const daily = buildDaily(rows, eventRows);
+  const eventMix = topItems(eventRows, (row) => eventLabel(row.event), {
+    fallback: grandTotal ? [{ label: "Pageview", value: grandTotal }] : [],
+  });
+  const topSources = buckets.slice(0, 10).map(([bucket, count]) => ({
+    label: bucketLabel(bucket),
+    value: count,
+  }));
+  const topPages = topItems(
+    eventRows.filter((row) => row.event === "pageview"),
+    (row) => row.page_path || "/",
+  );
+  const topReferrers = topItems(
+    eventRows.filter((row) => row.referrer_host),
+    (row) => row.referrer_host,
+  );
+  const topActions = topItems(
+    eventRows.filter((row) => row.event !== "pageview" && row.event_target),
+    (row) => `${eventLabel(row.event)} · ${row.event_target}`,
+  );
 
   const trackerEnabled = !!(project as { tracker_enabled?: boolean })
     .tracker_enabled;
@@ -149,55 +191,94 @@ export default async function ProjectStatsPage({
           <Metric label="Other visits" value={totalHuman} tone="muted" />
         </div>
 
-        <section className="card p-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
-            <h2 className="text-lg font-semibold">
-              Last {WINDOW_DAYS} days
-            </h2>
-            <p className="text-xs text-[var(--color-muted)]">
-              {grandTotal.toLocaleString()} total events
-            </p>
-          </div>
-          {buckets.length === 0 ? (
+        {grandTotal === 0 && eventRows.length === 0 ? (
+          <section className="card p-4">
             <p className="text-sm text-[var(--color-muted)]">
               {trackerEnabled
                 ? "No events yet. Once the snippet is installed and your site gets traffic, sources will appear here."
                 : "Enable the tracker to start collecting events."}
             </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--color-border)] text-left text-[var(--color-muted)]">
-                  <th className="py-1 font-normal">Source</th>
-                  <th className="py-1 text-right font-normal">Events</th>
-                  <th className="py-1 text-right font-normal">Share</th>
-                </tr>
-              </thead>
-              <tbody>
-                {buckets.map(([bucket, count]) => {
-                  const share = grandTotal ? (count / grandTotal) * 100 : 0;
-                  return (
-                    <tr
-                      key={bucket}
-                      className="border-b border-[var(--color-border)] last:border-0"
-                    >
-                      <td className="py-1.5">{bucketLabel(bucket)}</td>
-                      <td className="py-1.5 text-right tabular-nums">
-                        {count.toLocaleString()}
-                      </td>
-                      <td className="py-1.5 text-right tabular-nums text-[var(--color-muted)]">
-                        {share.toFixed(1)}%
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </section>
+          </section>
+        ) : (
+          <TrackerAnalytics
+            daily={daily}
+            events={eventMix}
+            sources={topSources}
+            pages={topPages}
+            referrers={topReferrers}
+            actions={topActions}
+          />
+        )}
       </div>
     </ProjectShell>
   );
+}
+
+function buildDaily(rows: StatsRow[], eventRows: EventRow[]): TrackerDailyPoint[] {
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() - WINDOW_DAYS + 1);
+
+  const byDay = new Map<string, TrackerDailyPoint>();
+  for (let i = 0; i < WINDOW_DAYS; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    const date = d.toISOString().slice(0, 10);
+    byDay.set(date, {
+      date,
+      events: 0,
+      pageviews: 0,
+      interactions: 0,
+      ai: 0,
+      bots: 0,
+    });
+  }
+
+  for (const row of rows) {
+    const point = byDay.get(row.day);
+    if (!point) continue;
+    point.events += row.count;
+    if (row.bucket.startsWith("ai_referral:")) point.ai += row.count;
+    if (row.bucket.startsWith("bot:")) point.bots += row.count;
+  }
+
+  for (const row of eventRows) {
+    const point = byDay.get(row.day);
+    if (!point) continue;
+    if (row.event === "pageview") point.pageviews += row.count;
+    else point.interactions += row.count;
+  }
+
+  for (const point of byDay.values()) {
+    if (point.events === 0) point.events = point.pageviews + point.interactions;
+  }
+
+  return Array.from(byDay.values());
+}
+
+function topItems(
+  rows: EventRow[],
+  labelFor: (row: EventRow) => string,
+  options: { fallback?: TrackerListItem[] } = {},
+): TrackerListItem[] {
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const label = labelFor(row);
+    if (!label) continue;
+    map.set(label, (map.get(label) ?? 0) + row.count);
+  }
+  const items = Array.from(map.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+  return items.length ? items : options.fallback ?? [];
+}
+
+function eventLabel(event: string) {
+  return event
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function Metric({

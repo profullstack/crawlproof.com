@@ -21,10 +21,10 @@ const DOCS: DocCard[] = [
       "How CrawlProof rolls per-engine audit scores into a single 0–100 number you can track over time, and what to do to make it climb.",
   },
   {
-    href: "/docs/stats-tracker",
-    title: "Stats tracker",
+    href: "/docs/statistics",
+    title: "Statistics",
     description:
-      "Drop a one-line <script> tag on your site and see which AI engines refer you, which AI crawlers visit, and how that mix changes day to day.",
+      "Install the cookieless tracker, collect pageviews and interactions, and send custom events from any frontend stack.",
   },
   {
     href: "/docs/autoblog-webhook",
