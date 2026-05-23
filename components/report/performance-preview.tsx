@@ -9,19 +9,19 @@ import Link from "next/link";
 // even when nobody's looking at a chart.
 const ScoreTrend = dynamic(
   () => import("@/components/charts/score-trend").then((m) => m.ScoreTrend),
-  { ssr: false, loading: () => <div className="card h-64" /> },
+  { ssr: false, loading: () => <div className="card h-64 min-h-64 min-w-0" /> },
 );
 const StatusPie = dynamic(
   () => import("@/components/charts/status-pie").then((m) => m.StatusPie),
-  { ssr: false, loading: () => <div className="card h-64" /> },
+  { ssr: false, loading: () => <div className="card h-64 min-h-64 min-w-0" /> },
 );
 const SectionBar = dynamic(
   () => import("@/components/charts/section-bar").then((m) => m.SectionBar),
-  { ssr: false, loading: () => <div className="card h-72" /> },
+  { ssr: false, loading: () => <div className="card h-72 min-h-72 min-w-0" /> },
 );
 const PriorityBar = dynamic(
   () => import("@/components/charts/priority-bar").then((m) => m.PriorityBar),
-  { ssr: false, loading: () => <div className="card h-72" /> },
+  { ssr: false, loading: () => <div className="card h-72 min-h-72 min-w-0" /> },
 );
 
 // Sample data — illustrative only. Picked so the chart shows an obvious
@@ -123,7 +123,7 @@ export function PerformancePreview({ variant = "report" }: { variant?: Variant }
               Sign up free
             </Link>
             <p className="mt-2 text-xs text-[var(--color-muted)]">
-              3 free credits on signup · 10 free scans/day/URL after that.
+              3 free AI credits on signup · free rule-based scans up to the daily limit.
             </p>
           </div>
         </div>

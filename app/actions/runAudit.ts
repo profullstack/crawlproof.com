@@ -67,17 +67,18 @@ export async function startAuditFromForm(input: {
   estimatedMonthlySales?: string;
   engines?: Engine[];
   marketingOptIn?: boolean;
+  listPublic?: boolean;
 }): Promise<({ ok: true; id: string; token: string } & { engines: Engine[] }) | Err> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
   const target = check.url;
 
-  // Email is now required on the hero form — we use it for the PDF
-  // report + lead capture. Belt-and-braces in case a client bypasses
-  // the `required` attribute.
   const email = input.email?.trim();
-  if (!email || !email.includes("@")) {
-    return { ok: false, error: "Email is required." };
+  if (email && !email.includes("@")) {
+    return { ok: false, error: "Enter a valid email address." };
+  }
+  if (input.marketingOptIn && !email) {
+    return { ok: false, error: "Email is required for marketing updates." };
   }
 
   const hdrs = await headers();
@@ -129,21 +130,36 @@ export async function startAuditFromForm(input: {
   const salesRaw = input.estimatedMonthlySales?.trim();
   const salesParsed =
     salesRaw && Number.isFinite(Number(salesRaw)) ? Number(salesRaw) : null;
-  const { data: row, error } = await svc
+  const insertPayload: Record<string, unknown> = {
+    target_url: target,
+    owner_id: user?.id ?? null,
+    status: "queued",
+    share_token: token,
+    triggered_by: "manual",
+    engine: firstEngine,
+    pdf_email: email || null,
+    phone: input.phone?.trim() || null,
+    estimated_monthly_sales: salesParsed,
+    listed_public: !!input.listPublic,
+  };
+  let { data: row, error } = await svc
     .from("audits")
-    .insert({
-      target_url: target,
-      owner_id: user?.id ?? null,
-      status: "queued",
-      share_token: token,
-      triggered_by: "manual",
-      engine: firstEngine,
-      pdf_email: email,
-      phone: input.phone?.trim() || null,
-      estimated_monthly_sales: salesParsed,
-    })
+    .insert(insertPayload)
     .select("id, share_token")
     .single();
+  if (
+    error &&
+    /listed_public|schema cache|column/i.test(error.message ?? "")
+  ) {
+    delete insertPayload.listed_public;
+    const retry = await svc
+      .from("audits")
+      .insert(insertPayload)
+      .select("id, share_token")
+      .single();
+    row = retry.data;
+    error = retry.error;
+  }
   if (error || !row) {
     if (cost > 0 && user) await refundCredit(user.id, cost);
     return { ok: false, error: error?.message ?? "Failed to create audit." };
@@ -156,11 +172,12 @@ export async function startAuditFromForm(input: {
     audit_id: row.id,
     meta: {
       from: "hero_form",
-      email,
+      email: email || null,
       phone: input.phone?.trim() || null,
       estimated_monthly_sales: salesParsed,
       engine: firstEngine,
       credits_spent: cost,
+      listed_public: !!input.listPublic,
     },
   });
 
@@ -168,17 +185,19 @@ export async function startAuditFromForm(input: {
   // marketing_contacts. Tick → consented_at=now() (real opt-in).
   // Unticked → consented_at=NULL (lead only, no marketing sends).
   // Best-effort: failures must not break the audit.
-  try {
-    if (input.marketingOptIn) {
-      await recordMarketingConsent({ email, source: "hero_form" });
-    } else {
-      await recordLead({ email, source: "hero_form" });
+  if (email) {
+    try {
+      if (input.marketingOptIn) {
+        await recordMarketingConsent({ email, source: "hero_form" });
+      } else {
+        await recordLead({ email, source: "hero_form" });
+      }
+    } catch (err) {
+      console.warn("[runAudit] lead/consent record failed", err);
     }
-  } catch (err) {
-    console.warn("[runAudit] lead/consent record failed", err);
   }
 
-  await notifyWorker(row.id, email);
+  await notifyWorker(row.id, email || undefined);
   return { ok: true, id: row.id, token: row.share_token!, engines: [firstEngine] };
 }
 
