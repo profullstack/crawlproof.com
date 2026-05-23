@@ -24,12 +24,6 @@ const snippet = `(function(){
         ref: document.referrer || null,
         path: location.pathname + location.search,
       });
-      if (navigator.sendBeacon) {
-        try {
-          var blob = new Blob([body], { type: 'application/json' });
-          if (navigator.sendBeacon(endpoint, blob)) return;
-        } catch (_) {}
-      }
       try {
         fetch(endpoint, {
           method: 'POST',
