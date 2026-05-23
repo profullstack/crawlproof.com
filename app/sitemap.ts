@@ -3,7 +3,7 @@ import { env } from "@/lib/env";
 import { posts } from "@/lib/blog/posts";
 import { serviceClient } from "@/lib/supabase/service";
 
-// Regenerate hourly so new free scans show up in the index without a deploy.
+// Regenerate hourly so new public scans show up in the index without a deploy.
 export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -34,7 +34,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })),
   ];
 
-  // Include the most recent anonymous reports as deep links so they get
+  // Include the most recent opted-in reports as deep links so they get
   // indexed. We cap at 100 to mirror the /recent UI and keep sitemap size
   // reasonable; older audits drop out as new ones come in.
   let reportEntries: MetadataRoute.Sitemap = [];
@@ -43,7 +43,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const { data } = await svc
       .from("audits")
       .select("share_token, completed_at, created_at")
-      .is("owner_id", null)
       .eq("listed_public", true)
       .eq("status", "complete")
       .not("share_token", "is", null)

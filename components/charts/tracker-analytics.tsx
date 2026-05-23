@@ -46,6 +46,8 @@ export function TrackerAnalytics({
   pages,
   referrers,
   actions,
+  countries,
+  cities,
 }: {
   daily: TrackerDailyPoint[];
   events: TrackerListItem[];
@@ -53,6 +55,8 @@ export function TrackerAnalytics({
   pages: TrackerListItem[];
   referrers: TrackerListItem[];
   actions: TrackerListItem[];
+  countries: TrackerListItem[];
+  cities: TrackerListItem[];
 }) {
   const total = daily.reduce((sum, point) => sum + point.events, 0);
 
@@ -158,6 +162,19 @@ export function TrackerAnalytics({
           title="Referrer hosts"
           data={referrers}
           empty="No external referrers yet."
+        />
+        <RankedList
+          title="Countries"
+          data={countries}
+          empty="No location data yet."
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RankedList
+          title="Cities"
+          data={cities}
+          empty="No city data yet."
         />
       </div>
     </div>

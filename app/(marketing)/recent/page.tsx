@@ -89,7 +89,7 @@ export async function generateMetadata({
       url,
       title: "Recent AEO audits — CrawlProof",
       description:
-        "The latest opted-in AEO audits run on CrawlProof. Free, anonymous scans of real sites.",
+        "The latest opted-in AEO audits run on CrawlProof. Shareable scans of real sites.",
       siteName: "CrawlProof",
     },
     twitter: { card: "summary_large_image", title: "Recent AEO audits — CrawlProof" },
@@ -113,7 +113,6 @@ export default async function RecentPage({
       "share_token, target_url, status, score, completed_at, created_at, engine",
       { count: "exact" },
     )
-    .is("owner_id", null)
     .eq("listed_public", true)
     .eq("status", "complete")
     .not("share_token", "is", null)
@@ -168,7 +167,7 @@ export default async function RecentPage({
         <h1 className="text-4xl font-extrabold">Recent AEO audits</h1>
         <p className="mt-2 text-[var(--color-muted)]">
           The most recent {MAX_PAGES * PAGE_SIZE}{" "}
-          opted-in free scans run on CrawlProof.
+          opted-in scans run on CrawlProof.
           Click any to see the full report — what AI crawlers can find, what they can&apos;t,
           and the priority to-do list to fix it.
         </p>

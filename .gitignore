@@ -8,6 +8,8 @@ node_modules
 .env.test
 !.env.example
 *.log
+*.mmdb
+data/GeoLite2-*
 .DS_Store
 dist
 worker/dist

@@ -10,6 +10,11 @@ export const env = {
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
   supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+  maxmindLicenseKey: process.env.MAXMIND_LICENSE_KEY ?? "",
+  geoLite2CityDbPath:
+    process.env.MAXMIND_GEOLITE2_CITY_DB_PATH ??
+    process.env.GEOLITE2_CITY_DB_PATH ??
+    "data/GeoLite2-City.mmdb",
   // CoinPay — crypto credit purchases.
   coinpayMerchantId: process.env.COINPAY_MERCHANT_ID ?? "",
   coinpayApiKey: process.env.COINPAY_API_KEY ?? "",
