@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import net from "node:net";
+import path from "node:path";
 import maxmind, { type CityResponse, type Reader } from "maxmind";
 import { env } from "@/lib/env";
 
@@ -12,7 +14,14 @@ export interface GeoLocation {
   timezone: string;
 }
 
-let readerPromise: Promise<Reader<CityResponse> | null> | null = null;
+type GeoReaders = {
+  explicit: Reader<CityResponse> | null;
+  ipv4: Reader<CityResponse> | null;
+  ipv6: Reader<CityResponse> | null;
+};
+
+const require = createRequire(import.meta.url);
+let readerPromise: Promise<GeoReaders | null> | null = null;
 
 export function clientIpFromHeaders(headers: Headers) {
   const forwardedFor = headers.get("x-forwarded-for");
@@ -30,33 +39,85 @@ export async function lookupGeo(ip: string | null): Promise<GeoLocation | null> 
   const cleanIp = sanitizeIp(ip);
   if (!cleanIp || isPrivateOrLocalIp(cleanIp)) return null;
 
-  const reader = await getReader();
-  if (!reader) return null;
+  const readers = await getReaders();
+  if (!readers) return null;
 
-  const result = reader.get(cleanIp);
+  const reader =
+    readers.explicit ?? (net.isIPv4(cleanIp) ? readers.ipv4 : readers.ipv6);
+  const result = reader?.get(cleanIp) as CityResponse | FlatGeoResponse | null | undefined;
   if (!result) return null;
+  const flat = result as FlatGeoResponse;
 
   return {
-    countryCode: result.country?.iso_code ?? "",
-    countryName: result.country?.names?.en ?? "",
-    regionCode: result.subdivisions?.[0]?.iso_code ?? "",
-    regionName: result.subdivisions?.[0]?.names?.en ?? "",
-    city: result.city?.names?.en ?? "",
-    timezone: result.location?.time_zone ?? "",
+    countryCode: nestedCountryCode(result) || flatText(flat.country_code),
+    countryName: nestedCountryName(result) || flatText(flat.country_name),
+    regionCode: nestedRegionCode(result) || flatText(flat.state1),
+    regionName: nestedRegionName(result) || flatText(flat.state2),
+    city: nestedCity(result) || flatText(flat.city),
+    timezone: nestedTimezone(result) || flatText(flat.timezone),
   };
 }
 
-function getReader() {
+type FlatGeoResponse = {
+  country_code?: unknown;
+  country_name?: unknown;
+  state1?: unknown;
+  state2?: unknown;
+  city?: unknown;
+  timezone?: unknown;
+};
+
+function nestedCountryCode(result: CityResponse | FlatGeoResponse) {
+  return "country" in result ? result.country?.iso_code ?? "" : "";
+}
+
+function nestedCountryName(result: CityResponse | FlatGeoResponse) {
+  return "country" in result ? result.country?.names?.en ?? "" : "";
+}
+
+function nestedRegionCode(result: CityResponse | FlatGeoResponse) {
+  return "subdivisions" in result ? result.subdivisions?.[0]?.iso_code ?? "" : "";
+}
+
+function nestedRegionName(result: CityResponse | FlatGeoResponse) {
+  return "subdivisions" in result ? result.subdivisions?.[0]?.names?.en ?? "" : "";
+}
+
+function nestedCity(result: CityResponse | FlatGeoResponse) {
+  return "city" in result && typeof result.city === "object"
+    ? (result.city as CityResponse["city"])?.names?.en ?? ""
+    : "";
+}
+
+function nestedTimezone(result: CityResponse | FlatGeoResponse) {
+  return "location" in result ? result.location?.time_zone ?? "" : "";
+}
+
+function flatText(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function getReaders() {
   if (!readerPromise) {
-    readerPromise = openReader();
+    readerPromise = openReaders();
   }
   return readerPromise;
 }
 
-async function openReader() {
-  const dbPath = env.geoLite2CityDbPath;
-  if (!dbPath) return null;
+async function openReaders(): Promise<GeoReaders | null> {
+  const explicit = await openReaderIfReadable(env.geoLite2CityDbPath);
+  if (explicit) return { explicit, ipv4: null, ipv6: null };
 
+  const bundled = bundledDbPaths();
+  const [ipv4, ipv6] = await Promise.all([
+    openReaderIfReadable(bundled?.ipv4),
+    openReaderIfReadable(bundled?.ipv6),
+  ]);
+  return ipv4 || ipv6 ? { explicit: null, ipv4, ipv6 } : null;
+}
+
+async function openReaderIfReadable(dbPath: string | null | undefined) {
+  if (!dbPath) return null;
   try {
     await fs.access(dbPath);
     return await maxmind.open<CityResponse>(dbPath, {
@@ -64,6 +125,21 @@ async function openReader() {
       watchForUpdates: true,
       watchForUpdatesNonPersistent: true,
     });
+  } catch {
+    return null;
+  }
+}
+
+function bundledDbPaths() {
+  try {
+    const packageJson = require.resolve(
+      "@ip-location-db/geolite2-city-mmdb/package.json",
+    );
+    const root = path.dirname(packageJson);
+    return {
+      ipv4: path.join(root, "geolite2-city-ipv4.mmdb"),
+      ipv6: path.join(root, "geolite2-city-ipv6.mmdb"),
+    };
   } catch {
     return null;
   }
