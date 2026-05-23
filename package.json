@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
+    "@ip-location-db/geolite2-city-mmdb": "^2.3.2026052019",
     "@profullstack/autoblog": "github:profullstack/autoblog#f76b7d3",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",

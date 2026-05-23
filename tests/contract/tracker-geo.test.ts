@@ -15,4 +15,11 @@ describe("tracker geo lookup", () => {
     await expect(lookupGeo("10.0.0.1")).resolves.toBeNull();
     await expect(lookupGeo("192.168.1.1")).resolves.toBeNull();
   });
+
+  it("looks up public IP locations from the bundled database", async () => {
+    const geo = await lookupGeo("8.8.8.8");
+
+    expect(geo?.countryCode).toBe("US");
+    expect(geo?.timezone).toBeTruthy();
+  });
 });
