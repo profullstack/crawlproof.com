@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
+import { FontSparkline } from "@/components/font-sparkline";
 import { backfillProjectLogo } from "@/app/actions/createProject";
 
 export const metadata = { title: "Dashboard" };
@@ -49,10 +50,11 @@ export default async function DashboardPage({
   // project has an lx_site row in status=active; social is "on" when at
   // least one social account is linked at the project level.
   const projectIds = (projects ?? []).map((p) => p.id);
-  const [autoblogIds, socialIds, latestPosts] = await Promise.all([
+  const [autoblogIds, socialIds, latestPosts, trafficByProject] = await Promise.all([
     fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
     fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
     fetchLatestBlogPostByProject(supabase, projectIds),
+    fetchSevenDayPageviews(supabase, projectIds),
   ]);
 
   // Lazy backfill: any project still missing a logo gets one scraped
@@ -173,6 +175,17 @@ export default async function DashboardPage({
                     </a>
                   </div>
                 )}
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
+                  <div>
+                    <div className="text-xs font-medium text-[var(--color-fg)]">
+                      {totalTraffic(trafficByProject.get(p.id) ?? []).toLocaleString()} pageviews
+                    </div>
+                    <div className="text-[11px] text-[var(--color-muted)]">
+                      Past 7 days
+                    </div>
+                  </div>
+                  <FontSparkline samples={trafficSamples(trafficByProject.get(p.id))} />
+                </div>
               </li>
             ))}
           </ul>
@@ -253,6 +266,7 @@ function ProjectLogo({
 }
 
 type LatestPost = { url: string; publishedAt: string };
+type TrafficPoint = { day: string; count: number };
 
 async function fetchLatestBlogPostByProject(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -292,6 +306,57 @@ async function fetchLatestBlogPostByProject(
     });
   }
   return out;
+}
+
+async function fetchSevenDayPageviews(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectIds: string[],
+): Promise<Map<string, TrafficPoint[]>> {
+  const days = lastSevenDays();
+  const out = new Map<string, TrafficPoint[]>();
+  for (const projectId of projectIds) {
+    out.set(
+      projectId,
+      days.map((day) => ({ day, count: 0 })),
+    );
+  }
+  if (projectIds.length === 0) return out;
+
+  const { data } = await supabase
+    .from("tracker_event_daily_stats")
+    .select("project_id, day, count")
+    .in("project_id", projectIds)
+    .eq("event", "pageview")
+    .gte("day", days[0]);
+
+  for (const row of (data ?? []) as Array<{
+    project_id: string;
+    day: string;
+    count: number;
+  }>) {
+    const points = out.get(row.project_id);
+    if (!points) continue;
+    const point = points.find((item) => item.day === row.day);
+    if (point) point.count += row.count;
+  }
+
+  return out;
+}
+
+function lastSevenDays() {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() - (6 - index));
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+function trafficSamples(points: TrafficPoint[] | undefined) {
+  return points?.map((point) => point.count) ?? Array(7).fill(0);
+}
+
+function totalTraffic(points: TrafficPoint[]) {
+  return points.reduce((sum, point) => sum + point.count, 0);
 }
 
 async function fetchEnabledProjectIds(
