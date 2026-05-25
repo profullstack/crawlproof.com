@@ -32,6 +32,7 @@ import {
   extractSectionForMarker,
   generateImage,
   generateInlineImage,
+  normalizeArticleOutput,
   refundCredit,
   slugify,
   uniqueSlug,
@@ -182,7 +183,7 @@ export async function generateGuestPost(
       maxTokens: 48000,
       anthropicCacheSystemPrompt: true,
     });
-    article = generated.output;
+    article = normalizeArticleOutput(generated.output);
   } catch (err) {
     await refundCredit(supabase, author.user_id);
     return {
