@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  ensureTableOfContentsLinks,
   extractSectionForMarker,
   slugify,
   validateInternalLinks,
@@ -56,6 +57,59 @@ Read more about [our product](https://example.com/product) and the
 
   it("returns ok with an empty expected list (no link slots)", () => {
     expect(validateInternalLinks(md, []).ok).toBe(true);
+  });
+});
+
+describe("ensureTableOfContentsLinks", () => {
+  it("links plain TOC bullets to matching headings", () => {
+    const md = [
+      "## Table of contents",
+      "- Why This Matters",
+      "  - What Breaks",
+      "",
+      "## Why This Matters",
+      "Copy.",
+      "",
+      "### What Breaks",
+      "More copy.",
+    ].join("\n");
+
+    expect(ensureTableOfContentsLinks(md)).toContain(
+      "- [Why This Matters](#why-this-matters)",
+    );
+    expect(ensureTableOfContentsLinks(md)).toContain(
+      "  - [What Breaks](#what-breaks)",
+    );
+  });
+
+  it("normalizes existing TOC fragment links", () => {
+    const md = [
+      "## Table of contents",
+      "- [OpenAI Change](#old-anchor)",
+      "",
+      "## OpenAI Change",
+      "Copy.",
+    ].join("\n");
+
+    expect(ensureTableOfContentsLinks(md)).toContain(
+      "- [OpenAI Change](#openai-change)",
+    );
+  });
+
+  it("does not rewrite links outside the TOC block", () => {
+    const md = [
+      "See [pricing](#pricing) first.",
+      "",
+      "## Table of contents",
+      "- Pricing",
+      "",
+      "## Pricing",
+      "Copy.",
+    ].join("\n");
+
+    const out = ensureTableOfContentsLinks(md);
+    expect(out).toContain("See [pricing](#pricing) first.");
+    expect(out).toContain("- [Pricing](#pricing)");
   });
 });
 
