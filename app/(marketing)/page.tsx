@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { HeroAuditForm } from "@/components/hero-audit-form";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
 import { PerformancePreview } from "@/components/report/performance-preview";
@@ -20,6 +21,17 @@ const faqs = [
     q: "Is the free tier really free?",
     a: "Yes — anonymous visitors get 10 audits per day per IP with no signup, and signing up unlocks 3 free credits. Paid scans are $1/credit with volume discounts down to $0.50/credit at 100 scans. No subscription, credits never expire.",
   },
+];
+
+const backlinkPricePoints = [
+  { label: "Entry", value: "$445", width: 11 },
+  { label: "Alt", value: "$445", width: 11 },
+  { label: "Low", value: "$506", width: 12 },
+  { label: "Mid", value: "$631", width: 15 },
+  { label: "Plus", value: "$1,105", width: 27 },
+  { label: "High", value: "$1,331", width: 33 },
+  { label: "Upper", value: "$1,981", width: 48 },
+  { label: "Peak", value: "$4,090", width: 100 },
 ];
 
 export default function HomePage() {
@@ -89,6 +101,39 @@ export default function HomePage() {
         <PerformancePreview variant="home" />
       </section>
 
+      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
+        <div className="grid items-center gap-8 lg:grid-cols-[0.95fr_1.05fr]">
+          <div>
+            <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
+              Newly Launched Feature
+            </p>
+            <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
+              Autoblog support turns credits into published SEO posts.
+            </h2>
+            <p className="mt-4 text-[var(--color-muted)]">
+              Connect a webhook once and CrawlProof can research topics, draft long-form
+              posts, attach a hero image, and deliver articles to your CMS on schedule.
+              Each published post uses 1 credit.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <LaunchStat label="Cost model" value="1 credit" />
+              <LaunchStat label="Delivery" value="Webhook" />
+              <LaunchStat label="Cadence" value="Scheduled" />
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/signup" className="btn btn-primary">
+                Start autoblogging
+              </Link>
+              <Link href="/docs/autoblog-webhook" className="btn">
+                View webhook docs
+              </Link>
+            </div>
+          </div>
+
+          <AutoblogLaunchGraphic />
+        </div>
+      </section>
+
       <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-16">
         <div className="card p-6 sm:p-8">
           <h2 className="text-2xl font-bold">Built to be audited in public.</h2>
@@ -122,6 +167,72 @@ export default function HomePage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function LaunchStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[rgba(18,22,28,0.72)] p-4">
+      <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
+      <div className="mt-1 text-lg font-bold">{value}</div>
+    </div>
+  );
+}
+
+function AutoblogLaunchGraphic() {
+  return (
+    <div
+      className="rounded-xl border border-[var(--color-border)] bg-[#101820] p-5 shadow-2xl shadow-black/20 sm:p-6"
+      aria-label="Backlink marketplace examples ranged from $445 to $4,090, compared with CrawlProof Autoblog at 1 credit per post."
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Generic market spread
+          </div>
+          <div className="mt-1 text-xl font-extrabold">Backlink prices found in research</div>
+        </div>
+        <div className="rounded-lg border border-[rgba(110,231,183,0.35)] bg-[rgba(110,231,183,0.12)] px-3 py-2 text-right">
+          <div className="text-xs text-[var(--color-muted)]">Autoblog</div>
+          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">1 credit</div>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-3">
+        {backlinkPricePoints.map((point) => (
+          <div key={`${point.label}-${point.value}`} className="grid grid-cols-[3.4rem_1fr_4.4rem] items-center gap-3">
+            <div className="text-xs text-[var(--color-muted)]">{point.label}</div>
+            <div className="h-3 rounded-full bg-[#1d2630]">
+              <div
+                className="h-3 rounded-full bg-[linear-gradient(90deg,#6ee7b7,#fbbf24)]"
+                style={{ width: `${point.width}%` }}
+              />
+            </div>
+            <div className="text-right font-mono text-sm font-semibold">{point.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg bg-[#17202a] p-3">
+          <div className="text-xs text-[var(--color-muted)]">Min observed</div>
+          <div className="font-mono text-lg font-bold">$445</div>
+        </div>
+        <div className="rounded-lg bg-[#17202a] p-3">
+          <div className="text-xs text-[var(--color-muted)]">Max observed</div>
+          <div className="font-mono text-lg font-bold">$4,090</div>
+        </div>
+        <div className="rounded-lg bg-[#17202a] p-3">
+          <div className="text-xs text-[var(--color-muted)]">CrawlProof</div>
+          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">1 credit</div>
+        </div>
+      </div>
+
+      <p className="mt-4 text-xs leading-relaxed text-[var(--color-muted)]">
+        Price examples are redrawn from internal reference research as an abstract comparison,
+        not a copied marketplace interface.
+      </p>
+    </div>
   );
 }
 

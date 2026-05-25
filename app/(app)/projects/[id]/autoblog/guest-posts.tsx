@@ -276,10 +276,34 @@ function TopicAction({
     );
   }
 
+  if (req.status === "failed") {
+    return (
+      <span className="flex items-center gap-2">
+        <span className="badge badge-fail text-xs">failed</span>
+        <button
+          type="button"
+          className="btn text-xs"
+          disabled={anyPending}
+          onClick={onGenerate}
+          title="Retry this guest-post request"
+        >
+          {isBusy ? "Retrying…" : "Retry"}
+        </button>
+        <button
+          type="button"
+          className="btn text-xs"
+          disabled={anyPending}
+          onClick={onUnclick}
+          title="Cancel this request"
+        >
+          Remove
+        </button>
+      </span>
+    );
+  }
+
   const statusBadge =
-    req.status === "failed" ? (
-      <span className="badge badge-fail text-xs">failed</span>
-    ) : req.status === "generating" ? (
+    req.status === "generating" ? (
       <span className="badge badge-warn text-xs">generating</span>
     ) : (
       <span className="badge badge-info text-xs">queued</span>

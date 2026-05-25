@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { enqueueGuestPostGenerate } from "@/lib/lx/workerClient";
 import { getProjectById } from "@/lib/lx/currentSite";
+import { serviceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
 
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  const authorSiteId = authorLx.id;
 
   let body: { targetSiteId?: string; topic?: string };
   try {
@@ -79,6 +81,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const enqueueExisting = async (requestId: string) => {
+    await enqueueGuestPostGenerate(authorSiteId, body.targetSiteId!, body.topic!, {
+      requestId,
+    });
+  };
+
   // Record the request before enqueueing so the UI can show an
   // indicator immediately and the user can cancel before generation
   // completes. Unique on (author, target, topic) — if a row already
@@ -104,7 +112,28 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    // queued / generating / failed → just return the existing row.
+    if (existing.status === "failed") {
+      const svc = serviceClient();
+      const { data: reset, error: resetErr } = await svc
+        .from("lx_guest_post_request")
+        .update({ status: "queued", error_text: null })
+        .eq("id", existing.id)
+        .select("id, status, article_id")
+        .maybeSingle();
+      if (resetErr || !reset) {
+        return NextResponse.json(
+          { ok: false, error: resetErr?.message ?? "could not retry request" },
+          { status: 500 },
+        );
+      }
+      await enqueueExisting(existing.id);
+      return NextResponse.json({ ok: true, request: reset, retried: true });
+    }
+    if (existing.status === "queued") {
+      await enqueueExisting(existing.id);
+    }
+    // queued / generating → return the existing row. queued is re-notified
+    // above so a lost worker notification does not strand the request.
     return NextResponse.json({ ok: true, request: existing });
   }
 
@@ -125,8 +154,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  await enqueueGuestPostGenerate(authorLx.id, body.targetSiteId, body.topic, {
-    requestId: inserted.id,
-  });
+  await enqueueExisting(inserted.id);
   return NextResponse.json({ ok: true, request: inserted });
 }

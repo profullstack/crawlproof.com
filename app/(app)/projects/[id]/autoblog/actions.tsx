@@ -4,11 +4,18 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setSitePaused } from "@/app/actions/linkExchange";
 
-async function call(path: string): Promise<{ ok: boolean; error?: string }> {
+async function call(
+  path: string,
+): Promise<{ ok: boolean; error?: string; action?: string; message?: string }> {
   try {
     const res = await fetch(path, { method: "POST" });
     const json = await res.json().catch(() => ({}));
-    return { ok: res.ok && json?.ok !== false, error: json?.error };
+    return {
+      ok: res.ok && json?.ok !== false,
+      error: json?.error,
+      action: json?.action,
+      message: json?.message,
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -66,7 +73,10 @@ export function DashboardActions({
     // 'generating' claim shows up immediately instead of after the
     // next interval tick.
     setNotice(
-      "Queued — the preview will appear in the section above when it's ready (1–3 minutes).",
+      r.action === "keyword_research"
+        ? (r.message ??
+          "No queued keywords were available, so keyword research was started. Try Generate article now again after research finishes.")
+        : "Queued — the preview will appear in the section above when it's ready (1–3 minutes).",
     );
     router.refresh();
   }
@@ -99,7 +109,7 @@ export function DashboardActions({
     setNotice(null);
     setError(null);
     startTransition(async () => {
-      const r = await setSitePaused(!paused);
+      const r = await setSitePaused(!paused, projectId);
       if (!r.ok) setError(r.error);
       else router.refresh();
     });
@@ -113,7 +123,11 @@ export function DashboardActions({
           className="btn"
           disabled={busy !== null}
           onClick={() =>
-            run("sitemap", "/api/lx/sitemap/refresh", "Sitemap crawl queued.")
+            run(
+              "sitemap",
+              `/api/lx/sitemap/refresh?projectId=${encodeURIComponent(projectId)}`,
+              "Sitemap crawl queued.",
+            )
           }
         >
           {busy === "sitemap" ? "Crawling…" : "Refresh sitemap"}
@@ -125,7 +139,7 @@ export function DashboardActions({
           onClick={() =>
             run(
               "keywords",
-              "/api/lx/keywords/refresh",
+              `/api/lx/keywords/refresh?projectId=${encodeURIComponent(projectId)}`,
               "Keyword research queued.",
             )
           }

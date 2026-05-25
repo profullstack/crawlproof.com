@@ -6,6 +6,7 @@ import {
   enqueueArticleGenerate,
   enqueueKeywordResearch,
 } from "@/lib/lx/workerClient";
+import { repairStuckLxJobs } from "@/lib/lx/repair";
 
 export const runtime = "nodejs";
 
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
   const svc = serviceClient();
   const now = new Date();
   const nowIso = now.toISOString();
+  const repaired = await repairStuckLxJobs(svc, { now });
 
   // ============================================================
   // Pass 1: top up keywords on every active site whose queued
@@ -105,6 +107,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     ok: true,
+    repaired,
     topped_up,
     enqueued,
     skipped_no_webhook,

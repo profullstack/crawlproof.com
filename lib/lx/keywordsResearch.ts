@@ -146,13 +146,18 @@ export async function researchKeywords(
   );
   const ranked = rankKeywords(filtered);
 
-  // Skip keywords this site has already had queued/published.
+  // Skip keywords this site already has in active/history states. Failed
+  // rows are intentionally ignored here: an upstream outage should not
+  // permanently poison a topic and prevent the top-up sweep from
+  // refilling the queue.
   const { data: existingRows } = await supabase
     .from("lx_keyword")
-    .select("keyword")
+    .select("keyword, status")
     .eq("site_id", site.id);
   const existingSet = new Set(
-    (existingRows ?? []).map((r: { keyword: string }) => r.keyword.toLowerCase()),
+    (existingRows ?? [])
+      .filter((r: { status: string }) => r.status !== "failed")
+      .map((r: { keyword: string }) => r.keyword.toLowerCase()),
   );
 
   const chosen = dedupeBySite(ranked, existingSet).slice(0, TARGET_KEYWORDS);
