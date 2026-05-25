@@ -31,7 +31,7 @@ export const env = {
   backendAiProvider:
     process.env.BACKEND_AI_PROVIDER ?? process.env.AI_TEXT_PROVIDER ?? "openai",
   backendAiOpenaiModel:
-    process.env.BACKEND_AI_OPENAI_MODEL ?? "gpt-5.5",
+    process.env.BACKEND_AI_OPENAI_MODEL ?? "gpt-5-mini",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
