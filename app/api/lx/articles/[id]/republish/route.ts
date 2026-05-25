@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { enqueueArticleDeliver } from "@/lib/lx/workerClient";
+import { serviceClient } from "@/lib/supabase/service";
+import { deliverArticle } from "@/lib/lx/webhookDeliver";
 
 export const runtime = "nodejs";
 
@@ -44,7 +45,8 @@ export async function POST(
   // Flip back to 'ready' so the worker's atomic claim
   // (ready -> publishing) can pick it up. webhook_last_error is cleared
   // so the previous failure (if any) doesn't ghost the UI.
-  const { error } = await supabase
+  const svc = serviceClient();
+  const { error } = await svc
     .from("lx_article")
     .update({ status: "ready", webhook_last_error: null })
     .eq("id", id)
@@ -53,6 +55,10 @@ export async function POST(
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  await enqueueArticleDeliver(id);
-  return NextResponse.json({ ok: true });
+  const delivery = await deliverArticle(id, { supabase: svc });
+  return NextResponse.json({
+    ok: delivery.ok,
+    delivery,
+    error: delivery.ok ? undefined : delivery.error ?? "delivery failed",
+  }, { status: delivery.ok ? 200 : 422 });
 }

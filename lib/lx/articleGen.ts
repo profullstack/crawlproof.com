@@ -41,6 +41,8 @@ const BUCKET = "lx-article-images";
 // Cap on input to the LLM so a malicious or oversized sitemap can't
 // blow up the prompt.
 const MAX_LINK_CANDIDATES = 8;
+const MIN_SEO_LINKS = 2;
+const MAX_SEO_LINKS = 3;
 
 type SiteRow = {
   id: string;
@@ -359,8 +361,8 @@ function buildUserPrompt(input: {
   const exchangeMax = Math.min(exchangeSlots, exchangeCandidates.length);
   const exchangeSlotLine = exchangeSlots > 0 && exchangeCandidates.length > 0
     ? exchangeRelaxed
-      ? `Insert UP TO ${exchangeMax} of the following external partner-blog links. These are pre-vetted blogs in our shared content network — the network is still small, so topical overlap may be loose. Place each as a natural "Related reading from our network: [anchor](url)"-style inline reference where the surrounding paragraph allows even a tangential connection (e.g., a "for adjacent reading" aside, a comparison, or a "teams in {their niche} face similar tradeoffs" sentence). Prefer using all ${exchangeMax}; only skip a candidate if including it would make a paragraph read as obviously incoherent. Do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
-      : `Insert UP TO ${exchangeMax} of the following external partner-blog links inline as standard markdown links, where each fits naturally in a sentence whose topic genuinely overlaps. Pick the most relevant — skip any that don't fit; do not force a link. Do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
+      ? `Insert EXACTLY ${exchangeMax} of the following external partner-blog links. These are pre-vetted blogs in our shared content network — the network is still small, so topical overlap may be loose. Place each as a natural "Related reading from our network: [anchor](url)"-style inline reference where the surrounding paragraph allows even a tangential connection (e.g., a "for adjacent reading" aside, a comparison, or a "teams in {their niche} face similar tradeoffs" sentence). Do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
+      : `Insert EXACTLY ${exchangeMax} of the following external partner-blog links inline as standard markdown links, where each fits naturally in a sentence whose topic genuinely overlaps. Pick the most relevant candidates; do not invent URLs. Return the URLs you used in used_exchange_link_urls.`
     : "External-link slots: 0. Return used_exchange_link_urls: [] and do not link out.";
 
   return [
@@ -919,10 +921,11 @@ export async function generateArticle(
   //
   // Source 1+2: lx_site_page via pgvector RPC, one call per is_blog_post
   // value so both pillar pages AND existing on-site blog posts surface.
-  const sitePageSlots = Math.min(
-    typedSite.internal_links_per_article,
-    MAX_LINK_CANDIDATES,
+  const desiredInternalLinks = Math.min(
+    MAX_SEO_LINKS,
+    Math.max(MIN_SEO_LINKS, typedSite.internal_links_per_article || 0),
   );
+  const sitePageSlots = Math.min(desiredInternalLinks, MAX_LINK_CANDIDATES);
   let candidates: LabeledCandidate[] = [];
   if (sitePageSlots > 0) {
     const [{ data: pillarRows, error: pillarErr }, { data: blogRows, error: blogErr }] =
@@ -980,14 +983,17 @@ export async function generateArticle(
       return true;
     })
     .slice(0, MAX_LINK_CANDIDATES);
-  const linkSlots = Math.min(candidates.length, MAX_LINK_CANDIDATES);
+  const linkSlots = Math.min(candidates.length, desiredInternalLinks);
 
   // Source 4: Phase 3 link-exchange candidates — articles on OTHER
   // opted-in sites in the network whose topic overlaps. Only requested
   // when this site has explicitly opted in via backlinks_enabled and
   // configured external_links_per_article > 0.
   const exchangeSlots = typedSite.backlinks_enabled
-    ? Math.max(0, typedSite.external_links_per_article)
+    ? Math.min(
+        MAX_SEO_LINKS,
+        Math.max(MIN_SEO_LINKS, typedSite.external_links_per_article || 0),
+      )
     : 0;
   const exchangeMatch = await findExchangeCandidates(supabase, {
     selfSiteId: typedSite.id,
