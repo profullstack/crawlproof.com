@@ -11,7 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, email, credits_balance")
+    .select("display_name, email, credits_balance, is_admin")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -21,22 +21,25 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link
             href="/dashboard"
-            className="flex shrink-0 items-center gap-2 font-bold"
+            className="flex shrink-0 items-center"
+            aria-label="CrawlProof — Dashboard"
           >
-            <span className="inline-block size-2 rounded-full bg-[var(--color-accent)]" />
-            CrawlProof
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.svg"
+              alt="CrawlProof"
+              className="h-16 w-auto"
+              width={320}
+              height={64}
+            />
           </Link>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
-            <Link href="/projects/new" className="hidden sm:inline">
-              New
-            </Link>
-            <Link href="/autoblog" className="hidden sm:inline">
-              Autoblog
-            </Link>
-            <Link href="/settings" className="hidden sm:inline">
-              Settings
-            </Link>
+            <Link href="/projects/new">New</Link>
+            <Link href="/settings/integrations/github">GitHub</Link>
+            <a href="/blog" target="_blank" rel="noreferrer">Blog ↗</a>
+            {profile?.is_admin && <Link href="/admin">Admin</Link>}
+            <Link href="/settings">Settings</Link>
             <Link
               href="/settings/billing"
               className="badge badge-pass font-mono"

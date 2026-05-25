@@ -68,11 +68,26 @@ export function ViewTabs({
         {rawMarkdownUrl && (
           <a
             href={rawMarkdownUrl}
-            className="text-xs text-[var(--color-muted)] underline"
-            target="_blank"
-            rel="noreferrer"
+            download="prompt.md"
+            className="inline-flex items-center gap-2 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-[var(--color-accent-fg)] shadow-sm hover:opacity-90"
+            title="Markdown formatted as a prompt — paste into Claude, GPT-5, or Cursor to apply the fixes"
           >
-            View raw .md
+            <svg
+              aria-hidden="true"
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M8 1v10" />
+              <path d="M4 7l4 4 4-4" />
+              <path d="M2 14h12" />
+            </svg>
+            Download fix prompt
           </a>
         )}
       </div>

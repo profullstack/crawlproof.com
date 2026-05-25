@@ -83,3 +83,28 @@ export async function archiveProject(projectId: string) {
 export async function restoreProject(projectId: string) {
   return setProjectStatus(projectId, "active");
 }
+
+// Flip the drop-in stats tracker on/off for a project. Owner only.
+export async function setTrackerEnabled(input: {
+  projectId: string;
+  enabled: boolean;
+}): Promise<{ ok: true; enabled: boolean } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const patch: Record<string, unknown> = { tracker_enabled: input.enabled };
+  if (input.enabled) patch.tracker_enabled_at = new Date().toISOString();
+
+  const { error } = await supabase
+    .from("projects")
+    .update(patch)
+    .eq("id", input.projectId)
+    .eq("owner_id", user.id);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/projects/${input.projectId}/stats`);
+  return { ok: true, enabled: input.enabled };
+}

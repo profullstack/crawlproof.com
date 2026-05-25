@@ -85,9 +85,9 @@ export async function deliverArticle(
     .eq("id", articleId)
     .eq("status", "ready")
     .select(
-      "id, site_id, title, slug, meta_description, excerpt, content_markdown, content_html, image_url, tags, outbound_links, internal_links, status, webhook_delivery_id, webhook_attempts, created_at",
+      "id, site_id, target_site_id, is_guest_post, title, slug, meta_description, excerpt, content_markdown, content_html, image_url, tags, outbound_links, internal_links, status, webhook_delivery_id, webhook_attempts, created_at",
     )
-    .maybeSingle<ArticleRow>();
+    .maybeSingle<ArticleRow & { target_site_id: string | null; is_guest_post: boolean | null }>();
   if (!claimed) {
     return {
       ok: false,
@@ -98,10 +98,14 @@ export async function deliverArticle(
     };
   }
 
+  // For guest posts, the receiver is target_site_id (the partner blog
+  // that will host the post), not site_id (the author who wrote it).
+  // Fetch webhook config from whichever the row points us at.
+  const deliveryTargetId = claimed.target_site_id ?? claimed.site_id;
   const { data: site } = await supabase
     .from("lx_site")
     .select("id, domain, blog_root_url, webhook_url, webhook_secret")
-    .eq("id", claimed.site_id)
+    .eq("id", deliveryTargetId)
     .maybeSingle<SiteRow>();
   if (!site?.webhook_url || !site?.webhook_secret) {
     await supabase

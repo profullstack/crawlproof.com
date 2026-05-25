@@ -84,7 +84,7 @@ export const ENGINES: Record<Engine, EngineMeta> = {
       "Alibaba's flagship model via DashScope. Cost-efficient second opinion on Chinese / cross-language sites.",
   },
   kimi: {
-    label: "Kimi K2",
+    label: "Kimi v2.6",
     cost: 1,
     available: true,
     blurb:

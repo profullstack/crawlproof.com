@@ -11,11 +11,16 @@ import {
 // rename a data point, or break the report format used by the worker, the
 // dashboard, and the Markdown report.
 describe("audit prompt constants", () => {
-  it("exposes exactly 10 canonical sections in the prompt order", () => {
-    expect(SECTIONS).toHaveLength(10);
+  it("exposes the canonical sections in the prompt order", () => {
+    expect(SECTIONS).toHaveLength(14);
     expect(SECTIONS[0]).toBe("Crawl Summary");
     expect(SECTIONS[1]).toBe("Data Found");
-    expect(SECTIONS[5]).toBe("LLM / AI Crawler Accessibility");
+    expect(SECTIONS[2]).toBe("Homepage Audit");
+    expect(SECTIONS).toContain("Content Quality");
+    expect(SECTIONS).toContain("Links & Images");
+    expect(SECTIONS).toContain("Performance");
+    expect(SECTIONS).toContain("Security");
+    expect(SECTIONS).toContain("LLM / AI Crawler Accessibility");
     expect(SECTIONS[SECTIONS.length - 1]).toBe("Priority To-Do List");
   });
 

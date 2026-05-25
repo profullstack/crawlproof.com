@@ -14,15 +14,19 @@
     "test:coverage": "vitest run --coverage",
     "worker": "tsx worker/index.ts",
     "worker:build": "tsc -p worker/tsconfig.json",
-    "cli": "tsx cli/index.ts"
+    "cli": "tsx cli/index.ts",
+    "download-geolite2": "node scripts/download-geolite2.mjs",
+    "rotate-secret": "tsx bin/rotate-secret.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
+    "@ip-location-db/geolite2-city-mmdb": "^2.3.2026052019",
     "@profullstack/autoblog": "github:profullstack/autoblog#f76b7d3",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
     "cheerio": "^1.0.0",
     "marked": "^14.1.3",
+    "maxmind": "^5.0.6",
     "next": "^16.0.0",
     "openai": "^6.37.0",
     "qrcode.react": "^4.2.0",

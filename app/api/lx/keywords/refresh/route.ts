@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { enqueueKeywordResearch } from "@/lib/lx/workerClient";
+import { getCurrentSite } from "@/lib/lx/currentSite";
 
 export const runtime = "nodejs";
 
@@ -13,15 +14,24 @@ export async function POST() {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const { data: site } = await supabase
-    .from("lx_site")
-    .select("id, niche, target_audiences")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const site = (await getCurrentSite("id, niche, target_audiences")) as
+    | {
+        id: string;
+        niche: string | null;
+        target_audiences: string[];
+        lx_site_id: string | null;
+      }
+    | null;
   if (!site) {
     return NextResponse.json(
       { ok: false, error: "no site configured" },
       { status: 404 },
+    );
+  }
+  if (!site.lx_site_id) {
+    return NextResponse.json(
+      { ok: false, error: "autoblog not configured for this project" },
+      { status: 400 },
     );
   }
   if (!site.niche && (site.target_audiences ?? []).length === 0) {
@@ -31,6 +41,6 @@ export async function POST() {
     );
   }
 
-  await enqueueKeywordResearch(site.id);
+  await enqueueKeywordResearch(site.lx_site_id);
   return NextResponse.json({ ok: true });
 }

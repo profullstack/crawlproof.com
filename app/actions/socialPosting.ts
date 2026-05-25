@@ -1,0 +1,327 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { encryptSecret } from "@/lib/sp/vault";
+import { createBlueskySession } from "@/lib/sp/platforms/bluesky";
+import { getDiscordWebhookInfo } from "@/lib/sp/platforms/discord";
+import {
+  getTelegramBotInfo,
+  getTelegramChatInfo,
+  validateTelegramToken,
+} from "@/lib/sp/platforms/telegram";
+import { postViaAccount, type PostInput } from "@/lib/sp/post";
+import { mintApiToken } from "@/lib/sp/apiToken";
+
+type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
+type Err = { ok: false; error: string };
+
+// ------------------------------------------------------------
+// connectBluesky — trade handle + app password for a session,
+// store encrypted JWTs in sp_account. Caller stays on /social/setup
+// and re-renders the connected-accounts list.
+// ------------------------------------------------------------
+export async function connectBluesky(input: {
+  handle: string;
+  appPassword: string;
+}): Promise<Ok<{ accountId: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const handle = (input.handle ?? "").trim().replace(/^@/, "");
+  const appPassword = (input.appPassword ?? "").trim();
+  if (!handle) return { ok: false, error: "Enter your Bluesky handle." };
+  if (!appPassword) return { ok: false, error: "Enter an app password." };
+  // Bluesky app passwords are formatted xxxx-xxxx-xxxx-xxxx but
+  // they're tolerant of other lengths; minimal sanity check only.
+  if (appPassword.length < 12 || appPassword.length > 200) {
+    return { ok: false, error: "App password looks malformed." };
+  }
+
+  let session;
+  try {
+    session = await createBlueskySession({ handle, appPassword });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Bluesky auth failed.",
+    };
+  }
+
+  // Idempotent upsert keyed on (user, platform, external_id=did).
+  const { data, error } = await supabase
+    .from("sp_account")
+    .upsert(
+      {
+        user_id: user.id,
+        platform: "bluesky",
+        auth_mode: "oauth",
+        handle: session.handle,
+        external_id: session.did,
+        enc_access_token: encryptSecret(session.accessJwt),
+        enc_refresh_token: encryptSecret(session.refreshJwt),
+        status: "active",
+      },
+      { onConflict: "user_id,platform,external_id" },
+    )
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not save account." };
+  }
+
+  revalidatePath("/projects", "layout");
+  return { ok: true, accountId: data.id };
+}
+
+// ------------------------------------------------------------
+// connectDiscord — take a Discord channel webhook URL, validate it
+// against Discord's API (GET on the URL returns webhook metadata),
+// store the URL AES-GCM-encrypted in enc_access_token. handle =
+// "<webhook-name> (#<channel-id>)" so the picker shows a human-readable
+// label; external_id = the webhook id (stable across the webhook's
+// lifetime; unique-conflict key with user_id+platform).
+// ------------------------------------------------------------
+export async function connectDiscord(input: {
+  webhookUrl: string;
+}): Promise<Ok<{ accountId: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const webhookUrl = (input.webhookUrl ?? "").trim();
+  if (!webhookUrl) return { ok: false, error: "Paste a webhook URL." };
+
+  let info;
+  try {
+    info = await getDiscordWebhookInfo(webhookUrl);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Discord webhook check failed.",
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("sp_account")
+    .upsert(
+      {
+        user_id: user.id,
+        platform: "discord",
+        auth_mode: "oauth", // webhook tokens behave like a bearer; reuse the column
+        handle: info.displayHandle,
+        external_id: info.id,
+        enc_access_token: encryptSecret(webhookUrl),
+        status: "active",
+      },
+      { onConflict: "user_id,platform,external_id" },
+    )
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not save account." };
+  }
+
+  revalidatePath("/projects", "layout");
+  return { ok: true, accountId: data.id };
+}
+
+// ------------------------------------------------------------
+// connectTelegram — take a bot token + channel reference, verify with
+// getMe + getChat (which also confirms the bot has been added to the
+// channel), then store. handle = "{channel-title} via @{bot-username}";
+// external_id = numeric channel id as a string; enc_access_token =
+// AES-GCM(bot token).
+// ------------------------------------------------------------
+export async function connectTelegram(input: {
+  botToken: string;
+  channel: string;
+}): Promise<Ok<{ accountId: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  let token: string;
+  try {
+    token = validateTelegramToken(input.botToken ?? "");
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Bad Telegram token.",
+    };
+  }
+
+  let bot;
+  try {
+    bot = await getTelegramBotInfo(token);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Telegram bot check failed.",
+    };
+  }
+
+  let chat;
+  try {
+    chat = await getTelegramChatInfo({ token, chatRef: input.channel ?? "" });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Telegram getChat failed.",
+    };
+  }
+
+  const handle =
+    `${chat.title} via @${bot.username}` +
+    (chat.username ? "" : " (private)");
+
+  const { data, error } = await supabase
+    .from("sp_account")
+    .upsert(
+      {
+        user_id: user.id,
+        platform: "telegram",
+        auth_mode: "oauth",
+        handle,
+        external_id: String(chat.id),
+        enc_access_token: encryptSecret(token),
+        status: "active",
+      },
+      { onConflict: "user_id,platform,external_id" },
+    )
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not save account." };
+  }
+
+  revalidatePath("/projects", "layout");
+  return { ok: true, accountId: data.id };
+}
+
+// ------------------------------------------------------------
+// disconnectAccount — delete an sp_account row (RLS scopes to owner).
+// Cascades to sp_site_account + sp_post via the FK constraints.
+// ------------------------------------------------------------
+export async function disconnectAccount(
+  accountId: string,
+): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { error } = await supabase
+    .from("sp_account")
+    .delete()
+    .eq("id", accountId)
+    .eq("user_id", user.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/projects", "layout");
+  return { ok: true };
+}
+
+// ------------------------------------------------------------
+// createApiToken — mint a fresh sp_api_token for the signed-in user.
+// Returns the plaintext token ONCE; we store only the hash. Caller is
+// responsible for showing the user the token and warning them it
+// won't be shown again.
+// ------------------------------------------------------------
+export async function createApiToken(input: {
+  name: string;
+}): Promise<Ok<{ id: string; token: string; prefix: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const name = (input.name ?? "").trim();
+  if (!name) return { ok: false, error: "Give the token a name." };
+  if (name.length > 80) return { ok: false, error: "Name too long." };
+
+  let minted;
+  try {
+    minted = mintApiToken();
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not mint token.",
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("sp_api_token")
+    .insert({
+      user_id: user.id,
+      name,
+      prefix: minted.prefix,
+      token_hash: minted.hash,
+    })
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not save token." };
+  }
+
+  revalidatePath("/projects", "layout");
+  return { ok: true, id: data.id, token: minted.plaintext, prefix: minted.prefix };
+}
+
+// ------------------------------------------------------------
+// revokeApiToken — mark a token as revoked (set revoked_at). Keeps the
+// row for audit so the user sees what was revoked when.
+// ------------------------------------------------------------
+export async function revokeApiToken(tokenId: string): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { error } = await supabase
+    .from("sp_api_token")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", tokenId)
+    .eq("user_id", user.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/projects", "layout");
+  return { ok: true };
+}
+
+// ------------------------------------------------------------
+// postNow — synchronous "post this text right now to this account."
+// v1 Phase 1: ignores scheduling, no worker, no queue. The full
+// scheduled-publish path lands when we wire the worker tick.
+//
+// Per-platform extras (subreddit + title for Reddit) ride along on the
+// input shape — irrelevant for other platforms.
+// ------------------------------------------------------------
+export async function postNow(
+  input: PostInput,
+): Promise<Ok<{ postId: string; webUrl: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const result = await postViaAccount({
+    supabase,
+    userId: user.id,
+    input,
+    source: "manual",
+  });
+  if (!result.ok) return { ok: false, error: result.error };
+  revalidatePath("/projects", "layout");
+  return { ok: true, postId: result.postId, webUrl: result.webUrl };
+}
+

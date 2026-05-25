@@ -43,8 +43,14 @@ export function SectionBar({ rows }: { rows: SectionRow[] }) {
   return (
     <div className="card p-4">
       <h3 className="mb-2 font-semibold">Findings by section</h3>
-      <div className="h-72">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-72 min-h-72 min-w-0">
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          minWidth={0}
+          minHeight={288}
+          initialDimension={{ width: 320, height: 288 }}
+        >
           <BarChart
             data={rows}
             layout="vertical"

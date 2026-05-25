@@ -66,24 +66,33 @@ describe("toMarkdown", () => {
     expect(md).toContain("**Score:** 78 / 100");
   });
 
-  it("includes all 10 numbered section headers in order", () => {
+  it("includes all 14 numbered section headers in order", () => {
     const positions = [
       "## 1. Crawl Summary",
       "## 2. Data Found",
       "## 3. Homepage Audit",
-      "## 4. Schema / Structured Data Audit",
-      "## 5. robots.txt and sitemap.xml Audit",
-      "## 6. LLM / AI Crawler Accessibility",
-      "## 7. Positioning Clarity",
-      "## 8. Missing or Hard-to-Find Information",
-      "## 9. Recommended Fixes",
-      "## 10. Priority To-Do List",
+      "## 4. Content Quality",
+      "## 5. Schema / Structured Data Audit",
+      "## 6. Links & Images",
+      "## 7. Performance",
+      "## 8. Security",
+      "## 9. robots.txt and sitemap.xml Audit",
+      "## 10. LLM / AI Crawler Accessibility",
+      "## 11. Positioning Clarity",
+      "## 12. Missing or Hard-to-Find Information",
+      "## 13. Recommended Fixes",
+      "## 14. Priority To-Do List",
     ].map((h) => md.indexOf(h));
     expect(positions.every((p) => p >= 0)).toBe(true);
     // strictly ascending
     for (let i = 1; i < positions.length; i++) {
       expect(positions[i]).toBeGreaterThan(positions[i - 1]);
     }
+  });
+
+  it("includes a fix-prompt preamble addressed to an AI assistant", () => {
+    expect(md).toMatch(/<!--[\s\S]*Instructions for the AI assistant/);
+    expect(md).toContain("https://example.com");
   });
 
   it("includes a Markdown Data Found table with the right columns", () => {

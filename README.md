@@ -9,9 +9,10 @@ CrawlProof runs an AEO audit on any URL and produces a structured report of what
 - **Next.js 16** (App Router, React Server Components, Server Actions)
 - **Tailwind v4** for styling
 - **Supabase** (Postgres + Auth + Storage)
-- **Stripe** (subscriptions)
+- **CoinPay** (crypto credit purchases)
 - **Resend** (transactional email)
-- **Playwright** (rendered-vs-static check + PDF export) — runs in an external worker
+- **Playwright** (rendered-vs-static check + PDF export) - runs in an external worker
+- **LLM providers** for paid scans: Anthropic, OpenAI, Gemini, Qwen, Kimi, DeepSeek, Perplexity
 - Both services deploy to **Railway** (Next.js app + worker, two services in the same project)
 
 ## Repo layout
@@ -21,14 +22,17 @@ app/                Next.js routes (marketing + app + auth + api + cron)
 components/         React components (server + client)
 lib/
   audit/            Audit engine: fetch, render, checks, scoring, recs
+  lx/               Autoblog / link-exchange / keyword research flows
+  sp/               Social posting accounts, OAuth, API tokens, publishing
+  github/           GitHub App install, repo binding, automated fix PRs
   supabase/         server / client / service-role helpers
+  coinpay.ts        CoinPay invoice + webhook helpers
   email.ts          Resend wrapper
-  rateLimit.ts      Anonymous + tier limits
-  stripe.ts         Stripe client
+  rateLimit.ts      Anonymous limits, URL safety, credit helpers
   shareToken.ts     URL-safe token generator
   env.ts            Typed env access
 supabase/migrations Postgres schema, RLS, cron
-worker/             External Playwright + pandoc worker (Docker)
+worker/             Audit, PDF, keyword, article, and delivery worker (Docker)
 Dockerfile          Next.js production image (Railway)
 railway.json        Railway service config — Next.js app
 railway.worker.json Railway service config — worker (set as "Config File Path")
@@ -55,10 +59,12 @@ railway.worker.json Railway service config — worker (set as "Config File Path"
 
 3. **Create `.env.local`** from `.env.example` and fill in:
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
-   - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`
+   - `COINPAY_MERCHANT_ID`, `COINPAY_API_KEY`, `COINPAY_WEBHOOK_SECRET`
    - `RESEND_API_KEY` (optional — emails are skipped if unset)
    - `WORKER_URL`, `WORKER_SHARED_SECRET`
    - `CRON_SECRET`
+   - `BACKEND_AI_PROVIDER` (`openai` by default, or `auto` / `anthropic`) for Autoblog text generation
+   - Provider keys for enabled paid engines: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `PERPLEXITY_API_KEY`
 
 4. **Run dev**:
    ```bash
@@ -80,7 +86,7 @@ Both services live in a single Railway project. Connect this repo to Railway, th
 - **Env vars** (everything from `.env.example`):
   - `NEXT_PUBLIC_SITE_URL` — your Railway domain or custom domain
   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
-  - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`
+  - `COINPAY_MERCHANT_ID`, `COINPAY_API_KEY`, `COINPAY_WEBHOOK_SECRET`
   - `RESEND_API_KEY`, `RESEND_FROM`
   - `WORKER_URL` — the worker service's internal URL (see below)
   - `WORKER_SHARED_SECRET`, `CRON_SECRET`
@@ -96,6 +102,7 @@ Railway sets `PORT` automatically; the Dockerfile listens on it.
   - `NEXT_PUBLIC_SITE_URL` — same as app, used for share-link emails
   - `WORKER_SHARED_SECRET` — must match the app's value
   - `RESEND_API_KEY`, `RESEND_FROM` (optional)
+  - `BACKEND_AI_PROVIDER` plus LLM / data provider keys used by worker jobs: Anthropic, OpenAI, DataForSEO, etc.
 
 In the app service, set `WORKER_URL` to the worker's Railway private URL — Railway provides `http://${{crawlproof-worker.RAILWAY_PRIVATE_DOMAIN}}:${{crawlproof-worker.PORT}}` via variable references.
 
@@ -110,13 +117,41 @@ alter database postgres set app.cron_secret = '<your CRON_SECRET>';
 
 This is host-agnostic and replaces Vercel cron entirely.
 
-### Stripe webhook
+### CoinPay webhook
 
-Point a Stripe webhook at `https://<your-railway-domain>/api/stripe/webhook` for:
-- `checkout.session.completed`
-- `customer.subscription.created`
-- `customer.subscription.updated`
-- `customer.subscription.deleted`
+Point CoinPay webhook delivery at:
+
+```text
+https://<your-domain>/api/coinpay/webhook
+```
+
+Credit purchases are created through `/api/credits/create-invoice`; successful webhook delivery finalizes the purchase and increments `profiles.credits_balance`.
+
+## Product flows
+
+### Free audit
+
+The homepage form queues a free rule-based audit. Email is optional: users get the on-page report immediately via `/r/<share_token>`, and receive a PDF only when they provide an email. Anonymous free scans are unlisted by default; `/recent` and sitemap deep links include only scans where the submitter explicitly opted into public listing. Common tracking parameters such as `utm_*`, `fbclid`, and `gclid` are stripped before new URLs are saved.
+
+### Project scan
+
+Signed-in users can save sites as projects, choose one or more engines, and run scans from the project page. A multi-engine scan creates one `audits` row per engine and ties them together with `scan_run_id` for side-by-side reports, consolidated Markdown/PDF, and project score history.
+
+### Credits and engines
+
+Rule-based scans cost 0 credits. Paid AI-model scans cost 1 credit per engine. Credit packs are defined in `lib/credits.ts`; failures and user-aborted paid scans refund credits.
+
+### Autoblog / link exchange
+
+The `lx_*` tables and `lib/lx/*` modules power site setup, sitemap crawling, keyword research through DataForSEO, article generation, guest posts, backlinks, and webhook delivery. Worker endpoints under `/lx/*` process the long-running pieces.
+
+### Social posting
+
+The `sp_*` tables and `lib/sp/*` modules support connected social accounts, encrypted tokens, project-level account bindings, API tokens, and post publishing.
+
+### GitHub integration
+
+The GitHub App flow stores installations and project repo bindings. Reports can offer "apply fix" actions that open PRs against connected repos.
 
 ## Self-audit goal
 

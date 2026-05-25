@@ -110,6 +110,12 @@ export type OACompatConfig = {
    * its engine override pins it.
    */
   temperature?: number;
+  /**
+   * Provider-specific body fields the OpenAI SDK doesn't model — Kimi's
+   * `thinking: { type: "enabled" }`, top_p tweaks, etc. Spread into the
+   * request body verbatim.
+   */
+  extraBody?: Record<string, unknown>;
 };
 
 export async function oaCompatAudit(
@@ -128,14 +134,15 @@ export async function oaCompatAudit(
   // DashScope / Moonshot occasionally stall mid-completion. The OpenAI SDK
   // default would let a job sit for ~10 minutes, blocking the credit and
   // confusing the user — cap each request and fail fast instead.
-  // SDK retries 429 / 5xx with Retry-After-aware exponential backoff.
-  // 4 retries handles transient Gemini Pro RPM hiccups without giving up
-  // immediately. Timeout caps each individual attempt at 4 minutes.
+  // Was 4-min timeout × 5 attempts (20 min worst case) before a 149K-char
+  // homepage scan caused a 10+ min stall against Kimi. Tightened to
+  // 90s per attempt × 3 attempts (~4.5 min worst case) so the user sees
+  // a real failure they can retry instead of an indefinite spinner.
   const client = new OpenAI({
     apiKey: cfg.apiKey,
     baseURL: cfg.baseURL,
-    timeout: 4 * 60 * 1000,
-    maxRetries: 4,
+    timeout: 90 * 1000,
+    maxRetries: 2,
   });
 
   console.log(
@@ -147,6 +154,10 @@ export async function oaCompatAudit(
   // on slow providers (DashScope/Moonshot).
   let stream: Awaited<ReturnType<typeof client.chat.completions.create>>;
   try {
+    // Cast extras separately so the `stream: true` literal still narrows
+    // the create() return type to the streaming overload. Spreading the
+    // cast object wholesale widens it and breaks the for-await iterator.
+    const extra = cfg.extraBody as Record<string, unknown> | undefined;
     stream = await client.chat.completions.create({
       model: cfg.model,
       messages: [
@@ -160,6 +171,9 @@ export async function oaCompatAudit(
       temperature: cfg.temperature ?? 0.2,
       max_tokens: cfg.maxOutputTokens,
       stream: true,
+      // Provider extras (Kimi reasoning, top_p, etc.). The SDK accepts
+      // unknown fields and forwards them to the backend.
+      ...(extra ?? {}),
     });
   } catch (err) {
     if (err instanceof OpenAI.APIError && err.status === 429) {

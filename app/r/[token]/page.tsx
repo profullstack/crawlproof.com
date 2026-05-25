@@ -8,8 +8,11 @@ import { ViewTabs } from "@/components/report/view-tabs";
 import { PerformancePreview } from "@/components/report/performance-preview";
 import { LivePoller } from "@/components/report/live-poller";
 import { CopyLink } from "@/components/copy-link";
+import { ShareBanner } from "@/components/share-banner";
+import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import type { Finding } from "@/lib/audit/types";
+import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -95,11 +98,23 @@ export async function generateMetadata({
       siteName: "CrawlProof",
       publishedTime: audit.created_at,
       modifiedTime: audit.completed_at ?? audit.created_at,
+      // Page-level openGraph replaces the layout block wholesale — no
+      // merging — so the banner has to be re-declared here or X/social
+      // previews end up with no thumbnail.
+      images: [
+        {
+          url: "/banner.png",
+          width: 1200,
+          height: 630,
+          alt: `CrawlProof AEO audit for ${host}`,
+        },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title: `AEO audit for ${host}${scoreLabel}`,
       description,
+      images: ["/banner.png"],
     },
     other: {
       "article:section": "AEO Audit",
@@ -160,9 +175,27 @@ export default async function PublicReportPage({
   const { token } = await params;
   const svc = serviceClient();
 
+  // Track viewer auth so we can gate the LLM-ready prompt download to
+  // registered users while keeping the structured report itself public.
+  const session = await createClient();
+  const {
+    data: { user: viewer },
+  } = await session.auth.getUser();
+  const viewerSignedIn = !!viewer;
+
   const { data: auditRows } = await svc.rpc("get_public_audit", { token });
   const audit = (auditRows as PublicAuditRow[] | null)?.[0];
   if (!audit) notFound();
+
+  // The public RPC doesn't surface scan_run_id (intentionally — owner
+  // metadata). Pull it via the share_token so we can collapse siblings
+  // into the same consolidated Markdown the prompt.md download uses.
+  const { data: scanLink } = await svc
+    .from("audits")
+    .select("scan_run_id")
+    .eq("share_token", token)
+    .maybeSingle();
+  const auditScanRunId = (scanLink?.scan_run_id ?? null) as string | null;
 
   const seo = await loadSeoAudit(token);
   const canonicalUrl = `${env.siteUrl.replace(/\/$/, "")}/r/${token}`;
@@ -192,6 +225,13 @@ export default async function PublicReportPage({
       {seo && <ReportJsonLd url={canonicalUrl} audit={seo} />}
       <SiteHeader />
       <main className="mx-auto max-w-6xl px-4 sm:px-6 py-10">
+        <ShareBanner
+          url={canonicalUrl}
+          reportTitle={audit.target_url}
+          scoreLabel={
+            typeof audit.score === "number" ? `${audit.score}/100` : undefined
+          }
+        />
         {audit.status !== "complete" && audit.status !== "failed" && (
           <div className="mb-6">
             <LivePoller id={audit.id} />
@@ -205,8 +245,21 @@ export default async function PublicReportPage({
 
         {audit.status === "complete" && audit.report_markdown ? (
           <ViewTabs
-            rawMarkdownUrl={`/r/${token}/report.md`}
-            markdownView={<MarkdownView markdown={audit.report_markdown} />}
+            rawMarkdownUrl={viewerSignedIn ? `/r/${token}/prompt.md` : undefined}
+            markdownView={
+              <MarkdownView
+                markdown={
+                  // Use the same consolidated/solo logic as the
+                  // /r/<token>/prompt.md download so the on-page Report
+                  // tab matches what the user grabs via Download.
+                  (await loadConsolidatedOrSoloMarkdown(svc, {
+                    scan_run_id: auditScanRunId,
+                    target_url: audit.target_url,
+                    report_markdown: audit.report_markdown,
+                  })) ?? audit.report_markdown
+                }
+              />
+            }
             structuredView={
               <ReportView
                 audit={audit as AuditRow}

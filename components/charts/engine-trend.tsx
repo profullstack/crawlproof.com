@@ -56,8 +56,14 @@ export function EngineTrend({
           engine{engines.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="h-72">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-72 min-h-72 min-w-0">
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          minWidth={0}
+          minHeight={288}
+          initialDimension={{ width: 320, height: 288 }}
+        >
           <LineChart
             data={data}
             margin={{ top: 8, right: 16, bottom: 0, left: -16 }}

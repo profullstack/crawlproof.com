@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { EnginesPanel } from "@/components/engines-panel";
+import { AeoScoreTrend } from "@/components/aeo-score-trend";
 import { ProjectShell } from "@/components/project-shell";
+import { DeleteProjectButton } from "./delete-project-button";
 import { ScoreBadge } from "@/components/score-badge";
 import type { Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
@@ -63,6 +65,7 @@ export default async function ProjectOverviewPage({
         schedule: project.schedule,
         status: (project.status ?? "active") as ProjectStatus,
         engines: (project.engines ?? ["rule"]) as Engine[],
+        logo_url: (project as { logo_url?: string | null }).logo_url ?? null,
       }}
       currentTab="overview"
     >
@@ -72,6 +75,8 @@ export default async function ProjectOverviewPage({
           url={project.url}
           defaultEngines={(project.engines ?? ["rule"]) as Engine[]}
         />
+
+        <AeoScoreTrend projectId={project.id} />
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Metric
@@ -163,6 +168,22 @@ export default async function ProjectOverviewPage({
             )}
           </section>
         )}
+
+        {/* Danger zone */}
+        <section className="border-t border-[var(--color-border)] pt-4">
+          <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Danger zone
+          </h2>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            Deletes the project and everything attached to it: audits,
+            autoblog config, queued keywords, article history, and
+            social-binding overrides. Connected social accounts (which
+            are global per-user) are NOT deleted.
+          </p>
+          <div className="mt-2">
+            <DeleteProjectButton projectId={project.id} />
+          </div>
+        </section>
       </div>
     </ProjectShell>
   );

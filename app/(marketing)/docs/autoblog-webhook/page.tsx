@@ -20,10 +20,22 @@ export default function AutoblogWebhookDocsPage() {
       </p>
       <p className="mt-3 text-[var(--color-muted)]">
         The easiest receiver is{" "}
-        <code className="font-mono">@profullstack/autoblog</code>: its{" "}
-        <code>verifyAndParse</code> helper validates the bearer + signature
-        + envelope in a single call and hands you a normalized{" "}
-        <code>Post</code> object.
+        <code className="font-mono">@profullstack/autoblog</code> (v0.3.0,{" "}
+        <a
+          className="underline"
+          href="https://www.npmjs.com/package/@profullstack/autoblog"
+          target="_blank"
+          rel="noreferrer"
+        >
+          npm
+        </a>
+        ): its <code>verifyAndParse</code> helper validates the bearer +
+        signature + envelope in a single call and hands you a normalized{" "}
+        <code>Post</code> object. v0.3 also covers two adjacent
+        delivery protocols — <strong>W3C Micropub</strong> (push posts to
+        a Micropub endpoint on your CMS) and <strong>W3C ActivityPub</strong>{" "}
+        (federate to the fediverse) — so you can pick whichever
+        protocol matches your stack.
       </p>
 
       <section className="mt-10 space-y-3">
@@ -47,16 +59,18 @@ export default function AutoblogWebhookDocsPage() {
         </ul>
 
         <h3 className="mt-6 text-lg font-bold">Headers</h3>
-        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`Authorization:      Bearer cp_lx_<your-secret>          # token from /autoblog/setup
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`Authorization:      Bearer <secret-key>                  # token from /autoblog/setup
 webhook-id:         <event uuid>                        # stable across retries
 webhook-timestamp:  <unix seconds>                       # delivery time
 webhook-signature:  v1,<base64 HMAC-SHA256>              # signs id.timestamp.body
 Content-Type:       application/cloudevents+json
-User-Agent:         @profullstack/autoblog/0.2`}</pre>
+User-Agent:         @profullstack/autoblog/0.3`}</pre>
         <p className="text-sm text-[var(--color-muted)]">
-          The bearer is the secret shown when you first save Autoblog
-          settings (or one you pasted from your own receiver). The same
-          value is the HMAC key for the signature header.
+          The bearer is a secret you generate on your receiver site (e.g.
+          a per-source token from your blog's admin page) and paste into{" "}
+          <code className="font-mono">/autoblog/setup</code>. Crawlproof
+          stores it verbatim and uses the same value as the HMAC key for
+          the signature header.
         </p>
         <p className="text-sm text-[var(--color-muted)]">
           <strong>Signing details (Standard Webhooks):</strong> the
@@ -112,6 +126,50 @@ User-Agent:         @profullstack/autoblog/0.2`}</pre>
           canonical short summary lives in{" "}
           <code className="font-mono">post.excerpt</code> (≤240 chars).
           Receivers should prefer <code>excerpt</code>.
+        </p>
+      </section>
+
+      <section className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Example — send a valid signed request</h2>
+        <p className="text-sm leading-relaxed">
+          Drop-in bash that POSTs a real, validly-signed CloudEvents
+          envelope at your receiver. Only{" "}
+          <code className="font-mono">curl</code> +{" "}
+          <code className="font-mono">openssl</code> +{" "}
+          <code className="font-mono">uuidgen</code> — no Node, no
+          Python. Set the two variables at the top and run; this is the
+          same shape CrawlProof puts on the wire for a real delivery.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`# Replace these two and run.
+URL="https://your-site.example/api/webhooks/crawlproof"
+SECRET="<secret-key>"
+
+ID="$(uuidgen | tr 'A-Z' 'a-z')"
+TS="$(date +%s)"
+NOW="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+
+BODY=$(cat <<JSON
+{"specversion":"1.0","id":"$ID","type":"com.crawlproof.post.published.v1","source":"https://crawlproof.com","subject":"post:$ID","time":"$NOW","datacontenttype":"application/json","data":{"post":{"id":"$ID","url":"$URL","canonical_url":"$URL","title":"Local test post","slug":"local-test-post","excerpt":"Verifying the autoblog webhook end-to-end from curl.","html":"<p>Hello from a signed test webhook.</p>","markdown":"Hello from a signed test webhook.","status":"published","published_at":"$NOW","updated_at":"$NOW","author":null,"tags":["test"],"categories":[],"featured_image":null}}}
+JSON
+)
+
+SIG="v1,$(printf '%s.%s.%s' "$ID" "$TS" "$BODY" \\
+  | openssl dgst -sha256 -hmac "$SECRET" -binary \\
+  | openssl base64 -A)"
+
+curl -sS -X POST "$URL" \\
+  -H "Authorization: Bearer $SECRET" \\
+  -H "webhook-id: $ID" \\
+  -H "webhook-timestamp: $TS" \\
+  -H "webhook-signature: $SIG" \\
+  -H "Content-Type: application/cloudevents+json" \\
+  --data-binary "$BODY"`}</pre>
+        <p className="text-sm text-[var(--color-muted)]">
+          The signing string is{" "}
+          <code className="font-mono">{`{id}.{timestamp}.{body}`}</code>{" "}
+          — exactly the same bytes that go in the headers + body. Edit
+          one without regenerating the signature and the receiver will
+          401, which is the whole point.
         </p>
       </section>
 

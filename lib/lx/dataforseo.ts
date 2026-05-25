@@ -98,14 +98,20 @@ export class DataForSeoClient {
     return this.post("/v3/keywords_data/google_ads/keywords_for_keywords/live", [payload]);
   }
 
-  // PRD §15.2a: volume lookup for a known list (no fan-out).
+  // PRD §15.2a: volume lookup for a known list (no fan-out). The
+  // Google Ads search_volume endpoint requires a location — unlike
+  // some other Google Ads endpoints that default to worldwide. We
+  // default to 2840 (US) / "en" so the form works without an explicit
+  // setting; callers can override per-call.
   async searchVolume(keywords: string[], opts?: {
     locationCode?: number;
     languageCode?: string;
   }): Promise<DfsResult> {
-    const payload: any = { keywords: keywords.slice(0, 1000) };
-    if (opts?.locationCode) payload.location_code = opts.locationCode;
-    if (opts?.languageCode) payload.language_code = opts.languageCode;
+    const payload: any = {
+      keywords: keywords.slice(0, 1000),
+      location_code: opts?.locationCode ?? 2840,
+      language_code: opts?.languageCode ?? "en",
+    };
     return this.post("/v3/keywords_data/google_ads/search_volume/live", [payload]);
   }
 
@@ -118,6 +124,104 @@ export class DataForSeoClient {
     if (opts?.locationCode) payload.location_code = opts.locationCode;
     if (opts?.languageCode) payload.language_code = opts.languageCode;
     return this.post("/v3/keywords_data/google_ads/keywords_for_site/live", [payload]);
+  }
+
+  // DataForSEO Labs "Keyword Ideas" — category-based expansion. Accepts
+  // up to 200 seeds and returns up to 1000 ideas with search_volume,
+  // CPC, competition, and a keyword_properties object that includes
+  // keyword_difficulty + word_count. Server-side `filters` let us push
+  // word-count and volume filtering to the API so we don't pay for
+  // rows we'll discard.
+  async keywordIdeas(seeds: string[], opts?: {
+    locationCode?: number;
+    languageCode?: string;
+    closelyVariants?: boolean;
+    minVolume?: number;
+    minWords?: number;
+    limit?: number;
+  }): Promise<DfsResult> {
+    // Labs endpoints require a location (unlike Google Ads
+    // keywords_for_keywords where it defaults to worldwide). The API's
+    // error in this case is misleading — it complains about an
+    // "Invalid Field: 'location_name'" when neither field is sent.
+    // 2840 = United States, "en" = English.
+    const payload: any = {
+      keywords: seeds.slice(0, 200),
+      location_code: opts?.locationCode ?? 2840,
+      language_code: opts?.languageCode ?? "en",
+      closely_variants: opts?.closelyVariants ?? false,
+      limit: Math.min(opts?.limit ?? 100, 1000),
+      // DataForSEO Labs filters use [field, op, value] triples joined
+      // by "and"/"or" strings. Each filter compresses what would
+      // otherwise be a client-side filter pass.
+      filters: [
+        ["keyword_info.search_volume", ">=", opts?.minVolume ?? 100],
+        "and",
+        ["keyword_properties.keyword_difficulty", "<=", 80],
+      ],
+      order_by: ["keyword_info.search_volume,desc"],
+    };
+    return this.postLabs("/v3/dataforseo_labs/google/keyword_ideas/live", [payload], opts?.minWords);
+  }
+
+  // Labs endpoints return a different shape than Google Ads endpoints
+  // (rows live under `result[0].items[]` and the keyword fields nest
+  // inside `keyword_info`). We re-pack them into the same DfsKeywordRow
+  // so callers don't care which API surface produced them.
+  private async postLabs(
+    path: string,
+    body: unknown,
+    minWords?: number,
+  ): Promise<DfsResult> {
+    const res = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: basicAuth(this.login, this.password),
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`DataForSEO ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    if (json.status_code !== 20000) {
+      throw new Error(`DataForSEO status ${json.status_code}: ${json.status_message}`);
+    }
+    const task = json.tasks?.[0];
+    if (!task || task.status_code !== 20000) {
+      throw new Error(
+        `DataForSEO task error ${task?.status_code}: ${task?.status_message ?? "unknown"}`,
+      );
+    }
+    const items: any[] = task.result?.[0]?.items ?? [];
+    const rows: DfsKeywordRow[] = items
+      .map((it) => {
+        const ki = it?.keyword_info ?? {};
+        return {
+          keyword: String(it.keyword ?? "").trim(),
+          search_volume: typeof ki.search_volume === "number" ? ki.search_volume : null,
+          competition: ki.competition_level ?? null,
+          competition_index: typeof ki.competition_index === "number" ? ki.competition_index : null,
+          cpc: typeof ki.cpc === "number" ? ki.cpc : null,
+          low_top_of_page_bid:
+            typeof ki.low_top_of_page_bid === "number" ? ki.low_top_of_page_bid : null,
+          high_top_of_page_bid:
+            typeof ki.high_top_of_page_bid === "number" ? ki.high_top_of_page_bid : null,
+          monthly_searches: Array.isArray(ki.monthly_searches) ? ki.monthly_searches : null,
+        };
+      })
+      .filter((r) => {
+        if (!r.keyword) return false;
+        if (minWords && r.keyword.split(/\s+/).length < minWords) return false;
+        return true;
+      });
+    return {
+      rows,
+      cost: typeof json.cost === "number" ? json.cost : 0,
+      taskId: task.id ?? null,
+    };
   }
 }
 

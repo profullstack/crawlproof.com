@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { ENGINES, type Engine } from "@/lib/credits";
 import { ScoreBadge } from "@/components/score-badge";
+import {
+  AbortAuditButton,
+  RetryAuditButton,
+} from "@/components/audit-row-actions";
+import { LiveElapsed } from "@/components/live-elapsed";
 
 export type RunAudit = {
   id: string;
@@ -44,12 +49,16 @@ function rolledUpCounts(
 export function ScanRunResults({
   rows,
   targetUrl,
+  projectId,
   ownerActions,
   backHref,
   backLabel,
 }: {
   rows: RunAudit[];
   targetUrl: string;
+  /** When set, each engine card renders Retry (on failed) / Cancel (on
+   * queued|running). Omit on read-only / public views. */
+  projectId?: string;
   ownerActions?: React.ReactNode;
   backHref?: string;
   backLabel?: string;
@@ -168,7 +177,7 @@ export function ScanRunResults({
         <h2 className="mb-3 text-lg font-semibold">Engine breakdown</h2>
         <div className="grid gap-3 md:grid-cols-2">
           {rows.map((a) => (
-            <EngineCard key={a.id} audit={a} />
+            <EngineCard key={a.id} audit={a} projectId={projectId} />
           ))}
         </div>
       </section>
@@ -176,7 +185,13 @@ export function ScanRunResults({
   );
 }
 
-function EngineCard({ audit }: { audit: RunAudit }) {
+function EngineCard({
+  audit,
+  projectId,
+}: {
+  audit: RunAudit;
+  projectId?: string;
+}) {
   const meta = ENGINES[audit.engine];
   const pending = audit.status === "queued" || audit.status === "running";
   const startedAt = new Date(audit.created_at).getTime();
@@ -245,18 +260,26 @@ function EngineCard({ audit }: { audit: RunAudit }) {
       {audit.status === "failed" && audit.failed_reason && (
         <p className="mt-3 break-words text-xs text-[var(--color-fail)]">
           {audit.failed_reason}
+          {durationMs !== null && (
+            <span className="ml-2 text-[var(--color-muted)]">
+              (ran {formatDuration(durationMs)})
+            </span>
+          )}
         </p>
       )}
 
       {pending && (
-        <p className="mt-3 text-xs text-[var(--color-muted)]">
-          {audit.status === "queued"
-            ? "Waiting for a worker to pick this up"
-            : "Auditing your site…"}
+        <p className="mt-3 flex items-center justify-between gap-3 text-xs text-[var(--color-muted)]">
+          <span>
+            {audit.status === "queued"
+              ? "Waiting for a worker to pick this up"
+              : "Auditing your site…"}
+          </span>
+          <LiveElapsed startedAt={audit.created_at} />
         </p>
       )}
 
-      <div className="mt-3 flex items-center gap-3 text-xs">
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
         {audit.status === "complete" && (
           <Link
             href={`/audits/${audit.id}`}
@@ -272,6 +295,16 @@ function EngineCard({ audit }: { audit: RunAudit }) {
           >
             Share link
           </Link>
+        )}
+        {/* Per-engine ops. Owner-only; the read-only public scan-run
+         * page omits projectId and skips these. */}
+        {projectId && pending && (
+          <AbortAuditButton projectId={projectId} auditId={audit.id} />
+        )}
+        {projectId && audit.status === "failed" && (
+          // Both natural failures and user-aborts can retry. Both
+          // refund on failure; retry re-charges a fresh credit.
+          <RetryAuditButton projectId={projectId} auditId={audit.id} />
         )}
       </div>
     </article>
