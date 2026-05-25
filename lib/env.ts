@@ -28,6 +28,10 @@ export const env = {
   // Paid engines — 1 credit each. All four non-Anthropic providers go
   // through the OpenAI-compatible adapter; base URLs are baked-in defaults
   // so the only env var per provider is the API key.
+  backendAiProvider:
+    process.env.BACKEND_AI_PROVIDER ?? process.env.AI_TEXT_PROVIDER ?? "openai",
+  backendAiOpenaiModel:
+    process.env.BACKEND_AI_OPENAI_MODEL ?? "gpt-5.5",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",

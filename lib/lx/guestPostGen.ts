@@ -24,7 +24,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod/v4";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { markdownToHtml } from "../markdown";
 import {
   ArticleSchema,
@@ -39,6 +38,7 @@ import {
   uploadImage,
   validateInternalLinks,
 } from "./articleGen";
+import { generateStructuredOutput } from "./backendAi";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 
@@ -121,7 +121,7 @@ export async function generateGuestPost(
   deps: {
     supabase: SupabaseClient<any>;
     openai: OpenAI;
-    anthropic: Anthropic;
+    anthropic?: Anthropic | null;
   },
 ): Promise<GuestPostResult> {
   const { supabase, openai, anthropic } = deps;
@@ -171,43 +171,23 @@ export async function generateGuestPost(
   type ArticleOutput = z.infer<typeof ArticleSchema>;
   let article: ArticleOutput;
   try {
-    const stream = anthropic.messages.stream({
-      model: CLAUDE_MODEL,
-      max_tokens: 48000,
-      thinking: { type: "disabled" },
-      output_config: {
-        effort: "medium",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        format: zodOutputFormat(ArticleSchema as any),
-      },
-      system: [
-        {
-          type: "text",
-          text: buildSystemPrompt(),
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [
-        {
-          role: "user",
-          content: buildGuestUserPrompt({ target, author, topic }),
-        },
-      ],
+    const generated = await generateStructuredOutput({
+      name: "lx_guest_post",
+      schema: ArticleSchema,
+      system: buildSystemPrompt(),
+      user: buildGuestUserPrompt({ target, author, topic }),
+      anthropic,
+      openai,
+      anthropicModel: CLAUDE_MODEL,
+      maxTokens: 48000,
+      anthropicCacheSystemPrompt: true,
     });
-    const response = await stream.finalMessage();
-    if (!response.parsed_output) {
-      await refundCredit(supabase, author.user_id);
-      return {
-        ok: false,
-        error: `claude returned no parsed_output (stop_reason=${response.stop_reason ?? "unknown"})`,
-      };
-    }
-    article = response.parsed_output as ArticleOutput;
+    article = generated.output;
   } catch (err) {
     await refundCredit(supabase, author.user_id);
     return {
       ok: false,
-      error: `claude error: ${err instanceof Error ? err.message : String(err)}`,
+      error: `backend AI error: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
@@ -218,7 +198,7 @@ export async function generateGuestPost(
     await refundCredit(supabase, author.user_id);
     return {
       ok: false,
-      error: `claude did not place the required author backlink (${authorUrl})`,
+      error: `model did not place the required author backlink (${authorUrl})`,
     };
   }
 

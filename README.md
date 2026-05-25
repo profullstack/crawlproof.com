@@ -63,6 +63,7 @@ railway.worker.json Railway service config — worker (set as "Config File Path"
    - `RESEND_API_KEY` (optional — emails are skipped if unset)
    - `WORKER_URL`, `WORKER_SHARED_SECRET`
    - `CRON_SECRET`
+   - `BACKEND_AI_PROVIDER` (`openai` by default, or `auto` / `anthropic`) for Autoblog text generation
    - Provider keys for enabled paid engines: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `PERPLEXITY_API_KEY`
 
 4. **Run dev**:
@@ -101,7 +102,7 @@ Railway sets `PORT` automatically; the Dockerfile listens on it.
   - `NEXT_PUBLIC_SITE_URL` — same as app, used for share-link emails
   - `WORKER_SHARED_SECRET` — must match the app's value
   - `RESEND_API_KEY`, `RESEND_FROM` (optional)
-  - LLM / data provider keys used by worker jobs: Anthropic, OpenAI, DataForSEO, etc.
+  - `BACKEND_AI_PROVIDER` plus LLM / data provider keys used by worker jobs: Anthropic, OpenAI, DataForSEO, etc.
 
 In the app service, set `WORKER_URL` to the worker's Railway private URL — Railway provides `http://${{crawlproof-worker.RAILWAY_PRIVATE_DOMAIN}}:${{crawlproof-worker.PORT}}` via variable references.
 
