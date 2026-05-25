@@ -79,14 +79,18 @@ export const ArticleSchema = z.object({
     .min(3)
     .max(96)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "lowercase-kebab-case"),
-  meta_description: z.string().min(50).max(160),
-  excerpt: z.string().min(50).max(240),
-  tags: z.array(z.string().min(2).max(40)).min(5).max(8),
+  meta_description: z.string().min(50).max(320),
+  excerpt: z.string().min(50).max(500),
+  tags: z.array(z.string().min(2).max(80)).min(3).max(12),
+  // 7,500-60,000 chars keeps pathological output bounded while avoiding
+  // throwing away otherwise usable posts that run slightly long. We clamp
+  // metadata/image-label fields after parsing instead of failing the job.
+  //
   // 7,500-32,000 chars ≈ 1,500-4,800 words. Without an upper bound models
   // can produce 70k+ chars, which can't be parsed back as JSON
   // inside max_tokens. The cap is the hard rail; the system prompt asks
   // for 3,200-4,500 words.
-  markdown_body: z.string().min(7500).max(32000),
+  markdown_body: z.string().min(7500).max(60000),
   used_internal_link_urls: z.array(z.string().url()).max(8),
   // Exchange (cross-site) backlinks selected by the Phase 3 matcher.
   // Empty array means the matcher returned no eligible candidates for
@@ -112,7 +116,7 @@ export const ArticleSchema = z.object({
         // labels (≤24 chars each) that should appear in the image.
         // Empty / ignored for "concept". gpt-image-1 renders these
         // legibly when count is small and labels are short.
-        labels: z.array(z.string().max(24)).max(6).default([]),
+        labels: z.array(z.string().max(80)).max(12).default([]),
       }),
     )
     .min(INLINE_IMAGE_COUNT)
@@ -120,6 +124,28 @@ export const ArticleSchema = z.object({
 });
 
 type ArticleOutput = z.infer<typeof ArticleSchema>;
+
+function truncateText(input: string, max: number): string {
+  const s = input.trim().replace(/\s+/g, " ");
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).trimEnd().replace(/[,\s:;.-]+$/, "") + "…";
+}
+
+export function normalizeArticleOutput(article: ArticleOutput): ArticleOutput {
+  return {
+    ...article,
+    title: truncateText(article.title, 180),
+    meta_description: truncateText(article.meta_description, 160),
+    excerpt: truncateText(article.excerpt, 240),
+    tags: article.tags.slice(0, 8).map((t) => truncateText(t, 40)),
+    inline_image_prompts: article.inline_image_prompts.map((p) => ({
+      ...p,
+      alt: truncateText(p.alt, 200),
+      prompt: truncateText(p.prompt, 500),
+      labels: (p.labels ?? []).slice(0, 6).map((l) => truncateText(l, 24)),
+    })),
+  };
+}
 
 export function slugify(input: string, max = 80): string {
   return input
@@ -932,7 +958,7 @@ export async function generateArticle(
       maxTokens: 48000,
       anthropicCacheSystemPrompt: true,
     });
-    article = generated.output;
+    article = normalizeArticleOutput(generated.output);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     // Provider monthly caps (e.g. Anthropic HTTP 400 "specified API usage
