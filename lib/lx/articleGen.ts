@@ -4,8 +4,9 @@
 //   1. Pick the next queued keyword (scheduled_for <= today).
 //   2. Embed the keyword + site context.
 //   3. Pull top-N internal-link candidates via lx_find_internal_links RPC.
-//   4. Call Claude Sonnet 4.6 with the keyword, site profile, and link
-//      slots to fill. Output is structured JSON (zod-validated).
+//   4. Call the configured backend text model with the keyword, site
+//      profile, and link slots to fill. Output is structured JSON
+//      (zod-validated).
 //   5. Generate the featured image with gpt-image-1, upload it to the
 //      lx-article-images public bucket.
 //   6. Render markdown → HTML with marked.
@@ -19,12 +20,12 @@ import Anthropic from "@anthropic-ai/sdk";
 // z.toJSONSchema() — a v4-only API. Importing plain "zod" gives v3
 // schemas whose `_def` shape v4 can't read.
 import { z } from "zod/v4";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { markdownToHtml } from "../markdown";
 import {
   findExchangeCandidates,
   type ExchangeCandidate,
 } from "./exchangeMatcher";
+import { generateStructuredOutput } from "./backendAi";
 
 const EMBED_MODEL = "text-embedding-3-small";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
@@ -81,8 +82,8 @@ export const ArticleSchema = z.object({
   meta_description: z.string().min(50).max(160),
   excerpt: z.string().min(50).max(240),
   tags: z.array(z.string().min(2).max(40)).min(5).max(8),
-  // 7,500-32,000 chars ≈ 1,500-4,800 words. Without an upper bound Claude
-  // occasionally produces 70k+ chars, which can't be parsed back as JSON
+  // 7,500-32,000 chars ≈ 1,500-4,800 words. Without an upper bound models
+  // can produce 70k+ chars, which can't be parsed back as JSON
   // inside max_tokens. The cap is the hard rail; the system prompt asks
   // for 3,200-4,500 words.
   markdown_body: z.string().min(7500).max(32000),
@@ -512,7 +513,7 @@ function cleanSectionMarkdown(section: string, heading: string): string {
 
 // Visual-design language shared across all infographic-style inline
 // images. Keeps charts/flows/comparisons/checklists feeling like they
-// came from the same magazine even though Claude wrote each prompt
+// came from the same magazine even when the text model wrote each prompt
 // independently. Different from SHARED_ART_DIRECTION (which is for
 // "concept" mode + the hero) — that one explicitly forbids text;
 // this one explicitly permits it.
@@ -749,7 +750,7 @@ export async function generateArticle(
   deps: {
     supabase: SupabaseClient<any>;
     openai: OpenAI;
-    anthropic: Anthropic;
+    anthropic?: Anthropic | null;
   },
   opts: { manual?: boolean } = {},
 ): Promise<GenerateArticleResult> {
@@ -910,57 +911,32 @@ export async function generateArticle(
   // Generate the article body.
   let article: ArticleOutput;
   try {
-    const stream = anthropic.messages.stream({
-      model: CLAUDE_MODEL,
+    const generated = await generateStructuredOutput({
+      name: "lx_article",
+      schema: ArticleSchema,
+      system: buildSystemPrompt(),
+      user: buildUserPrompt({
+        site: typedSite,
+        keyword: keyword.keyword,
+        candidates,
+        linkSlots,
+        exchangeCandidates,
+        exchangeSlots,
+        exchangeRelaxed,
+      }),
+      anthropic,
+      openai,
+      anthropicModel: CLAUDE_MODEL,
       // 3,200–4,500 words ≈ ~18k–25k output tokens. JSON escape overhead
-      // for markdown (every \n + every " in code blocks gets escaped)
-      // can push that another 30%. 48k gives meaningful headroom so the
-      // model isn't truncated mid-string — which manifests as
-      // "Unterminated string in JSON" on parse.
-      max_tokens: 48000,
-      thinking: { type: "disabled" },
-      output_config: {
-        effort: "medium",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        format: zodOutputFormat(ArticleSchema as any),
-      },
-      system: [
-        {
-          type: "text",
-          text: buildSystemPrompt(),
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [
-        {
-          role: "user",
-          content: buildUserPrompt({
-            site: typedSite,
-            keyword: keyword.keyword,
-            candidates,
-            linkSlots,
-            exchangeCandidates,
-            exchangeSlots,
-            exchangeRelaxed,
-          }),
-        },
-      ],
+      // can push that another 30%. 48k gives meaningful headroom.
+      maxTokens: 48000,
+      anthropicCacheSystemPrompt: true,
     });
-    const response = await stream.finalMessage();
-    if (!response.parsed_output) {
-      await failKeyword(
-        supabase,
-        keyword.id,
-        `claude returned no parsed_output (stop_reason=${response.stop_reason ?? "unknown"})`,
-      );
-      await refundCredit(supabase, typedSite.user_id);
-      return { ok: false, error: "claude empty output" };
-    }
-    article = response.parsed_output as ArticleOutput;
+    article = generated.output;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    // Anthropic monthly-cap (HTTP 400 "specified API usage limits") and
-    // generic rate-limit (HTTP 429) are transient. Marking the keyword
+    // Provider monthly caps (e.g. Anthropic HTTP 400 "specified API usage
+    // limits") and generic rate-limits are transient. Marking the keyword
     // 'failed' here permanently consumes it — when the cap resets the
     // user is stuck with stranded rows and a dedup'd research path that
     // never re-inserts them. Requeue instead so the keyword retries on
@@ -977,13 +953,13 @@ export async function generateArticle(
         .eq("id", keyword.id);
       await refundCredit(supabase, typedSite.user_id);
       console.warn(
-        `[lx] keyword ${keyword.id} requeued (transient claude error): ${errMsg}`,
+        `[lx] keyword ${keyword.id} requeued (transient backend AI error): ${errMsg}`,
       );
-      return { ok: false, error: "claude transient error" };
+      return { ok: false, error: "backend AI transient error" };
     }
-    await failKeyword(supabase, keyword.id, `claude error: ${errMsg}`);
+    await failKeyword(supabase, keyword.id, `backend AI error: ${errMsg}`);
     await refundCredit(supabase, typedSite.user_id);
-    return { ok: false, error: "claude error" };
+    return { ok: false, error: "backend AI error" };
   }
 
   // Validate that all "used" internal links are actually present in the body.
@@ -995,7 +971,7 @@ export async function generateArticle(
     await failKeyword(
       supabase,
       keyword.id,
-      `claude claimed links not present: ${linkCheck.missing.join(", ")}`,
+      `model claimed links not present: ${linkCheck.missing.join(", ")}`,
     );
     await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "internal-link validation failed" };
@@ -1014,7 +990,7 @@ export async function generateArticle(
     await failKeyword(
       supabase,
       keyword.id,
-      `claude used exchange URLs not in candidate list: ${phantomExchange.join(", ")}`,
+      `model used exchange URLs not in candidate list: ${phantomExchange.join(", ")}`,
     );
     await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "exchange-link validation failed" };
@@ -1027,7 +1003,7 @@ export async function generateArticle(
     await failKeyword(
       supabase,
       keyword.id,
-      `claude claimed exchange links not present: ${exchangeCheck.missing.join(", ")}`,
+      `model claimed exchange links not present: ${exchangeCheck.missing.join(", ")}`,
     );
     await refundCredit(supabase, typedSite.user_id);
     return { ok: false, error: "exchange-link validation failed" };
@@ -1105,7 +1081,7 @@ export async function generateArticle(
   // Strip pandoc-style `## Heading {#anchor-id}` attributes from headings.
   // Both our renderers (pandoc with gfm_auto_identifiers, marked with the
   // custom heading renderer) auto-slug headings, so explicit IDs are noise.
-  // Claude sometimes emits them anyway as a TOC anchoring hint; without
+  // Models sometimes emit them anyway as a TOC anchoring hint; without
   // header_attributes enabled they leak through as visible "{#…}" text on
   // the rendered page.
   bodyWithImages = bodyWithImages.replace(

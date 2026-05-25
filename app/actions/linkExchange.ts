@@ -243,7 +243,7 @@ export async function createSite(input: {
 // ------------------------------------------------------------
 // enrichFromUrls — phase 2 of the new wizard. With confirmed URLs
 // (auto-found or user-supplied), scrape the blog + feed and ask
-// Claude Haiku to extract niche / audiences / description.
+// the configured backend text model to extract niche / audiences / description.
 // ------------------------------------------------------------
 export async function enrichFromUrls(input: {
   blogUrl: string;
@@ -498,7 +498,7 @@ export async function createOrUpdateSite(
 // ------------------------------------------------------------
 // suggestLongTailKeywords — DataForSEO Labs keyword_ideas expansion.
 //
-// Takes BROAD head terms (the seed_keywords Anthropic generates
+// Takes BROAD head terms (the seed_keywords the backend model generates
 // during enrichment) and fans them out into hundreds of related
 // long-tail phrases with monthly volumes. The form expects a fat
 // keyword list — one blog targets dozens of phrases, not 5-15 —

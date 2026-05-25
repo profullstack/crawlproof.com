@@ -171,7 +171,7 @@ export function SetupForm({
       }
     }
 
-    // 2. Editorial enrichment via Anthropic.
+    // 2. Editorial enrichment via the configured backend text provider.
     setEnriching(true);
     const enrich = await enrichFromUrls({
       blogUrl: ensureBlogRoot,
@@ -188,10 +188,10 @@ export function SetupForm({
     }
     applyProfile(enrich.profile);
 
-    // 3. DataForSEO Labs keyword_ideas expansion. We feed it Anthropic's
+    // 3. DataForSEO Labs keyword_ideas expansion. We feed it the model's
     // BROAD seed_keywords (3-6 head terms like "web security") and let
     // DFS fan out into hundreds of related long-tail phrases — one
-    // blog wants a fat keyword list, not 5-15. Anthropic's narrower
+    // blog wants a fat keyword list, not 5-15. The narrower
     // `keywords` field is a fallback when no seeds came back.
     const expansionSeeds =
       enrich.profile.seedKeywords.length > 0
@@ -265,7 +265,7 @@ export function SetupForm({
       return;
     }
     // Move to review — the useEffect watching `step` then triggers
-    // autoFillFromDomain (sitemap detect → Anthropic enrichment →
+    // autoFillFromDomain (sitemap detect → model enrichment →
     // DataForSEO traffic lookup) and the spinner becomes visible.
     setStep("review");
   }
@@ -299,7 +299,7 @@ export function SetupForm({
 
   // Re-run only the DataForSEO long-tail expansion against the
   // currently-typed seed_keywords. Lets the user iterate on seeds
-  // without re-triggering the Anthropic enrichment that would
+  // without re-triggering the model enrichment that would
   // otherwise stomp niche, description, and the seed list itself.
   async function refetchLongTailFromSeeds() {
     if (preserveKeywords) {

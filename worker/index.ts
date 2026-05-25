@@ -42,6 +42,9 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
 
 async function processLxSitemap(siteId: string) {
   if (!openai) {
@@ -70,10 +73,6 @@ async function processLxGuestPost(payload: {
     console.error(`[worker] lx guest-post: OPENAI_API_KEY not set`);
     return;
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error(`[worker] lx guest-post: ANTHROPIC_API_KEY not set`);
-    return;
-  }
   const { authorSiteId, targetSiteId, topic, skipDeliver, requestId } = payload;
   console.log(
     `[worker] lx guest-post author=${authorSiteId} target=${targetSiteId} topic="${topic}" request=${requestId ?? "-"}`,
@@ -100,7 +99,6 @@ async function processLxGuestPost(payload: {
 
   try {
     const { generateGuestPost } = await import("../lib/lx/guestPostGen");
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const r = await generateGuestPost(
       { authorSiteId, targetSiteId, topic },
       { supabase, openai, anthropic },
@@ -149,15 +147,10 @@ async function processLxGenerate(
     console.error(`[worker] lx generate ${siteId}: OPENAI_API_KEY not set`);
     return;
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error(`[worker] lx generate ${siteId}: ANTHROPIC_API_KEY not set`);
-    return;
-  }
   console.log(
     `[worker] lx article generate ${siteId}${opts.skipDeliver ? " (preview)" : ""}`,
   );
   try {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const r = await generateArticle(
       siteId,
       { supabase, openai, anthropic },
