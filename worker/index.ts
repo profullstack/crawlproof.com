@@ -23,6 +23,7 @@ import { researchKeywords } from "../lib/lx/keywordsResearch";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateArticle } from "../lib/lx/articleGen";
 import { deliverArticle } from "../lib/lx/webhookDeliver";
+import { repairStuckLxJobs } from "../lib/lx/repair";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -82,19 +83,28 @@ async function processLxGuestPost(payload: {
   // (the user clicked "unclick"), bail out. The DELETE policy only
   // allows non-generated rows, so a missing row here means cancel.
   if (requestId) {
-    const { data: stillThere } = await supabase
-      .from("lx_guest_post_request")
-      .select("id")
-      .eq("id", requestId)
-      .maybeSingle();
-    if (!stillThere) {
-      console.log(`[worker] lx guest-post request ${requestId} cancelled — skipping`);
-      return;
-    }
-    await supabase
+    const { data: claimed } = await supabase
       .from("lx_guest_post_request")
       .update({ status: "generating" })
-      .eq("id", requestId);
+      .eq("id", requestId)
+      .eq("status", "queued")
+      .select("id")
+      .maybeSingle();
+    if (!claimed) {
+      const { data: current } = await supabase
+        .from("lx_guest_post_request")
+        .select("status")
+        .eq("id", requestId)
+        .maybeSingle();
+      if (!current) {
+        console.log(`[worker] lx guest-post request ${requestId} cancelled — skipping`);
+      } else {
+        console.log(
+          `[worker] lx guest-post request ${requestId} already ${current.status} — skipping`,
+        );
+      }
+      return;
+    }
   }
 
   try {
@@ -985,46 +995,37 @@ async function auditStuckSweep() {
   }
 }
 
-// Recover lx jobs orphaned by a worker crash. Two failure modes:
-//   * lx_article stuck in 'publishing' — atomic claim flipped it but the
-//     delivery loop never reached a terminal state. Reset to 'ready' so
-//     the cron / manual retry path can pick it up again.
-//   * lx_keyword stuck in 'generating' — article generation started but
-//     never wrote an article. Reset to 'queued'.
-// Conservative 10-minute threshold so we don't fight legitimate in-flight
-// work (article generation typically completes in 30–90s; delivery up to
-// 70s with retry backoff).
-const LX_STUCK_AFTER_MS = 10 * 60 * 1000;
-
 async function lxSweep() {
-  const cutoff = new Date(Date.now() - LX_STUCK_AFTER_MS).toISOString();
-
-  // updated_at < cutoff = "this row hasn't transitioned in 10 minutes".
-  // For 'publishing' that means delivery never reached a terminal state;
-  // reset to 'ready' so cron / manual retry can re-pick it. We do NOT
-  // re-fire delivery from the sweep itself — that's the cron/manual path.
-  const { data: stuckArticles, error: artErr } = await supabase
-    .from("lx_article")
-    .update({ status: "ready", webhook_last_error: "recovered from stuck publishing" })
-    .eq("status", "publishing")
-    .lt("updated_at", cutoff)
-    .select("id");
-  if (artErr) {
-    console.warn("[worker] lx sweep articles", artErr.message);
-  } else if (stuckArticles && stuckArticles.length > 0) {
-    console.log(`[worker] lx sweep: recovered ${stuckArticles.length} stuck article(s)`);
+  const repaired = await repairStuckLxJobs(supabase);
+  const totalRecovered =
+    repaired.publishingArticles +
+    repaired.generatingKeywordsWithArticle +
+    repaired.generatingKeywordsRequeued +
+    repaired.generatingGuestRequests;
+  if (totalRecovered > 0) {
+    console.log("[worker] lx sweep recovered", repaired);
   }
 
-  const { data: stuckKeywords, error: kwErr } = await supabase
-    .from("lx_keyword")
-    .update({ status: "queued" })
-    .eq("status", "generating")
-    .lt("updated_at", cutoff)
-    .select("id");
-  if (kwErr) {
-    console.warn("[worker] lx sweep keywords", kwErr.message);
-  } else if (stuckKeywords && stuckKeywords.length > 0) {
-    console.log(`[worker] lx sweep: recovered ${stuckKeywords.length} stuck keyword(s)`);
+  // Guest-post requests are persisted before the worker is notified. If
+  // that fire-and-forget notify fails, the row stays queued forever unless
+  // the worker polls it. This sweep is the durable queue fallback.
+  const { data: queuedGuestRequests, error: guestErr } = await supabase
+    .from("lx_guest_post_request")
+    .select("id, author_site_id, target_site_id, topic")
+    .eq("status", "queued")
+    .order("updated_at", { ascending: true })
+    .limit(10);
+  if (guestErr) {
+    console.warn("[worker] lx sweep guest requests", guestErr.message);
+    return;
+  }
+  for (const req of queuedGuestRequests ?? []) {
+    await processLxGuestPost({
+      authorSiteId: req.author_site_id as string,
+      targetSiteId: req.target_site_id as string,
+      topic: req.topic as string,
+      requestId: req.id as string,
+    });
   }
 }
 

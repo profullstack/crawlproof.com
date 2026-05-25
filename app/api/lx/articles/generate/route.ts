@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { enqueueArticleGenerate } from "@/lib/lx/workerClient";
+import {
+  enqueueArticleGenerate,
+  enqueueKeywordResearch,
+} from "@/lib/lx/workerClient";
 import { getProjectById, getCurrentSite } from "@/lib/lx/currentSite";
+import { repairStuckLxJobs } from "@/lib/lx/repair";
+import { serviceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
 
@@ -66,6 +71,23 @@ export async function POST(req: NextRequest) {
       },
       { status: 402 },
     );
+  }
+
+  const svc = serviceClient();
+  await repairStuckLxJobs(svc, { siteId: lxSiteId });
+  const { count: queuedCount } = await svc
+    .from("lx_keyword")
+    .select("id", { count: "exact", head: true })
+    .eq("site_id", lxSiteId)
+    .eq("status", "queued");
+  if ((queuedCount ?? 0) === 0) {
+    await enqueueKeywordResearch(lxSiteId);
+    return NextResponse.json({
+      ok: true,
+      action: "keyword_research",
+      message:
+        "No queued keywords were available, so keyword research was started. The article button will produce a preview after research finishes.",
+    });
   }
 
   // The button is a manual "generate now" — bypass the cron's

@@ -751,23 +751,37 @@ export async function deleteProject(input: {
 // ------------------------------------------------------------
 // pause / resume
 // ------------------------------------------------------------
-export async function setSitePaused(paused: boolean): Promise<Ok | Err> {
+export async function setSitePaused(
+  paused: boolean,
+  projectId?: string,
+): Promise<Ok | Err> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const site = (await getCurrentSite("id")) as { id: string } | null;
-  if (!site) return { ok: false, error: "No site selected." };
+  let lxSiteId: string | null = null;
+  if (projectId) {
+    const site = await lookupSiteForProject(supabase, user.id, projectId);
+    if ("error" in site) return { ok: false, error: site.error };
+    lxSiteId = site.id;
+  } else {
+    const site = (await getCurrentSite("id")) as
+      | { lx_site_id: string | null }
+      | null;
+    lxSiteId = site?.lx_site_id ?? null;
+  }
+  if (!lxSiteId) return { ok: false, error: "No site selected." };
 
   const { error } = await supabase
     .from("lx_site")
     .update({ status: paused ? "paused" : "active" })
-    .eq("id", site.id)
+    .eq("id", lxSiteId)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/autoblog");
+  if (projectId) revalidatePath(`/projects/${projectId}/autoblog`);
   return { ok: true };
 }
 

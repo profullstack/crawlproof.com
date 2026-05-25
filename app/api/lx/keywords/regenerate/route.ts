@@ -9,9 +9,10 @@ export const runtime = "nodejs";
 // modifiers, or long-tail list have changed and the existing queue is
 // no longer aligned with what they want to publish.
 //
-// Deletes queued + failed keywords (failed ones were never produced —
-// they're not contractually "history"). Leaves published keywords intact
-// so research's dedup still skips topics the site has already covered.
+// Deletes queued + failed + stuck generating keywords (failed/generating
+// ones were never produced — they're not contractually "history"). Leaves
+// published keywords intact so research's dedup still skips topics the site
+// has already covered.
 // Then enqueues a fresh research run.
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Delete queued + failed in one call. The RLS policy on lx_keyword is
+  // Delete queued + failed + generating in one call. The RLS policy on lx_keyword is
   // SELECT-only for owners; deletes go through the service-role client
   // implicit in supabase.from() under the server route + cookie auth
   // (the policy denies anon, so we rely on the route's own auth check
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
     .from("lx_keyword")
     .delete({ count: "exact" })
     .eq("site_id", lxSiteId)
-    .in("status", ["queued", "failed"]);
+    .in("status", ["queued", "failed", "generating"]);
   if (delErr) {
     return NextResponse.json(
       { ok: false, error: `delete failed: ${delErr.message}` },

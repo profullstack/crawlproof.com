@@ -407,6 +407,66 @@ export async function sendPurchaseReceiptEmail(input: {
   return { sent: true };
 }
 
+export function premiumDeckEmailHtml(input: { deckUrl: string }): string {
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                Your CrawlProof premium deck is attached
+              </h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                The PDF deck walks through the premium AEO workflow: multi-engine scans,
+                visibility gaps, reporting, and where Autoblog fits into the growth loop.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 8px;">
+              <a href="${input.deckUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                Open deck →
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <p style="margin:8px 0 0;font-size:12px;line-height:1.6;color:#64748b;">
+                A PDF copy is attached. Backup link:<br>
+                <a href="${input.deckUrl}" style="color:#9aa3b2;word-break:break-all;">${input.deckUrl}</a>
+              </p>
+            </td>
+          </tr>`;
+  return emailShell({
+    title: "Your CrawlProof premium deck",
+    innerHtml,
+    footerNote:
+      "This is a transactional email sent because you requested the premium deck.",
+  });
+}
+
+export async function sendPremiumDeckEmail(input: {
+  to: string;
+  pdf: Buffer;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+
+  const deckUrl = `${env.siteUrl}/pdfs/CrawlProof_Premium_Deck.pdf`;
+  const res = await c.emails.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: "Your CrawlProof premium deck",
+    html: premiumDeckEmailHtml({ deckUrl }),
+    attachments: [
+      {
+        filename: "CrawlProof_Premium_Deck.pdf",
+        content: input.pdf.toString("base64"),
+      },
+    ],
+  });
+  if (res.error) return { sent: false, error: String(res.error) };
+  return { sent: true };
+}
+
 // Internal lead notification — sent to the sales inbox when a visitor fills
 // out the /hire contact form. Plain HTML, no shell branding (this lands in
 // our inbox, not the customer's).
