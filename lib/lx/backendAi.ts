@@ -139,7 +139,11 @@ async function generateWithOpenAI<T>(
       `Return only a JSON object matching this ${args.name} JSON schema. Do not wrap it in Markdown.`,
       JSON.stringify(z.toJSONSchema(args.schema), null, 2),
     ].join("\n"),
-    input: args.user,
+    input: [
+      args.user,
+      "",
+      "Return JSON only. The final answer must be valid JSON and must not include Markdown.",
+    ].join("\n"),
     max_output_tokens: args.maxTokens,
     reasoning: { effort: "medium" },
     text: { format: { type: "json_object" } },
