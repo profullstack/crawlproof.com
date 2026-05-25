@@ -132,8 +132,20 @@ export async function deliverArticle(
     eventId: claimed.webhook_delivery_id ?? undefined,
   });
 
+  let responseBody = "";
   const result = await sendWebhook(site.webhook_url, event, {
     secret: site.webhook_secret,
+    fetchImpl: async (url, init) => {
+      const res = await fetch(url, init);
+      if (!res.ok) {
+        responseBody = await res
+          .clone()
+          .text()
+          .then((s) => s.slice(0, 1000))
+          .catch(() => "");
+      }
+      return res;
+    },
   });
 
   if (result.ok) {
@@ -168,7 +180,9 @@ export async function deliverArticle(
       webhook_response_code: result.status,
       webhook_attempts: result.attempts,
       webhook_last_error:
-        result.error ?? (result.status !== null ? `HTTP ${result.status}` : "unknown error"),
+        responseBody ||
+        result.error ||
+        (result.status !== null ? `HTTP ${result.status}` : "unknown error"),
     })
     .eq("id", articleId);
   await supabase

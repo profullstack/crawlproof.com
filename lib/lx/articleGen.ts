@@ -147,6 +147,13 @@ export function normalizeArticleOutput(article: ArticleOutput): ArticleOutput {
   };
 }
 
+export function stripInPageAnchorLinks(markdown: string): string {
+  // The receiver quality gate counts every rendered <a>. A 30-link table
+  // of contents can push link density over 1% even when the body only has
+  // one or two real outbound links. Keep the TOC readable but plain-text.
+  return markdown.replace(/\[([^\]\n]+)\]\(#[^)]+\)/g, "$1");
+}
+
 export function slugify(input: string, max = 80): string {
   return input
     .toLowerCase()
@@ -1114,6 +1121,7 @@ export async function generateArticle(
     /^(#{1,6}[^\n]*?)\s*\{#[a-z0-9][a-z0-9-]*\}\s*$/gim,
     "$1",
   );
+  bodyWithImages = stripInPageAnchorLinks(bodyWithImages);
 
   // Render HTML.
   let html: string;

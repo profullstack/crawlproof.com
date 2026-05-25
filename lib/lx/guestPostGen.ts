@@ -35,6 +35,7 @@ import {
   normalizeArticleOutput,
   refundCredit,
   slugify,
+  stripInPageAnchorLinks,
   uniqueSlug,
   uploadImage,
   validateInternalLinks,
@@ -273,6 +274,7 @@ export async function generateGuestPost(
     /^(#{1,6}[^\n]*?)\s*\{#[a-z0-9][a-z0-9-]*\}\s*$/gim,
     "$1",
   );
+  bodyWithImages = stripInPageAnchorLinks(bodyWithImages);
 
   // Render HTML.
   let html: string;
