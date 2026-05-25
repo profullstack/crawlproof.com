@@ -154,6 +154,68 @@ export function stripInPageAnchorLinks(markdown: string): string {
   return markdown.replace(/\[([^\]\n]+)\]\(#[^)]+\)/g, "$1");
 }
 
+function plainHeadingText(markdownHeadingText: string): string {
+  return markdownHeadingText
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[*_~]+/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tocLineText(input: string): string {
+  return input
+    .replace(/^\[([^\]\n]+)\]\(#[^)]+\)$/i, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function ensureTableOfContentsLinks(markdown: string): string {
+  const lines = markdown.split(/\r?\n/);
+  const headingSlugs = new Map<string, string>();
+
+  for (const line of lines) {
+    const match = line.match(/^(#{2,3})\s+(.+?)\s*$/);
+    if (!match) continue;
+    const text = plainHeadingText(match[2]);
+    if (!text || /^table of contents$/i.test(text)) continue;
+    const key = text.toLowerCase();
+    if (!headingSlugs.has(key)) {
+      headingSlugs.set(key, slugify(text));
+    }
+  }
+
+  let inToc = false;
+  let touched = false;
+  const out = lines.map((line) => {
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+    if (heading) {
+      const text = plainHeadingText(heading[2]);
+      inToc = heading[1].length === 2 && /^table of contents$/i.test(text);
+      return line;
+    }
+    if (!inToc) return line;
+
+    const bullet = line.match(/^(\s*[-*+]\s+)(.+?)(\s*)$/);
+    if (!bullet) return line;
+    const rawText = bullet[2].trim();
+    if (!rawText || /^(<!--|```)/.test(rawText)) return line;
+
+    const text = tocLineText(rawText);
+    if (!text) return line;
+    const slug = headingSlugs.get(text.toLowerCase()) ?? slugify(text);
+    if (!slug) return line;
+
+    const linked = `${bullet[1]}[${text}](#${slug})${bullet[3]}`;
+    if (linked !== line) touched = true;
+    return linked;
+  });
+
+  return touched ? out.join("\n") : markdown;
+}
+
 export function slugify(input: string, max = 80): string {
   return input
     .toLowerCase()
@@ -1121,7 +1183,7 @@ export async function generateArticle(
     /^(#{1,6}[^\n]*?)\s*\{#[a-z0-9][a-z0-9-]*\}\s*$/gim,
     "$1",
   );
-  bodyWithImages = stripInPageAnchorLinks(bodyWithImages);
+  bodyWithImages = ensureTableOfContentsLinks(bodyWithImages);
 
   // Render HTML.
   let html: string;
