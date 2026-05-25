@@ -24,7 +24,7 @@ export async function POST(
   // Verify the article belongs to the caller's site, and reset state.
   const { data: article } = await supabase
     .from("lx_article")
-    .select("id, site_id, status, lx_site!inner(user_id)")
+    .select("id, site_id, status, lx_site!lx_article_site_id_fkey!inner(user_id)")
     .eq("id", id)
     .maybeSingle();
   if (!article || (article as any).lx_site?.user_id !== user.id) {

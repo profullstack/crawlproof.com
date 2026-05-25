@@ -1,6 +1,7 @@
 import { HeroAuditForm } from "@/components/hero-audit-form";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
 import { PerformancePreview } from "@/components/report/performance-preview";
+import { env } from "@/lib/env";
 
 const faqs = [
   {
@@ -37,13 +38,15 @@ export default function HomePage() {
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-lg text-[var(--color-muted)]">
           CrawlProof runs an AEO audit on any URL and tells you what LLMs can actually find —
-          content, schema, robots rules, AI-bot access, and positioning. Free, no signup needed to try.
+          content, schema, robots rules, AI-bot access, and positioning. Free,
+          no signup needed to try.
         </p>
         <div className="mx-auto mt-8 max-w-xl">
           <HeroAuditForm />
         </div>
-        <p className="mt-3 text-xs text-[var(--color-muted)]">
-          10 free audits per day from this IP. No card required.
+        <p className="mx-auto mt-3 max-w-xl text-xs leading-relaxed text-[var(--color-muted)]">
+          Enter a URL to generate an on-page rule-based report. Add email only
+          if you want the PDF delivered to your inbox. No card required.
         </p>
       </section>
 
@@ -88,11 +91,22 @@ export default function HomePage() {
 
       <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-16">
         <div className="card p-6 sm:p-8">
-          <h2 className="text-2xl font-bold">Built to pass its own audit.</h2>
+          <h2 className="text-2xl font-bold">Built to be audited in public.</h2>
           <p className="mt-2 text-[var(--color-muted)]">
-            CrawlProof.com itself scores 100/100. Server-rendered, schema-rich, robots-clean,
-            with llms.txt and skill.md at the root.
+            CrawlProof.com ships server-rendered pages, rich schema, clean robots rules,
+            llms.txt, and skill.md at the root. Public scans can vary by model and timing,
+            so the product shows the report details instead of hiding behind a single claim.
           </p>
+          {env.selfAuditUrl && (
+            <a
+              href={env.selfAuditUrl}
+              className="btn mt-4"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              View current self-audit
+            </a>
+          )}
         </div>
       </section>
 

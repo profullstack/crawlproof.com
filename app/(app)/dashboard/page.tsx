@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
+import { FontSparkline } from "@/components/font-sparkline";
+import { backfillProjectLogo } from "@/app/actions/createProject";
 
 export const metadata = { title: "Dashboard" };
 
@@ -31,7 +33,7 @@ export default async function DashboardPage({
   const [{ data: projects }, { data: audits }, counts] = await Promise.all([
     supabase
       .from("projects")
-      .select("id,name,url,schedule,next_run_at,status")
+      .select("id,name,url,schedule,next_run_at,status,logo_url")
       .eq("owner_id", user!.id)
       .eq("status", status)
       .order("created_at", { ascending: false }),
@@ -43,6 +45,27 @@ export default async function DashboardPage({
       .limit(10),
     countByStatus(supabase, user!.id),
   ]);
+
+  // Per-project autoblog/social enablement. Autoblog is "on" when the
+  // project has an lx_site row in status=active; social is "on" when at
+  // least one social account is linked at the project level.
+  const projectIds = (projects ?? []).map((p) => p.id);
+  const [autoblogIds, socialIds, latestPosts, trafficByProject] = await Promise.all([
+    fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
+    fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
+    fetchLatestBlogPostByProject(supabase, projectIds),
+    fetchSevenDayPageviews(supabase, projectIds),
+  ]);
+
+  // Lazy backfill: any project still missing a logo gets one scraped
+  // in the background on this dashboard hit. Fire-and-forget — the
+  // tile shows a letter avatar until the next render after the write
+  // lands, so a slow third-party fetch never delays the page.
+  for (const p of projects ?? []) {
+    if (!(p as { logo_url: string | null }).logo_url) {
+      void backfillProjectLogo(p.id, p.url);
+    }
+  }
 
   return (
     <div className="space-y-10">
@@ -92,9 +115,36 @@ export default async function DashboardPage({
             {projects.map((p) => (
               <li key={p.id} className="card p-4">
                 <Link href={`/projects/${p.id}`} className="block">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-semibold">{p.name}</div>
-                    <div className="flex items-center gap-1.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ProjectLogo
+                        url={(p as { logo_url: string | null }).logo_url}
+                        name={p.name}
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold">{p.name}</div>
+                        <div className="mt-0.5 truncate text-sm text-[var(--color-muted)]">
+                          {p.url}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {autoblogIds.has(p.id) && (
+                        <span
+                          className="badge badge-pass"
+                          title="Autoblog campaign is active for this project"
+                        >
+                          Autoblog on
+                        </span>
+                      )}
+                      {socialIds.has(p.id) && (
+                        <span
+                          className="badge badge-pass"
+                          title="At least one social account is connected"
+                        >
+                          Social on
+                        </span>
+                      )}
                       <span className="badge">{p.schedule}</span>
                       {p.status !== "active" && (
                         <span
@@ -109,10 +159,33 @@ export default async function DashboardPage({
                       )}
                     </div>
                   </div>
-                  <div className="mt-1 truncate text-sm text-[var(--color-muted)]">
-                    {p.url}
-                  </div>
                 </Link>
+                {latestPosts.get(p.id) && (
+                  <div className="mt-2 truncate text-xs text-[var(--color-muted)]">
+                    Last blog post:{" "}
+                    <a
+                      href={latestPosts.get(p.id)!.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-[var(--color-fg)]"
+                    >
+                      {new Date(
+                        latestPosts.get(p.id)!.publishedAt,
+                      ).toLocaleDateString()}
+                    </a>
+                  </div>
+                )}
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
+                  <div>
+                    <div className="text-xs font-medium text-[var(--color-fg)]">
+                      {totalTraffic(trafficByProject.get(p.id) ?? []).toLocaleString()} pageviews
+                    </div>
+                    <div className="text-[11px] text-[var(--color-muted)]">
+                      Past 7 days
+                    </div>
+                  </div>
+                  <FontSparkline samples={trafficSamples(trafficByProject.get(p.id))} />
+                </div>
               </li>
             ))}
           </ul>
@@ -157,6 +230,146 @@ export default async function DashboardPage({
       </section>
     </div>
   );
+}
+
+function ProjectLogo({
+  url,
+  name,
+}: {
+  url: string | null;
+  name: string;
+}) {
+  const letter = (name || "?").trim().charAt(0).toUpperCase();
+  // 40px square; rounded corners; one-letter fallback when the site
+  // either has no detectable logo or backfill hasn't run yet.
+  if (!url) {
+    return (
+      <div
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--color-card)] text-sm font-semibold text-[var(--color-muted)]"
+        aria-hidden
+      >
+        {letter}
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt=""
+      width={40}
+      height={40}
+      loading="lazy"
+      className="h-10 w-10 shrink-0 rounded-md border border-[var(--color-border)] bg-white object-contain p-1"
+    />
+  );
+}
+
+type LatestPost = { url: string; publishedAt: string };
+type TrafficPoint = { day: string; count: number };
+
+async function fetchLatestBlogPostByProject(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectIds: string[],
+): Promise<Map<string, LatestPost>> {
+  const out = new Map<string, LatestPost>();
+  if (projectIds.length === 0) return out;
+
+  const { data: sites } = await supabase
+    .from("lx_site")
+    .select("id, project_id, blog_root_url")
+    .in("project_id", projectIds);
+  if (!sites || sites.length === 0) return out;
+
+  const siteToProject = new Map<string, { projectId: string; blogRoot: string }>();
+  for (const s of sites as { id: string; project_id: string; blog_root_url: string }[]) {
+    siteToProject.set(s.id, { projectId: s.project_id, blogRoot: s.blog_root_url });
+  }
+
+  const { data: articles } = await supabase
+    .from("lx_article")
+    .select("site_id, slug, published_at")
+    .in("site_id", Array.from(siteToProject.keys()))
+    .eq("status", "published")
+    .not("published_at", "is", null)
+    .order("published_at", { ascending: false });
+  if (!articles) return out;
+
+  for (const a of articles as { site_id: string; slug: string; published_at: string }[]) {
+    const site = siteToProject.get(a.site_id);
+    if (!site) continue;
+    if (out.has(site.projectId)) continue;
+    const root = site.blogRoot.replace(/\/$/, "");
+    out.set(site.projectId, {
+      url: `${root}/${a.slug}`,
+      publishedAt: a.published_at,
+    });
+  }
+  return out;
+}
+
+async function fetchSevenDayPageviews(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectIds: string[],
+): Promise<Map<string, TrafficPoint[]>> {
+  const days = lastSevenDays();
+  const out = new Map<string, TrafficPoint[]>();
+  for (const projectId of projectIds) {
+    out.set(
+      projectId,
+      days.map((day) => ({ day, count: 0 })),
+    );
+  }
+  if (projectIds.length === 0) return out;
+
+  const { data } = await supabase
+    .from("tracker_event_daily_stats")
+    .select("project_id, day, count")
+    .in("project_id", projectIds)
+    .eq("event", "pageview")
+    .gte("day", days[0]);
+
+  for (const row of (data ?? []) as Array<{
+    project_id: string;
+    day: string;
+    count: number;
+  }>) {
+    const points = out.get(row.project_id);
+    if (!points) continue;
+    const point = points.find((item) => item.day === row.day);
+    if (point) point.count += row.count;
+  }
+
+  return out;
+}
+
+function lastSevenDays() {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() - (6 - index));
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+function trafficSamples(points: TrafficPoint[] | undefined) {
+  return points?.map((point) => point.count) ?? Array(7).fill(0);
+}
+
+function totalTraffic(points: TrafficPoint[]) {
+  return points.reduce((sum, point) => sum + point.count, 0);
+}
+
+async function fetchEnabledProjectIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: "lx_site" | "sp_site_account",
+  projectIds: string[],
+  filters: Record<string, string> = {},
+): Promise<Set<string>> {
+  if (projectIds.length === 0) return new Set();
+  let q = supabase.from(table).select("project_id").in("project_id", projectIds);
+  for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
+  const { data } = await q;
+  return new Set((data ?? []).map((r: { project_id: string }) => r.project_id));
 }
 
 async function countByStatus(

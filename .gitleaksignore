@@ -1,0 +1,10 @@
+# gitleaks ignore list — fingerprints reviewed and confirmed false positive.
+# Format: <commit-sha>:<file-path>:<rule-id>:<line>
+#
+# 3b25385 used the literal string "Bearer cp_lx_REDACTED_TOKEN" as a doc
+# placeholder for the autoblog webhook example. The cp_lx_ prefix tripped
+# the curl-auth-header rule. Replaced with "<secret-key>" in 394ee87 — the
+# current tree is clean — but the historical blob still matches, so pin it
+# here rather than force-push master.
+
+3b253859e66d682d38537375b0e61f41e7ebb977:app/(marketing)/docs/autoblog-webhook/page.tsx:curl-auth-header:130

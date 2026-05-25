@@ -10,6 +10,7 @@
 // its env can be misconfigured even if the app's looks fine.
 
 import { env } from "@/lib/env";
+import { backendAiTextProviderLabel, hasBackendAiTextProvider } from "@/lib/lx/backendAi";
 
 const PROBE_TIMEOUT_MS = 2000;
 
@@ -64,7 +65,12 @@ export async function checkAutoblogReadiness(): Promise<{
       blocks: ["Sitemap embeddings", "Article featured image"],
     });
   }
-  if (!env.anthropicApiKey) {
+  if (
+    !hasBackendAiTextProvider({
+      anthropicApiKey: env.anthropicApiKey,
+      openaiApiKey: env.openaiApiKey,
+    })
+  ) {
     issues.push({
       key: "anthropic",
       blocks: ["Article body generation"],
@@ -93,7 +99,7 @@ export function readinessLabel(key: ReadinessIssue["key"]): string {
     case "openai":
       return "OPENAI_API_KEY not set";
     case "anthropic":
-      return "ANTHROPIC_API_KEY not set";
+      return `${backendAiTextProviderLabel()} text provider not set`;
     case "dataforseo":
       return "DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set";
     case "cron":

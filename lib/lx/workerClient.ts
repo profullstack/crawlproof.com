@@ -11,12 +11,34 @@ export async function enqueueKeywordResearch(siteId: string): Promise<void> {
   await postToWorker("/lx/keywords-research", { siteId });
 }
 
-export async function enqueueArticleGenerate(siteId: string): Promise<void> {
-  await postToWorker("/lx/article-generate", { siteId });
+export async function enqueueArticleGenerate(
+  siteId: string,
+  opts: { preview?: boolean; manual?: boolean } = {},
+): Promise<void> {
+  await postToWorker("/lx/article-generate", {
+    siteId,
+    preview: !!opts.preview,
+    manual: !!opts.manual,
+  });
 }
 
 export async function enqueueArticleDeliver(articleId: string): Promise<void> {
   await postToWorker("/lx/article-deliver", { articleId });
+}
+
+export async function enqueueGuestPostGenerate(
+  authorSiteId: string,
+  targetSiteId: string,
+  topic: string,
+  opts: { preview?: boolean; requestId?: string } = {},
+): Promise<void> {
+  await postToWorker("/lx/guest-post-generate", {
+    authorSiteId,
+    targetSiteId,
+    topic,
+    preview: !!opts.preview,
+    requestId: opts.requestId,
+  });
 }
 
 async function postToWorker(path: string, body: unknown): Promise<void> {

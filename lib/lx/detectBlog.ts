@@ -19,18 +19,19 @@
 //     • the feed (gives the cleanest sample of THE BLOG's recent
 //       output — title, description, ~10 post titles)
 //     • the blog page HTML as a fallback / supplement
-//   Pass everything to Claude Haiku 4.5 and ask for { niche,
-//   target_audiences, description }. Haiku is cheap (<$0.005/call here)
-//   and fast (<3s typical). If the LLM call fails, we return empty
-//   strings for those fields and let the user type them.
+//   Pass everything to the configured backend text model and ask for
+//   { niche, target_audiences, description }. If the LLM call fails,
+//   we return empty strings for those fields and let the user type them.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import OpenAI from "openai";
 // The SDK's zod helper imports from "zod/v4" internally and calls
 // z.toJSONSchema() — a v4-only API. Importing plain "zod" gives v3
 // schemas whose `_def` shape v4 can't read, producing the
 // "Cannot read properties of undefined (reading 'def')" crash.
 import { z } from "zod/v4";
+import { env } from "../env";
+import { generateStructuredOutput } from "./backendAi";
 import { detectSitemapUrl } from "./sitemap";
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -375,6 +376,12 @@ const ProfileLLMOutput = z.object({
   niche: z.string().min(2).max(120),
   target_audiences: z.array(z.string().min(2).max(80)).min(1).max(6),
   description: z.string().min(40).max(800),
+  seed_keywords: z.array(z.string().min(2).max(40)).min(3).max(6),
+  keywords: z.array(z.string().min(2).max(60)).min(5).max(15),
+  seo_title: z.string().min(10).max(70),
+  seo_description: z.string().min(50).max(160),
+  tone: z.string().min(3).max(120),
+  competitors: z.array(z.string().min(3).max(120)).min(0).max(5),
 });
 
 const SYSTEM_PROMPT = [
@@ -383,6 +390,12 @@ const SYSTEM_PROMPT = [
   "  niche — 2-6 word phrase describing the topical area (e.g. 'cybersecurity for SaaS', 'home-coffee gear reviews').",
   "  target_audiences — 2-4 short audience labels (e.g. 'security engineers', 'CTOs', 'home barista hobbyists').",
   "  description — 2-3 sentences describing what the site does and the tone to write in. Address the AI writer in second person ('You are writing for…').",
+  "  seed_keywords — 3-6 BROAD 1-3 word head terms that a keyword research tool can expand. These feed DataForSEO's keyword-ideas API, so they must be common search terms with real volume (e.g. 'web security', 'cyber security', 'penetration testing'), NOT long-tail phrases. Lowercase.",
+  "  keywords — 5-15 SEO keyword phrases. Strongly prefer 3-5 word long-tail phrases (e.g. 'soc2 compliance for startups' over 'soc2'); long-tail converts and ranks faster. Lowercase, no quotes.",
+  "  seo_title — a 50-60 character page <title> for the blog homepage. Brand-included, keyword-rich, human-readable.",
+  "  seo_description — a 140-160 character meta description for the blog homepage. Active voice, ends with a soft CTA.",
+  "  tone — 3-6 short tone descriptors comma-separated (e.g. 'technical, irreverent, no-fluff' or 'warm, practical, beginner-friendly').",
+  "  competitors — 0-5 well-known sites in the same niche (domain or brand name, e.g. 'stripe.com', 'Indie Hackers'). Empty array if uncertain.",
   "Be specific. Do not write marketing fluff. If you cannot tell, say so honestly in the description.",
 ].join("\n");
 
@@ -433,11 +446,21 @@ export type EnrichmentResult = {
   niche: string;
   targetAudiences: string[];
   description: string;
+  seedKeywords: string[];
+  keywords: string[];
+  seoTitle: string;
+  seoDescription: string;
+  tone: string;
+  competitors: string[];
 };
 
 export async function enrichBlogProfile(
   input: EnrichmentInput,
-  deps?: { anthropicApiKey?: string },
+  deps?: {
+    anthropicApiKey?: string;
+    openaiApiKey?: string;
+    backendAiProvider?: string;
+  },
 ): Promise<{ ok: true; profile: EnrichmentResult } | { ok: false; error: string }> {
   // Pull the feed and the blog page in parallel.
   const [feedRes, blogRes] = await Promise.all([
@@ -452,38 +475,41 @@ export async function enrichBlogProfile(
     return { ok: false, error: "couldn't fetch the blog URL or feed" };
   }
 
-  const apiKey = deps?.anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return { ok: false, error: "ANTHROPIC_API_KEY not set" };
+  const anthropicApiKey = deps?.anthropicApiKey ?? env.anthropicApiKey;
+  const openaiApiKey = deps?.openaiApiKey ?? env.openaiApiKey;
+  if (!anthropicApiKey && !openaiApiKey) {
+    return { ok: false, error: "OPENAI_API_KEY or ANTHROPIC_API_KEY not set" };
   }
 
   const prompt = buildEnrichmentPrompt({ blogUrl: input.blogUrl, feed, excerpt });
 
   try {
-    const anthropic = new Anthropic({ apiKey });
-    const stream = anthropic.messages.stream({
-      model: HAIKU_MODEL,
-      max_tokens: 700,
-      // Haiku 4.5 has no adaptive thinking and rejects the `effort`
-      // parameter — only Sonnet/Opus accept it. Pass `format` alone.
-      output_config: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        format: zodOutputFormat(ProfileLLMOutput as any),
-      },
-      system: [{ type: "text", text: SYSTEM_PROMPT }],
-      messages: [{ role: "user", content: prompt }],
+    const generated = await generateStructuredOutput({
+      name: "lx_blog_profile",
+      schema: ProfileLLMOutput,
+      system: SYSTEM_PROMPT,
+      user: prompt,
+      anthropic: anthropicApiKey ? new Anthropic({ apiKey: anthropicApiKey }) : null,
+      openai: openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null,
+      preference: deps?.backendAiProvider,
+      anthropicModel: HAIKU_MODEL,
+      maxTokens: 1200,
+      // Haiku 4.5 rejects Anthropic's `effort` parameter.
+      anthropicEffort: false,
     });
-    const response = await stream.finalMessage();
-    const parsed = response.parsed_output as z.infer<typeof ProfileLLMOutput> | null;
-    if (!parsed) {
-      return { ok: false, error: "model returned no parsed output" };
-    }
+    const parsed = generated.output;
     return {
       ok: true,
       profile: {
         niche: parsed.niche,
         targetAudiences: parsed.target_audiences,
         description: parsed.description,
+        seedKeywords: parsed.seed_keywords,
+        keywords: parsed.keywords,
+        seoTitle: parsed.seo_title,
+        seoDescription: parsed.seo_description,
+        tone: parsed.tone,
+        competitors: parsed.competitors,
       },
     };
   } catch (err) {

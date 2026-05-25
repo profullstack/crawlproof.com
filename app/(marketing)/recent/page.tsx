@@ -27,6 +27,35 @@ function hostOf(url: string): string {
   }
 }
 
+function displayUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    for (const key of Array.from(u.searchParams.keys())) {
+      const normalized = key.toLowerCase();
+      if (
+        normalized.startsWith("utm_") ||
+        [
+          "fbclid",
+          "gclid",
+          "gbraid",
+          "wbraid",
+          "msclkid",
+          "mc_cid",
+          "mc_eid",
+          "igshid",
+          "li_fat_id",
+          "ref",
+        ].includes(normalized)
+      ) {
+        u.searchParams.delete(key);
+      }
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 function formatScore(score: number | null, status: string): string {
   if (status !== "complete" || score === null) return status;
   return `${score}/100`;
@@ -53,14 +82,14 @@ export async function generateMetadata({
         ? "Recent AEO audits"
         : `Recent AEO audits — page ${page}`,
     description:
-      "Browse the latest free AEO audits run on CrawlProof. See what AI crawlers (GPTBot, ClaudeBot, PerplexityBot, Google-Extended) can find on real sites — score, findings, and a priority to-do list.",
+      "Browse opted-in free AEO audits run on CrawlProof. See what AI crawlers (GPTBot, ClaudeBot, PerplexityBot, Google-Extended) can find on real sites — score, findings, and a priority to-do list.",
     alternates: { canonical: url },
     openGraph: {
       type: "website",
       url,
       title: "Recent AEO audits — CrawlProof",
       description:
-        "The latest AEO audits run on CrawlProof. Free, anonymous scans of real sites.",
+        "The latest opted-in AEO audits run on CrawlProof. Shareable scans of real sites.",
       siteName: "CrawlProof",
     },
     twitter: { card: "summary_large_image", title: "Recent AEO audits — CrawlProof" },
@@ -84,7 +113,7 @@ export default async function RecentPage({
       "share_token, target_url, status, score, completed_at, created_at, engine",
       { count: "exact" },
     )
-    .is("owner_id", null)
+    .eq("listed_public", true)
     .eq("status", "complete")
     .not("share_token", "is", null)
     .order("completed_at", { ascending: false })
@@ -137,9 +166,16 @@ export default async function RecentPage({
       <header>
         <h1 className="text-4xl font-extrabold">Recent AEO audits</h1>
         <p className="mt-2 text-[var(--color-muted)]">
-          The most recent {MAX_PAGES * PAGE_SIZE} free scans run on CrawlProof. Click any to see
-          the full report — what AI crawlers can find, what they can&apos;t, and the priority
-          to-do list to fix it.
+          The most recent {MAX_PAGES * PAGE_SIZE}{" "}
+          opted-in scans run on CrawlProof.
+          Click any to see the full report — what AI crawlers can find, what they can&apos;t,
+          and the priority to-do list to fix it.
+        </p>
+        <p className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 text-sm text-[var(--color-muted)]">
+          Privacy note: only scans explicitly listed by the submitter appear
+          here. Common tracking parameters such as utm_* and fbclid are hidden
+          from this list and stripped from new submissions before storage. Use
+          a signed-in private project for private scan history.
         </p>
       </header>
 
@@ -159,7 +195,7 @@ export default async function RecentPage({
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold">{host}</div>
                     <div className="mt-1 truncate text-xs text-[var(--color-muted)]">
-                      {r.target_url}
+                      {displayUrl(r.target_url)}
                     </div>
                     <div className="mt-1 text-xs text-[var(--color-muted)]">
                       {new Date(when).toLocaleString()}

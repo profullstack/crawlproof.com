@@ -177,6 +177,168 @@ const RECS: Record<string, { title: string; how: string }> = {
     title: "Add a discoverable CTA",
     how: "Place 'Contact sales' or 'Start free' in the top-right of the nav. LLMs cite the visible label.",
   },
+
+  // --- Meta / Discoverability ---
+  "meta.robots_noindex": {
+    title: "Remove noindex from the homepage",
+    how: 'The homepage must be indexable. Drop the `noindex` from `<meta name="robots">` or the response `X-Robots-Tag`.',
+  },
+  "meta.x_robots_noindex": {
+    title: "Remove X-Robots-Tag: noindex on the homepage",
+    how: "The response header is telling crawlers not to index the page. Drop the header or limit it to admin/preview routes.",
+  },
+  "meta.hreflang": {
+    title: "Add hreflang x-default",
+    how: 'Declare `<link rel="alternate" hreflang="x-default" href="...">` so engines can fall back when a user\'s locale isn\'t in your list.',
+  },
+  "meta.favicon": {
+    title: "Add a favicon",
+    how: 'Add `<link rel="icon" href="/favicon.ico">` and an `apple-touch-icon` so AI citation cards show your brand mark.',
+  },
+  "meta.charset": {
+    title: "Declare charset",
+    how: 'Add `<meta charset="utf-8">` as the first child of <head> so non-ASCII content is parsed reliably.',
+  },
+
+  // --- Schema breadth ---
+  "schema.article": {
+    title: "Add Article / BlogPosting JSON-LD",
+    how: "On every blog/article page, include Article JSON-LD with headline, author, datePublished, dateModified. AI engines weight these heavily for freshness and authority.",
+  },
+  "schema.breadcrumb": {
+    title: "Add BreadcrumbList JSON-LD",
+    how: "Helps AI engines understand site hierarchy and improves citation context.",
+  },
+  "schema.local_business": {
+    title: "Add LocalBusiness JSON-LD (if you have a physical location)",
+    how: "Include address, geo, openingHours, telephone. Required for AI engines to surface you in 'near me' queries.",
+  },
+  "schema.person": {
+    title: "Add Person JSON-LD for authors / founders",
+    how: "Mark up bylines and founder bios with Person schema — name, jobTitle, sameAs (their profiles). Strengthens E-E-A-T.",
+  },
+  "schema.howto": {
+    title: "Add HowTo JSON-LD for step-by-step content",
+    how: "For any 'how to' page, wrap the steps in HowTo JSON-LD. AI step-by-step answers cite these heavily.",
+  },
+  "schema.video": {
+    title: "Add VideoObject JSON-LD",
+    how: "For embedded videos, include VideoObject with thumbnailUrl, uploadDate, duration. AI engines cite these in multimedia answers.",
+  },
+
+  // --- Content quality ---
+  "content.heading_order": {
+    title: "Fix heading-level skips",
+    how: "Don't jump from h2 to h4. AI outline parsers expect monotonic nesting — keep heading depth contiguous.",
+  },
+  "content.snippet_blocks": {
+    title: "Add lists or comparison tables",
+    how: "Answer engines lift bulleted lists, numbered steps, and tables verbatim. Add at least 2 snippet-ready blocks to the homepage.",
+  },
+  "content.qa_headings": {
+    title: "Phrase a heading as a user question",
+    how: "Use headings like 'How does pricing work?' or 'Who is this for?' — they map directly to conversational AI queries.",
+  },
+  "content.date_signal": {
+    title: "Publish a date signal",
+    how: 'Add `<time datetime="2026-05-17">` or `<meta property="article:published_time">`. AI ranking heavily weights freshness.',
+  },
+  "content.author": {
+    title: "Declare an author byline",
+    how: 'Add `<meta name="author" content="Name">` or a visible byline with `rel="author"`. Combine with Person JSON-LD for E-E-A-T.',
+  },
+  "content.text_ratio": {
+    title: "Raise your text-to-HTML ratio",
+    how: "Strip unused inline scripts/styles and move large bundles to external files. AI crawlers struggle when most of the response is markup.",
+  },
+
+  // --- Images ---
+  "images.format": {
+    title: "Use modern image formats",
+    how: "Serve WebP or AVIF for hero/above-the-fold images. Keep legacy PNG/JPG only as <picture> fallbacks.",
+  },
+  "images.lazy_loading": {
+    title: "Lazy-load below-the-fold images",
+    how: 'Add `loading="lazy"` on `<img>` tags that aren\'t in the initial viewport. Reduces first-paint payload.',
+  },
+  "images.dimensions": {
+    title: "Set width/height on images",
+    how: "Explicit dimensions prevent Cumulative Layout Shift and help AI extractors reserve space correctly.",
+  },
+  "images.srcset": {
+    title: "Use srcset/sizes for responsive images",
+    how: "Serve appropriately-sized images per viewport — saves bytes on mobile crawls.",
+  },
+
+  // --- Links ---
+  "links.nofollow_ratio": {
+    title: "Review nofollow usage on outbound links",
+    how: "Nearly-all-nofollow can read as a link-spam pattern. Use nofollow only for paid/UGC links per Google's guidance.",
+  },
+  "links.broken_sample": {
+    title: "Fix broken homepage links",
+    how: "We HEAD-probed the first 20 unique homepage links and found 4xx/5xx responses. Repair or remove them — broken links erode crawler trust.",
+  },
+
+  // --- Performance ---
+  "perf.page_size": {
+    title: "Reduce page size",
+    how: "AI crawlers commonly truncate over ~1.5 MB. Strip unused JS, defer below-the-fold images, and gzip/brotli all responses.",
+  },
+  "perf.resource_count": {
+    title: "Reduce resource count",
+    how: "Bundle scripts/styles, sprite or inline-SVG your icons, and use system fonts where possible.",
+  },
+  "perf.render_blocking": {
+    title: "Eliminate render-blocking head scripts",
+    how: 'Add `defer` or `async` to any `<script src="…">` in `<head>`, or move it to the end of `<body>`.',
+  },
+  "perf.inline_bulk": {
+    title: "Externalize large inline JS/CSS",
+    how: "Inline blobs aren't cacheable. Move >50 KB inline payloads to versioned external files.",
+  },
+  "perf.response_time": {
+    title: "Reduce response time",
+    how: "Push static HTML to a CDN edge cache. If you must server-render per-request, profile DB/template work and add `Cache-Control: s-maxage=…`.",
+  },
+  "perf.caching": {
+    title: "Set a Cache-Control header",
+    how: "Add `Cache-Control: public, max-age=300, s-maxage=3600` (or similar) so CDNs and AI crawlers can revalidate cheaply.",
+  },
+
+  // --- Security ---
+  "security.https": {
+    title: "Serve the site over HTTPS",
+    how: "Provision a certificate (Let's Encrypt, Caddy, or your platform's automatic cert) and redirect http→https at the edge.",
+  },
+  "security.mixed_content": {
+    title: "Fix mixed content",
+    how: "An https page loading http assets is downgraded by browsers and AI crawlers. Update asset URLs or use protocol-relative paths.",
+  },
+  "security.hsts": {
+    title: "Enable HSTS",
+    how: "Add `Strict-Transport-Security: max-age=31536000; includeSubDomains` once you're confident every subdomain is https-ready.",
+  },
+  "security.csp": {
+    title: "Define a Content-Security-Policy",
+    how: "Start with `Content-Security-Policy-Report-Only` to learn safe sources, then enforce. Cuts XSS blast radius.",
+  },
+  "security.xfo": {
+    title: "Add X-Frame-Options",
+    how: "`X-Frame-Options: SAMEORIGIN` (or CSP `frame-ancestors`) blocks clickjacking via iframe embeds.",
+  },
+  "security.xcto": {
+    title: "Add X-Content-Type-Options",
+    how: "`X-Content-Type-Options: nosniff` prevents browsers from MIME-sniffing responses.",
+  },
+  "security.referrer": {
+    title: "Set a Referrer-Policy",
+    how: "`Referrer-Policy: strict-origin-when-cross-origin` is a safe default.",
+  },
+  "security.permissions": {
+    title: "Set a Permissions-Policy",
+    how: "Restrict browser features you don't use, e.g. `Permissions-Policy: camera=(), microphone=(), geolocation=()`.",
+  },
 };
 
 // Add an aibot.* template for every blocked AI bot.

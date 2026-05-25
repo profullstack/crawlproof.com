@@ -13,8 +13,11 @@ import { LivePoller } from "@/components/report/live-poller";
 import { DiffView } from "@/components/report/diff-view";
 import { CopyLink } from "@/components/copy-link";
 import { PdfButton } from "@/components/pdf-button";
+import { ShareBanner } from "@/components/share-banner";
 import type { Finding } from "@/lib/audit/types";
 import { env } from "@/lib/env";
+import { getOrMintInstallationToken } from "@/lib/github/installations";
+import { listInstallationRepos } from "@/lib/github/app";
 
 export const dynamic = "force-dynamic";
 
@@ -140,15 +143,83 @@ export default async function AuditPage({
     </div>
   );
 
+  // Apply-Fix context: only available to the owner, on an audit attached
+  // to a project, when the GitHub App is configured AND the user has at
+  // least one installation with repos.
+  let fixContext:
+    | {
+        projectId: string;
+        auditId: string;
+        repos: Array<{ full_name: string; installation_id: number }>;
+        boundRepos: Array<{ full_name: string; installation_id: number }>;
+      }
+    | undefined;
+  const ghConfigured = !!(env.githubAppId && env.githubAppPrivateKey);
+  if (
+    ghConfigured &&
+    user &&
+    (audit as { owner_id?: string }).owner_id === user.id &&
+    (audit as { project_id?: string }).project_id
+  ) {
+    const { data: installs } = await supabase
+      .from("github_installations")
+      .select("installation_id")
+      .is("removed_at", null);
+    const repos: Array<{ full_name: string; installation_id: number }> = [];
+    for (const i of (installs ?? []) as Array<{ installation_id: number }>) {
+      try {
+        const token = await getOrMintInstallationToken(i.installation_id);
+        const list = await listInstallationRepos(token);
+        for (const r of list) {
+          repos.push({ full_name: r.full_name, installation_id: i.installation_id });
+        }
+      } catch {
+        // Skip on token / API failure — the user can connect again later.
+      }
+    }
+    const projectId = (audit as { project_id: string }).project_id;
+    const { data: boundData } = await supabase
+      .from("project_repos")
+      .select("installation_id, repo_owner, repo_name")
+      .eq("project_id", projectId);
+    const boundRepos = ((boundData ?? []) as Array<{
+      installation_id: number;
+      repo_owner: string;
+      repo_name: string;
+    }>).map((b) => ({
+      full_name: `${b.repo_owner}/${b.repo_name}`,
+      installation_id: b.installation_id,
+    }));
+    fixContext = {
+      projectId,
+      auditId: audit.id,
+      repos,
+      boundRepos,
+    };
+  }
+
+  const publicShareUrl = audit.share_token
+    ? `${env.siteUrl.replace(/\/$/, "")}/r/${audit.share_token}`
+    : null;
+  const scoreLabel =
+    typeof audit.score === "number" ? `${audit.score}/100` : undefined;
+
   return (
     <div className="space-y-6">
+      {publicShareUrl && (
+        <ShareBanner
+          url={publicShareUrl}
+          reportTitle={audit.target_url}
+          scoreLabel={scoreLabel}
+        />
+      )}
       {audit.status !== "complete" && audit.status !== "failed" && (
         <LivePoller id={audit.id} />
       )}
       {audit.status === "complete" && audit.report_markdown ? (
         <ViewTabs
           rawMarkdownUrl={
-            audit.share_token ? `/r/${audit.share_token}/report.md` : undefined
+            audit.share_token ? `/r/${audit.share_token}/prompt.md` : undefined
           }
           markdownView={<MarkdownView markdown={audit.report_markdown} />}
           structuredView={
@@ -156,6 +227,7 @@ export default async function AuditPage({
               audit={audit as AuditRow}
               findings={findings}
               ownerActions={ownerActions}
+              fixContext={fixContext}
             />
           }
           performanceView={
@@ -174,6 +246,7 @@ export default async function AuditPage({
           audit={audit as AuditRow}
           findings={findings}
           ownerActions={ownerActions}
+          fixContext={fixContext}
         />
       )}
     </div>

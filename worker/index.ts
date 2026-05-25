@@ -42,6 +42,9 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
 
 async function processLxSitemap(siteId: string) {
   if (!openai) {
@@ -59,23 +62,110 @@ async function processLxSitemap(siteId: string) {
   }
 }
 
-async function processLxGenerate(siteId: string) {
+async function processLxGuestPost(payload: {
+  authorSiteId: string;
+  targetSiteId: string;
+  topic: string;
+  skipDeliver?: boolean;
+  requestId?: string;
+}) {
+  if (!openai) {
+    console.error(`[worker] lx guest-post: OPENAI_API_KEY not set`);
+    return;
+  }
+  const { authorSiteId, targetSiteId, topic, skipDeliver, requestId } = payload;
+  console.log(
+    `[worker] lx guest-post author=${authorSiteId} target=${targetSiteId} topic="${topic}" request=${requestId ?? "-"}`,
+  );
+
+  // If the request row was deleted between enqueue and processing
+  // (the user clicked "unclick"), bail out. The DELETE policy only
+  // allows non-generated rows, so a missing row here means cancel.
+  if (requestId) {
+    const { data: stillThere } = await supabase
+      .from("lx_guest_post_request")
+      .select("id")
+      .eq("id", requestId)
+      .maybeSingle();
+    if (!stillThere) {
+      console.log(`[worker] lx guest-post request ${requestId} cancelled — skipping`);
+      return;
+    }
+    await supabase
+      .from("lx_guest_post_request")
+      .update({ status: "generating" })
+      .eq("id", requestId);
+  }
+
+  try {
+    const { generateGuestPost } = await import("../lib/lx/guestPostGen");
+    const r = await generateGuestPost(
+      { authorSiteId, targetSiteId, topic },
+      { supabase, openai, anthropic },
+    );
+    if (!r.ok) {
+      console.warn(`[worker] lx guest-post failed: ${r.error}`);
+      if (requestId) {
+        await supabase
+          .from("lx_guest_post_request")
+          .update({ status: "failed", error_text: r.error ?? "unknown" })
+          .eq("id", requestId);
+      }
+      return;
+    }
+    console.log(`[worker] lx guest-post ok article=${r.articleId} slug=${r.slug}`);
+    if (requestId && r.articleId) {
+      await supabase
+        .from("lx_guest_post_request")
+        .update({ status: "generated", article_id: r.articleId })
+        .eq("id", requestId);
+    }
+    if (skipDeliver || !r.articleId) return;
+    const d = await deliverArticle(r.articleId, { supabase });
+    console.log(
+      `[worker] lx guest-post deliver ${r.articleId} status=${d.status} code=${d.responseCode ?? "-"} attempts=${d.attempts}${d.error ? ` error=${d.error}` : ""}`,
+    );
+  } catch (err) {
+    console.error(`[worker] lx guest-post crashed`, err);
+    if (requestId) {
+      await supabase
+        .from("lx_guest_post_request")
+        .update({
+          status: "failed",
+          error_text: err instanceof Error ? err.message : String(err),
+        })
+        .eq("id", requestId);
+    }
+  }
+}
+
+async function processLxGenerate(
+  siteId: string,
+  opts: { skipDeliver?: boolean; manual?: boolean } = {},
+) {
   if (!openai) {
     console.error(`[worker] lx generate ${siteId}: OPENAI_API_KEY not set`);
     return;
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error(`[worker] lx generate ${siteId}: ANTHROPIC_API_KEY not set`);
-    return;
-  }
-  console.log(`[worker] lx article generate ${siteId}`);
+  console.log(
+    `[worker] lx article generate ${siteId}${opts.skipDeliver ? " (preview)" : ""}`,
+  );
   try {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const r = await generateArticle(siteId, { supabase, openai, anthropic });
+    const r = await generateArticle(
+      siteId,
+      { supabase, openai, anthropic },
+      { manual: !!opts.manual },
+    );
     if (r.skipped) {
       console.log(`[worker] lx generate ${siteId} skipped: ${r.skipped}`);
     } else if (r.ok && r.articleId) {
       console.log(`[worker] lx generate ${siteId} ok article=${r.articleId} slug=${r.slug}`);
+      if (opts.skipDeliver) {
+        // Preview mode: leave the article in status='ready' so the
+        // user can review on /autoblog/articles/<id> and click
+        // Publish when they're happy.
+        return;
+      }
       // Chain straight into delivery — the cron's "produce 1 article per
       // due slot" contract means publish should be the same job.
       const d = await deliverArticle(r.articleId, { supabase });
@@ -238,6 +328,21 @@ async function processJob(job: Job) {
 
     console.log(`[worker] audit ${auditId} complete, score=${score}`);
 
+    // AEO Score time-series: roll up siblings in the scan_run into a
+    // single project_scores row. Runs for every completed audit but the
+    // UNIQUE(project_id, scan_run_id) constraint ensures exactly one row
+    // per scan_run survives.
+    if (audit.project_id && audit.scan_run_id) {
+      try {
+        await recordProjectScoreIfReady({
+          projectId: audit.project_id as string,
+          scanRunId: audit.scan_run_id as string,
+        });
+      } catch (err) {
+        console.error("[worker] project_scores write failed", err);
+      }
+    }
+
     // Email path. Solo scans get a per-engine PDF; multi-engine scans get
     // ONE summary email after every sibling reaches a terminal state.
     if (pdfEmail) {
@@ -263,14 +368,51 @@ async function processJob(job: Job) {
     }
   } catch (err) {
     console.error("[worker] audit failed", auditId, err);
-    await supabase
+    // Mark failed only if the row wasn't already aborted by the user.
+    // The user-abort path already wrote failed + Aborted by user +
+    // refunded; we don't want to clobber that reason or double-refund.
+    const { data: updated } = await supabase
       .from("audits")
       .update({
         status: "failed",
         failed_reason: err instanceof Error ? err.message : String(err),
       })
-      .eq("id", auditId);
+      .eq("id", auditId)
+      .is("aborted_at", null)
+      .select("engine, owner_id")
+      .maybeSingle();
+    if (updated) {
+      // Natural failure (network, LLM timeout, etc.) — engine didn't
+      // produce a result, so refund the credit. ENGINES[engine].cost is
+      // 0 for the rule engine, so paid engines net to 0 (paid 1 to
+      // queue, refunded 1 on failure).
+      const cost = ENGINES[updated.engine as Engine]?.cost ?? 0;
+      if (cost > 0 && updated.owner_id) {
+        await refundCredits(supabase, updated.owner_id, cost);
+      }
+    }
   }
+}
+
+// Inline refund — the worker can't reach the Next.js rateLimit helper
+// directly because the helper imports the server-only serviceClient.
+// Same write the in-app refundCredit does (add to profiles.credits_balance).
+async function refundCredits(
+  sb: typeof supabase,
+  ownerId: string,
+  count: number,
+): Promise<void> {
+  if (count <= 0) return;
+  const { data: prof } = await sb
+    .from("profiles")
+    .select("credits_balance")
+    .eq("id", ownerId)
+    .maybeSingle();
+  if (!prof) return;
+  await sb
+    .from("profiles")
+    .update({ credits_balance: (prof.credits_balance ?? 0) + count })
+    .eq("id", ownerId);
 }
 
 type SiblingRow = {
@@ -284,6 +426,58 @@ type SiblingRow = {
   failed_reason: string | null;
   created_at: string;
 };
+
+// Insert one project_scores row per (project, scan_run) once all sibling
+// audits in the run reach a terminal state. The aggregate is the mean of
+// the completed engines' scores; the components jsonb keeps the per-engine
+// breakdown so a chart can drill in. UNIQUE(project_id, scan_run_id) +
+// ON CONFLICT DO NOTHING guarantees idempotence under concurrent workers.
+async function recordProjectScoreIfReady(input: {
+  projectId: string;
+  scanRunId: string;
+}): Promise<void> {
+  const { projectId, scanRunId } = input;
+  const { data: siblings } = await supabase
+    .from("audits")
+    .select("engine, status, score")
+    .eq("scan_run_id", scanRunId);
+  const rows = (siblings ?? []) as Array<{
+    engine: string;
+    status: string;
+    score: number | null;
+  }>;
+  if (rows.length === 0) return;
+  const allTerminal = rows.every(
+    (r) => r.status === "complete" || r.status === "failed",
+  );
+  if (!allTerminal) return;
+
+  const completed = rows.filter(
+    (r) => r.status === "complete" && typeof r.score === "number",
+  );
+  // No engine produced a usable score (every sibling failed). Skip — a zero
+  // here would be misleading on the trend chart.
+  if (completed.length === 0) return;
+
+  const components: Record<string, number> = {};
+  for (const r of completed) {
+    components[r.engine] = r.score as number;
+  }
+  const overall = Math.round(
+    completed.reduce((sum, r) => sum + (r.score as number), 0) / completed.length,
+  );
+
+  const { error } = await supabase.from("project_scores").insert({
+    project_id: projectId,
+    scan_run_id: scanRunId,
+    score: overall,
+    components,
+  });
+  // 23505 = unique_violation; another worker beat us to it. Not an error.
+  if (error && (error as { code?: string }).code !== "23505") {
+    console.error("[worker] project_scores insert", error);
+  }
+}
 
 
 // Route the audit-complete email. Solo scans (single audit in the
@@ -611,7 +805,7 @@ const server = http.createServer(async (req, res) => {
     let body = "";
     req.on("data", (chunk: Buffer) => (body += chunk.toString()));
     req.on("end", () => {
-      let payload: { siteId?: string };
+      let payload: { siteId?: string; preview?: boolean; manual?: boolean };
       try {
         payload = JSON.parse(body || "{}");
       } catch {
@@ -626,9 +820,50 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(202, { "content-type": "application/json" });
       res.end(JSON.stringify({ accepted: true }));
-      processLxGenerate(payload.siteId).catch((e) =>
-        console.error("[worker] lx generate unhandled", e),
-      );
+      processLxGenerate(payload.siteId, {
+        skipDeliver: !!payload.preview,
+        manual: !!payload.manual,
+      }).catch((e) => console.error("[worker] lx generate unhandled", e));
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/lx/guest-post-generate") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: {
+        authorSiteId?: string;
+        targetSiteId?: string;
+        topic?: string;
+        preview?: boolean;
+        requestId?: string;
+      };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+        return;
+      }
+      if (!payload.authorSiteId || !payload.targetSiteId || !payload.topic) {
+        res.writeHead(400);
+        res.end("authorSiteId, targetSiteId, topic required");
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      processLxGuestPost({
+        authorSiteId: payload.authorSiteId,
+        targetSiteId: payload.targetSiteId,
+        topic: payload.topic,
+        skipDeliver: !!payload.preview,
+        requestId: payload.requestId,
+      }).catch((e) => console.error("[worker] lx guest-post unhandled", e));
     });
     return;
   }
@@ -707,6 +942,49 @@ async function sweep() {
   for (const row of data) await processJob({ auditId: row.id });
 }
 
+// Recover audits orphaned by a worker crash or by an upstream LLM that
+// opened a connection then never delivered. Worst case the new
+// 90s × 3-attempt budget caps a healthy in-flight call around 4.5
+// minutes; anything still in `running` past 7 minutes is stuck.
+// Flip to failed + refund so the user sees a result and can retry.
+const AUDIT_STUCK_AFTER_MS = 7 * 60 * 1000;
+async function auditStuckSweep() {
+  const cutoff = new Date(Date.now() - AUDIT_STUCK_AFTER_MS).toISOString();
+  const { data: stuck, error: stuckErr } = await supabase
+    .from("audits")
+    .select("id, engine, owner_id")
+    .eq("status", "running")
+    .is("aborted_at", null)
+    .lt("created_at", cutoff);
+  if (stuckErr) {
+    console.warn("[worker] audit stuck sweep", stuckErr.message);
+    return;
+  }
+  if (!stuck || stuck.length === 0) return;
+
+  const now = new Date().toISOString();
+  for (const row of stuck) {
+    const { data: flipped } = await supabase
+      .from("audits")
+      .update({
+        status: "failed",
+        failed_reason: "Engine timed out (no response in 7 minutes)",
+        completed_at: now,
+      })
+      .eq("id", row.id)
+      .eq("status", "running")
+      .is("aborted_at", null)
+      .select("id")
+      .maybeSingle();
+    if (!flipped) continue;
+    const cost = ENGINES[row.engine as Engine]?.cost ?? 0;
+    if (cost > 0 && row.owner_id) {
+      await refundCredits(supabase, row.owner_id, cost);
+    }
+    console.log(`[worker] audit ${row.id} stuck — flipped to failed + refunded`);
+  }
+}
+
 // Recover lx jobs orphaned by a worker crash. Two failure modes:
 //   * lx_article stuck in 'publishing' — atomic claim flipped it but the
 //     delivery loop never reached a terminal state. Reset to 'ready' so
@@ -752,6 +1030,10 @@ async function lxSweep() {
 
 setInterval(() => sweep().catch(() => {}), 60_000);
 setInterval(() => lxSweep().catch((e) => console.error("[worker] lx sweep", e)), 60_000);
+setInterval(
+  () => auditStuckSweep().catch((e) => console.error("[worker] audit stuck sweep", e)),
+  60_000,
+);
 
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to

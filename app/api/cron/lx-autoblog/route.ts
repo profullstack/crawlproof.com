@@ -2,9 +2,19 @@ import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { env } from "@/lib/env";
 import { nextPublishAt } from "@/lib/lx/schedule";
-import { enqueueArticleGenerate } from "@/lib/lx/workerClient";
+import {
+  enqueueArticleGenerate,
+  enqueueKeywordResearch,
+} from "@/lib/lx/workerClient";
 
 export const runtime = "nodejs";
+
+// Keep at least this many queued keywords on each active site. Once the
+// queue drops below the threshold the cron fires keyword research to
+// top it up, so autoblog runs autonomously past the initial 30-day
+// seed. Tuned so a daily 1-article-per-day site never goes dark — at 14
+// remaining we have a 2-week buffer to refill before the worker runs dry.
+const KEYWORD_TOPUP_THRESHOLD = 14;
 
 export async function GET(req: Request) {
   return POST(req);
@@ -22,9 +32,39 @@ export async function POST(req: Request) {
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // Find every active site whose next publish slot has arrived. Sites
-  // without a webhook configured are skipped — there's nowhere for the
-  // article to land.
+  // ============================================================
+  // Pass 1: top up keywords on every active site whose queued
+  // count is below the threshold. Runs before the publish-due
+  // sweep so a freshly-refilled site can publish on the same
+  // tick if needed. researchKeywords dedupes against existing
+  // rows so re-running is safe.
+  // ============================================================
+  const { data: activeSites, error: actErr } = await svc
+    .from("lx_site")
+    .select("id")
+    .eq("status", "active")
+    .not("webhook_url", "is", null);
+  if (actErr) {
+    return NextResponse.json({ ok: false, error: actErr.message }, { status: 500 });
+  }
+  let topped_up = 0;
+  for (const s of activeSites ?? []) {
+    const { count } = await svc
+      .from("lx_keyword")
+      .select("id", { count: "exact", head: true })
+      .eq("site_id", s.id as string)
+      .eq("status", "queued");
+    if ((count ?? 0) < KEYWORD_TOPUP_THRESHOLD) {
+      await enqueueKeywordResearch(s.id as string);
+      topped_up++;
+    }
+  }
+
+  // ============================================================
+  // Pass 2: find every active site whose next publish slot has
+  // arrived. Sites without a webhook are skipped — there's
+  // nowhere for the article to land.
+  // ============================================================
   const { data: due, error } = await svc
     .from("lx_site")
     .select(
@@ -63,5 +103,10 @@ export async function POST(req: Request) {
     enqueued++;
   }
 
-  return NextResponse.json({ ok: true, enqueued, skipped_no_webhook });
+  return NextResponse.json({
+    ok: true,
+    topped_up,
+    enqueued,
+    skipped_no_webhook,
+  });
 }

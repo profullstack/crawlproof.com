@@ -21,7 +21,7 @@ import {
 } from "@/lib/credits";
 import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
-import { recordMarketingConsent } from "@/lib/marketing";
+import { recordMarketingConsent, recordLead } from "@/lib/marketing";
 
 type ScanOk = {
   ok: true;
@@ -67,10 +67,19 @@ export async function startAuditFromForm(input: {
   estimatedMonthlySales?: string;
   engines?: Engine[];
   marketingOptIn?: boolean;
+  listPublic?: boolean;
 }): Promise<({ ok: true; id: string; token: string } & { engines: Engine[] }) | Err> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { ok: false, error: check.reason };
   const target = check.url;
+
+  const email = input.email?.trim();
+  if (email && !email.includes("@")) {
+    return { ok: false, error: "Enter a valid email address." };
+  }
+  if (input.marketingOptIn && !email) {
+    return { ok: false, error: "Email is required for marketing updates." };
+  }
 
   const hdrs = await headers();
   const ip =
@@ -121,21 +130,36 @@ export async function startAuditFromForm(input: {
   const salesRaw = input.estimatedMonthlySales?.trim();
   const salesParsed =
     salesRaw && Number.isFinite(Number(salesRaw)) ? Number(salesRaw) : null;
-  const { data: row, error } = await svc
+  const insertPayload: Record<string, unknown> = {
+    target_url: target,
+    owner_id: user?.id ?? null,
+    status: "queued",
+    share_token: token,
+    triggered_by: "manual",
+    engine: firstEngine,
+    pdf_email: email || null,
+    phone: input.phone?.trim() || null,
+    estimated_monthly_sales: salesParsed,
+    listed_public: !!input.listPublic,
+  };
+  let { data: row, error } = await svc
     .from("audits")
-    .insert({
-      target_url: target,
-      owner_id: user?.id ?? null,
-      status: "queued",
-      share_token: token,
-      triggered_by: "manual",
-      engine: firstEngine,
-      pdf_email: input.email ?? null,
-      phone: input.phone?.trim() || null,
-      estimated_monthly_sales: salesParsed,
-    })
+    .insert(insertPayload)
     .select("id, share_token")
     .single();
+  if (
+    error &&
+    /listed_public|schema cache|column/i.test(error.message ?? "")
+  ) {
+    delete insertPayload.listed_public;
+    const retry = await svc
+      .from("audits")
+      .insert(insertPayload)
+      .select("id, share_token")
+      .single();
+    row = retry.data;
+    error = retry.error;
+  }
   if (error || !row) {
     if (cost > 0 && user) await refundCredit(user.id, cost);
     return { ok: false, error: error?.message ?? "Failed to create audit." };
@@ -148,25 +172,32 @@ export async function startAuditFromForm(input: {
     audit_id: row.id,
     meta: {
       from: "hero_form",
-      email: input.email ?? null,
+      email: email || null,
       phone: input.phone?.trim() || null,
       estimated_monthly_sales: salesParsed,
       engine: firstEngine,
       credits_spent: cost,
+      listed_public: !!input.listPublic,
     },
   });
 
-  // Marketing list opt-in is independent of the PDF email — same address,
-  // different consent. Best-effort: failure here must not break the audit.
-  if (input.marketingOptIn && input.email) {
+  // Lead capture: every hero-form submission lands in
+  // marketing_contacts. Tick → consented_at=now() (real opt-in).
+  // Unticked → consented_at=NULL (lead only, no marketing sends).
+  // Best-effort: failures must not break the audit.
+  if (email) {
     try {
-      await recordMarketingConsent({ email: input.email, source: "hero_form" });
+      if (input.marketingOptIn) {
+        await recordMarketingConsent({ email, source: "hero_form" });
+      } else {
+        await recordLead({ email, source: "hero_form" });
+      }
     } catch (err) {
-      console.warn("[runAudit] marketing consent record failed", err);
+      console.warn("[runAudit] lead/consent record failed", err);
     }
   }
 
-  await notifyWorker(row.id, input.email);
+  await notifyWorker(row.id, email || undefined);
   return { ok: true, id: row.id, token: row.share_token!, engines: [firstEngine] };
 }
 
