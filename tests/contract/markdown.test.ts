@@ -119,6 +119,15 @@ describe("markdownToHtml + htmlDocument", () => {
     expect(html).toMatch(/<li[^>]*>one<\/li>/);
   });
 
+  it("keeps in-page anchor links in the same browsing context", async () => {
+    const html = await markdownToHtml(
+      '## Table of contents\n- <a href="#intro" target="_blank" rel="noopener">Intro</a>\n\n## Intro\n',
+    );
+    expect(html).toContain('href="#intro"');
+    expect(html).not.toContain('target="_blank"');
+    expect(html).not.toContain('rel="noopener"');
+  });
+
   it("htmlDocument escapes the title and embeds the body", () => {
     const out = htmlDocument({
       title: "Test <script>alert(1)</script>",
