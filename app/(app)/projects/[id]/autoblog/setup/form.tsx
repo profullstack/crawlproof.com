@@ -51,7 +51,7 @@ const DAY_LABELS: Array<{ n: number; label: string }> = [
   { n: 7, label: "Sun" },
 ];
 
-type ApiResult = { ok: boolean; error?: string };
+type ApiResult = { ok: boolean; error?: string; message?: string };
 type Operation = "sitemap" | "keywords" | "regenerate";
 
 async function callOperation(path: string): Promise<ApiResult> {
@@ -61,6 +61,7 @@ async function callOperation(path: string): Promise<ApiResult> {
     return {
       ok: res.ok && json?.ok !== false,
       error: json?.error,
+      message: json?.message,
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -475,8 +476,7 @@ export function SetupForm({
       setError(res.error ?? "Request failed.");
       return false;
     }
-    setNotice(successMsg);
-    router.refresh();
+    setNotice(res.message ?? successMsg);
     return true;
   }
 

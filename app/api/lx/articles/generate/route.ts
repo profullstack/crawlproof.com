@@ -81,7 +81,13 @@ export async function POST(req: NextRequest) {
     .eq("site_id", lxSiteId)
     .eq("status", "queued");
   if ((queuedCount ?? 0) === 0) {
-    await enqueueKeywordResearch(lxSiteId);
+    const queued = await enqueueKeywordResearch(lxSiteId);
+    if (!queued.ok) {
+      return NextResponse.json(
+        { ok: false, error: queued.error },
+        { status: 503 },
+      );
+    }
     return NextResponse.json({
       ok: true,
       action: "keyword_research",
@@ -94,6 +100,15 @@ export async function POST(req: NextRequest) {
   // scheduled_for filter so it actually produces something when the
   // earliest queued slot is in the future. Default behavior (preview=true)
   // leaves the article in 'ready' state for review before publish.
-  await enqueueArticleGenerate(lxSiteId, { manual: true, preview: true });
-  return NextResponse.json({ ok: true });
+  const queued = await enqueueArticleGenerate(lxSiteId, {
+    manual: true,
+    preview: true,
+  });
+  if (!queued.ok) {
+    return NextResponse.json(
+      { ok: false, error: queued.error },
+      { status: 503 },
+    );
+  }
+  return NextResponse.json({ ok: true, message: "Article generation queued." });
 }

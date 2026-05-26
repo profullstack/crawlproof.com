@@ -60,6 +60,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  await enqueueKeywordResearch(lxSiteId);
-  return NextResponse.json({ ok: true });
+  const queued = await enqueueKeywordResearch(lxSiteId);
+  if (!queued.ok) {
+    return NextResponse.json(
+      { ok: false, error: queued.error },
+      { status: 503 },
+    );
+  }
+  return NextResponse.json({ ok: true, message: "Keyword research queued." });
 }

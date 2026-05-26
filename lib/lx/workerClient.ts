@@ -1,29 +1,39 @@
 import { env } from "@/lib/env";
 
-// Fire-and-forget call to the worker. Falls back silently if the worker
-// URL isn't configured — the worker's polling sweep is the safety net.
+// Fire-and-forget call to the worker. Callers get an explicit result so
+// manual UI actions can show whether the worker accepted the job.
 
-export async function enqueueSitemapCrawl(siteId: string): Promise<void> {
-  await postToWorker("/lx/sitemap-crawl", { siteId });
+export type WorkerEnqueueResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+export async function enqueueSitemapCrawl(
+  siteId: string,
+): Promise<WorkerEnqueueResult> {
+  return postToWorker("/lx/sitemap-crawl", { siteId });
 }
 
-export async function enqueueKeywordResearch(siteId: string): Promise<void> {
-  await postToWorker("/lx/keywords-research", { siteId });
+export async function enqueueKeywordResearch(
+  siteId: string,
+): Promise<WorkerEnqueueResult> {
+  return postToWorker("/lx/keywords-research", { siteId });
 }
 
 export async function enqueueArticleGenerate(
   siteId: string,
   opts: { preview?: boolean; manual?: boolean } = {},
-): Promise<void> {
-  await postToWorker("/lx/article-generate", {
+): Promise<WorkerEnqueueResult> {
+  return postToWorker("/lx/article-generate", {
     siteId,
     preview: !!opts.preview,
     manual: !!opts.manual,
   });
 }
 
-export async function enqueueArticleDeliver(articleId: string): Promise<void> {
-  await postToWorker("/lx/article-deliver", { articleId });
+export async function enqueueArticleDeliver(
+  articleId: string,
+): Promise<WorkerEnqueueResult> {
+  return postToWorker("/lx/article-deliver", { articleId });
 }
 
 export async function enqueueGuestPostGenerate(
@@ -31,8 +41,8 @@ export async function enqueueGuestPostGenerate(
   targetSiteId: string,
   topic: string,
   opts: { preview?: boolean; requestId?: string } = {},
-): Promise<void> {
-  await postToWorker("/lx/guest-post-generate", {
+): Promise<WorkerEnqueueResult> {
+  return postToWorker("/lx/guest-post-generate", {
     authorSiteId,
     targetSiteId,
     topic,
@@ -41,10 +51,15 @@ export async function enqueueGuestPostGenerate(
   });
 }
 
-async function postToWorker(path: string, body: unknown): Promise<void> {
-  if (!env.workerUrl) return;
+async function postToWorker(
+  path: string,
+  body: unknown,
+): Promise<WorkerEnqueueResult> {
+  if (!env.workerUrl) {
+    return { ok: false, error: "Worker is not configured (WORKER_URL missing)." };
+  }
   try {
-    await fetch(`${env.workerUrl}${path}`, {
+    const res = await fetch(`${env.workerUrl}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -52,7 +67,19 @@ async function postToWorker(path: string, body: unknown): Promise<void> {
       },
       body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return {
+        ok: false,
+        error: `Worker rejected ${path} with ${res.status}${text ? `: ${text}` : ""}.`,
+      };
+    }
+    return { ok: true };
   } catch (err) {
     console.warn(`[lx] worker notify ${path} failed`, err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
