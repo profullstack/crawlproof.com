@@ -51,12 +51,32 @@ const DAY_LABELS: Array<{ n: number; label: string }> = [
   { n: 7, label: "Sun" },
 ];
 
+type ApiResult = { ok: boolean; error?: string };
+type Operation = "sitemap" | "keywords" | "regenerate";
+
+async function callOperation(path: string): Promise<ApiResult> {
+  try {
+    const res = await fetch(path, { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    return {
+      ok: res.ok && json?.ok !== false,
+      error: json?.error,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function SetupForm({
   projectId,
   initial,
+  initialQueuedCount,
+  initialFailedCount,
 }: {
   projectId: string;
   initial: Existing | null;
+  initialQueuedCount: number;
+  initialFailedCount: number;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -124,6 +144,9 @@ export function SetupForm({
   const [suggesting, setSuggesting] = useState(false);
   const [autoFilling, setAutoFilling] = useState(false);
   const lastAutoFilledDomain = useRef<string | null>(null);
+  const [queuedCount, setQueuedCount] = useState(initialQueuedCount);
+  const [failedCount, setFailedCount] = useState(initialFailedCount);
+  const [operation, setOperation] = useState<Operation | null>(null);
 
   function normalizeDomainInput(raw: string): string {
     return raw
@@ -417,6 +440,7 @@ export function SetupForm({
       setError(res.error);
       return;
     }
+    setQueuedCount(res.scheduled);
     setNotice(`Scheduled ${res.scheduled} posts over the next 30 days.`);
   }
 
@@ -436,9 +460,82 @@ export function SetupForm({
     );
   }
 
+  async function runOperation(
+    nextOperation: Operation,
+    path: string,
+    successMsg: string,
+  ): Promise<boolean> {
+    setError(null);
+    setWarning(null);
+    setNotice(null);
+    setOperation(nextOperation);
+    const res = await callOperation(path);
+    setOperation(null);
+    if (!res.ok) {
+      setError(res.error ?? "Request failed.");
+      return false;
+    }
+    setNotice(successMsg);
+    router.refresh();
+    return true;
+  }
+
+  async function regenerateQueue() {
+    const total = queuedCount + failedCount;
+    const summary =
+      total > 0
+        ? `Delete ${queuedCount} queued + ${failedCount} failed keyword${total === 1 ? "" : "s"} and spend ~$0.22 on fresh research?`
+        : "Re-run keyword research with your current niche/audiences?";
+    if (
+      !window.confirm(
+        `${summary}\n\nPublished keywords stay deduped so we don't regenerate the same articles.`,
+      )
+    ) {
+      return;
+    }
+    const ok = await runOperation(
+      "regenerate",
+      `/api/lx/keywords/regenerate?projectId=${encodeURIComponent(projectId)}`,
+      "Queue cleared — fresh research queued.",
+    );
+    if (ok) {
+      setQueuedCount(0);
+      setFailedCount(0);
+    }
+  }
+
   function toggleDay(n: number) {
     setDays((d) => (d.includes(n) ? d.filter((x) => x !== n) : [...d, n].sort()));
   }
+
+  const statusText =
+    error ??
+    warning ??
+    notice ??
+    (operation === "sitemap"
+      ? "Sitemap crawl is being queued..."
+      : operation === "keywords"
+        ? "Keyword research is being queued..."
+        : operation === "regenerate"
+          ? "Clearing the old queue and starting fresh research..."
+          : scheduling
+            ? "Building the 30-day keyword schedule..."
+            : publishing
+              ? "Article preview generation is being queued..."
+              : pending
+                ? "Saving autoblog settings..."
+                : autoFilling
+                  ? "Refreshing the editorial profile and keyword list..."
+                  : suggesting
+                    ? "Refreshing long-tail keywords..."
+                    : "Idle.");
+  const statusTone = error
+    ? "text-[var(--color-fail)]"
+    : warning
+      ? "text-amber-500 dark:text-amber-400"
+      : notice
+        ? "text-[var(--color-pass)]"
+        : "text-[var(--color-muted)]";
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -1041,15 +1138,67 @@ export function SetupForm({
         </div>
       </section>
 
-      {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
-      {warning && (
-        <p className="text-sm text-amber-500 dark:text-amber-400">
-          ⚠ {warning}
+      <section className="card p-4 text-sm">
+        <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Status
+        </h2>
+        <p className={`mt-3 min-h-5 ${statusTone}`} role="status" aria-live="polite">
+          {statusText}
         </p>
-      )}
-      {notice && (
-        <p className="text-sm text-[var(--color-pass)]">{notice}</p>
-      )}
+        {initial && (
+          <>
+            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+              <dt className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                Queued keywords
+              </dt>
+              <dd>{queuedCount}</dd>
+              <dt className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                Failed keywords
+              </dt>
+              <dd>{failedCount}</dd>
+            </dl>
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-4">
+              <button
+                type="button"
+                className="btn"
+                disabled={operation !== null}
+                onClick={() =>
+                  void runOperation(
+                    "sitemap",
+                    `/api/lx/sitemap/refresh?projectId=${encodeURIComponent(projectId)}`,
+                    "Sitemap crawl queued.",
+                  )
+                }
+              >
+                {operation === "sitemap" ? "Crawling..." : "Refresh sitemap"}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={operation !== null}
+                onClick={() =>
+                  void runOperation(
+                    "keywords",
+                    `/api/lx/keywords/refresh?projectId=${encodeURIComponent(projectId)}`,
+                    "Keyword research queued.",
+                  )
+                }
+              >
+                {operation === "keywords" ? "Generating..." : "Generate keywords"}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={operation !== null}
+                onClick={() => void regenerateQueue()}
+                title="Clear queued + failed keywords and re-run research with your current niche/audiences/seeds."
+              >
+                {operation === "regenerate" ? "Regenerating..." : "Regenerate queue"}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
 
       <div className="flex flex-wrap gap-3">
         <button type="submit" className="btn btn-primary" disabled={pending}>

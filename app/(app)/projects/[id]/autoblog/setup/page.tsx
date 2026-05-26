@@ -31,6 +31,24 @@ export default async function AutoblogSetupPage({
   const sp = await searchParams;
   const isNew = sp?.new === "1";
   const site = isNew ? null : project.lx_site;
+  const lxSiteId =
+    site && typeof (site as { id?: unknown }).id === "string"
+      ? ((site as { id: string }).id)
+      : null;
+  const [{ count: queuedKeywords }, { count: failedKeywords }] = lxSiteId
+    ? await Promise.all([
+        supabase
+          .from("lx_keyword")
+          .select("id", { count: "exact", head: true })
+          .eq("site_id", lxSiteId)
+          .eq("status", "queued"),
+        supabase
+          .from("lx_keyword")
+          .select("id", { count: "exact", head: true })
+          .eq("site_id", lxSiteId)
+          .eq("status", "failed"),
+      ])
+    : [{ count: 0 }, { count: 0 }];
 
   return (
     <div className="max-w-3xl">
@@ -42,7 +60,12 @@ export default async function AutoblogSetupPage({
         your webhook. You handle publishing. Link Exchange ships later —
         for now, articles include internal links from your sitemap only.
       </p>
-      <SetupForm projectId={projectId} initial={(site as any) ?? null} />
+      <SetupForm
+        projectId={projectId}
+        initial={(site as any) ?? null}
+        initialQueuedCount={queuedKeywords ?? 0}
+        initialFailedCount={failedKeywords ?? 0}
+      />
     </div>
   );
 }
