@@ -61,7 +61,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  await enqueueKeywordResearch(lxSiteId);
+  const queued = await enqueueKeywordResearch(lxSiteId);
+  if (!queued.ok) {
+    return NextResponse.json(
+      { ok: false, error: queued.error, deleted: count ?? 0 },
+      { status: 503 },
+    );
+  }
 
-  return NextResponse.json({ ok: true, deleted: count ?? 0 });
+  return NextResponse.json({
+    ok: true,
+    deleted: count ?? 0,
+    message: "Queue cleared and keyword research queued.",
+  });
 }

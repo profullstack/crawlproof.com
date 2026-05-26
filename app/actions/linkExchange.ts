@@ -962,7 +962,11 @@ export async function previewNow(input: {
     };
   }
 
-  await enqueueArticleGenerate(site.id, { preview: true, manual: true });
+  const queued = await enqueueArticleGenerate(site.id, {
+    preview: true,
+    manual: true,
+  });
+  if (!queued.ok) return { ok: false, error: queued.error };
   revalidatePath("/projects", "layout");
   return { ok: true };
 }
@@ -998,7 +1002,8 @@ export async function publishArticle(input: {
     };
   }
 
-  await enqueueArticleDeliver(input.articleId);
+  const queued = await enqueueArticleDeliver(input.articleId);
+  if (!queued.ok) return { ok: false, error: queued.error };
   revalidatePath("/projects", "layout");
   return { ok: true };
 }

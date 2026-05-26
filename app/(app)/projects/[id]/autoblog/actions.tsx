@@ -59,8 +59,7 @@ export function DashboardActions({
     call(path)
       .then((r) => {
         if (r.ok) {
-          setNotice(successMsg);
-          router.refresh();
+          setNotice(r.message ?? successMsg);
         } else {
           setError(r.error ?? "Request failed.");
         }
@@ -80,19 +79,12 @@ export function DashboardActions({
       setError(r.error ?? "Could not queue article.");
       return;
     }
-    // Don't poll from the client — the amber Previews section above
-    // owns the in-flight state via the page's lx_keyword query, and
-    // AutoblogAutoRefresh re-fetches every few seconds while anything
-    // is generating. We just kick the first refresh so the worker's
-    // 'generating' claim shows up immediately instead of after the
-    // next interval tick.
     setNotice(
       r.action === "keyword_research"
         ? (r.message ??
           "No queued keywords were available, so keyword research was started. Try Generate article now again after research finishes.")
         : "Queued — the preview will appear in the section above when it's ready (1–3 minutes).",
     );
-    router.refresh();
   }
 
   async function regenerateQueue() {
@@ -112,8 +104,7 @@ export function DashboardActions({
     );
     setBusy(null);
     if (r.ok) {
-      setNotice("Queue cleared — fresh research queued.");
-      router.refresh();
+      setNotice(r.message ?? "Queue cleared — fresh research queued.");
     } else {
       setError(r.error ?? "Could not regenerate queue.");
     }
