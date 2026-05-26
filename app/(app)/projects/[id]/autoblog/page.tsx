@@ -327,14 +327,13 @@ export default async function AutoblogDashboardPage({
             </span>
           </Row>
         </dl>
+        <DashboardActions
+          paused={site.status === "paused"}
+          projectId={projectId}
+          queuedCount={queuedKeywords ?? 0}
+          failedCount={failedKeywords ?? 0}
+        />
       </section>
-
-      <DashboardActions
-        paused={site.status === "paused"}
-        projectId={projectId}
-        queuedCount={queuedKeywords ?? 0}
-        failedCount={failedKeywords ?? 0}
-      />
 
       <GuestPostOpportunities projectId={projectId} />
 

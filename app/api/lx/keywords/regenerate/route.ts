@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { serviceClient } from "@/lib/supabase/service";
 import { enqueueKeywordResearch } from "@/lib/lx/workerClient";
 import { getProjectById, getCurrentSite } from "@/lib/lx/currentSite";
 
@@ -44,12 +45,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Delete queued + failed + generating in one call. The RLS policy on lx_keyword is
-  // SELECT-only for owners; deletes go through the service-role client
-  // implicit in supabase.from() under the server route + cookie auth
-  // (the policy denies anon, so we rely on the route's own auth check
-  // above to gate access).
-  const { error: delErr, count } = await supabase
+  // Ownership was verified above through the signed-in user's project/site
+  // lookup. Use service role for the actual queue reset so child-row RLS
+  // cannot make this look like a successful no-op.
+  const svc = serviceClient();
+  const { error: delErr, count } = await svc
     .from("lx_keyword")
     .delete({ count: "exact" })
     .eq("site_id", lxSiteId)

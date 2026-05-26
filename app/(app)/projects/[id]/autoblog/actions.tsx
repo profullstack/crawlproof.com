@@ -37,6 +37,20 @@ export function DashboardActions({
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const status =
+    error ??
+    notice ??
+    (busy === "sitemap"
+      ? "Sitemap crawl is being queued..."
+      : busy === "keywords"
+        ? "Keyword research is being queued..."
+        : busy === "regenerate"
+          ? "Clearing the old queue and starting fresh research..."
+          : busy === "article"
+            ? "Article preview generation is being queued..."
+            : pending
+              ? "Updating autoblog status..."
+              : null);
 
   function run(label: string, path: string, successMsg: string) {
     setBusy(label);
@@ -116,7 +130,7 @@ export function DashboardActions({
   }
 
   return (
-    <section className="space-y-2">
+    <div className="mt-4 space-y-2 border-t border-[var(--color-border)] pt-4">
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -172,9 +186,21 @@ export function DashboardActions({
           {pending ? "…" : paused ? "Resume" : "Pause"}
         </button>
       </div>
-      {notice && <p className="text-sm text-[var(--color-pass)]">{notice}</p>}
-      {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
-    </section>
+      <p
+        className={
+          "min-h-5 text-sm " +
+          (error
+            ? "text-[var(--color-fail)]"
+            : notice
+              ? "text-[var(--color-pass)]"
+              : "text-[var(--color-muted)]")
+        }
+        role="status"
+        aria-live="polite"
+      >
+        {status ?? "Idle."}
+      </p>
+    </div>
   );
 }
 
