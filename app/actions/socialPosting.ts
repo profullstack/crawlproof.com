@@ -12,9 +12,19 @@ import {
 } from "@/lib/sp/platforms/telegram";
 import { postViaAccount, type PostInput } from "@/lib/sp/post";
 import { mintApiToken } from "@/lib/sp/apiToken";
+import { serviceClient } from "@/lib/supabase/service";
+import { processProjectSocialFeed, type FeedType } from "@/lib/sp/feedAutopost";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
+type FeedSettingsInput = {
+  projectId: string;
+  enabled: boolean;
+  feedType: FeedType;
+  feedUrl: string;
+  ignorePaths: string;
+  autopostAccountIds: string[];
+};
 
 // ------------------------------------------------------------
 // connectBluesky — trade handle + app password for a session,
@@ -325,3 +335,153 @@ export async function postNow(
   return { ok: true, postId: result.postId, webUrl: result.webUrl };
 }
 
+export async function saveFeedAutopostSettings(
+  input: FeedSettingsInput,
+): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const projectId = (input.projectId ?? "").trim();
+  if (!projectId) return { ok: false, error: "Project is missing." };
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found." };
+
+  const feedType = input.feedType === "rss" ? "rss" : "sitemap";
+  const feedUrl = (input.feedUrl ?? "").trim();
+  if (feedUrl) {
+    try {
+      const parsed = new URL(feedUrl);
+      if (!/^https?:$/.test(parsed.protocol)) {
+        return { ok: false, error: "Feed URL must start with http:// or https://." };
+      }
+    } catch {
+      return { ok: false, error: "Feed URL is not a valid URL." };
+    }
+  }
+
+  const ignorePaths = parseIgnorePaths(input.ignorePaths);
+  if (ignorePaths.length > 50) {
+    return { ok: false, error: "Keep ignore paths to 50 or fewer." };
+  }
+
+  const requestedAccountIds = [...new Set(input.autopostAccountIds ?? [])];
+  const { data: accounts, error: accountErr } = await supabase
+    .from("sp_account")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("status", "active");
+  if (accountErr) return { ok: false, error: accountErr.message };
+
+  const ownedAccountIds = new Set((accounts ?? []).map((a) => a.id as string));
+  const autopostAccountIds = requestedAccountIds.filter((id) => ownedAccountIds.has(id));
+  if (requestedAccountIds.length !== autopostAccountIds.length) {
+    return { ok: false, error: "One selected social account was not found." };
+  }
+
+  const { error: feedErr } = await supabase
+    .from("sp_feed_config")
+    .upsert(
+      {
+        user_id: user.id,
+        project_id: projectId,
+        enabled: !!input.enabled,
+        feed_type: feedType,
+        feed_url: feedUrl || null,
+        ignore_paths: ignorePaths,
+        status: "idle",
+        last_error: null,
+      },
+      { onConflict: "project_id" },
+    );
+  if (feedErr) return { ok: false, error: feedErr.message };
+
+  const allOwnedIds = [...ownedAccountIds];
+  if (allOwnedIds.length > 0) {
+    const { error: offErr } = await supabase
+      .from("sp_site_account")
+      .update({ auto: false })
+      .eq("project_id", projectId)
+      .eq("user_id", user.id)
+      .in("account_id", allOwnedIds);
+    if (offErr) return { ok: false, error: offErr.message };
+  }
+
+  if (autopostAccountIds.length > 0) {
+    const { error: bindErr } = await supabase.from("sp_site_account").upsert(
+      autopostAccountIds.map((accountId) => ({
+        user_id: user.id,
+        project_id: projectId,
+        account_id: accountId,
+        auto: true,
+        enabled: true,
+      })),
+      { onConflict: "project_id,account_id" },
+    );
+    if (bindErr) return { ok: false, error: bindErr.message };
+  }
+
+  revalidatePath(`/projects/${projectId}/social`);
+  revalidatePath("/projects", "layout");
+  return { ok: true };
+}
+
+export async function checkSocialFeedNow(
+  projectId: string,
+): Promise<Ok<FeedProcessResultShape> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found." };
+
+  const result = await processProjectSocialFeed(serviceClient(), projectId);
+  revalidatePath(`/projects/${projectId}/social`);
+  if (!result.ok) return { ok: false, error: result.error ?? "Feed check failed." };
+  return {
+    ok: true,
+    checked: result.checked ?? 0,
+    newItems: result.newItems ?? 0,
+    posted: result.posted ?? 0,
+    seeded: result.seeded ?? 0,
+    ignored: result.ignored ?? 0,
+  };
+}
+
+type FeedProcessResultShape = {
+  checked: number;
+  newItems: number;
+  posted: number;
+  seeded: number;
+  ignored: number;
+};
+
+function parseIgnorePaths(input: string): string[] {
+  const seen = new Set<string>();
+  for (const raw of input.split(/[\n,]/)) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    let path = trimmed;
+    try {
+      path = new URL(trimmed).pathname;
+    } catch {
+      path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+    }
+    path = path.replace(/\/+$/, "") || "/";
+    if (path.length <= 200) seen.add(path);
+  }
+  return [...seen];
+}

@@ -24,6 +24,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { generateArticle } from "../lib/lx/articleGen";
 import { deliverArticle } from "../lib/lx/webhookDeliver";
 import { repairStuckLxJobs } from "../lib/lx/repair";
+import { processDueSocialFeeds } from "../lib/sp/feedAutopost";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1069,8 +1070,27 @@ async function lxSweep() {
   }
 }
 
+async function socialFeedSweep() {
+  const results = await processDueSocialFeeds(supabase, { limit: 10 });
+  for (const result of results) {
+    if (!result.ok) {
+      console.warn(`[worker] social feed ${result.configId ?? "-"} failed: ${result.error}`);
+      continue;
+    }
+    if ((result.newItems ?? 0) > 0 || (result.posted ?? 0) > 0) {
+      console.log(
+        `[worker] social feed ${result.configId} checked=${result.checked ?? 0} new=${result.newItems ?? 0} posted=${result.posted ?? 0} seeded=${result.seeded ?? 0}`,
+      );
+    }
+  }
+}
+
 setInterval(() => sweep().catch(() => {}), 60_000);
 setInterval(() => lxSweep().catch((e) => console.error("[worker] lx sweep", e)), 60_000);
+setInterval(
+  () => socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e)),
+  60_000,
+);
 setInterval(
   () => auditStuckSweep().catch((e) => console.error("[worker] audit stuck sweep", e)),
   60_000,
@@ -1083,4 +1103,5 @@ const bindHost = process.env.WORKER_BIND ?? "127.0.0.1";
 server.listen(port, bindHost, () => {
   console.log(`[worker] listening on ${bindHost}:${port}`);
   sweep().catch(() => {});
+  socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e));
 });
