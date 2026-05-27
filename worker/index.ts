@@ -205,7 +205,7 @@ async function processLxKeywords(siteId: string) {
   console.log(`[worker] lx keywords research ${siteId}`);
   try {
     const dfs = new DataForSeoClient(login, password);
-    const r = await researchKeywords(siteId, { supabase, dfs });
+    const r = await researchKeywords(siteId, { supabase, dfs, openai, anthropic });
     if (r.ok) await clearKeywordResearchFailures(siteId);
     else await recordKeywordResearchFailure(siteId, r.error ?? "keyword research failed");
     console.log(

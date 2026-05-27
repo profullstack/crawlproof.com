@@ -13,15 +13,29 @@
 // Spend ledger: every DataForSEO call writes a row to lx_dataforseo_usage.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
+import {
+  flattenBuyerJourneyKeywords,
+  generateBuyerJourneyKeywordOpportunities,
+  type BuyerJourneyClusterType,
+  type BuyerJourneyKeywordCandidate,
+  type BuyerJourneyKeywordIntent,
+  type BuyerJourneyKeywordInput,
+} from "./buyerJourneyKeywords";
 import { DataForSeoClient, filterOutliers, type DfsKeywordRow } from "./dataforseo";
 import { nextPublishAt } from "./schedule";
 
 type SiteRow = {
   id: string;
+  domain: string | null;
   niche: string | null;
   target_audiences: string[];
+  description: string | null;
   seed_keywords: string[];
   keywords: string[];
+  competitors: string[];
+  tone: string | null;
   publish_days: number[];
   publish_hour: number;
   daily_article_count: number;
@@ -29,8 +43,10 @@ type SiteRow = {
 
 const TARGET_KEYWORDS = 30;
 const MIN_VOLUME = 50;
+const MIN_BUYER_JOURNEY_VOLUME = 10;
 const MIN_WORDS = 2;
 const PER_SEED_LIMIT = 200;
+const MAX_BUYER_JOURNEY_VOLUME_LOOKUP = 160;
 const SEED_TOKEN_STOPLIST = new Set([
   "the","and","for","with","you","your","that","this","from","into","over",
   "but","not","are","was","were","has","had","have","its","off","out","all",
@@ -41,7 +57,7 @@ function buildSeeds(site: SiteRow): string[] {
   const seeds: string[] = [];
   for (const s of site.seed_keywords ?? []) seeds.push(s.trim());
   if (site.niche) seeds.push(site.niche.trim());
-  for (const a of site.target_audiences.slice(0, 3)) {
+  for (const a of (site.target_audiences ?? []).slice(0, 3)) {
     if (site.niche && a) seeds.push(`${site.niche} for ${a}`);
     else if (a) seeds.push(a);
   }
@@ -74,7 +90,16 @@ function seedTokens(seed: string): string[] {
     .filter((t) => t.length >= 4 && !SEED_TOKEN_STOPLIST.has(t));
 }
 
-function rankKeywords(rows: DfsKeywordRow[]): DfsKeywordRow[] {
+type KeywordBoost = {
+  priority: number;
+  intent: BuyerJourneyKeywordIntent;
+  clusterType: BuyerJourneyClusterType;
+};
+
+function rankKeywords(
+  rows: DfsKeywordRow[],
+  boosts = new Map<string, KeywordBoost>(),
+): DfsKeywordRow[] {
   // PRD §15.1a: after filtering, take top by (relevance_rank * 0.6 + log(volume) * 0.4).
   // We don't get an explicit relevance_rank when sort_by='relevance' —
   // the row order IS the rank. Build the composite score from index +
@@ -85,11 +110,76 @@ function rankKeywords(rows: DfsKeywordRow[]): DfsKeywordRow[] {
     const logVol = vol > 0 ? Math.log10(vol) : 0;
     // Normalize rank to [0,1] over the slice (so it's comparable to log10).
     const rankPenalty = rank / Math.max(rows.length, 1);
-    const score = -(rankPenalty * 0.6) + logVol * 0.04; // weights tuned to match the order of magnitude of log10(volume) ~ 1-6
+    const boost = boosts.get(r.keyword.toLowerCase());
+    const priorityBoost = boost ? boost.priority * 0.14 : 0;
+    const intentBoost = boost && ["commercial", "transactional", "local"].includes(boost.intent)
+      ? 0.12
+      : 0;
+    const opennessBoost = boost && [
+      "alternative_solution",
+      "comparison",
+      "commercial_openness",
+      "objection_or_risk",
+      "substitute",
+    ].includes(boost.clusterType)
+      ? 0.12
+      : 0;
+    const score =
+      -(rankPenalty * 0.6) +
+      logVol * 0.04 +
+      priorityBoost +
+      intentBoost +
+      opennessBoost; // volume still matters, but buyer-journey openness can outrank generic variants.
     return { row: r, score };
   });
   scored.sort((a, b) => b.score - a.score);
   return scored.map((s) => s.row);
+}
+
+function primarySeedQuery(site: SiteRow, seeds: string[]): string {
+  return (
+    seeds[0] ??
+    site.niche ??
+    site.keywords?.[0] ??
+    site.description ??
+    site.domain ??
+    "site keyword research"
+  ).trim();
+}
+
+function buildBuyerJourneyInput(site: SiteRow, seeds: string[]): BuyerJourneyKeywordInput {
+  const brand = site.domain?.replace(/^www\./, "") || site.niche || "the website";
+  const offer = [site.niche, site.description]
+    .filter((s): s is string => !!s && s.trim().length > 0)
+    .join(" — ")
+    .slice(0, 900);
+  return {
+    seedQuery: primarySeedQuery(site, seeds),
+    additionalSeeds: seeds.slice(1, 8),
+    offer: offer || brand,
+    audience: site.target_audiences?.join(", ") || "the site's target customers",
+    brand,
+    geography: "United States",
+    industry: site.niche || "not specified",
+    competitors: site.competitors ?? [],
+    tone: site.tone || "helpful, educational, non-pushy",
+  };
+}
+
+function rowFromCandidate(
+  candidate: BuyerJourneyKeywordCandidate,
+  metrics?: DfsKeywordRow,
+): DfsKeywordRow {
+  return {
+    keyword: candidate.keyword,
+    search_volume: metrics?.search_volume ?? null,
+    competition: metrics?.competition ?? null,
+    competition_index: metrics?.competition_index ?? null,
+    cpc: metrics?.cpc ?? null,
+    low_top_of_page_bid: metrics?.low_top_of_page_bid ?? null,
+    high_top_of_page_bid: metrics?.high_top_of_page_bid ?? null,
+    monthly_searches: metrics?.monthly_searches ?? null,
+  };
 }
 
 function dedupeBySite(
@@ -137,14 +227,20 @@ export type KeywordResearchResult = {
 
 export async function researchKeywords(
   siteId: string,
-  deps: { supabase: SupabaseClient<any>; dfs: DataForSeoClient },
+  deps: {
+    supabase: SupabaseClient<any>;
+    dfs: DataForSeoClient;
+    openai?: OpenAI | null;
+    anthropic?: Anthropic | null;
+    backendAiProvider?: string;
+  },
 ): Promise<KeywordResearchResult> {
   const { supabase, dfs } = deps;
 
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, niche, target_audiences, seed_keywords, keywords, publish_days, publish_hour, daily_article_count",
+      "id, domain, niche, target_audiences, description, seed_keywords, keywords, competitors, tone, publish_days, publish_hour, daily_article_count",
     )
     .eq("id", siteId)
     .maybeSingle<SiteRow>();
@@ -185,9 +281,63 @@ export async function researchKeywords(
   // up using the same DataForSEO Labs endpoint + relevance gate used by
   // the settings page's "Refetch keywords" flow.
   const allRows: DfsKeywordRow[] = [];
+  const buyerJourneyBoosts = new Map<string, KeywordBoost>();
   let totalCost = 0;
   const seedErrors: string[] = [];
   if (savedChosen.length < TARGET_KEYWORDS && seeds.length > 0) {
+    if (deps.openai || deps.anthropic) {
+      try {
+        const buyerJourney = await generateBuyerJourneyKeywordOpportunities(
+          buildBuyerJourneyInput(site, seeds),
+          {
+            openai: deps.openai,
+            anthropic: deps.anthropic,
+            backendAiProvider: deps.backendAiProvider,
+          },
+        );
+        const candidates = flattenBuyerJourneyKeywords(
+          buyerJourney.output,
+          MAX_BUYER_JOURNEY_VOLUME_LOOKUP,
+        );
+        const volumeKeywords = candidates.map((c) => c.keyword);
+        const volume = volumeKeywords.length > 0
+          ? await dfs.searchVolume(volumeKeywords)
+          : { rows: [], cost: 0, taskId: null };
+        totalCost += volume.cost;
+        if (volume.cost > 0 || volume.taskId) {
+          await supabase.from("lx_dataforseo_usage").insert({
+            task_id: volume.taskId,
+            endpoint: "search_volume/live",
+            cost: volume.cost,
+            site_id: site.id,
+          });
+        }
+
+        const metricsByKeyword = new Map(
+          volume.rows.map((r) => [r.keyword.toLowerCase(), r]),
+        );
+        for (const candidate of candidates) {
+          const metrics = metricsByKeyword.get(candidate.keyword.toLowerCase());
+          const volumeValue = metrics?.search_volume ?? 0;
+          if (
+            volumeValue >= MIN_BUYER_JOURNEY_VOLUME ||
+            candidate.priority >= 4
+          ) {
+            allRows.push(rowFromCandidate(candidate, metrics));
+            buyerJourneyBoosts.set(candidate.keyword.toLowerCase(), {
+              priority: candidate.priority,
+              intent: candidate.intent,
+              clusterType: candidate.clusterType,
+            });
+          }
+        }
+      } catch (err) {
+        seedErrors.push(
+          `buyer-journey model: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     for (const seed of seeds.slice(0, 3)) {
       try {
         const result = await dfs.keywordIdeas([seed], {
@@ -221,9 +371,13 @@ export async function researchKeywords(
   }
 
   const filtered = filterOutliers(allRows).filter(
-    (r) => (r.search_volume ?? 0) >= MIN_VOLUME,
+    (r) => {
+      const boost = buyerJourneyBoosts.get(r.keyword.toLowerCase());
+      if (boost && boost.priority >= 4) return true;
+      return (r.search_volume ?? 0) >= MIN_VOLUME;
+    },
   );
-  const ranked = rankKeywords(filtered);
+  const ranked = rankKeywords(filtered, buyerJourneyBoosts);
   const existingWithSaved = new Set(existingSet);
   for (const r of savedChosen) existingWithSaved.add(r.keyword.toLowerCase());
   const researchedChosen = dedupeBySite(ranked, existingWithSaved).slice(
