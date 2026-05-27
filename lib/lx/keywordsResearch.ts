@@ -20,6 +20,8 @@ type SiteRow = {
   id: string;
   niche: string | null;
   target_audiences: string[];
+  seed_keywords: string[];
+  keywords: string[];
   publish_days: number[];
   publish_hour: number;
   daily_article_count: number;
@@ -27,15 +29,49 @@ type SiteRow = {
 
 const TARGET_KEYWORDS = 30;
 const MIN_VOLUME = 50;
+const MIN_WORDS = 2;
+const PER_SEED_LIMIT = 200;
+const SEED_TOKEN_STOPLIST = new Set([
+  "the","and","for","with","you","your","that","this","from","into","over",
+  "but","not","are","was","were","has","had","have","its","off","out","all",
+  "any","new","get","how","why","what","who","best","top",
+]);
 
 function buildSeeds(site: SiteRow): string[] {
   const seeds: string[] = [];
+  for (const s of site.seed_keywords ?? []) seeds.push(s.trim());
   if (site.niche) seeds.push(site.niche.trim());
   for (const a of site.target_audiences.slice(0, 3)) {
     if (site.niche && a) seeds.push(`${site.niche} for ${a}`);
     else if (a) seeds.push(a);
   }
   return Array.from(new Set(seeds.filter((s) => s.length > 0))).slice(0, 5);
+}
+
+function parseStoredKeyword(row: string): DfsKeywordRow | null {
+  const idx = row.indexOf(",");
+  const keyword = (idx === -1 ? row : row.slice(0, idx)).trim();
+  if (keyword.length < 2) return null;
+  const volumeRaw = idx === -1 ? "" : row.slice(idx + 1).trim();
+  const volume = /^\d+$/.test(volumeRaw) ? parseInt(volumeRaw, 10) : null;
+  return {
+    keyword,
+    search_volume: volume,
+    competition: null,
+    competition_index: null,
+    cpc: null,
+    low_top_of_page_bid: null,
+    high_top_of_page_bid: null,
+    monthly_searches: null,
+  };
+}
+
+function seedTokens(seed: string): string[] {
+  return seed
+    .toLowerCase()
+    .split(/[\s-]+/)
+    .map((t) => t.replace(/[^a-z0-9]/g, ""))
+    .filter((t) => t.length >= 4 && !SEED_TOKEN_STOPLIST.has(t));
 }
 
 function rankKeywords(rows: DfsKeywordRow[]): DfsKeywordRow[] {
@@ -108,7 +144,7 @@ export async function researchKeywords(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, niche, target_audiences, publish_days, publish_hour, daily_article_count",
+      "id, niche, target_audiences, seed_keywords, keywords, publish_days, publish_hour, daily_article_count",
     )
     .eq("id", siteId)
     .maybeSingle<SiteRow>();
@@ -116,35 +152,18 @@ export async function researchKeywords(
     return { ok: false, inserted: 0, apiCost: 0, error: "site not found" };
   }
 
+  const savedKeywords = (site.keywords ?? [])
+    .map(parseStoredKeyword)
+    .filter((r): r is DfsKeywordRow => !!r);
   const seeds = buildSeeds(site);
-  if (seeds.length === 0) {
+  if (savedKeywords.length === 0 && seeds.length === 0) {
     return {
       ok: false,
       inserted: 0,
       apiCost: 0,
-      error: "set a niche or target audience first",
+      error: "add saved keywords or seed keywords first",
     };
   }
-
-  // Expand each seed. Cap total API spend at 5 tasks ($0.375 worst case).
-  const allRows: DfsKeywordRow[] = [];
-  let totalCost = 0;
-  for (const seed of seeds.slice(0, 3)) {
-    const result = await dfs.keywordsForKeywords([seed], { sortBy: "relevance" });
-    totalCost += result.cost;
-    await supabase.from("lx_dataforseo_usage").insert({
-      task_id: result.taskId,
-      endpoint: "keywords_for_keywords/live",
-      cost: result.cost,
-      site_id: site.id,
-    });
-    allRows.push(...result.rows);
-  }
-
-  const filtered = filterOutliers(allRows).filter(
-    (r) => (r.search_volume ?? 0) >= MIN_VOLUME,
-  );
-  const ranked = rankKeywords(filtered);
 
   // Skip keywords this site already has in active/history states. Failed
   // rows are intentionally ignored here: an upstream outage should not
@@ -160,9 +179,70 @@ export async function researchKeywords(
       .map((r: { keyword: string }) => r.keyword.toLowerCase()),
   );
 
-  const chosen = dedupeBySite(ranked, existingSet).slice(0, TARGET_KEYWORDS);
+  const savedChosen = dedupeBySite(savedKeywords, existingSet).slice(0, TARGET_KEYWORDS);
+
+  // If the saved long-tail list does not fill the target queue, top it
+  // up using the same DataForSEO Labs endpoint + relevance gate used by
+  // the settings page's "Refetch keywords" flow.
+  const allRows: DfsKeywordRow[] = [];
+  let totalCost = 0;
+  const seedErrors: string[] = [];
+  if (savedChosen.length < TARGET_KEYWORDS && seeds.length > 0) {
+    for (const seed of seeds.slice(0, 3)) {
+      try {
+        const result = await dfs.keywordIdeas([seed], {
+          limit: PER_SEED_LIMIT,
+          minVolume: MIN_VOLUME,
+          minWords: MIN_WORDS,
+          closelyVariants: false,
+        });
+        totalCost += result.cost;
+        await supabase.from("lx_dataforseo_usage").insert({
+          task_id: result.taskId,
+          endpoint: "keyword_ideas/live",
+          cost: result.cost,
+          site_id: site.id,
+        });
+
+        const tokens = seedTokens(seed);
+        const relevant = tokens.length === 0
+          ? result.rows
+          : result.rows.filter((r) => {
+              const kw = r.keyword.toLowerCase();
+              return tokens.some((t) => kw.includes(t));
+            });
+        allRows.push(...relevant);
+      } catch (err) {
+        seedErrors.push(
+          `"${seed}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  const filtered = filterOutliers(allRows).filter(
+    (r) => (r.search_volume ?? 0) >= MIN_VOLUME,
+  );
+  const ranked = rankKeywords(filtered);
+  const existingWithSaved = new Set(existingSet);
+  for (const r of savedChosen) existingWithSaved.add(r.keyword.toLowerCase());
+  const researchedChosen = dedupeBySite(ranked, existingWithSaved).slice(
+    0,
+    TARGET_KEYWORDS - savedChosen.length,
+  );
+  const chosen = [...savedChosen, ...researchedChosen].slice(0, TARGET_KEYWORDS);
   if (chosen.length === 0) {
-    return { ok: true, inserted: 0, apiCost: totalCost };
+    const details = seedErrors.length > 0
+      ? ` Seed errors: ${seedErrors.join("; ")}`
+      : "";
+    return {
+      ok: false,
+      inserted: 0,
+      apiCost: totalCost,
+      error:
+        "No new keyword candidates found. Saved keywords may already be published or queued; add new seed keywords/settings and try again." +
+        details,
+    };
   }
 
   // The cross-tenant lx_keyword_metrics cache is intentionally left

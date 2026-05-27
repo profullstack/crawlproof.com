@@ -207,7 +207,7 @@ export class DataForSeoClient {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`DataForSEO ${res.status}: ${text.slice(0, 200)}`);
+      throw new Error(dataForSeoErrorMessage(res.status, text));
     }
     const json = await res.json();
     if (json.status_code !== 20000) {
