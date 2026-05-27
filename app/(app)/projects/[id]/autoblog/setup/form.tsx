@@ -73,11 +73,13 @@ export function SetupForm({
   initial,
   initialQueuedCount,
   initialFailedCount,
+  initialKeywordFailure,
 }: {
   projectId: string;
   initial: Existing | null;
   initialQueuedCount: number;
   initialFailedCount: number;
+  initialKeywordFailure: string | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -147,6 +149,7 @@ export function SetupForm({
   const lastAutoFilledDomain = useRef<string | null>(null);
   const [queuedCount, setQueuedCount] = useState(initialQueuedCount);
   const [failedCount, setFailedCount] = useState(initialFailedCount);
+  const [keywordFailure, setKeywordFailure] = useState(initialKeywordFailure);
   const [operation, setOperation] = useState<Operation | null>(null);
 
   function normalizeDomainInput(raw: string): string {
@@ -477,6 +480,10 @@ export function SetupForm({
       return false;
     }
     setNotice(res.message ?? successMsg);
+    if (nextOperation === "keywords" || nextOperation === "regenerate") {
+      setKeywordFailure(null);
+    }
+    window.setTimeout(() => router.refresh(), 5000);
     return true;
   }
 
@@ -501,6 +508,7 @@ export function SetupForm({
     if (ok) {
       setQueuedCount(0);
       setFailedCount(0);
+      setKeywordFailure(null);
     }
   }
 
@@ -1156,6 +1164,18 @@ export function SetupForm({
                 Failed keywords
               </dt>
               <dd>{failedCount}</dd>
+              <dt className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                Keyword research
+              </dt>
+              <dd>
+                {keywordFailure ? (
+                  <span className="text-[var(--color-fail)]">
+                    {keywordFailure.replace(/^Keyword research failed:\s*/, "")}
+                  </span>
+                ) : (
+                  <span className="text-[var(--color-muted)]">no recent errors</span>
+                )}
+              </dd>
             </dl>
             <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-4">
               <button

@@ -195,17 +195,57 @@ async function processLxKeywords(siteId: string) {
   const password = process.env.DATAFORSEO_PASSWORD ?? "";
   if (!login || !password) {
     console.error(`[worker] lx keywords ${siteId}: DATAFORSEO_LOGIN/PASSWORD not set`);
+    await recordKeywordResearchFailure(
+      siteId,
+      "DATAFORSEO_LOGIN/PASSWORD not set",
+    );
     return;
   }
   console.log(`[worker] lx keywords research ${siteId}`);
   try {
     const dfs = new DataForSeoClient(login, password);
     const r = await researchKeywords(siteId, { supabase, dfs });
+    if (r.ok) await clearKeywordResearchFailures(siteId);
+    else await recordKeywordResearchFailure(siteId, r.error ?? "keyword research failed");
     console.log(
       `[worker] lx keywords ${siteId} ok=${r.ok} inserted=${r.inserted} cost=$${r.apiCost.toFixed(3)}${r.error ? ` error=${r.error}` : ""}`,
     );
   } catch (err) {
     console.error(`[worker] lx keywords ${siteId} crashed`, err);
+    await recordKeywordResearchFailure(
+      siteId,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+function keywordResearchFailureText(error: string): string {
+  return `Keyword research failed: ${error}`.slice(0, 500);
+}
+
+async function clearKeywordResearchFailures(siteId: string) {
+  const { error } = await supabase
+    .from("lx_keyword")
+    .delete()
+    .eq("site_id", siteId)
+    .eq("status", "failed")
+    .ilike("keyword", "Keyword research failed:%");
+  if (error) {
+    console.warn(`[worker] clear keyword research failure ${siteId}: ${error.message}`);
+  }
+}
+
+async function recordKeywordResearchFailure(siteId: string, error: string) {
+  await clearKeywordResearchFailures(siteId);
+  const { error: insertErr } = await supabase.from("lx_keyword").insert({
+    site_id: siteId,
+    keyword: keywordResearchFailureText(error),
+    scheduled_for: new Date().toISOString().slice(0, 10),
+    status: "failed",
+    source: "auto",
+  });
+  if (insertErr) {
+    console.warn(`[worker] record keyword research failure ${siteId}: ${insertErr.message}`);
   }
 }
 
