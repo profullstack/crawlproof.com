@@ -5,7 +5,10 @@ export const metadata = {
   title: "Blog",
   description:
     "Notes on AEO, LLM crawlers, schema markup, llms.txt, and how AI answer engines actually pick what to cite — from the team building CrawlProof.",
-  alternates: { canonical: "/blog" },
+  alternates: {
+    canonical: "/blog",
+    types: { "application/rss+xml": "/blog/rss.xml" },
+  },
   openGraph: {
     title: "CrawlProof blog",
     description:

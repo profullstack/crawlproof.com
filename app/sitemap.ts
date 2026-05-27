@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
+import { buildSitemapBlogEntries } from "@profullstack/autoblog/feeds";
 import { env } from "@/lib/env";
-import { posts } from "@/lib/blog/posts";
+import { loadAllPosts } from "@/lib/blog/posts";
 import { serviceClient } from "@/lib/supabase/service";
 
 // Regenerate hourly so new public scans show up in the index without a deploy.
@@ -9,6 +10,7 @@ export const revalidate = 3600;
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = env.siteUrl.replace(/\/$/, "");
   const now = new Date();
+  const allPosts = await loadAllPosts();
   const staticEntries: MetadataRoute.Sitemap = [
     { url: `${base}/`, lastModified: now, changeFrequency: "weekly", priority: 1.0 },
     { url: `${base}/pricing`, lastModified: now, changeFrequency: "monthly", priority: 0.9 },
@@ -20,12 +22,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/bot`, lastModified: now, changeFrequency: "monthly", priority: 0.5 },
     { url: `${base}/privacy`, lastModified: now, changeFrequency: "yearly", priority: 0.3 },
     { url: `${base}/terms`, lastModified: now, changeFrequency: "yearly", priority: 0.3 },
-    ...posts.map((p) => ({
-      url: `${base}/blog/${p.slug}`,
-      lastModified: new Date(p.date),
-      changeFrequency: "monthly" as const,
-      priority: 0.6,
-    })),
+    ...buildSitemapBlogEntries({
+      posts: allPosts.map((p) => ({
+        slug: p.slug,
+        title: p.title,
+        publishedAt: p.date,
+      })),
+      baseUrl: base,
+    }),
     // Paginated /recent pages so crawlers can walk them.
     ...[2, 3, 4, 5].map((page) => ({
       url: `${base}/recent?page=${page}`,
