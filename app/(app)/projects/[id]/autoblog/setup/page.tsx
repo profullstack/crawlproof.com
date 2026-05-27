@@ -35,7 +35,11 @@ export default async function AutoblogSetupPage({
     site && typeof (site as { id?: unknown }).id === "string"
       ? ((site as { id: string }).id)
       : null;
-  const [{ count: queuedKeywords }, { count: failedKeywords }] = lxSiteId
+  const [
+    { count: queuedKeywords },
+    { count: failedKeywords },
+    { data: latestKeywordFailure },
+  ] = lxSiteId
     ? await Promise.all([
         supabase
           .from("lx_keyword")
@@ -47,8 +51,17 @@ export default async function AutoblogSetupPage({
           .select("id", { count: "exact", head: true })
           .eq("site_id", lxSiteId)
           .eq("status", "failed"),
+        supabase
+          .from("lx_keyword")
+          .select("keyword, created_at")
+          .eq("site_id", lxSiteId)
+          .eq("status", "failed")
+          .ilike("keyword", "Keyword research failed:%")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
       ])
-    : [{ count: 0 }, { count: 0 }];
+    : [{ count: 0 }, { count: 0 }, { data: null }];
 
   return (
     <div className="max-w-3xl">
@@ -65,6 +78,11 @@ export default async function AutoblogSetupPage({
         initial={(site as any) ?? null}
         initialQueuedCount={queuedKeywords ?? 0}
         initialFailedCount={failedKeywords ?? 0}
+        initialKeywordFailure={
+          typeof latestKeywordFailure?.keyword === "string"
+            ? latestKeywordFailure.keyword
+            : null
+        }
       />
     </div>
   );

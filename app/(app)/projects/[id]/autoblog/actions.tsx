@@ -60,6 +60,7 @@ export function DashboardActions({
       .then((r) => {
         if (r.ok) {
           setNotice(r.message ?? successMsg);
+          window.setTimeout(() => router.refresh(), 5000);
         } else {
           setError(r.error ?? "Request failed.");
         }
@@ -85,6 +86,7 @@ export function DashboardActions({
           "No queued keywords were available, so keyword research was started. Try Generate article now again after research finishes.")
         : "Queued — the preview will appear in the section above when it's ready (1–3 minutes).",
     );
+    window.setTimeout(() => router.refresh(), 5000);
   }
 
   async function regenerateQueue() {
@@ -105,6 +107,7 @@ export function DashboardActions({
     setBusy(null);
     if (r.ok) {
       setNotice(r.message ?? "Queue cleared — fresh research queued.");
+      window.setTimeout(() => router.refresh(), 5000);
     } else {
       setError(r.error ?? "Could not regenerate queue.");
     }

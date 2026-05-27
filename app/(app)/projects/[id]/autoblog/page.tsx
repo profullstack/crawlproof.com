@@ -93,6 +93,7 @@ export default async function AutoblogDashboardPage({
     { data: recent },
     { data: previews },
     { data: inFlight },
+    { data: latestKeywordFailure },
   ] = await Promise.all([
     supabase
       .from("lx_keyword")
@@ -149,6 +150,15 @@ export default async function AutoblogDashboardPage({
       .eq("site_id", site.id)
       .eq("status", "generating")
       .order("scheduled_for", { ascending: true }),
+    supabase
+      .from("lx_keyword")
+      .select("keyword, created_at")
+      .eq("site_id", site.id)
+      .eq("status", "failed")
+      .ilike("keyword", "Keyword research failed:%")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
   const inFlightCount = (inFlight ?? []).length;
 
@@ -325,6 +335,22 @@ export default async function AutoblogDashboardPage({
             <span className="ml-2 text-xs text-[var(--color-muted)]">
               {fmtDate(site.last_sitemap_fetch_at)}
             </span>
+          </Row>
+          <Row k="Keyword research">
+            {latestKeywordFailure ? (
+              <span className="text-[var(--color-fail)]">
+                {String((latestKeywordFailure as any).keyword).replace(
+                  /^Keyword research failed:\s*/,
+                  "",
+                )}
+              </span>
+            ) : (
+              <span className="text-[var(--color-muted)]">
+                {queuedKeywords && queuedKeywords > 0
+                  ? `${queuedKeywords} queued`
+                  : "no recent errors"}
+              </span>
+            )}
           </Row>
         </dl>
         <DashboardActions
