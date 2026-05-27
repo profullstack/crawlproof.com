@@ -48,7 +48,7 @@ import {
   THREADS_MAX_CHARS,
 } from "@/lib/sp/platforms/threads";
 
-export type PostSource = "manual" | "api" | "autoblog" | "rss";
+export type PostSource = "manual" | "api" | "autoblog" | "rss" | "sitemap";
 
 export type PostInput = {
   accountId: string;
@@ -75,8 +75,9 @@ export async function postViaAccount(args: {
   userId: string;
   input: PostInput;
   source: PostSource;
+  projectId?: string | null;
 }): Promise<PostResult> {
-  const { supabase, userId, input, source } = args;
+  const { supabase, userId, input, source, projectId } = args;
 
   const text = (input.text ?? "").trim();
   if (!text) return { ok: false, error: "Enter some text." };
@@ -181,6 +182,7 @@ export async function postViaAccount(args: {
     .insert({
       user_id: userId,
       account_id: account.id,
+      project_id: projectId ?? null,
       source,
       rendered_text: text,
       scheduled_for: new Date().toISOString(),
