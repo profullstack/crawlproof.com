@@ -197,6 +197,9 @@ export default async function AutoblogDashboardPage({
           <Link href={`/projects/${projectId}/autoblog/history`} className="btn">
             History
           </Link>
+          <Link href={`/projects/${projectId}/autoblog/backlinks`} className="btn">
+            Backlinks
+          </Link>
         </div>
       </header>
 

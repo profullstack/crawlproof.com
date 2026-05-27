@@ -77,6 +77,9 @@ export default async function AutoblogSetupPage({
           <Link href={`/projects/${projectId}/autoblog/history`} className="btn">
             History
           </Link>
+          <Link href={`/projects/${projectId}/autoblog/backlinks`} className="btn">
+            Backlinks
+          </Link>
         </div>
       </div>
       <p className="mt-2 text-sm text-[var(--color-muted)]">
