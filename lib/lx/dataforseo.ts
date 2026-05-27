@@ -44,6 +44,30 @@ function normalizeRow(raw: any): DfsKeywordRow {
   };
 }
 
+function dataForSeoErrorMessage(
+  status: number,
+  text: string,
+): string {
+  try {
+    const json = JSON.parse(text);
+    const task = Array.isArray(json.tasks) ? json.tasks[0] : null;
+    const taskCode =
+      typeof task?.status_code === "number" ? ` task ${task.status_code}` : "";
+    const taskMessage =
+      typeof task?.status_message === "string" && task.status_message.trim()
+        ? task.status_message.trim()
+        : null;
+    const topMessage =
+      typeof json.status_message === "string" && json.status_message.trim()
+        ? json.status_message.trim()
+        : null;
+    const message = taskMessage ?? topMessage ?? "request failed";
+    return `DataForSEO HTTP ${status}${taskCode}: ${message}`;
+  } catch {
+    return `DataForSEO HTTP ${status}: ${text.slice(0, 300) || "request failed"}`;
+  }
+}
+
 export class DataForSeoClient {
   constructor(
     private login: string,
@@ -61,7 +85,7 @@ export class DataForSeoClient {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`DataForSEO ${res.status}: ${text.slice(0, 200)}`);
+      throw new Error(dataForSeoErrorMessage(res.status, text));
     }
     const json = await res.json();
     if (json.status_code !== 20000) {
