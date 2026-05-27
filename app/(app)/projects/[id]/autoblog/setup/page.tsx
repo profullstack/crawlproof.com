@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProjectById } from "@/lib/lx/currentSite";
@@ -65,13 +66,23 @@ export default async function AutoblogSetupPage({
 
   return (
     <div className="max-w-3xl">
-      <h2 className="text-xl font-bold">
-        {site ? "Autoblog settings" : "Set up Autoblog"}
-      </h2>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className="text-xl font-bold">
+          {site ? "Autoblog settings" : "Set up Autoblog"}
+        </h2>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/projects/${projectId}/autoblog`} className="btn">
+            Dashboard
+          </Link>
+          <Link href={`/projects/${projectId}/autoblog/history`} className="btn">
+            History
+          </Link>
+        </div>
+      </div>
       <p className="mt-2 text-sm text-[var(--color-muted)]">
         We auto-generate a daily SEO blog post for your site and POST it to
-        your webhook. You handle publishing. Link Exchange ships later —
-        for now, articles include internal links from your sitemap only.
+        your webhook. You handle publishing. When backlink exchange is enabled,
+        the History page shows partner backlinks and guest posts.
       </p>
       <SetupForm
         projectId={projectId}
