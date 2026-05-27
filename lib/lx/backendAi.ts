@@ -20,6 +20,8 @@ type StructuredOutputArgs<T> = {
   preference?: string;
   anthropicCacheSystemPrompt?: boolean;
   anthropicEffort?: "low" | "medium" | "high" | false;
+  openaiStructuredOutputs?: boolean;
+  openaiJsonSchema?: Record<string, unknown>;
 };
 
 export function normalizeBackendAiPreference(
@@ -131,6 +133,14 @@ async function generateWithOpenAI<T>(
   args: StructuredOutputArgs<T>,
 ): Promise<T> {
   if (!args.openai) throw new Error("OPENAI_API_KEY not set");
+  const format = args.openaiStructuredOutputs
+    ? {
+        type: "json_schema" as const,
+        name: args.name,
+        strict: true,
+        schema: args.openaiJsonSchema ?? z.toJSONSchema(args.schema),
+      }
+    : { type: "json_object" as const };
   const response = await args.openai.responses.create({
     model: args.openaiModel ?? env.backendAiOpenaiModel,
     instructions: [
@@ -146,7 +156,7 @@ async function generateWithOpenAI<T>(
     ].join("\n"),
     max_output_tokens: args.maxTokens,
     reasoning: { effort: "medium" },
-    text: { format: { type: "json_object" } },
+    text: { format },
     store: false,
   });
   if (response.error) {
