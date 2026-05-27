@@ -18,22 +18,34 @@ export async function POST(req: NextRequest) {
   let lxSiteId: string | null = null;
   let niche: string | null = null;
   let targetAudiences: string[] = [];
+  let seedKeywords: string[] = [];
+  let savedKeywords: string[] = [];
   if (projectIdParam) {
     const project = await getProjectById(projectIdParam, {
-      siteColumns: "id, niche, target_audiences",
+      siteColumns: "id, niche, target_audiences, seed_keywords, keywords",
     });
     const lxSite = project?.lx_site as
-      | { id?: string; niche?: string | null; target_audiences?: string[] }
+      | {
+          id?: string;
+          niche?: string | null;
+          target_audiences?: string[];
+          seed_keywords?: string[];
+          keywords?: string[];
+        }
       | null;
     lxSiteId = lxSite?.id ?? null;
     niche = lxSite?.niche ?? null;
     targetAudiences = lxSite?.target_audiences ?? [];
+    seedKeywords = lxSite?.seed_keywords ?? [];
+    savedKeywords = lxSite?.keywords ?? [];
   } else {
-    const site = (await getCurrentSite("id, niche, target_audiences")) as
+    const site = (await getCurrentSite("id, niche, target_audiences, seed_keywords, keywords")) as
       | {
           id: string;
           niche: string | null;
           target_audiences: string[];
+          seed_keywords: string[];
+          keywords: string[];
           lx_site_id: string | null;
         }
       | null;
@@ -46,6 +58,8 @@ export async function POST(req: NextRequest) {
     lxSiteId = site.lx_site_id;
     niche = site.niche;
     targetAudiences = site.target_audiences ?? [];
+    seedKeywords = site.seed_keywords ?? [];
+    savedKeywords = site.keywords ?? [];
   }
   if (!lxSiteId) {
     return NextResponse.json(
@@ -53,9 +67,14 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (!niche && targetAudiences.length === 0) {
+  if (
+    !niche &&
+    targetAudiences.length === 0 &&
+    seedKeywords.length === 0 &&
+    savedKeywords.length === 0
+  ) {
     return NextResponse.json(
-      { ok: false, error: "set a niche or target audience before generating keywords" },
+      { ok: false, error: "add saved keywords or seed keywords before generating keywords" },
       { status: 400 },
     );
   }
