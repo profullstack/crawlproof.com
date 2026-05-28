@@ -5,6 +5,7 @@
 //   crawlproof audit <url> [--engine=rule|claude] [--format=markdown|json]
 //   crawlproof report <token>
 //   crawlproof sweep
+//   crawlproof track --project=<uuid> --event=<name>
 //   crawlproof help
 //
 // Currently `audit` runs the rule-based engine locally with no DB/credit
@@ -104,6 +105,42 @@ async function cmdReport(args: Args): Promise<number> {
   return 0;
 }
 
+async function cmdTrack(args: Args): Promise<number> {
+  const project =
+    (args.flags.project as string | undefined) ?? process.env.CRAWLPROOF_PROJECT;
+  if (!project) {
+    console.error(
+      "usage: crawlproof track --project=<uuid> --event=<name> [--url=<href>] [--target=<label>]",
+    );
+    console.error("       (or set CRAWLPROOF_PROJECT to skip --project)");
+    return 2;
+  }
+  const event = (args.flags.event as string | undefined) ?? "pageview";
+  const pageUrl = args.flags.url as string | undefined;
+  const target = args.flags.target as string | undefined;
+  const referrer = args.flags.referrer as string | undefined;
+  const base =
+    (args.flags.base as string | undefined) ??
+    process.env.CRAWLPROOF_SITE_URL ??
+    "https://crawlproof.com";
+  const endpoint = `${base.replace(/\/$/, "")}/api/track`;
+  const body: Record<string, unknown> = { site: project, event };
+  if (pageUrl) body.url = pageUrl;
+  if (target) body.target = target;
+  if (referrer) body.referrer = referrer;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok && res.status !== 204) {
+    console.error(`track failed: ${res.status} ${res.statusText}`);
+    return 1;
+  }
+  console.error(`[cli] tracked ${event} for project ${project}`);
+  return 0;
+}
+
 async function cmdSweep(args: Args): Promise<number> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -165,12 +202,18 @@ COMMANDS
       hourly pg_cron tick. Requires CRON_SECRET. Override host with
       CRAWLPROOF_SITE_URL.
 
+  track --project=<uuid> [--event=<name>] [--url=<href>] [--target=<label>] [--referrer=<href>]
+      Send a stats event to /api/track without the browser script.
+      Defaults --event to "pageview". Project id can also come from
+      CRAWLPROOF_PROJECT. Override host with CRAWLPROOF_SITE_URL.
+
   help
       Print this message.
 
 ENV
   ANTHROPIC_API_KEY      Required for --engine=claude.
-  CRAWLPROOF_SITE_URL    Override the API base URL for 'report' and 'sweep'.
+  CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', and 'track'.
+  CRAWLPROOF_PROJECT     Default project UUID for 'track'.
   CRON_SECRET            Required for 'sweep'.
 
 EXAMPLES
@@ -179,6 +222,7 @@ EXAMPLES
   crawlproof report r-ceiZSv2VnqypqUfjLwtrV0
   CRAWLPROOF_SITE_URL=http://localhost:3000 crawlproof sweep
   CRAWLPROOF_SITE_URL=http://localhost:3000 crawlproof sweep --target=autoblog
+  crawlproof track --project=ac4e0a7d-... --event=signup --target=hero_cta
 `);
 }
 
@@ -192,6 +236,8 @@ async function main() {
         return await cmdReport(args);
       case "sweep":
         return await cmdSweep(args);
+      case "track":
+        return await cmdTrack(args);
       case "help":
       case "--help":
       case "-h":
