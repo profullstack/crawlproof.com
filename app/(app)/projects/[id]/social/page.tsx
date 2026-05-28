@@ -111,6 +111,15 @@ export default async function SocialDashboardPage({
     .filter((b) => b.auto && b.enabled)
     .map((b) => b.account_id);
 
+  // Only auto-refresh while something is actively moving. Idle tabs
+  // shouldn't be hitting the DB every 15s.
+  const hasInFlightPost = (posts ?? []).some(
+    (p: any) => p.status === "queued" || p.status === "publishing",
+  );
+  const feedChecking =
+    (feedConfig as { status?: string } | null)?.status === "checking";
+  const isLive = hasInFlightPost || feedChecking;
+
   return (
     <div className="mx-auto max-w-4xl space-y-8">
       <header className="flex flex-wrap items-baseline justify-between gap-4">
@@ -218,10 +227,10 @@ export default async function SocialDashboardPage({
             Post history
           </h2>
           <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-            Live · refreshes every 15s
+            {isLive ? "Live · refreshes every 15s" : "Idle · reload to update"}
           </span>
         </div>
-        <SocialAutoRefresh />
+        <SocialAutoRefresh active={isLive} />
         {(posts ?? []).length === 0 ? (
           <p className="mt-2 text-sm text-[var(--color-muted)]">
             No posts yet.
