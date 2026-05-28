@@ -9,6 +9,7 @@ export type SocialProfile = {
   tone: string;
   default_hashtags: string[];
   image_cadence: number;
+  image_style: string;
   custom_instructions: string;
 };
 
@@ -21,6 +22,34 @@ const TONES = [
   "playful",
   "technical",
 ] as const;
+
+const IMAGE_STYLES: Array<{ value: string; label: string; hint: string }> = [
+  {
+    value: "editorial",
+    label: "Editorial photo",
+    hint: "Single focal photographic/illustrative subject, magazine-cover feel. Falls back to the article's og:image if one exists.",
+  },
+  {
+    value: "infographic",
+    label: "Infographic (split compare)",
+    hint: "Two-panel before/after with a bold headline, iconography, on-image labels. Best for explainer-style posts.",
+  },
+  {
+    value: "quote_card",
+    label: "Quote card",
+    hint: "Minimalist text card with the article headline as the centrepiece. Best for opinion / hot-take posts.",
+  },
+  {
+    value: "diagram",
+    label: "Labelled diagram",
+    hint: "Clean architecture/flow diagram with labelled boxes and arrows. Best for technical or process posts.",
+  },
+  {
+    value: "screenshot",
+    label: "Product UI mockup",
+    hint: "Fake-but-plausible SaaS dashboard screenshot. Best for product / feature launch posts.",
+  },
+];
 
 export function SocialProfileForm({
   projectId,
@@ -37,6 +66,7 @@ export function SocialProfileForm({
     (profile?.default_hashtags ?? []).join(" "),
   );
   const [imageCadence, setImageCadence] = useState(profile?.image_cadence ?? 0);
+  const [imageStyle, setImageStyle] = useState(profile?.image_style ?? "editorial");
   const [customInstructions, setCustomInstructions] = useState(
     profile?.custom_instructions ?? "",
   );
@@ -54,6 +84,7 @@ export function SocialProfileForm({
         tone,
         defaultHashtags: hashtags,
         imageCadence,
+        imageStyle,
         customInstructions,
       });
       if (!result.ok) {
@@ -115,11 +146,37 @@ export function SocialProfileForm({
             onChange={(e) => setImageCadence(Number(e.target.value))}
           />
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            0 = never. 1 = every post. 3 = roughly 1 in 3. Tries the
-            article's <code>og:image</code> first; only generates a fresh
-            AI image when the page has none.
+            0 = never. 1 = every post. 3 = roughly 1 in 3.
           </p>
         </div>
+      </div>
+
+      <div>
+        <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Image style
+        </label>
+        <select
+          className="input mt-1"
+          value={imageStyle}
+          onChange={(e) => setImageStyle(e.target.value)}
+          disabled={imageCadence === 0}
+        >
+          {IMAGE_STYLES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
+          {IMAGE_STYLES.find((s) => s.value === imageStyle)?.hint}
+        </p>
+        {imageStyle === "editorial" && imageCadence > 0 && (
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            Editorial is the only style that reuses an existing
+            <code> og:image</code> when present — every other style always
+            generates a fresh image so the chosen layout is preserved.
+          </p>
+        )}
       </div>
 
       <div>

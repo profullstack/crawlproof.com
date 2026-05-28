@@ -105,7 +105,7 @@ export default async function SocialDashboardPage({
     supabase
       .from("sp_project_config")
       .select(
-        "brand_voice, tone, default_hashtags, image_cadence, custom_instructions",
+        "brand_voice, tone, default_hashtags, image_cadence, image_style, custom_instructions",
       )
       .eq("project_id", projectId)
       .maybeSingle(),

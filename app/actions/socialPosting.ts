@@ -449,6 +449,7 @@ export type SocialProfileInput = {
   tone: string;
   defaultHashtags: string;
   imageCadence: number;
+  imageStyle: string;
   customInstructions: string;
 };
 
@@ -460,6 +461,14 @@ const ALLOWED_TONES = new Set([
   "friendly",
   "playful",
   "technical",
+]);
+
+const ALLOWED_IMAGE_STYLES = new Set([
+  "editorial",
+  "infographic",
+  "quote_card",
+  "diagram",
+  "screenshot",
 ]);
 
 export async function saveSocialProfile(
@@ -481,6 +490,9 @@ export async function saveSocialProfile(
   if (!project) return { ok: false, error: "Project not found." };
 
   const tone = ALLOWED_TONES.has(input.tone) ? input.tone : "casual";
+  const imageStyle = ALLOWED_IMAGE_STYLES.has(input.imageStyle)
+    ? input.imageStyle
+    : "editorial";
   const brandVoice = (input.brandVoice ?? "").trim().slice(0, 2000);
   const customInstructions = (input.customInstructions ?? "").trim().slice(0, 2000);
   const hashtagList = (input.defaultHashtags ?? "")
@@ -502,6 +514,7 @@ export async function saveSocialProfile(
         tone,
         default_hashtags: hashtagList,
         image_cadence: imageCadence,
+        image_style: imageStyle,
         custom_instructions: customInstructions,
       },
       { onConflict: "project_id" },

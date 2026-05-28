@@ -11,13 +11,89 @@ const FETCH_TIMEOUT_MS = 8_000;
 const MIN_OG_IMAGE_BYTES = 2_000; // <2KB is almost certainly a placeholder.
 const BUCKET = "sp-images";
 const IMAGE_MODEL = "gpt-image-1";
-const IMAGE_SIZE = "1024x1024";
-const IMAGE_QUALITY: "low" | "medium" | "high" | "auto" = "medium";
+const IMAGE_QUALITY: "low" | "medium" | "high" | "auto" = "high";
 
 export type ImageAttachment = {
   url: string;
   source: "og" | "ai";
 };
+
+export type ImageStyle =
+  | "editorial"
+  | "infographic"
+  | "quote_card"
+  | "diagram"
+  | "screenshot";
+
+// Style → (size, prompt builder). Sizes are picked from gpt-image-1's
+// native options (1024x1024, 1536x1024, 1024x1536) so we don't pay for
+// crops.
+type StyleSpec = {
+  size: "1024x1024" | "1536x1024" | "1024x1536";
+  buildPrompt: (args: { articleTitle: string; brandContext: string }) => string;
+};
+
+const STYLE_SPECS: Record<ImageStyle, StyleSpec> = {
+  editorial: {
+    size: "1024x1024",
+    buildPrompt: ({ articleTitle, brandContext }) =>
+      [
+        `Editorial social-share image for an article titled: "${articleTitle}".`,
+        brandContext,
+        "Single focal subject, photographic or illustrative, dramatic lighting, scroll-stopping. Square 1:1 composition that reads well at thumbnail size. No on-image text, no logos, no AI-style geometric abstract shapes.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+  },
+  infographic: {
+    size: "1536x1024",
+    buildPrompt: ({ articleTitle, brandContext }) =>
+      [
+        `Bold two-panel comparison infographic for an article titled: "${articleTitle}".`,
+        brandContext,
+        "Top: a short uppercase headline (max 6 words) that captures the article's claim. Below it: two clearly separated panels. Left panel shows the 'before' / problem state in a muted grey-blue palette with simple iconography (clocks, calendars, paper documents, banks). Right panel shows the 'after' / solution state in a vivid blue-green neon palette with glowing iconography (network nodes, lightning bolts, checkmarks, fast arrows). A large arrow points from left to right between them. Crisp sans-serif on-image text labels under each panel (2-3 short phrases). Flat illustrative style, scroll-stopping, no photographic elements, no logos, no fake brand names. Landscape 3:2.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+  },
+  quote_card: {
+    size: "1024x1024",
+    buildPrompt: ({ articleTitle, brandContext }) =>
+      [
+        `Minimalist quote card centred on the headline: "${articleTitle}".`,
+        brandContext,
+        "Headline rendered as the dominant element — large, bold, well-kerned sans-serif, broken across at most 4 lines. Soft single-colour or subtle gradient background; one understated decorative motif (a thin underline, a small geometric flourish, or a faint texture) — nothing busy. No author photo, no logos, no quotation marks unless they support the typography. Square 1:1. Reads cleanly at thumbnail size.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+  },
+  diagram: {
+    size: "1536x1024",
+    buildPrompt: ({ articleTitle, brandContext }) =>
+      [
+        `Clean technical diagram illustrating the concept in: "${articleTitle}".`,
+        brandContext,
+        "Labelled boxes / nodes connected by directional arrows. Architecture-diagram aesthetic: thin outlined shapes, monospace or geometric sans-serif labels, a restrained 2-3 colour palette with one accent colour for emphasis. Light background. Each box has a short readable label (1-3 words). No drop shadows, no glow effects, no photographic elements. Landscape 3:2.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+  },
+  screenshot: {
+    size: "1536x1024",
+    buildPrompt: ({ articleTitle, brandContext }) =>
+      [
+        `Plausible product UI screenshot mocking up the feature described in: "${articleTitle}".`,
+        brandContext,
+        "Looks like a real SaaS dashboard or app screenshot — a header bar, a sidebar or tab strip, a main content area with cards/tables/charts, realistic spacing and typography. Use real-looking but fictional copy (no Lorem Ipsum). Subtle drop shadows, modern light-mode UI palette. No browser chrome, no mouse cursor, no people. Landscape 3:2, reads well as a social preview.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+  },
+};
+
+export function imageStyleOptions(): ImageStyle[] {
+  return Object.keys(STYLE_SPECS) as ImageStyle[];
+}
 
 // Decides whether THIS feed item should get an image. cadence = 0 means
 // never; cadence = N means roughly 1 in N. Decision is deterministic from
@@ -65,23 +141,19 @@ export async function generateSocialImage(args: {
   openai: OpenAI;
   articleTitle: string;
   brandVoice: string;
+  style: ImageStyle;
 }): Promise<Buffer | null> {
-  const { openai, articleTitle, brandVoice } = args;
-  const brand = brandVoice.trim()
+  const { openai, articleTitle, brandVoice, style } = args;
+  const spec = STYLE_SPECS[style] ?? STYLE_SPECS.editorial;
+  const brandContext = brandVoice.trim()
     ? `Brand context: ${brandVoice.trim()}.`
     : "";
-  const prompt = [
-    `Editorial social-share image for an article titled: "${articleTitle}".`,
-    brand,
-    "Single focal subject, photographic or illustrative, dramatic lighting, scroll-stopping. Square 1:1 composition that reads well at thumbnail size. No on-image text, no logos, no AI-style geometric abstract shapes.",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const prompt = spec.buildPrompt({ articleTitle, brandContext });
   try {
     const res = await openai.images.generate({
       model: IMAGE_MODEL,
       prompt,
-      size: IMAGE_SIZE,
+      size: spec.size,
       quality: IMAGE_QUALITY,
       n: 1,
     });
@@ -131,20 +203,45 @@ export async function resolveImage(args: {
   articleUrl: string;
   articleTitle: string;
   brandVoice: string;
+  style: ImageStyle;
   allowAi: boolean;
 }): Promise<ImageAttachment | null> {
-  const { supabase, openai, feedItemId, articleUrl, articleTitle, brandVoice, allowAi } =
-    args;
+  const {
+    supabase,
+    openai,
+    feedItemId,
+    articleUrl,
+    articleTitle,
+    brandVoice,
+    style,
+    allowAi,
+  } = args;
 
-  const og = await fetchOgImage(articleUrl);
-  if (og) {
-    const url = await uploadSocialImage(supabase, feedItemId, og.bytes, og.contentType);
-    if (url) return { url, source: "og" };
+  // Stylised images (infographic / diagram / quote_card / screenshot)
+  // are the whole point of choosing the style — falling back to the
+  // article's og:image would defeat that. Only short-circuit to og for
+  // 'editorial', where any reasonable hero image will do.
+  if (style === "editorial") {
+    const og = await fetchOgImage(articleUrl);
+    if (og) {
+      const url = await uploadSocialImage(
+        supabase,
+        feedItemId,
+        og.bytes,
+        og.contentType,
+      );
+      if (url) return { url, source: "og" };
+    }
   }
 
   if (!allowAi || !openai) return null;
 
-  const bytes = await generateSocialImage({ openai, articleTitle, brandVoice });
+  const bytes = await generateSocialImage({
+    openai,
+    articleTitle,
+    brandVoice,
+    style,
+  });
   if (!bytes) return null;
   const url = await uploadSocialImage(supabase, feedItemId, bytes, "image/png");
   if (!url) return null;
