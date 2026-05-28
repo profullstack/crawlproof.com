@@ -4,6 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { PostNowForm } from "./post-now";
 import { FeedSettingsForm } from "./feed-settings";
 import { SocialAutoRefresh } from "./auto-refresh";
+import { Countdown } from "../autoblog/countdown";
+
+// Must match FEED_POLL_EVERY_MS in lib/sp/feedAutopost.ts — the worker
+// re-checks a feed once its last_checked_at is older than this.
+const FEED_POLL_EVERY_MS = 15 * 60 * 1000;
 
 export const metadata = { title: "Social" };
 
@@ -113,12 +118,50 @@ export default async function SocialDashboardPage({
 
   // Only auto-refresh while something is actively moving. Idle tabs
   // shouldn't be hitting the DB every 15s.
-  const hasInFlightPost = (posts ?? []).some(
+  const inFlightPosts = (posts ?? []).filter(
     (p: any) => p.status === "queued" || p.status === "publishing",
   );
+  const hasInFlightPost = inFlightPosts.length > 0;
   const feedChecking =
     (feedConfig as { status?: string } | null)?.status === "checking";
-  const isLive = hasInFlightPost || feedChecking;
+
+  // Compute the next worker check ETA. Worker sweeps every 60s and picks
+  // up any config with last_checked_at older than FEED_POLL_EVERY_MS.
+  const fc = feedConfig as
+    | { enabled: boolean; last_checked_at: string | null }
+    | null;
+  const autopostAccounts = autopostAccountIds
+    .map((id) => accountById.get(id))
+    .filter(Boolean) as Array<{ platform: string; handle: string }>;
+  const platformsList = autopostAccounts.length
+    ? autopostAccounts.map((a) => `${a.platform} ${a.handle}`).join(", ")
+    : null;
+  let nextCheckIso: string | null = null;
+  let scheduleState: "off" | "no-targets" | "due" | "checking" | "scheduled" =
+    "off";
+  if (!fc?.enabled) {
+    scheduleState = "off";
+  } else if (autopostAccounts.length === 0) {
+    scheduleState = "no-targets";
+  } else if (feedChecking) {
+    scheduleState = "checking";
+  } else if (!fc.last_checked_at) {
+    scheduleState = "due";
+  } else {
+    const nextMs = new Date(fc.last_checked_at).getTime() + FEED_POLL_EVERY_MS;
+    if (nextMs <= Date.now()) {
+      scheduleState = "due";
+    } else {
+      scheduleState = "scheduled";
+      nextCheckIso = new Date(nextMs).toISOString();
+    }
+  }
+
+  // Auto-refresh while something is actively moving OR the next check
+  // is due (worker should pick it up within 60s — surface the change
+  // without a manual reload).
+  const isLive =
+    hasInFlightPost || scheduleState === "checking" || scheduleState === "due";
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -155,7 +198,94 @@ export default async function SocialDashboardPage({
       <section className="card p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">Feed autopost</h2>
+            <h2 className="text-lg font-semibold">Schedule</h2>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Fully automated. The worker re-checks the feed every 15
+              minutes and posts any new URLs to every autopost-enabled
+              account.
+            </p>
+          </div>
+        </div>
+        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              Next feed check
+            </dt>
+            <dd className="mt-1 font-medium">
+              {scheduleState === "off" && (
+                <span className="text-[var(--color-muted)]">
+                  Feed autopost is OFF — enable it below
+                </span>
+              )}
+              {scheduleState === "no-targets" && (
+                <span className="text-[var(--color-warn)]">
+                  No autopost accounts selected — nothing to post to
+                </span>
+              )}
+              {scheduleState === "checking" && (
+                <span className="text-[var(--color-pass)]">
+                  Checking now…
+                </span>
+              )}
+              {scheduleState === "due" && (
+                <span className="text-[var(--color-pass)]">
+                  Due — should pick up within 60s
+                </span>
+              )}
+              {scheduleState === "scheduled" && (
+                <>
+                  <Countdown targetIso={nextCheckIso} />{" "}
+                  <span className="text-xs font-normal text-[var(--color-muted)]">
+                    ({fmtDate(nextCheckIso)})
+                  </span>
+                </>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              Posting to
+            </dt>
+            <dd className="mt-1 font-medium">
+              {platformsList ? (
+                <span>{platformsList}</span>
+              ) : (
+                <span className="text-[var(--color-muted)]">
+                  No platforms — pick at least one below
+                </span>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              Last check
+            </dt>
+            <dd className="mt-1 font-medium">
+              {fc?.last_checked_at ? fmtDate(fc.last_checked_at) : "Never"}
+              {fc && "last_error" in fc && (fc as any).last_error && (
+                <span className="ml-2 text-xs font-normal text-[var(--color-fail)]">
+                  {(fc as any).last_error}
+                </span>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              In flight
+            </dt>
+            <dd className="mt-1 font-medium">
+              {hasInFlightPost
+                ? `${inFlightPosts.length} post${inFlightPosts.length === 1 ? "" : "s"} queued or publishing`
+                : "Nothing queued"}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="card p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Feed autopost settings</h2>
             <p className="mt-1 text-sm text-[var(--color-muted)]">
               Watch a sitemap or RSS feed and post newly discovered URLs to
               selected accounts.
