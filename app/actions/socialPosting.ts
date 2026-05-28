@@ -14,6 +14,17 @@ import { postViaAccount, type PostInput } from "@/lib/sp/post";
 import { mintApiToken } from "@/lib/sp/apiToken";
 import { serviceClient } from "@/lib/supabase/service";
 import { processProjectSocialFeed, type FeedType } from "@/lib/sp/feedAutopost";
+import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+
+// Reuse a single SDK instance across action invocations — these are
+// stateless wrappers around fetch + a key.
+const anthropicSdk = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+const openaiSdk = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -432,6 +443,74 @@ export async function saveFeedAutopostSettings(
   return { ok: true };
 }
 
+export type SocialProfileInput = {
+  projectId: string;
+  brandVoice: string;
+  tone: string;
+  defaultHashtags: string;
+  imageCadence: number;
+  customInstructions: string;
+};
+
+const ALLOWED_TONES = new Set([
+  "casual",
+  "professional",
+  "witty",
+  "authoritative",
+  "friendly",
+  "playful",
+  "technical",
+]);
+
+export async function saveSocialProfile(
+  input: SocialProfileInput,
+): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const projectId = (input.projectId ?? "").trim();
+  if (!projectId) return { ok: false, error: "Project is missing." };
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found." };
+
+  const tone = ALLOWED_TONES.has(input.tone) ? input.tone : "casual";
+  const brandVoice = (input.brandVoice ?? "").trim().slice(0, 2000);
+  const customInstructions = (input.customInstructions ?? "").trim().slice(0, 2000);
+  const hashtagList = (input.defaultHashtags ?? "")
+    .split(/[\s,]+/)
+    .map((h) => h.trim())
+    .filter(Boolean)
+    .map((h) => (h.startsWith("#") ? h : `#${h}`))
+    .slice(0, 12);
+  const cadenceRaw = Number.isFinite(input.imageCadence) ? input.imageCadence : 0;
+  const imageCadence = Math.max(0, Math.min(50, Math.round(cadenceRaw)));
+
+  const { error: upErr } = await (supabase as any)
+    .from("sp_project_config")
+    .upsert(
+      {
+        project_id: projectId,
+        user_id: user.id,
+        brand_voice: brandVoice,
+        tone,
+        default_hashtags: hashtagList,
+        image_cadence: imageCadence,
+        custom_instructions: customInstructions,
+      },
+      { onConflict: "project_id" },
+    );
+  if (upErr) return { ok: false, error: upErr.message };
+  revalidatePath(`/projects/${projectId}/social`);
+  return { ok: true };
+}
+
 export async function checkSocialFeedNow(
   projectId: string,
 ): Promise<Ok<FeedProcessResultShape> | Err> {
@@ -448,7 +527,9 @@ export async function checkSocialFeedNow(
     .maybeSingle();
   if (!project) return { ok: false, error: "Project not found." };
 
-  const result = await processProjectSocialFeed(serviceClient(), projectId);
+  const result = await processProjectSocialFeed(serviceClient(), projectId, {
+    clients: { anthropic: anthropicSdk, openai: openaiSdk },
+  });
   revalidatePath(`/projects/${projectId}/social`);
   if (!result.ok) return { ok: false, error: result.error ?? "Feed check failed." };
   return {

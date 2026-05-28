@@ -1071,7 +1071,10 @@ async function lxSweep() {
 }
 
 async function socialFeedSweep() {
-  const results = await processDueSocialFeeds(supabase, { limit: 10 });
+  const results = await processDueSocialFeeds(supabase, {
+    limit: 10,
+    clients: { anthropic, openai },
+  });
   for (const result of results) {
     if (!result.ok) {
       console.warn(`[worker] social feed ${result.configId ?? "-"} failed: ${result.error}`);

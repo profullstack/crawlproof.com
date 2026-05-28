@@ -55,6 +55,12 @@ export type PostInput = {
   text: string;
   subreddit?: string;
   title?: string;
+  // Public URLs of images/media to attach. v1 only persists this on
+  // sp_post.rendered_media_url — per-platform attachment uploads (Bluesky
+  // embeds, X media_id, Mastodon attachments) ship as each platform
+  // module learns to handle the field. Until then, the URL is included
+  // in the post text by the renderer so the link unfurls.
+  mediaUrl?: string[];
 };
 
 export type PostOk = {
@@ -185,6 +191,7 @@ export async function postViaAccount(args: {
       project_id: projectId ?? null,
       source,
       rendered_text: text,
+      rendered_media_url: input.mediaUrl ?? [],
       scheduled_for: new Date().toISOString(),
       status: "publishing",
       publish_attempts: 1,

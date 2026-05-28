@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PostNowForm } from "./post-now";
 import { FeedSettingsForm } from "./feed-settings";
 import { SocialAutoRefresh } from "./auto-refresh";
+import { SocialProfileForm, type SocialProfile } from "./social-profile";
 import { Countdown } from "../autoblog/countdown";
 import { nextPlatformReleases } from "@/lib/sp/feedAutopost";
 
@@ -64,6 +65,7 @@ export default async function SocialDashboardPage({
     { data: feedConfig },
     { data: bindings },
     { data: feedItems },
+    { data: socialProfileRow },
   ] = await Promise.all([
     supabase
       .from("sp_account")
@@ -100,7 +102,15 @@ export default async function SocialDashboardPage({
       .eq("project_id", projectId)
       .order("first_seen_at", { ascending: false })
       .limit(10),
+    supabase
+      .from("sp_project_config")
+      .select(
+        "brand_voice, tone, default_hashtags, image_cadence, custom_instructions",
+      )
+      .eq("project_id", projectId)
+      .maybeSingle(),
   ]);
+  const socialProfile = (socialProfileRow ?? null) as SocialProfile | null;
 
   const accountList = (accounts ?? []) as Array<{
     id: string;
@@ -201,6 +211,20 @@ export default async function SocialDashboardPage({
           <PostNowForm accounts={accountList} />
         </section>
       )}
+
+      <section className="card p-5">
+        <div>
+          <h2 className="text-lg font-semibold">Brand profile</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Drives the per-platform LLM renderer. Every autopost is
+            tailored to the platform's voice on top of these settings,
+            so Bluesky doesn't sound like LinkedIn.
+          </p>
+        </div>
+        <div className="mt-4">
+          <SocialProfileForm projectId={projectId} profile={socialProfile} />
+        </div>
+      </section>
 
       <section className="card p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
