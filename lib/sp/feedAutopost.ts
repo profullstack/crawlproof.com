@@ -1,7 +1,21 @@
 import * as cheerio from "cheerio";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import { detectSitemapUrl } from "@/lib/lx/sitemap";
 import { postViaAccount, type PostSource } from "@/lib/sp/post";
+import {
+  assemblePostText,
+  renderPostForPlatform,
+  type ProjectSocialConfig,
+  type RenderedPost,
+} from "@/lib/sp/renderPost";
+import { resolveImage, shouldAttachImage } from "@/lib/sp/imageGen";
+
+export type FeedAutopostClients = {
+  anthropic?: Anthropic | null;
+  openai?: OpenAI | null;
+};
 
 const USER_AGENT = "CrawlProofSocialFeed/1.0";
 const FETCH_TIMEOUT_MS = 12_000;
@@ -106,7 +120,7 @@ export type FeedProcessResult = {
 
 export async function processDueSocialFeeds(
   supabase: SupabaseClient<any>,
-  opts: { now?: Date; limit?: number } = {},
+  opts: { now?: Date; limit?: number; clients?: FeedAutopostClients } = {},
 ): Promise<FeedProcessResult[]> {
   const now = opts.now ?? new Date();
   const cutoff = new Date(now.getTime() - FEED_POLL_EVERY_MS).toISOString();
@@ -121,7 +135,12 @@ export async function processDueSocialFeeds(
   if (error) return [{ ok: false, error: error.message }];
   const results: FeedProcessResult[] = [];
   for (const config of (data ?? []) as FeedConfig[]) {
-    results.push(await processSocialFeedConfig(supabase, config, { now }));
+    results.push(
+      await processSocialFeedConfig(supabase, config, {
+        now,
+        clients: opts.clients,
+      }),
+    );
   }
   return results;
 }
@@ -129,7 +148,7 @@ export async function processDueSocialFeeds(
 export async function processProjectSocialFeed(
   supabase: SupabaseClient<any>,
   projectId: string,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; clients?: FeedAutopostClients } = {},
 ): Promise<FeedProcessResult> {
   const { data: config, error } = await supabase
     .from("sp_feed_config")
@@ -141,13 +160,14 @@ export async function processProjectSocialFeed(
   if (!config) return { ok: false, error: "Feed autopost is not enabled." };
   return processSocialFeedConfig(supabase, config as FeedConfig, {
     now: opts.now ?? new Date(),
+    clients: opts.clients,
   });
 }
 
 async function processSocialFeedConfig(
   supabase: SupabaseClient<any>,
   config: FeedConfig,
-  opts: { now: Date },
+  opts: { now: Date; clients?: FeedAutopostClients },
 ): Promise<FeedProcessResult> {
   const nowIso = opts.now.toISOString();
   const { data: claimed } = await supabase
@@ -224,7 +244,7 @@ async function processSocialFeedConfig(
     // because their platform was inside the 4h throttle window.
     let posted = 0;
     if (!isFirstCheck) {
-      posted = await drainPendingFeedItems(supabase, config);
+      posted = await drainPendingFeedItems(supabase, config, opts.clients ?? {});
     }
 
     await supabase
@@ -263,7 +283,37 @@ type FeedItemRow = {
   title: string | null;
   published_at: string | null;
   delivered_platforms: string[] | null;
+  rendered_per_platform: Record<string, RenderedPost> | null;
+  image_url: string | null;
+  image_source: "og" | "ai" | null;
 };
+
+const DEFAULT_PROJECT_CONFIG: ProjectSocialConfig & { image_cadence: number } = {
+  brand_voice: "",
+  tone: "casual",
+  default_hashtags: [],
+  custom_instructions: "",
+  image_cadence: 0,
+};
+
+async function loadProjectConfig(
+  supabase: SupabaseClient<any>,
+  projectId: string,
+): Promise<ProjectSocialConfig & { image_cadence: number }> {
+  const { data } = await supabase
+    .from("sp_project_config")
+    .select("brand_voice, tone, default_hashtags, custom_instructions, image_cadence")
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!data) return DEFAULT_PROJECT_CONFIG;
+  return {
+    brand_voice: (data.brand_voice as string | null) ?? "",
+    tone: (data.tone as string | null) ?? "casual",
+    default_hashtags: (data.default_hashtags as string[] | null) ?? [],
+    custom_instructions: (data.custom_instructions as string | null) ?? "",
+    image_cadence: (data.image_cadence as number | null) ?? 0,
+  };
+}
 
 // Drain the 'seen' backlog for this config, one item per platform per
 // 4h. Items not yet delivered to every bound platform stay in 'seen'
@@ -271,6 +321,7 @@ type FeedItemRow = {
 async function drainPendingFeedItems(
   supabase: SupabaseClient<any>,
   config: FeedConfig,
+  clients: FeedAutopostClients,
 ): Promise<number> {
   const { data: bindings, error: bindErr } = await supabase
     .from("sp_site_account")
@@ -294,6 +345,8 @@ async function drainPendingFeedItems(
   }>);
   const platforms = [...new Set(accounts.map((a) => a.platform))];
 
+  const projectConfig = await loadProjectConfig(supabase, config.project_id);
+
   let posted = 0;
   for (const platform of platforms) {
     const last = await lastFeedPostOnPlatform(supabase, config.user_id, platform);
@@ -301,6 +354,29 @@ async function drainPendingFeedItems(
 
     const item = await findOldestUndeliveredItem(supabase, config.id, platform);
     if (!item) continue;
+
+    // 1. Make sure we have an LLM render for this (item, platform).
+    const rendered = await ensureRendered({
+      supabase,
+      item,
+      platform,
+      url: item.url,
+      title: item.title,
+      config: projectConfig,
+      anthropic: clients.anthropic ?? null,
+    });
+
+    // 2. Make sure we have an image resolved (og or ai) if cadence says so.
+    const imageUrl = await ensureImage({
+      supabase,
+      item,
+      cadence: projectConfig.image_cadence,
+      brandVoice: projectConfig.brand_voice,
+      openai: clients.openai ?? null,
+    });
+
+    // 3. Assemble platform-appropriate post text.
+    const text = assemblePostText({ rendered, url: item.url, platform });
 
     const platformAccounts = accounts.filter((a) => a.platform === platform);
     const errors: string[] = [];
@@ -310,11 +386,9 @@ async function drainPendingFeedItems(
         userId: config.user_id,
         input: {
           accountId: account.id,
-          text: renderFeedPost({
-            url: item.url,
-            title: item.title,
-            publishedAt: item.published_at,
-          }),
+          text,
+          title: rendered.title,
+          mediaUrl: imageUrl ? [imageUrl] : undefined,
         },
         source: config.feed_type as PostSource,
         projectId: config.project_id,
@@ -351,6 +425,80 @@ async function drainPendingFeedItems(
   return posted;
 }
 
+async function ensureRendered(args: {
+  supabase: SupabaseClient<any>;
+  item: FeedItemRow;
+  platform: string;
+  url: string;
+  title: string | null;
+  config: ProjectSocialConfig;
+  anthropic: Anthropic | null;
+}): Promise<RenderedPost> {
+  const { supabase, item, platform, url, title, config, anthropic } = args;
+  const cache = (item.rendered_per_platform ?? {}) as Record<string, RenderedPost>;
+  if (cache[platform]) return cache[platform];
+
+  let rendered: RenderedPost;
+  if (anthropic) {
+    try {
+      rendered = await renderPostForPlatform({
+        anthropic,
+        platform,
+        url,
+        articleTitle: title,
+        config,
+      });
+    } catch (err) {
+      console.warn(
+        "[sp] render failed; falling back to title+url",
+        err instanceof Error ? err.message : err,
+      );
+      rendered = { text: title ?? url, hashtags: [] };
+    }
+  } else {
+    // No LLM available — keep the old title/url shape.
+    rendered = { text: title ?? url, hashtags: [] };
+  }
+
+  const next = { ...cache, [platform]: rendered };
+  await supabase
+    .from("sp_feed_item")
+    .update({ rendered_per_platform: next })
+    .eq("id", item.id);
+  item.rendered_per_platform = next;
+  return rendered;
+}
+
+async function ensureImage(args: {
+  supabase: SupabaseClient<any>;
+  item: FeedItemRow;
+  cadence: number;
+  brandVoice: string;
+  openai: OpenAI | null;
+}): Promise<string | null> {
+  const { supabase, item, cadence, brandVoice, openai } = args;
+  if (item.image_url) return item.image_url;
+  if (!shouldAttachImage(item.id, cadence)) return null;
+  const attached = await resolveImage({
+    supabase,
+    openai,
+    feedItemId: item.id,
+    articleUrl: item.url,
+    articleTitle: item.title ?? item.url,
+    brandVoice,
+    // AI generation only if cadence is on AND an OpenAI client is available.
+    allowAi: !!openai,
+  });
+  if (!attached) return null;
+  await supabase
+    .from("sp_feed_item")
+    .update({ image_url: attached.url, image_source: attached.source })
+    .eq("id", item.id);
+  item.image_url = attached.url;
+  item.image_source = attached.source;
+  return attached.url;
+}
+
 async function findOldestUndeliveredItem(
   supabase: SupabaseClient<any>,
   configId: string,
@@ -363,7 +511,9 @@ async function findOldestUndeliveredItem(
   // do the contains check in app code.
   const { data } = await supabase
     .from("sp_feed_item")
-    .select("id, url, title, published_at, delivered_platforms")
+    .select(
+      "id, url, title, published_at, delivered_platforms, rendered_per_platform, image_url, image_source",
+    )
     .eq("config_id", configId)
     .eq("status", "seen")
     .order("first_seen_at", { ascending: true })
@@ -374,18 +524,6 @@ async function findOldestUndeliveredItem(
       (r) => !((r.delivered_platforms ?? []) as string[]).includes(platform),
     ) ?? null
   );
-}
-
-function renderFeedPost(item: FeedItem): string {
-  const url = item.url;
-  const title = (item.title ?? "").trim();
-  if (!title) return url;
-  const max = 280;
-  const room = max - url.length - 1;
-  if (room <= 12) return url.slice(0, max);
-  const renderedTitle =
-    title.length > room ? `${title.slice(0, Math.max(0, room - 1)).trim()}…` : title;
-  return `${renderedTitle}\n${url}`;
 }
 
 async function resolveFeedUrl(
