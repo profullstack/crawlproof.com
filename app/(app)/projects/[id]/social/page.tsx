@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { PostNowForm } from "./post-now";
 import { FeedSettingsForm } from "./feed-settings";
+import { SocialAutoRefresh } from "./auto-refresh";
 
 export const metadata = { title: "Social" };
 
@@ -12,6 +13,26 @@ function fmtDate(iso: string | null): string {
     return new Date(iso).toLocaleString();
   } catch {
     return iso;
+  }
+}
+
+// Posts are stored as a single rendered_text blob. Feed autoposts come in as
+// "title\nurl"; manual posts can be anything. Pull the first URL out so we
+// can show it as a real link, and use whatever remains as the title.
+function splitPostText(text: string): { title: string | null; url: string | null } {
+  if (!text) return { title: null, url: null };
+  const match = text.match(/https?:\/\/[^\s<>"'`]+/);
+  if (!match) return { title: text.trim() || null, url: null };
+  const url = match[0].replace(/[).,!?;:]+$/, "");
+  const title = text.replace(match[0], "").trim();
+  return { title: title || null, url };
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
   }
 }
 
@@ -52,7 +73,7 @@ export default async function SocialDashboardPage({
       .eq("user_id", user.id)
       .eq("project_id", projectId)
       .order("created_at", { ascending: false })
-      .limit(20),
+      .limit(50),
     supabase
       .from("sp_feed_config")
       .select(
@@ -192,9 +213,15 @@ export default async function SocialDashboardPage({
       </section>
 
       <section>
-        <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          Recent posts
-        </h2>
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Post history
+          </h2>
+          <span className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+            Live · refreshes every 15s
+          </span>
+        </div>
+        <SocialAutoRefresh />
         {(posts ?? []).length === 0 ? (
           <p className="mt-2 text-sm text-[var(--color-muted)]">
             No posts yet.
@@ -203,10 +230,26 @@ export default async function SocialDashboardPage({
           <ul className="mt-2 divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)]">
             {posts!.map((p: any) => {
               const a = accountById.get(p.account_id);
+              const { title, url } = splitPostText(p.rendered_text ?? "");
+              const headline = title ?? (url ? hostOf(url) : "(empty post)");
               return (
                 <li key={p.id} className="px-3 py-2 text-sm">
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className="line-clamp-2 flex-1">{p.rendered_text}</span>
+                    {url ? (
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="line-clamp-2 flex-1 font-medium hover:underline"
+                        title={url}
+                      >
+                        {headline}
+                      </a>
+                    ) : (
+                      <span className="line-clamp-2 flex-1 font-medium">
+                        {headline}
+                      </span>
+                    )}
                     <span
                       className={
                         "badge shrink-0 " +
@@ -220,7 +263,19 @@ export default async function SocialDashboardPage({
                       {p.status}
                     </span>
                   </div>
-                  <div className="mt-1 flex items-baseline gap-2 text-xs text-[var(--color-muted)]">
+                  {url && title && (
+                    <div className="mt-1 text-xs text-[var(--color-muted)]">
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline"
+                      >
+                        {hostOf(url)}
+                      </a>
+                    </div>
+                  )}
+                  <div className="mt-1 flex flex-wrap items-baseline gap-2 text-xs text-[var(--color-muted)]">
                     {a && (
                       <span>
                         {a.handle} <span className="opacity-60">({a.platform})</span>
@@ -247,7 +302,7 @@ export default async function SocialDashboardPage({
                           rel="noreferrer"
                           className="underline"
                         >
-                          view
+                          view on {a?.platform ?? "platform"}
                         </a>
                       </>
                     )}
