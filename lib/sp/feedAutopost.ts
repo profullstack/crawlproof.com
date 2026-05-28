@@ -10,7 +10,11 @@ import {
   type ProjectSocialConfig,
   type RenderedPost,
 } from "@/lib/sp/renderPost";
-import { resolveImage, shouldAttachImage } from "@/lib/sp/imageGen";
+import {
+  resolveImage,
+  shouldAttachImage,
+  type ImageStyle,
+} from "@/lib/sp/imageGen";
 
 export type FeedAutopostClients = {
   anthropic?: Anthropic | null;
@@ -288,21 +292,29 @@ type FeedItemRow = {
   image_source: "og" | "ai" | null;
 };
 
-const DEFAULT_PROJECT_CONFIG: ProjectSocialConfig & { image_cadence: number } = {
+type LoadedProjectConfig = ProjectSocialConfig & {
+  image_cadence: number;
+  image_style: ImageStyle;
+};
+
+const DEFAULT_PROJECT_CONFIG: LoadedProjectConfig = {
   brand_voice: "",
   tone: "casual",
   default_hashtags: [],
   custom_instructions: "",
   image_cadence: 0,
+  image_style: "editorial",
 };
 
 async function loadProjectConfig(
   supabase: SupabaseClient<any>,
   projectId: string,
-): Promise<ProjectSocialConfig & { image_cadence: number }> {
+): Promise<LoadedProjectConfig> {
   const { data } = await supabase
     .from("sp_project_config")
-    .select("brand_voice, tone, default_hashtags, custom_instructions, image_cadence")
+    .select(
+      "brand_voice, tone, default_hashtags, custom_instructions, image_cadence, image_style",
+    )
     .eq("project_id", projectId)
     .maybeSingle();
   if (!data) return DEFAULT_PROJECT_CONFIG;
@@ -312,6 +324,7 @@ async function loadProjectConfig(
     default_hashtags: (data.default_hashtags as string[] | null) ?? [],
     custom_instructions: (data.custom_instructions as string | null) ?? "",
     image_cadence: (data.image_cadence as number | null) ?? 0,
+    image_style: ((data.image_style as string | null) ?? "editorial") as ImageStyle,
   };
 }
 
@@ -372,6 +385,7 @@ async function drainPendingFeedItems(
       item,
       cadence: projectConfig.image_cadence,
       brandVoice: projectConfig.brand_voice,
+      style: projectConfig.image_style,
       openai: clients.openai ?? null,
     });
 
@@ -474,9 +488,10 @@ async function ensureImage(args: {
   item: FeedItemRow;
   cadence: number;
   brandVoice: string;
+  style: ImageStyle;
   openai: OpenAI | null;
 }): Promise<string | null> {
-  const { supabase, item, cadence, brandVoice, openai } = args;
+  const { supabase, item, cadence, brandVoice, style, openai } = args;
   if (item.image_url) return item.image_url;
   if (!shouldAttachImage(item.id, cadence)) return null;
   const attached = await resolveImage({
@@ -486,6 +501,7 @@ async function ensureImage(args: {
     articleUrl: item.url,
     articleTitle: item.title ?? item.url,
     brandVoice,
+    style,
     // AI generation only if cadence is on AND an OpenAI client is available.
     allowAi: !!openai,
   });
