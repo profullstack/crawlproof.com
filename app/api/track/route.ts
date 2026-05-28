@@ -2,11 +2,18 @@
 // JSON payload, categorizes the event, and bumps the matching counter row
 // in tracker_daily_stats. Idempotent under load via ON CONFLICT.
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
+import {
+  buildTrackerEvent,
+  deliverAndRecord,
+  type TrackerEvent,
+  type TrackerEventGeo,
+  type TrackerWebhookRow,
+} from "@/lib/tracker/webhookDeliver";
 
 export const runtime = "nodejs";
 
@@ -232,6 +239,16 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   }
 
   const geo = await lookupGeo(clientIpFromHeaders(request.headers));
+  const eventGeo: TrackerEventGeo | null = geo
+    ? {
+        country_code: geo.countryCode,
+        country_name: geo.countryName,
+        region_code: geo.regionCode,
+        region_name: geo.regionName,
+        city: geo.city,
+        timezone: geo.timezone,
+      }
+    : null;
   if (geo) {
     const { data: geoExisting } = await sb
       .from("tracker_geo_daily_stats")
@@ -273,6 +290,34 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       });
     }
   }
+
+  // Fan out to per-project webhooks AFTER the response. Each enabled
+  // webhook gets one POST with a Standard-Webhooks-signed copy of the
+  // raw event. No retries here; analytics-grade best-effort.
+  const webhookEvent: TrackerEvent = buildTrackerEvent({
+    project_id: site,
+    data: {
+      event,
+      bucket,
+      page_path: pagePath,
+      page_url: pageUrl ?? null,
+      referrer: referrer ?? null,
+      referrer_host: referrerHost,
+      target: eventTarget,
+      user_agent: userAgent,
+      geo: eventGeo,
+    },
+  });
+  after(async () => {
+    const { data: hooks } = await sb
+      .from("tracker_webhooks")
+      .select("id, url, secret")
+      .eq("project_id", site)
+      .eq("enabled", true);
+    const rows = (hooks ?? []) as TrackerWebhookRow[];
+    if (rows.length === 0) return;
+    await Promise.allSettled(rows.map((h) => deliverAndRecord(sb, h, webhookEvent)));
+  });
 
   return ok(request);
 }
