@@ -130,6 +130,55 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
 </a>`}</pre>
       </section>
 
+      <section id="server-side" className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Server-side, CLI, and programmatic</h2>
+        <p className="text-sm leading-relaxed">
+          The browser script just POSTs JSON to{" "}
+          <code className="font-mono">/api/track</code>. Any backend, cron
+          job, mobile app, or shell can hit the same endpoint — no SDK,
+          no auth headers. The project id is the only required field.
+        </p>
+        <p className="text-sm leading-relaxed">curl:</p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`curl -X POST https://crawlproof.com/api/track \\
+  -H "content-type: application/json" \\
+  -d '{
+    "site": "<your-project-uuid>",
+    "event": "signup",
+    "url": "https://example.com/pricing",
+    "target": "hero_cta"
+  }'`}</pre>
+        <p className="text-sm leading-relaxed">Node / Deno / Bun:</p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`await fetch("https://crawlproof.com/api/track", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    site: process.env.CRAWLPROOF_PROJECT,
+    event: "checkout_started",
+    url: "https://example.com/pricing",
+    target: "pro_plan",
+  }),
+});`}</pre>
+        <p className="text-sm leading-relaxed">CLI (ships in the repo as <code className="font-mono">cli/index.ts</code>):</p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`crawlproof track \\
+  --project=<your-project-uuid> \\
+  --event=deploy \\
+  --target=production`}</pre>
+        <p className="text-sm leading-relaxed">
+          Accepted fields: <code className="font-mono">site</code> (UUID, required),{" "}
+          <code className="font-mono">event</code> (defaults to{" "}
+          <code className="font-mono">pageview</code>),{" "}
+          <code className="font-mono">url</code> or{" "}
+          <code className="font-mono">path</code> (the page being tracked),{" "}
+          <code className="font-mono">referrer</code>,{" "}
+          <code className="font-mono">target</code> (short label). The
+          server categorizes by{" "}
+          <code className="font-mono">User-Agent</code> and{" "}
+          <code className="font-mono">Referer</code> — set them from the
+          HTTP client when you want bucket attribution other than &quot;direct&quot;.
+          The response is always <code className="font-mono">204 No Content</code>.
+        </p>
+      </section>
+
       <section className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Privacy model</h2>
         <ul className="list-disc pl-5 text-sm leading-relaxed">

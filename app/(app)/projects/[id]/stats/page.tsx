@@ -224,6 +224,17 @@ export default async function ProjectStatsPage({
                 projectUrl={project.url}
                 siteUrl={env.siteUrl}
               />
+              <p className="mt-2 text-xs text-[var(--color-muted)]">
+                Tracking from a server, cron, mobile app, or CLI?{" "}
+                <a
+                  href="/docs/statistics#server-side"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-[var(--color-foreground)]"
+                >
+                  See the programmatic / CLI docs →
+                </a>
+              </p>
               <div className="mt-3">
                 <AutoInstall
                   projectId={id}
