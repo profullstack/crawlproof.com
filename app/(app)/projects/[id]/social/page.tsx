@@ -5,6 +5,7 @@ import { PostNowForm } from "./post-now";
 import { FeedSettingsForm } from "./feed-settings";
 import { SocialAutoRefresh } from "./auto-refresh";
 import { Countdown } from "../autoblog/countdown";
+import { nextPlatformReleases } from "@/lib/sp/feedAutopost";
 
 // Must match FEED_POLL_EVERY_MS in lib/sp/feedAutopost.ts — the worker
 // re-checks a feed once its last_checked_at is older than this.
@@ -136,6 +137,12 @@ export default async function SocialDashboardPage({
   const platformsList = autopostAccounts.length
     ? autopostAccounts.map((a) => `${a.platform} ${a.handle}`).join(", ")
     : null;
+  const boundPlatforms = [...new Set(autopostAccounts.map((a) => a.platform))];
+  const throttleReleases = await nextPlatformReleases(
+    supabase,
+    user.id,
+    boundPlatforms,
+  );
   let nextCheckIso: string | null = null;
   let scheduleState: "off" | "no-targets" | "due" | "checking" | "scheduled" =
     "off";
@@ -280,6 +287,32 @@ export default async function SocialDashboardPage({
             </dd>
           </div>
         </dl>
+        {boundPlatforms.length > 0 && (
+          <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              Per-platform throttle · 1 post / 4h
+            </div>
+            <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+              {boundPlatforms.map((p) => {
+                const releaseIso = throttleReleases[p] ?? null;
+                return (
+                  <li key={p} className="flex items-baseline justify-between gap-2">
+                    <span className="font-medium">{p}</span>
+                    {releaseIso ? (
+                      <span className="text-xs text-[var(--color-warn)]">
+                        next post <Countdown targetIso={releaseIso} />
+                      </span>
+                    ) : (
+                      <span className="text-xs text-[var(--color-pass)]">
+                        ready
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="card p-5">
