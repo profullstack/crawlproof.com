@@ -9,6 +9,67 @@ const MAX_RSS_ITEMS = 50;
 const MAX_SITEMAP_URLS = 500;
 const FEED_POLL_EVERY_MS = 15 * 60 * 1000;
 
+// Per-(user, platform) cap on autoposted feed items, across every project
+// that user owns. Manual posts are not counted. When the gate fires the
+// item stays 'seen' and is picked up by the next sweep after the window
+// closes — items are not dropped.
+export const POST_THROTTLE_MS = 4 * 60 * 60 * 1000;
+const FEED_SOURCES: ReadonlyArray<PostSource> = ["rss", "sitemap"];
+
+async function platformAccountIds(
+  supabase: SupabaseClient<any>,
+  userId: string,
+  platform: string,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("sp_account")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("platform", platform);
+  return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+}
+
+async function lastFeedPostOnPlatform(
+  supabase: SupabaseClient<any>,
+  userId: string,
+  platform: string,
+): Promise<Date | null> {
+  const accountIds = await platformAccountIds(supabase, userId, platform);
+  if (accountIds.length === 0) return null;
+  const cutoff = new Date(Date.now() - POST_THROTTLE_MS).toISOString();
+  const { data } = await supabase
+    .from("sp_post")
+    .select("created_at")
+    .eq("user_id", userId)
+    .in("account_id", accountIds)
+    .in("source", FEED_SOURCES as unknown as string[])
+    .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+  return new Date(data.created_at as string);
+}
+
+// Public helper for the Schedule UI: returns next-allowed-post time per
+// platform that the user has at least one autopost binding for. A
+// platform with no recent post is omitted (it's ready right now).
+export async function nextPlatformReleases(
+  supabase: SupabaseClient<any>,
+  userId: string,
+  platforms: string[],
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const platform of platforms) {
+    const last = await lastFeedPostOnPlatform(supabase, userId, platform);
+    if (!last) continue;
+    const nextMs = last.getTime() + POST_THROTTLE_MS;
+    if (nextMs <= Date.now()) continue;
+    out[platform] = new Date(nextMs).toISOString();
+  }
+  return out;
+}
+
 export type FeedType = "sitemap" | "rss";
 
 type FeedConfig = {
@@ -140,6 +201,10 @@ async function processSocialFeedConfig(
     const isFirstCheck = !config.last_checked_at && existingUrls.size === 0;
     const newItems = items.filter((item) => !existingUrls.has(item.url));
     if (newItems.length > 0) {
+      // On the very first check, the items already in the feed are
+      // historical — flag them 'ignored' so the drain loop doesn't post
+      // a backlog of old URLs at 1-per-4h.
+      const insertStatus = isFirstCheck ? "ignored" : "seen";
       const { error: insErr } = await supabase.from("sp_feed_item").insert(
         newItems.map((item) => ({
           config_id: config.id,
@@ -148,15 +213,18 @@ async function processSocialFeedConfig(
           url: item.url,
           title: item.title,
           published_at: item.publishedAt,
-          status: "seen",
+          status: insertStatus,
         })),
       );
       if (insErr && insErr.code !== "23505") throw new Error(insErr.message);
     }
 
+    // Drain pending items regardless of whether this sweep added any —
+    // earlier sweeps may have left 'seen' rows that couldn't ship
+    // because their platform was inside the 4h throttle window.
     let posted = 0;
-    if (!isFirstCheck && newItems.length > 0) {
-      posted = await postFeedItems(supabase, config, newItems);
+    if (!isFirstCheck) {
+      posted = await drainPendingFeedItems(supabase, config);
     }
 
     await supabase
@@ -189,10 +257,20 @@ async function processSocialFeedConfig(
   }
 }
 
-async function postFeedItems(
+type FeedItemRow = {
+  id: string;
+  url: string;
+  title: string | null;
+  published_at: string | null;
+  delivered_platforms: string[] | null;
+};
+
+// Drain the 'seen' backlog for this config, one item per platform per
+// 4h. Items not yet delivered to every bound platform stay in 'seen'
+// state so future sweeps pick them up after the throttle window passes.
+async function drainPendingFeedItems(
   supabase: SupabaseClient<any>,
   config: FeedConfig,
-  items: FeedItem[],
 ): Promise<number> {
   const { data: bindings, error: bindErr } = await supabase
     .from("sp_site_account")
@@ -205,34 +283,97 @@ async function postFeedItems(
   const accountIds = [...new Set((bindings ?? []).map((b) => b.account_id as string))];
   if (accountIds.length === 0) return 0;
 
+  const { data: accountRows } = await supabase
+    .from("sp_account")
+    .select("id, handle, platform")
+    .in("id", accountIds);
+  const accounts = ((accountRows ?? []) as Array<{
+    id: string;
+    handle: string;
+    platform: string;
+  }>);
+  const platforms = [...new Set(accounts.map((a) => a.platform))];
+
   let posted = 0;
-  for (const item of items) {
+  for (const platform of platforms) {
+    const last = await lastFeedPostOnPlatform(supabase, config.user_id, platform);
+    if (last && Date.now() - last.getTime() < POST_THROTTLE_MS) continue;
+
+    const item = await findOldestUndeliveredItem(supabase, config.id, platform);
+    if (!item) continue;
+
+    const platformAccounts = accounts.filter((a) => a.platform === platform);
     const errors: string[] = [];
-    for (const accountId of accountIds) {
+    for (const account of platformAccounts) {
       const result = await postViaAccount({
         supabase,
         userId: config.user_id,
         input: {
-          accountId,
-          text: renderFeedPost(item),
+          accountId: account.id,
+          text: renderFeedPost({
+            url: item.url,
+            title: item.title,
+            publishedAt: item.published_at,
+          }),
         },
         source: config.feed_type as PostSource,
         projectId: config.project_id,
       });
-      if (result.ok) posted++;
-      else errors.push(`${accountId}: ${result.error}`);
+      if (!result.ok) errors.push(`${account.handle}: ${result.error}`);
     }
+
+    if (errors.length === platformAccounts.length) {
+      await supabase
+        .from("sp_feed_item")
+        .update({
+          status: "failed",
+          last_error: errors.join("; ").slice(0, 1000),
+        })
+        .eq("id", item.id);
+      continue;
+    }
+
+    const delivered = [
+      ...new Set([...((item.delivered_platforms ?? []) as string[]), platform]),
+    ];
+    const complete = platforms.every((p) => delivered.includes(p));
     await supabase
       .from("sp_feed_item")
       .update({
-        status: errors.length === 0 ? "posted" : "failed",
-        posted_at: errors.length === 0 ? new Date().toISOString() : null,
+        delivered_platforms: delivered,
+        status: complete ? "posted" : "seen",
+        posted_at: complete ? new Date().toISOString() : null,
         last_error: errors.length ? errors.join("; ").slice(0, 1000) : null,
       })
-      .eq("config_id", config.id)
-      .eq("url", item.url);
+      .eq("id", item.id);
+    posted++;
   }
   return posted;
+}
+
+async function findOldestUndeliveredItem(
+  supabase: SupabaseClient<any>,
+  configId: string,
+  platform: string,
+): Promise<FeedItemRow | null> {
+  // Oldest-first so backlog drains predictably. Pull a small window and
+  // pick the first one whose delivered_platforms doesn't already include
+  // this platform — filtering server-side via .not("delivered_platforms",
+  // "cs", `{${platform}}`) is brittle across PostgREST versions, so we
+  // do the contains check in app code.
+  const { data } = await supabase
+    .from("sp_feed_item")
+    .select("id, url, title, published_at, delivered_platforms")
+    .eq("config_id", configId)
+    .eq("status", "seen")
+    .order("first_seen_at", { ascending: true })
+    .limit(20);
+  const rows = (data ?? []) as FeedItemRow[];
+  return (
+    rows.find(
+      (r) => !((r.delivered_platforms ?? []) as string[]).includes(platform),
+    ) ?? null
+  );
 }
 
 function renderFeedPost(item: FeedItem): string {
