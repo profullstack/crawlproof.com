@@ -322,12 +322,13 @@ async function fetchSevenDayPageviews(
   }
   if (projectIds.length === 0) return out;
 
-  const { data } = await supabase
-    .from("tracker_event_daily_stats")
-    .select("project_id, day, count")
-    .in("project_id", projectIds)
-    .eq("event", "pageview")
-    .gte("day", days[0]);
+  // Server-side aggregator — selecting raw rows runs into PostgREST's
+  // 1000-row response cap and silently truncates whichever projects'
+  // rows didn't make the cut.
+  const { data } = await supabase.rpc("dashboard_project_pageviews", {
+    p_project_ids: projectIds,
+    p_since: days[0],
+  });
 
   for (const row of (data ?? []) as Array<{
     project_id: string;
@@ -337,7 +338,7 @@ async function fetchSevenDayPageviews(
     const points = out.get(row.project_id);
     if (!points) continue;
     const point = points.find((item) => item.day === row.day);
-    if (point) point.count += row.count;
+    if (point) point.count += Number(row.count);
   }
 
   return out;
