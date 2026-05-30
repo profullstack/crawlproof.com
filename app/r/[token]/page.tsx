@@ -9,6 +9,7 @@ import { PerformancePreview } from "@/components/report/performance-preview";
 import { LivePoller } from "@/components/report/live-poller";
 import { CopyLink } from "@/components/copy-link";
 import { ShareBanner } from "@/components/share-banner";
+import { EmailReportForm } from "@/components/report/email-report-form";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import type { Finding } from "@/lib/audit/types";
@@ -275,6 +276,15 @@ export default async function PublicReportPage({
             findings={findings}
             ownerActions={ownerActions}
           />
+        )}
+
+        {audit.status !== "failed" && (
+          <div className="mt-8">
+            <EmailReportForm
+              token={token}
+              complete={audit.status === "complete"}
+            />
+          </div>
         )}
       </main>
       <SiteFooter />
