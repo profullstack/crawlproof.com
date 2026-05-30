@@ -5,6 +5,25 @@
 // so we never re-render the same item for the same platform.
 
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+// SDK zod helpers require v4 (z.toJSONSchema). See lib/lx/detectBlog.ts.
+import { z } from "zod/v4";
+import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { env } from "@/lib/env";
+
+const RENDER_MODEL = "claude-haiku-4-5-20251001";
+
+const RenderSchema = z.object({
+  text: z
+    .string()
+    .describe("The post body — WITHOUT the article URL and WITHOUT hashtags."),
+  title: z
+    .string()
+    .describe("Reddit post title; empty string for every other platform."),
+  hashtags: z
+    .array(z.string())
+    .describe("Platform-appropriate hashtags (no leading #). Empty if the platform doesn't use them."),
+});
 
 export type RenderedPost = {
   // Post body text; assembled with url + hashtags by the caller.
@@ -98,27 +117,25 @@ const HASHTAG_GUIDANCE: Record<PlatformProfile["usesHashtags"], string> = {
 
 const SYSTEM_PROMPT = `You write social posts for a small SaaS product. You write the way a sharp human operator writes — never the way an LLM writes. Avoid: "In today's digital landscape", "unlock", "leverage", "synergy", "game-changer", "delve", "navigate", em-dashes used as breath marks, every sentence starting with the same structure. Use: real specifics from the article, concrete claims, a clear hook. If you don't have a real reason to add a sentence, don't add it.`;
 
-const STYLE_GUIDE = `Output strict JSON only, matching this shape:
-{
-  "text": "the post body, WITHOUT the article URL and WITHOUT hashtags",
-  "title": "OPTIONAL — only set for reddit platform",
-  "hashtags": ["#tag1", "#tag2"]
-}
-No prose outside the JSON. No markdown. No backticks.`;
-
+// Renders brand-aware, per-platform post copy. Throws when no real copy can
+// be produced (no provider, unknown platform, model error/empty output) so the
+// caller can mark the item failed/retryable — we never emit raw "title\nurl"
+// spam.
 export async function renderPostForPlatform(args: {
-  anthropic: Anthropic;
+  anthropic: Anthropic | null;
+  openai: OpenAI | null;
   platform: string;
   url: string;
   articleTitle: string | null;
   config: ProjectSocialConfig;
 }): Promise<RenderedPost> {
-  const { anthropic, platform, url, articleTitle, config } = args;
+  const { anthropic, openai, platform, url, articleTitle, config } = args;
   const profile = PLATFORM_PROFILES[platform];
   if (!profile) {
-    // Fallback for platforms we don't have a profile for — keep the old
-    // "title\nurl" shape rather than failing the whole drain loop.
-    return { text: articleTitle ?? url, hashtags: [] };
+    throw new Error(`No platform profile configured for "${platform}".`);
+  }
+  if (!anthropic && !openai) {
+    throw new Error("No AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY).");
   }
 
   const tone = config.tone || "casual";
@@ -143,40 +160,37 @@ export async function renderPostForPlatform(args: {
     custom,
     `Article title: ${articleTitle ?? "(no title — derive from URL)"}`,
     `Article URL (do NOT include in the text field; the renderer appends it): ${url}`,
-    STYLE_GUIDE,
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  const res = await anthropic.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 600,
+  const { output } = await generateStructuredOutput({
+    name: "sp_render_post",
+    schema: RenderSchema,
     system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userPrompt }],
+    user: userPrompt,
+    anthropic,
+    openai,
+    preference: env.backendAiProvider,
+    anthropicModel: RENDER_MODEL,
+    openaiModel: env.backendAiOpenaiModel,
+    maxTokens: 800,
+    // Haiku 4.5 rejects Anthropic's `effort` parameter.
+    anthropicEffort: false,
   });
 
-  const raw = textFromMessage(res);
-  const parsed = safeParseJson(raw);
-  if (!parsed) {
-    return { text: articleTitle ?? url, hashtags: [] };
+  const text = (output.text ?? "").trim();
+  if (!text) {
+    throw new Error("Render produced empty text.");
   }
-  const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
   const title =
-    platform === "reddit" && typeof parsed.title === "string"
-      ? parsed.title.trim()
-      : undefined;
-  const hashtags = Array.isArray(parsed.hashtags)
-    ? parsed.hashtags
-        .filter((h: unknown): h is string => typeof h === "string")
-        .map((h) => (h.startsWith("#") ? h : `#${h}`))
-        .slice(0, 8)
-    : [];
+    platform === "reddit" && output.title?.trim() ? output.title.trim() : undefined;
+  const hashtags = (output.hashtags ?? [])
+    .filter((h): h is string => typeof h === "string")
+    .map((h) => (h.startsWith("#") ? h : `#${h}`))
+    .slice(0, 8);
 
-  return {
-    text: text || articleTitle || url,
-    title,
-    hashtags,
-  };
+  return { text, title, hashtags };
 }
 
 // Assemble final post text for the platform from the rendered pieces +
@@ -211,25 +225,3 @@ export function assemblePostText(args: {
   return [head, url, tagsBlock].filter(Boolean).join("\n");
 }
 
-function textFromMessage(res: Anthropic.Messages.Message): string {
-  return res.content
-    .filter((b): b is Anthropic.Messages.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-}
-
-function safeParseJson(raw: string): Record<string, unknown> | null {
-  const trimmed = raw.trim();
-  // Strip ```json fences if the model added them despite instructions.
-  const cleaned = trimmed
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "");
-  try {
-    const parsed = JSON.parse(cleaned);
-    return typeof parsed === "object" && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}

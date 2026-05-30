@@ -7,6 +7,7 @@ import {
   ConnectTelegramForm,
   DisconnectButton,
 } from "./form";
+import { AppPasswordReveal } from "./app-password-reveal";
 
 export const metadata = { title: "Social · Connect accounts" };
 
@@ -22,6 +23,7 @@ type AccountRow = {
   status: string;
   last_post_at: string | null;
   consecutive_failures: number;
+  enc_app_password: string | null;
 };
 
 export default async function SocialSetupPage({
@@ -44,7 +46,9 @@ export default async function SocialSetupPage({
 
   const { data: accounts } = await supabase
     .from("sp_account")
-    .select("id, platform, handle, status, last_post_at, consecutive_failures")
+    .select(
+      "id, platform, handle, status, last_post_at, consecutive_failures, enc_app_password",
+    )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -125,6 +129,9 @@ export default async function SocialSetupPage({
                     <p className="mt-1 text-xs text-[var(--color-muted)]">
                       Last post {new Date(a.last_post_at).toLocaleString()}
                     </p>
+                  )}
+                  {a.platform === "bluesky" && a.enc_app_password && (
+                    <AppPasswordReveal accountId={a.id} />
                   )}
                 </div>
                 <DisconnectButton accountId={a.id} handle={a.handle} />
