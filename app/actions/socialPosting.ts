@@ -470,6 +470,7 @@ const ALLOWED_IMAGE_STYLES = new Set([
   "quote_card",
   "diagram",
   "screenshot",
+  "rotate",
 ]);
 
 export async function saveSocialProfile(
