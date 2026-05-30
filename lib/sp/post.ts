@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
 import {
   createBlueskyPost,
+  createBlueskySession,
   BLUESKY_MAX_CHARS,
 } from "@/lib/sp/platforms/bluesky";
 import {
@@ -91,7 +92,7 @@ export async function postViaAccount(args: {
   const { data: account } = await supabase
     .from("sp_account")
     .select(
-      "id, platform, handle, external_id, instance_url, enc_access_token, enc_refresh_token, token_expires_at, status, consecutive_failures",
+      "id, platform, handle, external_id, instance_url, enc_access_token, enc_refresh_token, enc_app_password, token_expires_at, status, consecutive_failures",
     )
     .eq("id", input.accountId)
     .eq("user_id", userId)
@@ -261,12 +262,35 @@ export async function postViaAccount(args: {
   try {
     let result: { platformPostId: string; webUrl: string };
     if (account.platform === "bluesky") {
-      const r = await createBlueskyPost({
-        accessJwt: accessToken,
-        did: account.external_id,
-        handle: account.handle,
-        text,
-      });
+      const doPost = (jwt: string) =>
+        createBlueskyPost({
+          accessJwt: jwt,
+          did: account.external_id,
+          handle: account.handle,
+          text,
+        });
+      let r;
+      try {
+        r = await doPost(accessToken);
+      } catch (err) {
+        // Bluesky access JWTs expire and there's no refresh path; if we
+        // stored the app password, re-auth and retry once.
+        if (!account.enc_app_password) throw err;
+        const appPassword = decryptSecret(account.enc_app_password);
+        const session = await createBlueskySession({
+          handle: account.handle,
+          appPassword,
+        });
+        await supabase
+          .from("sp_account")
+          .update({
+            enc_access_token: encryptSecret(session.accessJwt),
+            enc_refresh_token: encryptSecret(session.refreshJwt),
+            status: "active",
+          })
+          .eq("id", account.id);
+        r = await doPost(session.accessJwt);
+      }
       result = { platformPostId: r.uri, webUrl: r.webUrl };
     } else if (account.platform === "reddit") {
       const r = await createRedditSelfPost({

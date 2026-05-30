@@ -369,16 +369,41 @@ async function drainPendingFeedItems(
     const item = await findOldestUndeliveredItem(supabase, config.id, platform);
     if (!item) continue;
 
-    // 1. Make sure we have an LLM render for this (item, platform).
-    const rendered = await ensureRendered({
-      supabase,
-      item,
-      platform,
-      url: item.url,
-      title: item.title,
-      config: projectConfig,
-      anthropic: clients.anthropic ?? null,
-    });
+    // Sitemap feeds carry no titles, so item.title is derived from the URL
+    // slug (e.g. a UUID). Fetch the real page <title>/og:title so the render
+    // has good input — and persist it so history shows the real title.
+    if (config.feed_type === "sitemap" && !item.rendered_per_platform) {
+      const real = await fetchPageTitle(item.url);
+      if (real && real !== item.title) {
+        await supabase.from("sp_feed_item").update({ title: real }).eq("id", item.id);
+        item.title = real;
+      }
+    }
+
+    // 1. Make sure we have an LLM render for this (item, platform). If the
+    // render can't be produced, mark the item failed (retryable) and move on
+    // rather than posting a raw title+url spam fallback.
+    let rendered: RenderedPost;
+    try {
+      rendered = await ensureRendered({
+        supabase,
+        item,
+        platform,
+        url: item.url,
+        title: item.title,
+        config: projectConfig,
+        anthropic: clients.anthropic ?? null,
+        openai: clients.openai ?? null,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sp] render failed for ${platform} (${item.url}): ${msg}`);
+      await supabase
+        .from("sp_feed_item")
+        .update({ status: "failed", last_error: `render: ${msg}`.slice(0, 1000) })
+        .eq("id", item.id);
+      continue;
+    }
 
     // 2. Make sure we have an image resolved (og or ai) if cadence says so.
     const imageUrl = await ensureImage({
@@ -448,32 +473,22 @@ async function ensureRendered(args: {
   title: string | null;
   config: ProjectSocialConfig;
   anthropic: Anthropic | null;
+  openai: OpenAI | null;
 }): Promise<RenderedPost> {
-  const { supabase, item, platform, url, title, config, anthropic } = args;
+  const { supabase, item, platform, url, title, config, anthropic, openai } = args;
   const cache = (item.rendered_per_platform ?? {}) as Record<string, RenderedPost>;
   if (cache[platform]) return cache[platform];
 
-  let rendered: RenderedPost;
-  if (anthropic) {
-    try {
-      rendered = await renderPostForPlatform({
-        anthropic,
-        platform,
-        url,
-        articleTitle: title,
-        config,
-      });
-    } catch (err) {
-      console.warn(
-        "[sp] render failed; falling back to title+url",
-        err instanceof Error ? err.message : err,
-      );
-      rendered = { text: title ?? url, hashtags: [] };
-    }
-  } else {
-    // No LLM available — keep the old title/url shape.
-    rendered = { text: title ?? url, hashtags: [] };
-  }
+  // Throws on failure (no provider / model error / empty). The caller marks
+  // the item failed (retryable) — we never post a raw "title\nurl" fallback.
+  const rendered = await renderPostForPlatform({
+    anthropic,
+    openai,
+    platform,
+    url,
+    articleTitle: title,
+    config,
+  });
 
   const next = { ...cache, [platform]: rendered };
   await supabase
@@ -638,6 +653,32 @@ async function fetchText(url: string): Promise<string> {
     });
     if (!res.ok) throw new Error(`Feed returned HTTP ${res.status}`);
     return await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Fetch a page's real title (og:title or <title>). Used for sitemap feeds
+// whose items have no title (only a URL-slug fallback).
+async function fetchPageTitle(url: string): Promise<string | null> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { accept: "text/html,*/*;q=0.5", "user-agent": USER_AGENT },
+      signal: ac.signal,
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "";
+    if (!ct.toLowerCase().includes("text/html")) return null;
+    const html = (await res.text()).slice(0, 200_000);
+    const $ = cheerio.load(html);
+    const og = $('meta[property="og:title"]').attr("content")?.trim();
+    const title = $("title").first().text().trim();
+    return cleanText(og || title || "");
+  } catch {
+    return null;
   } finally {
     clearTimeout(timer);
   }

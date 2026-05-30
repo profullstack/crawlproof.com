@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { postNow } from "@/app/actions/socialPosting";
+import { postNow, postNowFromUrl } from "@/app/actions/socialPosting";
 
 const BLUESKY_MAX = 300;
 const MASTODON_MAX = 500;
@@ -16,13 +16,17 @@ const REDDIT_TITLE_MAX = 300;
 
 export function PostNowForm({
   accounts,
+  projectId,
 }: {
   accounts: Array<{ id: string; platform: string; handle: string }>;
+  projectId: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [mode, setMode] = useState<"manual" | "url">("manual");
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [text, setText] = useState("");
+  const [url, setUrl] = useState("");
   const [subreddit, setSubreddit] = useState("");
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -52,16 +56,35 @@ export function PostNowForm({
   const titleRemaining = isReddit ? REDDIT_TITLE_MAX - title.length : null;
 
   const canSubmit =
-    !!accountId &&
-    !!text.trim() &&
-    (remaining === null || remaining >= 0) &&
-    (!isReddit || (!!subreddit.trim() && !!title.trim() && titleRemaining! >= 0));
+    mode === "url"
+      ? !!accountId && !!url.trim()
+      : !!accountId &&
+        !!text.trim() &&
+        (remaining === null || remaining >= 0) &&
+        (!isReddit || (!!subreddit.trim() && !!title.trim() && titleRemaining! >= 0));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setNotice(null);
     start(async () => {
+      if (mode === "url") {
+        const r = await postNowFromUrl({
+          projectId,
+          url,
+          accountIds: accountId ? [accountId] : [],
+        });
+        if (!r.ok) {
+          setError(r.error);
+          return;
+        }
+        setUrl("");
+        setNotice(
+          `Posted${r.errors.length ? ` (${r.errors.length} failed)` : ""}.`,
+        );
+        router.refresh();
+        return;
+      }
       const r = await postNow({
         accountId,
         text,
@@ -81,6 +104,22 @@ export function PostNowForm({
 
   return (
     <form onSubmit={submit} className="mt-3 space-y-3">
+      <div className="inline-flex rounded-lg border border-[var(--color-border)] p-0.5 text-sm">
+        <button
+          type="button"
+          onClick={() => setMode("manual")}
+          className={`rounded-md px-3 py-1 ${mode === "manual" ? "bg-[var(--color-card)] text-[var(--color-fg)]" : "text-[var(--color-muted)]"}`}
+        >
+          Write manually
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("url")}
+          className={`rounded-md px-3 py-1 ${mode === "url" ? "bg-[var(--color-card)] text-[var(--color-fg)]" : "text-[var(--color-muted)]"}`}
+        >
+          From URL (AI)
+        </button>
+      </div>
       <div>
         <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
           Post from
@@ -97,7 +136,25 @@ export function PostNowForm({
           ))}
         </select>
       </div>
-      {isReddit && (
+      {mode === "url" && (
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Article URL
+          </label>
+          <input
+            className="input mt-1"
+            type="url"
+            placeholder="https://example.com/post"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            We fetch the page, render it in your brand voice for{" "}
+            {acct ? acct.platform : "the platform"}, and post immediately.
+          </p>
+        </div>
+      )}
+      {mode === "manual" && isReddit && (
         <>
           <div>
             <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
@@ -144,6 +201,7 @@ export function PostNowForm({
           </div>
         </>
       )}
+      {mode === "manual" && (
       <div>
         <label className="flex items-baseline justify-between text-xs uppercase tracking-wider text-[var(--color-muted)]">
           <span>{isReddit ? "Body" : "Text"}</span>
@@ -169,6 +227,7 @@ export function PostNowForm({
           onChange={(e) => setText(e.target.value)}
         />
       </div>
+      )}
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
       {notice && <p className="text-sm text-[var(--color-pass)]">{notice}</p>}
       <button
@@ -176,7 +235,7 @@ export function PostNowForm({
         className="btn btn-primary"
         disabled={pending || !canSubmit}
       >
-        {pending ? "Posting…" : "Post now"}
+        {pending ? "Posting…" : mode === "url" ? "Generate & post" : "Post now"}
       </button>
     </form>
   );

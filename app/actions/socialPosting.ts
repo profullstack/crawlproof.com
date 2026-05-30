@@ -2,8 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { encryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
 import { createBlueskySession } from "@/lib/sp/platforms/bluesky";
+import {
+  renderPostForPlatform,
+  assemblePostText,
+  type ProjectSocialConfig,
+} from "@/lib/sp/renderPost";
 import { getDiscordWebhookInfo } from "@/lib/sp/platforms/discord";
 import {
   getTelegramBotInfo,
@@ -85,6 +90,9 @@ export async function connectBluesky(input: {
         external_id: session.did,
         enc_access_token: encryptSecret(session.accessJwt),
         enc_refresh_token: encryptSecret(session.refreshJwt),
+        // Stored so the worker can silently re-auth when the Bluesky tokens
+        // expire (Bluesky has no refresh-token rotation path here).
+        enc_app_password: encryptSecret(appPassword),
         status: "active",
       },
       { onConflict: "user_id,platform,external_id" },
@@ -643,4 +651,175 @@ function parseIgnorePaths(input: string): string[] {
     if (path.length <= 200) seen.add(path);
   }
   return [...seen];
+}
+
+// ------------------------------------------------------------
+// getBlueskyAppPassword — owner-gated reveal of the stored app
+// password for the accounts UI (Show/Copy). Returns the decrypted value.
+// ------------------------------------------------------------
+export async function getBlueskyAppPassword(input: {
+  accountId: string;
+}): Promise<Ok<{ appPassword: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: account } = await supabase
+    .from("sp_account")
+    .select("id, enc_app_password")
+    .eq("id", input.accountId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!account) return { ok: false, error: "Account not found." };
+  const enc = (account as { enc_app_password?: string | null }).enc_app_password;
+  if (!enc) {
+    return { ok: false, error: "No app password stored — reconnect to save it." };
+  }
+  try {
+    return { ok: true, appPassword: decryptSecret(enc) };
+  } catch {
+    return { ok: false, error: "Could not decrypt the stored app password." };
+  }
+}
+
+// ------------------------------------------------------------
+// postNowFromUrl — AI-render an article URL per-platform using the
+// project's brand profile and post immediately to the chosen accounts.
+// ------------------------------------------------------------
+export async function postNowFromUrl(input: {
+  projectId: string;
+  url: string;
+  accountIds: string[];
+}): Promise<Ok<{ posted: number; errors: string[] }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const projectId = (input.projectId ?? "").trim();
+  const url = (input.url ?? "").trim();
+  const accountIds = (input.accountIds ?? []).filter(Boolean);
+  if (!projectId) return { ok: false, error: "Project is missing." };
+  if (!url) return { ok: false, error: "Enter an article URL." };
+  try {
+    const p = new URL(url);
+    if (!/^https?:$/.test(p.protocol)) {
+      return { ok: false, error: "URL must start with http:// or https://." };
+    }
+  } catch {
+    return { ok: false, error: "That doesn't look like a valid URL." };
+  }
+  if (accountIds.length === 0) {
+    return { ok: false, error: "Pick at least one account." };
+  }
+
+  // Project ownership (RLS scopes it) + brand profile.
+  const { data: cfgRow } = await supabase
+    .from("sp_project_config")
+    .select("brand_voice, tone, default_hashtags, custom_instructions")
+    .eq("project_id", projectId)
+    .maybeSingle();
+  const config: ProjectSocialConfig = {
+    brand_voice: (cfgRow?.brand_voice as string | null) ?? "",
+    tone: (cfgRow?.tone as string | null) ?? "casual",
+    default_hashtags: (cfgRow?.default_hashtags as string[] | null) ?? [],
+    custom_instructions: (cfgRow?.custom_instructions as string | null) ?? "",
+  };
+
+  const { data: accounts } = await supabase
+    .from("sp_account")
+    .select("id, platform")
+    .eq("user_id", user.id)
+    .in("id", accountIds);
+  if (!accounts || accounts.length === 0) {
+    return { ok: false, error: "No matching accounts." };
+  }
+
+  // Fetch the real page title so the render has good input.
+  let title: string | null = null;
+  try {
+    const site = await fetchSiteText(url);
+    title = site.title || null;
+  } catch {
+    // non-fatal — render can derive from the URL
+  }
+
+  let posted = 0;
+  const errors: string[] = [];
+  for (const account of accounts as Array<{ id: string; platform: string }>) {
+    try {
+      const rendered = await renderPostForPlatform({
+        anthropic: anthropicSdk,
+        openai: openaiSdk,
+        platform: account.platform,
+        url,
+        articleTitle: title,
+        config,
+      });
+      const text = assemblePostText({ rendered, url, platform: account.platform });
+      const result = await postViaAccount({
+        supabase,
+        userId: user.id,
+        input: { accountId: account.id, text, title: rendered.title },
+        source: "manual",
+        projectId,
+      });
+      if (result.ok) posted++;
+      else errors.push(`${account.platform}: ${result.error}`);
+    } catch (err) {
+      errors.push(
+        `${account.platform}: ${err instanceof Error ? err.message : "render failed"}`,
+      );
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}/social`);
+  if (posted === 0) {
+    return { ok: false, error: errors.join("; ") || "Nothing was posted." };
+  }
+  return { ok: true, posted, errors };
+}
+
+// ------------------------------------------------------------
+// retryPost — re-publish a previously failed post using its stored
+// rendered_text + account. Owner-gated.
+// ------------------------------------------------------------
+export async function retryPost(input: {
+  postId: string;
+}): Promise<Ok<{ webUrl: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: post } = await supabase
+    .from("sp_post")
+    .select("id, account_id, rendered_text, status, project_id")
+    .eq("id", input.postId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!post) return { ok: false, error: "Post not found." };
+  const p = post as {
+    account_id: string;
+    rendered_text: string | null;
+    project_id: string | null;
+  };
+  if (!p.account_id || !p.rendered_text) {
+    return { ok: false, error: "This post can't be retried (missing account or text)." };
+  }
+
+  const result = await postViaAccount({
+    supabase,
+    userId: user.id,
+    input: { accountId: p.account_id, text: p.rendered_text },
+    source: "manual",
+    projectId: p.project_id ?? undefined,
+  });
+  if (!result.ok) return { ok: false, error: result.error };
+  if (p.project_id) revalidatePath(`/projects/${p.project_id}/social`);
+  return { ok: true, webUrl: result.webUrl };
 }
