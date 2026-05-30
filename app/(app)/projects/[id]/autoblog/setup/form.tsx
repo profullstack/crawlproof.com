@@ -38,8 +38,17 @@ type Existing = {
   internal_links_per_article: number;
   backlinks_enabled: boolean;
   external_links_per_article: number;
+  banner_style: string | null;
   status: string;
 };
+
+const BANNER_STYLE_OPTIONS: Array<{ value: string; label: string; hint: string }> = [
+  { value: "editorial", label: "Editorial photo", hint: "Cinematic photojournalistic cover" },
+  { value: "hype", label: "Marketing hype", hint: "Bold, energetic launch-poster look" },
+  { value: "concept", label: "Concept illustration", hint: "Clean illustrated metaphor of the idea" },
+  { value: "tech", label: "3D / isometric", hint: "Sleek 3D render of the topic" },
+  { value: "bold_type", label: "Bold minimal", hint: "Striking minimal composition" },
+];
 
 const DAY_LABELS: Array<{ n: number; label: string }> = [
   { n: 1, label: "Mon" },
@@ -115,6 +124,7 @@ export function SetupForm({
   const [seoTitle, setSeoTitle] = useState(initial?.seo_title ?? "");
   const [seoDescription, setSeoDescription] = useState(initial?.seo_description ?? "");
   const [tone, setTone] = useState(initial?.tone ?? "");
+  const [bannerStyle, setBannerStyle] = useState(initial?.banner_style ?? "editorial");
   const [competitors, setCompetitors] = useState(
     (initial?.competitors ?? []).join(", "),
   );
@@ -566,6 +576,7 @@ export function SetupForm({
         seoTitle,
         seoDescription,
         tone,
+        bannerStyle,
         competitors,
         webhookUrl,
         webhookSecret,
@@ -932,6 +943,26 @@ export function SetupForm({
             value={tone}
             onChange={(e) => setTone(e.target.value)}
           />
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Banner image style
+          </label>
+          <select
+            className="input mt-1"
+            value={bannerStyle}
+            onChange={(e) => setBannerStyle(e.target.value)}
+          >
+            {BANNER_STYLE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {BANNER_STYLE_OPTIONS.find((o) => o.value === bannerStyle)?.hint}
+            {" "}— every banner depicts the post's actual topic in this style.
+          </p>
         </div>
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
