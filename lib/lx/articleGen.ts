@@ -809,7 +809,7 @@ const STYLE_DIRECTION: Record<BannerStyle, string> = {
   editorial:
     "Treatment: cinematic editorial cover PHOTOGRAPH (Time / National Geographic / The Verge feature). A real-feeling moment that depicts the topic — a charged scene, a dramatic object lit in context, or a person genuinely doing the thing the article is about. Chiaroscuro lighting, one committed color palette, film-like microcontrast, real-world texture. Looks shot, not rendered.",
   hype:
-    "Treatment: bold MARKETING / HYPE poster — energetic product-launch key art. High-contrast, saturated, dynamic angles and motion, dramatic rim light and glow, a confident hero subject that embodies the topic. Feels like the splash image for a hot launch. Premium and exciting, NOT cheesy stock or clip-art.",
+    "Treatment: bold MARKETING AD CREATIVE / product-launch key art — like a premium paid-social ad or a SaaS landing-page hero. Build the composition around a single bold SYMBOLIC OBJECT or stylized representation of the topic (a glowing product-like artifact, an abstract-but-meaningful icon-as-3D-object, dramatic shapes), floating or spotlit as the hero element. High-contrast, saturated, big confident color blocks, dynamic diagonal energy, rim light and glow, sense of motion and momentum. ABSOLUTELY NO people sitting at desks, laptops, monitors, keyboards, or office scenes — the hero is the concept/product itself, not a person working. Premium and exciting, never cheesy stock photography.",
   concept:
     "Treatment: clean CONCEPT ILLUSTRATION — a single clear visual metaphor for the article's core idea, rendered in a modern flat/vector editorial style with depth and a tight palette. The metaphor must come from the post's actual subject, not generic tech doodles.",
   tech:
@@ -845,7 +845,8 @@ export async function generateImage(
     lede ? `What it's actually about: ${lede}` : "",
     tagList.length > 0 ? `Key concepts to depict: ${tagList.join(", ")}.` : "",
     meta.niche ? `Subject area: ${meta.niche}.` : "",
-    "The image MUST be recognizably about this topic — a viewer should glance at it and understand what the article covers. Depict the actual subject, not a generic office or 'person at a laptop' scene.",
+    "The image MUST be recognizably about this topic — a viewer should glance at it and understand what the article covers.",
+    "HARD CONSTRAINT: do NOT show a person sitting at a computer, laptop, desk, monitors, or a generic office — this cliché is banned even for software / AI / SEO / publishing topics. Depict the actual subject matter through objects, environments, systems, or bold concept visuals instead.",
     audienceList.length > 0
       ? `Audience: ${audienceList.join("; ")}. Any people shown should plausibly belong to it.`
       : "",
