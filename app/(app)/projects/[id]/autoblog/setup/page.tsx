@@ -7,7 +7,7 @@ import { SetupForm } from "./form";
 export const metadata = { title: "Autoblog · Setup" };
 
 const SITE_COLUMNS =
-  "id, domain, blog_root_url, sitemap_url, niche, target_audiences, description, seed_keywords, modifiers, preserve_keywords, keywords, seo_title, seo_description, tone, competitors, webhook_url, webhook_secret, daily_article_count, publish_days, publish_hour, internal_links_per_article, backlinks_enabled, external_links_per_article, status";
+  "id, domain, blog_root_url, sitemap_url, niche, target_audiences, description, seed_keywords, modifiers, preserve_keywords, keywords, seo_title, seo_description, tone, competitors, webhook_url, webhook_secret, daily_article_count, publish_days, publish_hour, internal_links_per_article, backlinks_enabled, external_links_per_article, banner_style, status";
 
 export default async function AutoblogSetupPage({
   params,
