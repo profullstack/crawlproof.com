@@ -95,6 +95,22 @@ export function imageStyleOptions(): ImageStyle[] {
   return Object.keys(STYLE_SPECS) as ImageStyle[];
 }
 
+// A stored image-style preference: a concrete style, or "rotate" to cycle
+// through every style (one per post).
+export type ImageStylePref = ImageStyle | "rotate";
+
+// Resolve a stored preference to a concrete style. "rotate" picks one
+// deterministically from the seed (the feed item id) so re-renders are
+// stable while different items cycle through the full set.
+export function resolveImageStyle(pref: ImageStylePref, seed: string): ImageStyle {
+  if (pref !== "rotate") return pref;
+  const options = imageStyleOptions();
+  const hex = seed.replace(/-/g, "").slice(0, 8);
+  const n = parseInt(hex, 16);
+  const idx = Number.isFinite(n) ? n % options.length : 0;
+  return options[idx] ?? "editorial";
+}
+
 // Decides whether THIS feed item should get an image. cadence = 0 means
 // never; cadence = N means roughly 1 in N. Decision is deterministic from
 // the item id so re-renders give the same answer.

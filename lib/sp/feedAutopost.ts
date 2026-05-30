@@ -12,8 +12,9 @@ import {
 } from "@/lib/sp/renderPost";
 import {
   resolveImage,
+  resolveImageStyle,
   shouldAttachImage,
-  type ImageStyle,
+  type ImageStylePref,
 } from "@/lib/sp/imageGen";
 
 export type FeedAutopostClients = {
@@ -294,7 +295,7 @@ type FeedItemRow = {
 
 type LoadedProjectConfig = ProjectSocialConfig & {
   image_cadence: number;
-  image_style: ImageStyle;
+  image_style: ImageStylePref;
 };
 
 const DEFAULT_PROJECT_CONFIG: LoadedProjectConfig = {
@@ -324,7 +325,7 @@ async function loadProjectConfig(
     default_hashtags: (data.default_hashtags as string[] | null) ?? [],
     custom_instructions: (data.custom_instructions as string | null) ?? "",
     image_cadence: (data.image_cadence as number | null) ?? 0,
-    image_style: ((data.image_style as string | null) ?? "editorial") as ImageStyle,
+    image_style: ((data.image_style as string | null) ?? "editorial") as ImageStylePref,
   };
 }
 
@@ -488,7 +489,7 @@ async function ensureImage(args: {
   item: FeedItemRow;
   cadence: number;
   brandVoice: string;
-  style: ImageStyle;
+  style: ImageStylePref;
   openai: OpenAI | null;
 }): Promise<string | null> {
   const { supabase, item, cadence, brandVoice, style, openai } = args;
@@ -501,7 +502,8 @@ async function ensureImage(args: {
     articleUrl: item.url,
     articleTitle: item.title ?? item.url,
     brandVoice,
-    style,
+    // "rotate" resolves to a concrete style deterministically per item.
+    style: resolveImageStyle(style, item.id),
     // AI generation only if cadence is on AND an OpenAI client is available.
     allowAi: !!openai,
   });

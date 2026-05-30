@@ -49,6 +49,11 @@ const IMAGE_STYLES: Array<{ value: string; label: string; hint: string }> = [
     label: "Product UI mockup",
     hint: "Fake-but-plausible SaaS dashboard screenshot. Best for product / feature launch posts.",
   },
+  {
+    value: "rotate",
+    label: "Rotate through all",
+    hint: "Cycle through every style — each post gets a different one (chosen deterministically per article).",
+  },
 ];
 
 export function SocialProfileForm({
