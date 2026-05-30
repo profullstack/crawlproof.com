@@ -152,11 +152,18 @@ export function PostNowForm({
               }}
             >
               <option value="">Pick from your feed…</option>
-              {urls.map((u) => (
-                <option key={u.url} value={u.url}>
-                  {u.title || u.url}
-                </option>
-              ))}
+              {urls.map((u) => {
+                const t = (u.title || "").trim();
+                // Older feed items have a URL-slug title (often a UUID); show
+                // the URL in that case so options are recognizable.
+                const uuidish = /^[0-9a-f]{8}[\s-]/i.test(t);
+                const label = t && !uuidish ? `${t} — ${u.url}` : u.url;
+                return (
+                  <option key={u.url} value={u.url}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
           )}
           <input

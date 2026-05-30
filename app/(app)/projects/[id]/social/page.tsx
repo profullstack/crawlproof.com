@@ -104,7 +104,7 @@ export default async function SocialDashboardPage({
       .eq("user_id", user.id)
       .eq("project_id", projectId)
       .order("first_seen_at", { ascending: false })
-      .limit(10),
+      .limit(50),
     supabase
       .from("sp_project_config")
       .select(
@@ -391,7 +391,7 @@ export default async function SocialDashboardPage({
           </p>
         ) : (
           <ul className="mt-2 divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)]">
-            {feedItems!.map((item: any) => (
+            {feedItems!.slice(0, 10).map((item: any) => (
               <li key={item.id} className="px-3 py-2 text-sm">
                 <div className="flex items-baseline justify-between gap-3">
                   <a
