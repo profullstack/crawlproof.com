@@ -55,6 +55,7 @@ type SiteRow = {
   internal_links_per_article: number;
   backlinks_enabled: boolean;
   external_links_per_article: number;
+  banner_style: BannerStyle | null;
 };
 
 type KeywordRow = {
@@ -522,11 +523,16 @@ async function findPriorArticles(
 // at work, dramatic scenes, expressive moments) instead of abstract
 // metallic objects. Mix subjects across articles so the blog index
 // doesn't feel like one repeated style.
-const SHARED_ART_DIRECTION = [
-  // Reference: visual benchmarks people stop scrolling for.
+// Inline "concept" section images keep the photojournalistic tactile-metaphor
+// look. The hero no longer forces this — its subject comes from the post
+// content + the project's chosen banner style instead, so projects stop
+// looking identical.
+const INLINE_CONCEPT_DIRECTION = [
   "Style benchmark: a Time Magazine / National Geographic / Bloomberg Businessweek / The Verge feature-cover photograph. Editorial photojournalism, not abstract digital art. Should feel like a published photograph, not a render.",
-  // Subject diversity — break the "geometric metal sculpture" default.
   "Subject: pick the most cinematic option that fits the topic — a person at work with the topic visible in their environment (engineer at a screen, operator in a control room, hands on a keyboard with code reflected in glasses, a researcher at a whiteboard); OR a dramatic scene that evokes the topic (a server room glowing in low light, a city at dusk seen through a window, a single object spotlit on a desk surrounded by cluttered notes); OR a close-up of a real-world workspace artifact (open laptop, well-worn notebook, coffee-ringed printout, glowing terminal). Vary across articles. Faces and hands are welcome — they drive engagement.",
+];
+
+const SHARED_ART_DIRECTION = [
   // Lighting: cinematic but believable.
   "Lighting: cinematic chiaroscuro — one strong directional light source (window, monitor glow, desk lamp) with deep falloff into shadow, plus a subtle warm or cool fill. Mood is contemplative-intense, not corporate-bright. Volumetric light particles welcome.",
   // Palette: richer and varied per piece.
@@ -707,6 +713,7 @@ function buildInlineImagePrompt(
         `Editorial section image for a long-form technical SEO article.`,
         `Concept to evoke (do NOT depict literally — find a tactile metaphor): ${spec.prompt}.`,
         niche,
+        ...INLINE_CONCEPT_DIRECTION,
         ...SHARED_ART_DIRECTION,
         "Slightly more subdued than a hero — a chapter divider, not the cover. 3:2 aspect.",
       ]
@@ -743,6 +750,46 @@ export async function generateInlineImage(
   return Buffer.from(b64, "base64");
 }
 
+export type BannerStyle = "editorial" | "hype" | "concept" | "tech" | "bold_type";
+
+export const BANNER_STYLES: ReadonlyArray<{
+  id: BannerStyle;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "editorial",
+    label: "Editorial photo",
+    description: "Cinematic photojournalistic cover — a real-feeling scene about the topic.",
+  },
+  {
+    id: "hype",
+    label: "Marketing hype",
+    description: "Bold, energetic launch-poster look. Punchy, high-contrast, scroll-stopping.",
+  },
+  {
+    id: "concept",
+    label: "Concept illustration",
+    description: "Clean illustrated metaphor of the post's core idea.",
+  },
+  {
+    id: "tech",
+    label: "3D / isometric",
+    description: "Sleek 3D or isometric render of the topic's objects and systems.",
+  },
+  {
+    id: "bold_type",
+    label: "Bold minimal",
+    description: "Striking minimal composition built around the topic's key motif.",
+  },
+];
+
+export function isBannerStyle(v: unknown): v is BannerStyle {
+  return (
+    typeof v === "string" && BANNER_STYLES.some((s) => s.id === v)
+  );
+}
+
 export type HeroImageMeta = {
   title: string;
   excerpt?: string | null;
@@ -751,6 +798,24 @@ export type HeroImageMeta = {
   niche?: string | null;
   audiences?: string[] | null;
   brand?: string | null;
+  style?: BannerStyle | null;
+};
+
+// Per-style art direction. Every style anchors on the SAME post content
+// (built below); this only changes the visual treatment so projects don't
+// all look identical. Shared rules: cinematic, text-free, single focal
+// subject, reads at thumbnail size.
+const STYLE_DIRECTION: Record<BannerStyle, string> = {
+  editorial:
+    "Treatment: cinematic editorial cover PHOTOGRAPH (Time / National Geographic / The Verge feature). A real-feeling moment that depicts the topic — a charged scene, a dramatic object lit in context, or a person genuinely doing the thing the article is about. Chiaroscuro lighting, one committed color palette, film-like microcontrast, real-world texture. Looks shot, not rendered.",
+  hype:
+    "Treatment: bold MARKETING / HYPE poster — energetic product-launch key art. High-contrast, saturated, dynamic angles and motion, dramatic rim light and glow, a confident hero subject that embodies the topic. Feels like the splash image for a hot launch. Premium and exciting, NOT cheesy stock or clip-art.",
+  concept:
+    "Treatment: clean CONCEPT ILLUSTRATION — a single clear visual metaphor for the article's core idea, rendered in a modern flat/vector editorial style with depth and a tight palette. The metaphor must come from the post's actual subject, not generic tech doodles.",
+  tech:
+    "Treatment: sleek 3D / ISOMETRIC render of the concrete objects, systems, or flow the article is about (devices, pipelines, networks, structures depicted literally as polished 3D forms). Studio lighting, soft shadows, glossy/matte material contrast, one accent color. Modern SaaS hero-render aesthetic.",
+  bold_type:
+    "Treatment: striking MINIMAL composition built around the single key motif of the topic — one bold symbolic object or shape, generous negative space, dramatic lighting, one strong accent color against a restrained background. Graphic and confident.",
 };
 
 export async function generateImage(
@@ -758,14 +823,13 @@ export async function generateImage(
   meta: HeroImageMeta,
 ): Promise<Buffer | null> {
   // Hero image. The thumbnail on /blog AND the OG card on every share —
-  // it has to stop a scroll on a phone. Aim for an editorial cover that
-  // a magazine art director would approve: a clear human or scene
-  // subject, dramatic light, one striking color combination.
+  // it has to stop a scroll on a phone AND actually depict THIS post.
   //
-  // We feed the model the actual article metadata (title, lede,
-  // tags, audience) so it has more to anchor on than the bare headline.
-  // Without the lede, gpt-image-1 collapses every abstract title into
-  // the same generic geometric render.
+  // We feed the model the real article metadata (title, lede, tags,
+  // niche) so the image is about the content, then apply the project's
+  // chosen visual treatment. Without the lede, gpt-image-1 collapses
+  // every abstract title into the same generic render.
+  const style: BannerStyle = meta.style ?? "editorial";
   const lede = (meta.excerpt || meta.metaDescription || "").trim();
   const tagList = (meta.tags ?? [])
     .map((t) => t.trim())
@@ -776,19 +840,22 @@ export async function generateImage(
     .filter(Boolean)
     .slice(0, 3);
   const prompt = [
-    `Hero cover photograph for a long-form technical feature titled: "${meta.title}".`,
-    lede ? `What the piece is actually about: ${lede}` : "",
-    tagList.length > 0 ? `Topic tags: ${tagList.join(", ")}.` : "",
+    // Content FIRST — the image must depict this specific post.
+    `Create a hero banner image that visually depicts the subject of this article. Title: "${meta.title}".`,
+    lede ? `What it's actually about: ${lede}` : "",
+    tagList.length > 0 ? `Key concepts to depict: ${tagList.join(", ")}.` : "",
     meta.niche ? `Subject area: ${meta.niche}.` : "",
+    "The image MUST be recognizably about this topic — a viewer should glance at it and understand what the article covers. Depict the actual subject, not a generic office or 'person at a laptop' scene.",
     audienceList.length > 0
-      ? `Audience the piece is for: ${audienceList.join("; ")}. If you place a person in the frame, they should plausibly belong to that audience (clothing, environment, tools).`
+      ? `Audience: ${audienceList.join("; ")}. Any people shown should plausibly belong to it.`
       : "",
     meta.brand
-      ? `Publication: ${meta.brand} — operator-focused technical journalism, not corporate marketing.`
+      ? `Publication: ${meta.brand}.`
       : "",
-    "Pick the single most cinematic, scroll-stopping visual that fits the topic — preferably a real-feeling moment (a person at work, a charged scene, a single dramatic object lit in context) rather than abstract geometric shapes. Make it look like a published feature-story photograph, NOT an AI-generated abstract pattern.",
+    // Visual treatment SECOND — varies per project, keeps the family look.
+    STYLE_DIRECTION[style],
     ...SHARED_ART_DIRECTION,
-    "Cinematic 3:2 magazine cover aspect. Single-image composition with a clear focal subject; never a collage. Must read well as a 320×213px social-card thumbnail.",
+    "Cinematic 3:2 aspect. Single-image composition with one clear focal subject; never a collage. Text-free (no words, labels, or logos). Must read well as a 320×213px social-card thumbnail.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -856,7 +923,7 @@ export async function generateArticle(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, user_id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, backlinks_enabled, external_links_per_article, status",
+      "id, user_id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, backlinks_enabled, external_links_per_article, banner_style, status",
     )
     .eq("id", siteId)
     .maybeSingle();
@@ -1131,6 +1198,7 @@ export async function generateArticle(
           niche: typedSite.niche,
           audiences: typedSite.target_audiences,
           brand: typedSite.domain ?? null,
+          style: typedSite.banner_style ?? "editorial",
         });
         if (bytes)
           imageUrl = await uploadImage(supabase, typedSite.id, finalSlug, bytes);
