@@ -104,7 +104,7 @@ export default async function SocialDashboardPage({
       .eq("user_id", user.id)
       .eq("project_id", projectId)
       .order("first_seen_at", { ascending: false })
-      .limit(50),
+      .limit(500),
     supabase
       .from("sp_project_config")
       .select(

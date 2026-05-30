@@ -14,6 +14,15 @@ const FACEBOOK_MAX = 5000;
 const THREADS_MAX = 500;
 const REDDIT_TITLE_MAX = 300;
 
+// Classify a feed URL so the picker can group Software listings / Blog posts /
+// News separately from tag/category/static "other" pages.
+function kindOf(url: string): "blog" | "software" | "news" | "other" {
+  if (/\/blog\//i.test(url)) return "blog";
+  if (/\/software\//i.test(url)) return "software";
+  if (/\/news\//i.test(url)) return "news";
+  return "other";
+}
+
 export function PostNowForm({
   accounts,
   projectId,
@@ -152,16 +161,30 @@ export function PostNowForm({
               }}
             >
               <option value="">Pick from your feed…</option>
-              {urls.map((u) => {
-                const t = (u.title || "").trim();
-                // Older feed items have a URL-slug title (often a UUID); show
-                // the URL in that case so options are recognizable.
-                const uuidish = /^[0-9a-f]{8}[\s-]/i.test(t);
-                const label = t && !uuidish ? `${t} — ${u.url}` : u.url;
+              {(
+                [
+                  ["blog", "Blog posts"],
+                  ["software", "Software listings"],
+                  ["news", "News"],
+                  ["other", "Other pages"],
+                ] as const
+              ).map(([kind, label]) => {
+                const inKind = urls.filter((u) => kindOf(u.url) === kind);
+                if (inKind.length === 0) return null;
                 return (
-                  <option key={u.url} value={u.url}>
-                    {label}
-                  </option>
+                  <optgroup key={kind} label={`${label} (${inKind.length})`}>
+                    {inKind.slice(0, 50).map((u) => {
+                      const t = (u.title || "").trim();
+                      // Older items have a URL-slug/UUID title; show the URL then.
+                      const uuidish = /^[0-9a-f]{8}[\s-]/i.test(t);
+                      const optLabel = t && !uuidish ? `${t} — ${u.url}` : u.url;
+                      return (
+                        <option key={u.url} value={u.url}>
+                          {optLabel}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
                 );
               })}
             </select>
