@@ -314,6 +314,9 @@ export type SiteInput = {
   // (Link Exchange phase) ships separately.
   backlinksEnabled?: boolean;
   externalLinksPerArticle?: number;
+  // Autoblog hero/banner image style. See BANNER_STYLES in
+  // lib/lx/articleGen.ts. Defaults to 'editorial'.
+  bannerStyle?: string;
 };
 
 export async function createOrUpdateSite(
@@ -370,6 +373,10 @@ export async function createOrUpdateSite(
   const internalLinks = Math.max(0, Math.min(8, Math.floor(input.internalLinksPerArticle ?? 3)));
   const backlinksEnabled = !!input.backlinksEnabled;
   const externalLinks = Math.max(0, Math.min(5, Math.floor(input.externalLinksPerArticle ?? 3)));
+  const BANNER_STYLE_IDS = ["editorial", "hype", "concept", "tech", "bold_type"];
+  const bannerStyle = BANNER_STYLE_IDS.includes(input.bannerStyle ?? "")
+    ? (input.bannerStyle as string)
+    : "editorial";
   const publishDays = Array.from(
     new Set(
       (input.publishDays ?? [1, 2, 3, 4, 5])
@@ -442,6 +449,7 @@ export async function createOrUpdateSite(
         internal_links_per_article: internalLinks,
         backlinks_enabled: backlinksEnabled,
         external_links_per_article: externalLinks,
+        banner_style: bannerStyle,
         next_publish_at: nextAt?.toISOString() ?? null,
       })
       .eq("id", existingByProject.id);
@@ -480,6 +488,7 @@ export async function createOrUpdateSite(
       internal_links_per_article: internalLinks,
       backlinks_enabled: backlinksEnabled,
       external_links_per_article: externalLinks,
+      banner_style: bannerStyle,
       next_publish_at: nextAt?.toISOString() ?? null,
     })
     .select("id")
