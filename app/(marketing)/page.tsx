@@ -49,17 +49,34 @@ export default function HomePage() {
           See your site the way AI crawlers do.
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-lg text-[var(--color-muted)]">
-          CrawlProof runs an AEO audit on any URL and tells you what LLMs can actually find —
-          content, schema, robots rules, AI-bot access, and positioning. Free,
-          no signup needed to try.
+          <strong className="font-semibold text-[var(--color-text)]">
+            AEO is Answer Engine Optimization
+          </strong>{" "}
+          — making sure ChatGPT, Claude, Perplexity, and Google AI Overviews can
+          actually read and describe your site. CrawlProof audits any URL and
+          shows you exactly what they find: content, schema, robots rules,
+          AI-bot access, and positioning.
         </p>
         <div className="mx-auto mt-8 max-w-xl">
           <HeroAuditForm />
         </div>
-        <p className="mx-auto mt-3 max-w-xl text-xs leading-relaxed text-[var(--color-muted)]">
-          Enter a URL to generate an on-page rule-based report. Add email only
-          if you want the PDF delivered to your inbox. No card required.
-        </p>
+        <div className="mx-auto mt-4 flex max-w-xl flex-col items-center gap-3 text-xs text-[var(--color-muted)]">
+          <p className="leading-relaxed">
+            Every scan checks crawlability (HTML vs. JS-rendered), schema /
+            JSON-LD, robots.txt &amp; sitemap, AI-bot access, llms.txt &amp;
+            skill.md, and positioning — then hands you a priority to-do list.
+          </p>
+          {env.selfAuditUrl && (
+            <a
+              href={env.selfAuditUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-[var(--color-accent)] hover:underline"
+            >
+              See a sample report →
+            </a>
+          )}
+        </div>
       </section>
 
       <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">

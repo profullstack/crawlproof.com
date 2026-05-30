@@ -317,6 +317,42 @@ export async function sendAuditReadyEmail(input: {
   });
 }
 
+// Email a completed report's PDF on demand — used by the post-report
+// "email me the PDF" capture on /r/<token>. Mirrors the worker's
+// sendPerEngineEmail (same template + attachment) but runs in-app so a
+// visitor can request the PDF after the scan has already finished.
+export async function sendAuditReportPdfEmail(input: {
+  to: string;
+  targetUrl: string;
+  score: number;
+  reportUrl: string;
+  pdf: Buffer;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  const host = (() => {
+    try {
+      return new URL(input.targetUrl).hostname;
+    } catch {
+      return input.targetUrl;
+    }
+  })();
+  const res = await c.emails.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: `Your CrawlProof audit for ${host} (${input.score}/100)`,
+    html: auditReadyEmailHtml({
+      targetUrl: input.targetUrl,
+      score: input.score,
+      reportUrl: input.reportUrl,
+      pdfAttached: true,
+    }),
+    attachments: [{ filename: `crawlproof-${host}.pdf`, content: input.pdf.toString("base64") }],
+  });
+  if (res.error) return { sent: false, error: String(res.error) };
+  return { sent: true };
+}
+
 export async function sendDigestEmail(input: {
   to: string;
   rows: Array<{ target: string; score: number; url: string }>;
