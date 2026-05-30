@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { PostNowForm } from "./post-now";
 import { RetryPostButton } from "./retry-post-button";
+import { RetryFeedItemButton } from "./retry-feed-item-button";
 import { FeedSettingsForm } from "./feed-settings";
 import { SocialAutoRefresh } from "./auto-refresh";
 import { SocialProfileForm, type SocialProfile } from "./social-profile";
@@ -218,7 +219,14 @@ export default async function SocialDashboardPage({
       ) : (
         <section className="card p-5">
           <h2 className="text-lg font-semibold">Post now</h2>
-          <PostNowForm accounts={accountList} projectId={projectId} />
+          <PostNowForm
+            accounts={accountList}
+            projectId={projectId}
+            urls={(feedItems ?? []).map((f: { url: string; title: string | null }) => ({
+              url: f.url,
+              title: f.title,
+            }))}
+          />
         </section>
       )}
 
@@ -415,6 +423,11 @@ export default async function SocialDashboardPage({
                   <p className="mt-1 text-xs text-[var(--color-fail)]">
                     {item.last_error}
                   </p>
+                )}
+                {item.status === "failed" && (
+                  <div className="mt-1">
+                    <RetryFeedItemButton itemId={item.id} />
+                  </div>
                 )}
               </li>
             ))}

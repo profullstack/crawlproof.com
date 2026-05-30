@@ -823,3 +823,37 @@ export async function retryPost(input: {
   if (p.project_id) revalidatePath(`/projects/${p.project_id}/social`);
   return { ok: true, webUrl: result.webUrl };
 }
+
+// ------------------------------------------------------------
+// retryFeedItem — re-queue a failed feed item (e.g. one that failed to post
+// because the platform token had expired). Resets it to 'seen' so the next
+// feed run re-attempts delivery with the cached (good) render.
+// ------------------------------------------------------------
+export async function retryFeedItem(input: {
+  itemId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: item } = await supabase
+    .from("sp_feed_item")
+    .select("id, user_id, project_id")
+    .eq("id", input.itemId)
+    .maybeSingle();
+  if (!item || (item as { user_id?: string }).user_id !== user.id) {
+    return { ok: false, error: "Feed item not found." };
+  }
+
+  const { error } = await supabase
+    .from("sp_feed_item")
+    .update({ status: "seen", last_error: null })
+    .eq("id", input.itemId);
+  if (error) return { ok: false, error: error.message };
+
+  const projectId = (item as { project_id?: string }).project_id;
+  if (projectId) revalidatePath(`/projects/${projectId}/social`);
+  return { ok: true };
+}
