@@ -17,9 +17,11 @@ const REDDIT_TITLE_MAX = 300;
 export function PostNowForm({
   accounts,
   projectId,
+  urls = [],
 }: {
   accounts: Array<{ id: string; platform: string; handle: string }>;
   projectId: string;
+  urls?: Array<{ url: string; title: string | null }>;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -141,10 +143,26 @@ export function PostNowForm({
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Article URL
           </label>
+          {urls.length > 0 && (
+            <select
+              className="input mt-1"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) setUrl(e.target.value);
+              }}
+            >
+              <option value="">Pick from your feed…</option>
+              {urls.map((u) => (
+                <option key={u.url} value={u.url}>
+                  {u.title || u.url}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             className="input mt-1"
             type="url"
-            placeholder="https://example.com/post"
+            placeholder={urls.length > 0 ? "…or paste a URL" : "https://example.com/post"}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
