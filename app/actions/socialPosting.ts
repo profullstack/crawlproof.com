@@ -14,6 +14,7 @@ import { postViaAccount, type PostInput } from "@/lib/sp/post";
 import { mintApiToken } from "@/lib/sp/apiToken";
 import { serviceClient } from "@/lib/supabase/service";
 import { processProjectSocialFeed, type FeedType } from "@/lib/sp/feedAutopost";
+import { fetchSiteText, extractBrandProfile } from "@/lib/sp/brandProfileFetch";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
@@ -522,6 +523,69 @@ export async function saveSocialProfile(
   if (upErr) return { ok: false, error: upErr.message };
   revalidatePath(`/projects/${projectId}/social`);
   return { ok: true };
+}
+
+/**
+ * Use AI to derive a brand profile from the project's website. Returns the
+ * fields shaped like SocialProfileInput so the form can populate itself; it
+ * does NOT persist — the user reviews and clicks Save (saveSocialProfile).
+ */
+export async function fetchBrandProfile(input: {
+  projectId: string;
+}): Promise<{ ok: true; data: SocialProfileInput } | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const projectId = (input.projectId ?? "").trim();
+  if (!projectId) return { ok: false, error: "Project is missing." };
+
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id, url, name")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found." };
+
+  const url = ((project as { url?: string }).url ?? "").trim();
+  if (!url) {
+    return { ok: false, error: "Add a website URL to this project first." };
+  }
+
+  try {
+    const { title, text } = await fetchSiteText(url);
+    if (!text) {
+      return {
+        ok: false,
+        error: "Couldn't read any content from the site. Check the project URL.",
+      };
+    }
+    const extracted = await extractBrandProfile({
+      url,
+      name: (project as { name?: string | null }).name ?? null,
+      title,
+      siteText: text,
+    });
+    return {
+      ok: true,
+      data: {
+        projectId,
+        brandVoice: extracted.brandVoice,
+        tone: extracted.tone,
+        defaultHashtags: extracted.defaultHashtags.join(" "),
+        imageCadence: extracted.imageCadence,
+        imageStyle: extracted.imageStyle,
+        customInstructions: extracted.customInstructions,
+      },
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to fetch brand info.",
+    };
+  }
 }
 
 export async function checkSocialFeedNow(

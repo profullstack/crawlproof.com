@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { saveSocialProfile } from "@/app/actions/socialPosting";
+import { saveSocialProfile, fetchBrandProfile } from "@/app/actions/socialPosting";
 
 export type SocialProfile = {
   brand_voice: string;
@@ -54,12 +54,15 @@ const IMAGE_STYLES: Array<{ value: string; label: string; hint: string }> = [
 export function SocialProfileForm({
   projectId,
   profile,
+  projectUrl,
 }: {
   projectId: string;
   profile: SocialProfile | null;
+  projectUrl?: string | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [fetching, startFetch] = useTransition();
   const [brandVoice, setBrandVoice] = useState(profile?.brand_voice ?? "");
   const [tone, setTone] = useState(profile?.tone ?? "casual");
   const [hashtags, setHashtags] = useState(
@@ -96,8 +99,43 @@ export function SocialProfileForm({
     });
   }
 
+  function fetchNow() {
+    setError(null);
+    setNotice(null);
+    startFetch(async () => {
+      const result = await fetchBrandProfile({ projectId });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      const d = result.data;
+      setBrandVoice(d.brandVoice);
+      setTone(d.tone);
+      setHashtags(d.defaultHashtags);
+      setImageCadence(d.imageCadence);
+      setImageStyle(d.imageStyle);
+      setCustomInstructions(d.customInstructions);
+      setNotice("Filled from your site — review the fields, then Save.");
+    });
+  }
+
   return (
     <form onSubmit={submit} className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3">
+        <button
+          type="button"
+          className="btn"
+          onClick={fetchNow}
+          disabled={fetching || !projectUrl}
+        >
+          {fetching ? "Fetching…" : "Fetch now"}
+        </button>
+        <p className="text-xs text-[var(--color-muted)]">
+          {projectUrl
+            ? "Analyse your site with AI to pre-fill these fields. Nothing is saved until you click Save."
+            : "Add a website URL to this project to enable AI auto-fill."}
+        </p>
+      </div>
       <div>
         <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
           Brand voice
