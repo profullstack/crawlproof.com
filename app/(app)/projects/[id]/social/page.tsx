@@ -66,6 +66,7 @@ export default async function SocialDashboardPage({
     { data: bindings },
     { data: feedItems },
     { data: socialProfileRow },
+    { data: projectRow },
   ] = await Promise.all([
     supabase
       .from("sp_account")
@@ -109,8 +110,16 @@ export default async function SocialDashboardPage({
       )
       .eq("project_id", projectId)
       .maybeSingle(),
+    supabase
+      .from("projects")
+      .select("url")
+      .eq("id", projectId)
+      .maybeSingle(),
   ]);
   const socialProfile = (socialProfileRow ?? null) as SocialProfile | null;
+  const projectUrl = ((projectRow as { url?: string } | null)?.url ?? null) as
+    | string
+    | null;
 
   const accountList = (accounts ?? []) as Array<{
     id: string;
@@ -222,7 +231,11 @@ export default async function SocialDashboardPage({
           </p>
         </div>
         <div className="mt-4">
-          <SocialProfileForm projectId={projectId} profile={socialProfile} />
+          <SocialProfileForm
+            projectId={projectId}
+            profile={socialProfile}
+            projectUrl={projectUrl}
+          />
         </div>
       </section>
 
