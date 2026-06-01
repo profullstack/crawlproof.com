@@ -7,9 +7,9 @@ import { signInWithPassword, startGoogleOAuth } from "@/app/actions/auth";
 
 const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
-export function LoginForm({ redirectTo }: { redirectTo?: string }) {
+export function LoginForm({ redirectTo, defaultEmail }: { redirectTo?: string; defaultEmail?: string }) {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(defaultEmail ?? "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
