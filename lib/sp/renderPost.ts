@@ -22,7 +22,9 @@ const RenderSchema = z.object({
     .describe("Reddit post title; empty string for every other platform."),
   hashtags: z
     .array(z.string())
-    .describe("Platform-appropriate hashtags (no leading #). Empty if the platform doesn't use them."),
+    .describe(
+      "Platform-appropriate hashtags (no leading #). Empty if the platform doesn't use them.",
+    ),
 });
 
 export type RenderedPost = {
@@ -65,7 +67,8 @@ const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   threads: {
     maxChars: 480,
     usesHashtags: "few",
-    voice: "Conversational. One short hook, then one supporting line if needed.",
+    voice:
+      "Conversational. One short hook, then one supporting line if needed.",
   },
   mastodon: {
     maxChars: 480,
@@ -135,7 +138,9 @@ export async function renderPostForPlatform(args: {
     throw new Error(`No platform profile configured for "${platform}".`);
   }
   if (!anthropic && !openai) {
-    throw new Error("No AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY).");
+    throw new Error(
+      "No AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY).",
+    );
   }
 
   const tone = config.tone || "casual";
@@ -184,7 +189,9 @@ export async function renderPostForPlatform(args: {
     throw new Error("Render produced empty text.");
   }
   const title =
-    platform === "reddit" && output.title?.trim() ? output.title.trim() : undefined;
+    platform === "reddit" && output.title?.trim()
+      ? output.title.trim()
+      : undefined;
   const hashtags = (output.hashtags ?? [])
     .filter((h): h is string => typeof h === "string")
     .map((h) => (h.startsWith("#") ? h : `#${h}`))
@@ -193,35 +200,94 @@ export async function renderPostForPlatform(args: {
   return { text, title, hashtags };
 }
 
+// Real per-platform hard limits — the length each platform actually rejects
+// above. These are the SAME values enforced in lib/sp/platforms/* and at the
+// postViaAccount guard; hardcoded here (they don't change) so the renderer can
+// guarantee a fitting post without importing every platform module. NOTE these
+// differ from PLATFORM_PROFILES[*].maxChars, which is the *soft* cap fed to the
+// LLM (deliberately lower to leave room for the URL + hashtags).
+const PLATFORM_HARD_LIMIT: Record<string, number> = {
+  bluesky: 300,
+  x: 280,
+  threads: 500,
+  mastodon: 500,
+  facebook: 5000,
+  facebook_page: 5000,
+  linkedin: 3000,
+  discord: 2000,
+  telegram: 4096,
+  reddit: 40_000,
+};
+
+const ELLIPSIS = "…";
+
+// Join body + url + hashtags and guarantee the result fits within `limit`.
+// The body is the only truncatable piece — the URL must stay intact (it's the
+// point of the post), and hashtags are dropped before the URL is sacrificed.
+function clampAssembled(
+  body: string,
+  url: string,
+  tags: string,
+  joiner: string,
+  limit: number,
+): string {
+  const assemble = (b: string, includeTags: boolean) =>
+    [b, url, includeTags ? tags : ""].filter(Boolean).join(joiner);
+
+  // Fits as-is.
+  if (assemble(body, true).length <= limit) return assemble(body, true);
+
+  // Decide whether we can keep hashtags: only if doing so still leaves a
+  // reasonable amount of room for the body.
+  const suffixWithTags = assemble("", true); // = url (+ joiner + tags)
+  const suffixNoTags = assemble("", false); // = url
+  const keepTags = limit - suffixWithTags.length >= 24;
+  const suffix = keepTags ? suffixWithTags : suffixNoTags;
+
+  // Budget left for the body once the suffix and one joiner are reserved.
+  const bodyBudget = limit - suffix.length - joiner.length;
+  if (bodyBudget <= ELLIPSIS.length) {
+    // URL (and maybe tags) alone already fill the limit — return the suffix,
+    // trimmed as a last resort. This effectively never triggers for the short
+    // platforms because their URLs are far shorter than the limit.
+    return suffix.slice(0, limit);
+  }
+
+  // Trim the body to budget, preferring a word boundary so we don't cut mid-word.
+  let cut = body.slice(0, bodyBudget - ELLIPSIS.length);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace > bodyBudget * 0.6) cut = cut.slice(0, lastSpace);
+  const trimmedBody = cut.trimEnd() + ELLIPSIS;
+
+  return [trimmedBody, suffix].join(joiner);
+}
+
 // Assemble final post text for the platform from the rendered pieces +
 // the article URL. Different platforms want different orderings; some
-// embed the URL inline, others trail it after a blank line.
+// embed the URL inline, others trail it after a blank line. The result is
+// always clamped to the platform's hard character limit.
 export function assemblePostText(args: {
   rendered: RenderedPost;
   url: string;
   platform: string;
 }): string {
   const { rendered, url, platform } = args;
-  const profile = PLATFORM_PROFILES[platform];
-  const tagsBlock = rendered.hashtags.length > 0 ? rendered.hashtags.join(" ") : "";
+  const tagsBlock =
+    rendered.hashtags.length > 0 ? rendered.hashtags.join(" ") : "";
+  const limit = PLATFORM_HARD_LIMIT[platform] ?? Infinity;
 
   if (platform === "reddit") {
     // Reddit's "text" body is its self-post; URL goes in the body. Title
-    // is handled at the postViaAccount layer.
-    return [rendered.text, url].filter(Boolean).join("\n\n");
+    // is handled at the postViaAccount layer. No hashtags.
+    return clampAssembled(rendered.text, url, "", "\n\n", limit);
   }
   if (platform === "linkedin") {
-    return [rendered.text, url, tagsBlock].filter(Boolean).join("\n\n");
+    return clampAssembled(rendered.text, url, tagsBlock, "\n\n", limit);
   }
   if (platform === "discord" || platform === "telegram") {
     // No hashtags for these.
-    return [rendered.text, url].filter(Boolean).join("\n\n");
+    return clampAssembled(rendered.text, url, "", "\n\n", limit);
   }
   // Default short-form (bluesky/x/threads/mastodon/facebook): inline.
-  const head =
-    profile && rendered.text.length + url.length + 2 > profile.maxChars
-      ? rendered.text.slice(0, Math.max(0, profile.maxChars - url.length - 8)) + "…"
-      : rendered.text;
-  return [head, url, tagsBlock].filter(Boolean).join("\n");
+  return clampAssembled(rendered.text, url, tagsBlock, "\n", limit);
 }
-
