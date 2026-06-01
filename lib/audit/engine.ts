@@ -12,6 +12,7 @@ import { checkImages } from "./checks/images";
 import { checkLinks } from "./checks/links";
 import { checkSecurity } from "./checks/security";
 import { checkPerformance } from "./checks/performance";
+import { checkSpecCompliance } from "./checks/spec-compliance";
 import { scoreFindings } from "./score";
 import { deriveRecommendations } from "./recommendations";
 import type { AuditResult, CrawlContext, FetchedPage, Finding } from "./types";
@@ -101,7 +102,7 @@ export async function runAudit(
   // 1. Fetch homepage.
   const homepage = await fetchPage(target);
   // 2. Probe well-known files in parallel.
-  const [robots, sitemap, llmsTxt, llmsFullTxt, skillMd, aiPlugin, securityTxt] = await Promise.all([
+  const [robots, sitemap, llmsTxt, llmsFullTxt, skillMd, aiPlugin, securityTxt, changePassword, apiCatalog, agentCard] = await Promise.all([
     probeText(`${origin}/robots.txt`),
     probeText(`${origin}/sitemap.xml`),
     probeText(`${origin}/llms.txt`),
@@ -109,6 +110,9 @@ export async function runAudit(
     probeText(`${origin}/skill.md`),
     probeText(`${origin}/.well-known/ai-plugin.json`),
     probeText(`${origin}/.well-known/security.txt`),
+    probeText(`${origin}/.well-known/change-password`),
+    probeText(`${origin}/.well-known/api-catalog`),
+    probeText(`${origin}/.well-known/agent-card.json`),
   ]);
 
   // 3. Render homepage with Playwright (best effort).
@@ -145,6 +149,9 @@ export async function runAudit(
       skillMd: skillMd,
       aiPlugin: aiPlugin,
       securityTxt: securityTxt,
+      changePassword: changePassword,
+      apiCatalog: apiCatalog,
+      agentCard: agentCard,
     },
     findings: [],
   };
@@ -183,6 +190,7 @@ export async function runAudit(
   findings.push(...checkSecurity(ctx));
   findings.push(...checkRobotsAndSitemap(ctx));
   findings.push(...checkPositioning(ctx));
+  findings.push(...checkSpecCompliance(ctx));
 
   // Data Found
   const data = collectDataPoints(ctx);

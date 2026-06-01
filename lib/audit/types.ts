@@ -39,6 +39,9 @@ export type CrawlContext = {
     skillMd?: { content: string; status: number };
     aiPlugin?: { content: string; status: number };
     securityTxt?: { content: string; status: number };
+    changePassword?: { content: string; status: number };
+    apiCatalog?: { content: string; status: number };
+    agentCard?: { content: string; status: number };
   };
   findings: Finding[];
 };
