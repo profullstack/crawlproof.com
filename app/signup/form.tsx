@@ -4,9 +4,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signUpWithPassword, startGoogleOAuth } from "@/app/actions/auth";
 
-export function SignupForm({ redirectTo }: { redirectTo?: string }) {
+export function SignupForm({ redirectTo, defaultEmail }: { redirectTo?: string; defaultEmail?: string }) {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(defaultEmail ?? "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);

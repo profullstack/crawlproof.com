@@ -18,12 +18,16 @@ export const metadata = {
 export default async function SignupPage({
   searchParams,
 }: {
-  searchParams: Promise<{ redirect?: string }>;
+  searchParams: Promise<{ redirect?: string; email?: string }>;
 }) {
   const sp = await searchParams;
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
   if (data.user) redirect(sp.redirect ?? "/dashboard");
+
+  const loginHref = sp.redirect
+    ? `/login?redirect=${encodeURIComponent(sp.redirect)}`
+    : "/login";
 
   return (
     <main className="mx-auto max-w-md px-4 py-12 sm:px-6 sm:py-16">
@@ -34,10 +38,10 @@ export default async function SignupPage({
       <p className="mt-2 text-[var(--color-muted)]">
         Free tier: 10 audits/month, no card required.
       </p>
-      <SignupForm redirectTo={sp.redirect} />
+      <SignupForm redirectTo={sp.redirect} defaultEmail={sp.email} />
       <p className="mt-6 text-sm text-[var(--color-muted)]">
         Have an account?{" "}
-        <Link href="/login" className="underline">
+        <Link href={loginHref} className="underline">
           Sign in
         </Link>
       </p>

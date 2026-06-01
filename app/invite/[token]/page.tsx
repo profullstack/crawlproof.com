@@ -64,7 +64,11 @@ export default async function InvitePage({
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect(`/login?redirect=/invite/${token}`);
+    // New users need signup, not login. Pre-fill their invited email so they
+    // register with the right address, then land back here to accept.
+    redirect(
+      `/signup?redirect=${encodeURIComponent(`/invite/${token}`)}&email=${encodeURIComponent(inv.email)}`,
+    );
   }
 
   const { data: userProfile } = await svc

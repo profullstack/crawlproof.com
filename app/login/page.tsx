@@ -37,7 +37,10 @@ export default async function LoginPage({
       <LoginForm redirectTo={sp.redirect} />
       <p className="mt-6 text-sm text-[var(--color-muted)]">
         New here?{" "}
-        <Link href="/signup" className="underline">
+        <Link
+          href={sp.redirect ? `/signup?redirect=${encodeURIComponent(sp.redirect)}` : "/signup"}
+          className="underline"
+        >
           Create an account
         </Link>
       </p>
