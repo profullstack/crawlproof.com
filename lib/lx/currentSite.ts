@@ -33,7 +33,25 @@ function extractDomain(url: string): string {
   }
 }
 
-// All projects the signed-in user owns, with an autoblog badge.
+// Returns project IDs the user is a member of (via invitation, not ownership).
+async function memberProjectIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("project_members")
+    .select("project_id")
+    .eq("user_id", userId);
+  return (data ?? []).map((r: { project_id: string }) => r.project_id);
+}
+
+// Builds a filter string for "projects the user can access" — owner or member.
+function accessFilter(userId: string, memberIds: string[]): string | null {
+  if (memberIds.length === 0) return null;
+  return `owner_id.eq.${userId},id.in.(${memberIds.join(",")})`;
+}
+
+// All projects the signed-in user owns or is a member of, with an autoblog badge.
 export async function listUserProjects(): Promise<ProjectSummary[]> {
   const supabase = await createClient();
   const {
@@ -41,11 +59,15 @@ export async function listUserProjects(): Promise<ProjectSummary[]> {
   } = await supabase.auth.getUser();
   if (!user) return [];
 
-  const { data } = await supabase
+  const memberIds = await memberProjectIds(supabase, user.id);
+  const filter = accessFilter(user.id, memberIds);
+
+  let query = supabase
     .from("projects")
     .select("id, name, url, lx_site(status)")
-    .eq("owner_id", user.id)
     .order("created_at", { ascending: true });
+  query = filter ? query.or(filter) : query.eq("owner_id", user.id);
+  const { data } = await query;
 
   return ((data ?? []) as Array<{
     id: string;
@@ -130,11 +152,21 @@ export async function getProjectById(
 
   const { data } = await supabase
     .from("projects")
-    .select(select)
+    .select(`${select}, owner_id`)
     .eq("id", projectId)
-    .eq("owner_id", user.id)
     .maybeSingle();
-  return data ? normalizeProject(data as unknown as Record<string, unknown>) : null;
+  if (!data) return null;
+  const row = data as unknown as Record<string, unknown>;
+  if (row.owner_id !== user.id) {
+    const { data: membership } = await supabase
+      .from("project_members")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) return null;
+  }
+  return normalizeProject(row);
 }
 
 export async function getCurrentProject(opts: {
@@ -154,18 +186,19 @@ export async function getCurrentProject(opts: {
   const siteColumns = opts.siteColumns ?? "*";
   const select = `${projectColumns}, lx_site(${siteColumns})`;
 
-  const cookieStore = await cookies();
+  const [cookieStore, memberIds] = await Promise.all([
+    cookies(),
+    memberProjectIds(supabase, user.id),
+  ]);
+  const filter = accessFilter(user.id, memberIds);
   const cookieId = cookieStore.get(CURRENT_SITE_COOKIE)?.value;
 
   if (cookieId) {
     // The cookie may hold a project_id (new) or an lx_site.id (legacy).
     // Try project first; if no hit, look up the project_id from lx_site.
-    const { data: byProject } = await supabase
-      .from("projects")
-      .select(select)
-      .eq("id", cookieId)
-      .eq("owner_id", user.id)
-      .maybeSingle();
+    let q = supabase.from("projects").select(select).eq("id", cookieId);
+    q = filter ? q.or(filter) : q.eq("owner_id", user.id);
+    const { data: byProject } = await q.maybeSingle();
     if (byProject) return normalizeProject(byProject as unknown as Record<string, unknown>);
 
     const { data: viaSite } = await supabase
@@ -175,23 +208,20 @@ export async function getCurrentProject(opts: {
       .eq("user_id", user.id)
       .maybeSingle();
     if (viaSite?.project_id) {
-      const { data: hopped } = await supabase
-        .from("projects")
-        .select(select)
-        .eq("id", viaSite.project_id)
-        .eq("owner_id", user.id)
-        .maybeSingle();
+      let hq = supabase.from("projects").select(select).eq("id", viaSite.project_id);
+      hq = filter ? hq.or(filter) : hq.eq("owner_id", user.id);
+      const { data: hopped } = await hq.maybeSingle();
       if (hopped) return normalizeProject(hopped as unknown as Record<string, unknown>);
     }
   }
 
-  const { data: first } = await supabase
+  let fallback = supabase
     .from("projects")
     .select(select)
-    .eq("owner_id", user.id)
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+  fallback = filter ? fallback.or(filter) : fallback.eq("owner_id", user.id);
+  const { data: first } = await fallback.maybeSingle();
   return first ? normalizeProject(first as unknown as Record<string, unknown>) : null;
 }
 
