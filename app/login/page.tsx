@@ -13,7 +13,7 @@ export const metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ redirect?: string; error?: string }>;
+  searchParams: Promise<{ redirect?: string; error?: string; email?: string }>;
 }) {
   const sp = await searchParams;
   const supabase = await createClient();
@@ -34,7 +34,7 @@ export default async function LoginPage({
           {sp.error}
         </p>
       )}
-      <LoginForm redirectTo={sp.redirect} />
+      <LoginForm redirectTo={sp.redirect} defaultEmail={sp.email} />
       <p className="mt-6 text-sm text-[var(--color-muted)]">
         New here?{" "}
         <Link
