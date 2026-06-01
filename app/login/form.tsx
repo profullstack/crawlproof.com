@@ -5,6 +5,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithPassword, startGoogleOAuth } from "@/app/actions/auth";
 
+const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
+
 export function LoginForm({ redirectTo }: { redirectTo?: string }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -40,14 +42,18 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
 
   return (
     <div className="mt-6 space-y-4">
-      <button type="button" className="btn w-full" onClick={onGoogle} disabled={pending}>
-        Continue with Google
-      </button>
-      <div className="flex items-center gap-3 text-sm text-[var(--color-muted)]">
-        <div className="h-px flex-1 bg-[var(--color-border)]" />
-        or
-        <div className="h-px flex-1 bg-[var(--color-border)]" />
-      </div>
+      {googleEnabled && (
+        <>
+          <button type="button" className="btn w-full" onClick={onGoogle} disabled={pending}>
+            Continue with Google
+          </button>
+          <div className="flex items-center gap-3 text-sm text-[var(--color-muted)]">
+            <div className="h-px flex-1 bg-[var(--color-border)]" />
+            or
+            <div className="h-px flex-1 bg-[var(--color-border)]" />
+          </div>
+        </>
+      )}
       <form onSubmit={onSubmit} className="space-y-3">
         <input
           type="email"
