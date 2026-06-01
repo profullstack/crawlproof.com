@@ -2,6 +2,7 @@ import http from "node:http";
 import WebSocket from "ws";
 import { createClient } from "@supabase/supabase-js";
 import { runAudit } from "../lib/audit/engine";
+import { specAudit } from "../lib/audit/spec-engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
 import { openaiAudit } from "../lib/audit/openai-engine";
 import { geminiAudit } from "../lib/audit/gemini-engine";
@@ -291,6 +292,7 @@ async function processJob(job: Job) {
     const engine =
       (audit.engine as
         | "rule"
+        | "spec"
         | "claude"
         | "openai"
         | "gemini"
@@ -323,7 +325,13 @@ async function processJob(job: Job) {
       perplexity: perplexityAudit,
     } as const;
 
-    if (engine in llmEngines) {
+    if (engine === "spec") {
+      const r = await specAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = r.markdown;
+    } else if (engine in llmEngines) {
       const fn = llmEngines[engine as keyof typeof llmEngines];
       const r = await fn(audit.target_url);
       score = r.score;

@@ -147,6 +147,7 @@ export const SECTIONS = [
   "Well-Known URIs",
   "Privacy",
   "Resilience",
+  "Website Specification",
   "Missing or Hard-to-Find Information",
   "Recommended Fixes",
   "Priority To-Do List",
