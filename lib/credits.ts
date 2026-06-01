@@ -37,6 +37,7 @@ export function perScanCents(pack: CreditPack): number {
 // ----- Engines (rule + 6 LLM providers) -----------------------------------
 export type Engine =
   | "rule"
+  | "spec"
   | "claude"
   | "openai"
   | "qwen"
@@ -60,6 +61,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Deterministic engine — fetches your site, parses HTML / JSON-LD / robots, generates the structured report. Free.",
+  },
+  spec: {
+    label: "specification.website",
+    cost: 0,
+    available: true,
+    blurb:
+      "Runs your URL against the specification.website checklist — 114 checks across Foundations, SEO, Security, Accessibility, Agent Readiness, Performance, Privacy, Resilience, and Internationalisation. Free.",
   },
   claude: {
     label: "Claude Sonnet 4.6",

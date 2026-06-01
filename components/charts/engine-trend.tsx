@@ -22,6 +22,7 @@ export type EngineTrendPoint = {
 
 const ENGINE_COLORS: Record<Engine, string> = {
   rule: "#9aa3b2",
+  spec: "#64748b",
   claude: "#d97706",
   openai: "#10b981",
   gemini: "#3b82f6",
