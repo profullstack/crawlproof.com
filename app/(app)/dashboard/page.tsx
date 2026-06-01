@@ -30,20 +30,33 @@ export default async function DashboardPage({
     data: { user },
   } = await supabase.auth.getUser();
 
+  const { data: memberRows } = await supabase
+    .from("project_members")
+    .select("project_id")
+    .eq("user_id", user!.id);
+  const memberIds = (memberRows ?? []).map((r: { project_id: string }) => r.project_id);
+  const accessFilter =
+    memberIds.length > 0
+      ? `owner_id.eq.${user!.id},id.in.(${memberIds.join(",")})`
+      : null;
+
+  const projectsQuery = supabase
+    .from("projects")
+    .select("id,name,url,schedule,next_run_at,status,logo_url")
+    .eq("status", status)
+    .order("created_at", { ascending: false });
+
   const [{ data: projects }, { data: audits }, counts] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("id,name,url,schedule,next_run_at,status,logo_url")
-      .eq("owner_id", user!.id)
-      .eq("status", status)
-      .order("created_at", { ascending: false }),
+    accessFilter
+      ? projectsQuery.or(accessFilter)
+      : projectsQuery.eq("owner_id", user!.id),
     supabase
       .from("audits")
       .select("id,target_url,status,score,created_at,share_token")
       .eq("owner_id", user!.id)
       .order("created_at", { ascending: false })
       .limit(10),
-    countByStatus(supabase, user!.id),
+    countByStatus(supabase, user!.id, accessFilter),
   ]);
 
   // Per-project autoblog/social enablement. Autoblog is "on" when the
@@ -376,14 +389,16 @@ async function fetchEnabledProjectIds(
 async function countByStatus(
   supabase: Awaited<ReturnType<typeof createClient>>,
   ownerId: string,
+  accessFilter: string | null,
 ): Promise<Record<StatusFilter, number>> {
   const rows = await Promise.all(
     FILTERS.map(async (f) => {
-      const { count } = await supabase
+      let q = supabase
         .from("projects")
         .select("id", { count: "exact", head: true })
-        .eq("owner_id", ownerId)
         .eq("status", f.id);
+      q = accessFilter ? q.or(accessFilter) : q.eq("owner_id", ownerId);
+      const { count } = await q;
       return [f.id, count ?? 0] as const;
     }),
   );
