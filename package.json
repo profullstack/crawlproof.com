@@ -34,6 +34,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-globe.gl": "^2.38.0",
     "recharts": "^3.8.1",
     "resend": "^4.0.0",
     "stripe": "^17.4.0",
