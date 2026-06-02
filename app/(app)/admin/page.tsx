@@ -104,6 +104,16 @@ export default async function AdminPage() {
       </section>
 
       <section className="card p-5">
+        <h2 className="text-lg font-semibold">Email broadcast</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">Send a mass email to all registered users.</p>
+        <div className="mt-4">
+          <Link href="/admin/email-broadcast" className="text-sm font-semibold underline hover:opacity-80">
+            Compose &amp; send →
+          </Link>
+        </div>
+      </section>
+
+      <section className="card p-5">
         <h2 className="text-lg font-semibold">Autoblog integrations</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Bearer tokens for inbound autoblog webhooks (Outrank, Crawlproof).
