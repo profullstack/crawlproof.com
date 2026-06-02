@@ -67,7 +67,13 @@ export async function lookupGeo(ip: string | null): Promise<GeoLocation | null> 
     flatText(flat.country_name) ||
     countryNameFromCode(countryCode);
 
+  // Nested CityResponse format: result.location.latitude / .longitude
   const loc = "location" in result ? (result as CityResponse).location : null;
+  // Flat format (e.g. @ip-location-db/geolite2-city-mmdb): result.latitude / .longitude
+  const flatLat = typeof (flat as Record<string, unknown>).latitude === "number"
+    ? (flat as Record<string, unknown>).latitude as number : null;
+  const flatLng = typeof (flat as Record<string, unknown>).longitude === "number"
+    ? (flat as Record<string, unknown>).longitude as number : null;
 
   return {
     countryCode,
@@ -76,8 +82,8 @@ export async function lookupGeo(ip: string | null): Promise<GeoLocation | null> 
     regionName: nestedRegionName(result) || flatText(flat.state2),
     city: nestedCity(result) || flatText(flat.city),
     timezone: nestedTimezone(result) || flatText(flat.timezone),
-    lat: typeof loc?.latitude === "number" ? loc.latitude : null,
-    lng: typeof loc?.longitude === "number" ? loc.longitude : null,
+    lat: (typeof loc?.latitude === "number" ? loc.latitude : null) ?? flatLat,
+    lng: (typeof loc?.longitude === "number" ? loc.longitude : null) ?? flatLng,
   };
 }
 

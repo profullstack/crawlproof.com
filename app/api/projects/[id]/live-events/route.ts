@@ -7,6 +7,25 @@ import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { serviceClient } from "@/lib/supabase/service";
 import { bucketLabel } from "@/lib/tracker/categorize";
 
+// Approximate country centroids — fallback when precise lat/lng is missing.
+const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
+  US:[37.1,-95.7],GB:[55.4,-3.4],DE:[51.2,10.4],FR:[46.2,2.2],CA:[56.1,-106.3],
+  AU:[-25.3,133.8],JP:[36.2,138.3],CN:[35.9,104.2],IN:[20.6,78.9],BR:[-14.2,-51.9],
+  MX:[23.6,-102.5],RU:[61.5,105.3],KR:[35.9,127.8],IT:[41.9,12.6],ES:[40.5,-3.7],
+  NL:[52.1,5.3],SE:[60.1,18.6],NO:[60.5,8.5],PL:[51.9,19.1],UA:[48.4,31.2],
+  ZA:[-30.6,22.9],NG:[9.1,8.7],EG:[26.8,30.8],KE:[-0.0,37.9],GH:[7.9,-1.0],
+  AR:[-38.4,-63.6],CL:[-35.7,-71.5],CO:[4.6,-74.3],PE:[-9.2,-75.0],VE:[6.4,-66.6],
+  SG:[1.3,103.8],MY:[4.2,108.0],TH:[15.9,100.9],VN:[14.1,108.3],ID:[-0.8,113.9],
+  PH:[12.9,121.8],PK:[30.4,69.3],BD:[23.7,90.4],LK:[7.9,80.8],NZ:[-40.9,174.9],
+  SA:[23.9,45.1],AE:[23.4,53.8],IL:[31.0,34.9],TR:[38.9,35.2],IR:[32.4,53.7],
+  CH:[46.8,8.2],AT:[47.5,14.6],BE:[50.5,4.5],PT:[39.4,-8.2],DK:[56.3,9.5],
+  FI:[61.9,25.7],CZ:[49.8,15.5],HU:[47.2,19.5],RO:[45.9,24.9],GR:[39.1,21.8],
+};
+
+function countryLatLng(code: string): [number, number] | null {
+  return COUNTRY_CENTROIDS[code?.toUpperCase()] ?? null;
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -55,19 +74,25 @@ export async function GET(
   const globePoints: { lat: number; lng: number; label: string; age_s: number; visitor_id: string }[] = [];
   const seenVisitors = new Map<string, number>(); // visitor_id → index in globePoints
   for (const e of events) {
-    if (e.lat == null || e.lng == null) continue;
-    const vid = e.visitor_id || `${e.lat.toFixed(1)},${e.lng.toFixed(1)}`;
+    // Use precise coords when available, fall back to country centroid.
+    let lat = e.lat;
+    let lng = e.lng;
+    if (lat == null || lng == null) {
+      const centroid = countryLatLng(e.country_code);
+      if (!centroid) continue;
+      [lat, lng] = centroid;
+    }
+    const vid = e.visitor_id || `${lat.toFixed(1)},${lng.toFixed(1)}`;
     const age_s = Math.floor((Date.now() - new Date(e.occurred_at).getTime()) / 1000);
     const label = [e.city, e.country_name].filter(Boolean).join(", ") || e.country_code || "";
     if (seenVisitors.has(vid)) {
-      // Keep the freshest occurrence for this visitor.
       const idx = seenVisitors.get(vid)!;
       if (age_s < globePoints[idx].age_s) {
-        globePoints[idx] = { lat: e.lat, lng: e.lng, label, age_s, visitor_id: vid };
+        globePoints[idx] = { lat, lng, label, age_s, visitor_id: vid };
       }
     } else {
       seenVisitors.set(vid, globePoints.length);
-      globePoints.push({ lat: e.lat, lng: e.lng, label, age_s, visitor_id: vid });
+      globePoints.push({ lat, lng, label, age_s, visitor_id: vid });
     }
   }
 
