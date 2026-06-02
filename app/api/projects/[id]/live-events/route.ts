@@ -51,21 +51,23 @@ export async function GET(
   const byCountry = new Map<string, { name: string; count: number }>();
   const sessionsSeen = new Set<string>();
 
-  // Build globe points: dedupe by lat/lng bucket, most recent wins label
-  const globePoints: { lat: number; lng: number; label: string; age_s: number }[] = [];
-  const seenCoords = new Set<string>();
+  // Build globe points: dedupe by visitor_id (one pin per visitor), keep freshest.
+  const globePoints: { lat: number; lng: number; label: string; age_s: number; visitor_id: string }[] = [];
+  const seenVisitors = new Map<string, number>(); // visitor_id → index in globePoints
   for (const e of events) {
-    if (e.lat != null && e.lng != null) {
-      const key = `${e.lat.toFixed(1)},${e.lng.toFixed(1)}`;
-      if (!seenCoords.has(key)) {
-        seenCoords.add(key);
-        globePoints.push({
-          lat: e.lat,
-          lng: e.lng,
-          label: [e.city, e.country_name].filter(Boolean).join(", ") || e.country_code || "",
-          age_s: Math.floor((Date.now() - new Date(e.occurred_at).getTime()) / 1000),
-        });
+    if (e.lat == null || e.lng == null) continue;
+    const vid = e.visitor_id || `${e.lat.toFixed(1)},${e.lng.toFixed(1)}`;
+    const age_s = Math.floor((Date.now() - new Date(e.occurred_at).getTime()) / 1000);
+    const label = [e.city, e.country_name].filter(Boolean).join(", ") || e.country_code || "";
+    if (seenVisitors.has(vid)) {
+      // Keep the freshest occurrence for this visitor.
+      const idx = seenVisitors.get(vid)!;
+      if (age_s < globePoints[idx].age_s) {
+        globePoints[idx] = { lat: e.lat, lng: e.lng, label, age_s, visitor_id: vid };
       }
+    } else {
+      seenVisitors.set(vid, globePoints.length);
+      globePoints.push({ lat: e.lat, lng: e.lng, label, age_s, visitor_id: vid });
     }
   }
 
