@@ -32,7 +32,7 @@ export async function GET(
   const { data: rows, error } = await svc
     .from("tracker_events")
     .select(
-      "id, occurred_at, event, page_path, referrer_host, event_target, bucket, country_code, country_name, city, visitor_id, session_id",
+      "id, occurred_at, event, page_path, referrer_host, event_target, bucket, country_code, country_name, city, lat, lng, visitor_id, session_id",
     )
     .eq("project_id", projectId)
     .gte("occurred_at", since)
@@ -50,6 +50,24 @@ export async function GET(
   const bySource = new Map<string, number>();
   const byCountry = new Map<string, { name: string; count: number }>();
   const sessionsSeen = new Set<string>();
+
+  // Build globe points: dedupe by lat/lng bucket, most recent wins label
+  const globePoints: { lat: number; lng: number; label: string; age_s: number }[] = [];
+  const seenCoords = new Set<string>();
+  for (const e of events) {
+    if (e.lat != null && e.lng != null) {
+      const key = `${e.lat.toFixed(1)},${e.lng.toFixed(1)}`;
+      if (!seenCoords.has(key)) {
+        seenCoords.add(key);
+        globePoints.push({
+          lat: e.lat,
+          lng: e.lng,
+          label: [e.city, e.country_name].filter(Boolean).join(", ") || e.country_code || "",
+          age_s: Math.floor((Date.now() - new Date(e.occurred_at).getTime()) / 1000),
+        });
+      }
+    }
+  }
 
   for (const e of events) {
     const page = e.page_path || "/";
@@ -89,6 +107,7 @@ export async function GET(
     total_events: events.length,
     unique_sessions: sessionsSeen.size,
     events: events.slice(0, 100),
+    globe_points: globePoints,
     top_pages: topPages,
     top_sources: topSources,
     top_countries: topCountries,

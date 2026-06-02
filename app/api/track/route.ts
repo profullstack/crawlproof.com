@@ -248,6 +248,8 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         country_code: geo?.countryCode ?? "",
         country_name: geo?.countryName ?? "",
         city: geo?.city ?? "",
+        lat: geo?.lat ?? null,
+        lng: geo?.lng ?? null,
         visitor_id: parsed.data.visitorId ?? "",
         session_id: parsed.data.sessionId ?? "",
       });

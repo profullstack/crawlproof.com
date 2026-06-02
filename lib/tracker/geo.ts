@@ -12,6 +12,8 @@ export interface GeoLocation {
   regionName: string;
   city: string;
   timezone: string;
+  lat: number | null;
+  lng: number | null;
 }
 
 type GeoReaders = {
@@ -65,6 +67,8 @@ export async function lookupGeo(ip: string | null): Promise<GeoLocation | null> 
     flatText(flat.country_name) ||
     countryNameFromCode(countryCode);
 
+  const loc = "location" in result ? (result as CityResponse).location : null;
+
   return {
     countryCode,
     countryName,
@@ -72,6 +76,8 @@ export async function lookupGeo(ip: string | null): Promise<GeoLocation | null> 
     regionName: nestedRegionName(result) || flatText(flat.state2),
     city: nestedCity(result) || flatText(flat.city),
     timezone: nestedTimezone(result) || flatText(flat.timezone),
+    lat: typeof loc?.latitude === "number" ? loc.latitude : null,
+    lng: typeof loc?.longitude === "number" ? loc.longitude : null,
   };
 }
 
