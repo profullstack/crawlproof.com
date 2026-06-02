@@ -6,14 +6,13 @@ import dynamic from "next/dynamic";
 export type GlobePoint = {
   lat: number;
   lng: number;
-  label: string;      // city/country
+  label: string;
   age_s: number;
   visitor_id: string;
 };
 
-// Adjective + animal pairs from a stable seed — gives memorable anonymous names.
-const ADJS = ["Red","Blue","Fast","Cool","Dark","Wild","Calm","Bold","Keen","Warm",
-               "Soft","Gray","Gold","Jade","Teal","Aqua","Rose","Lime","Sage","Dusk"];
+const ADJS  = ["Red","Blue","Fast","Cool","Dark","Wild","Calm","Bold","Keen","Warm",
+                "Soft","Gray","Gold","Jade","Teal","Aqua","Rose","Lime","Sage","Dusk"];
 const NOUNS = ["Fox","Owl","Elk","Cat","Jay","Bee","Emu","Yak","Koi","Ram",
                "Ibis","Lynx","Newt","Puma","Wren","Vole","Mink","Boar","Dove","Crow"];
 
@@ -29,7 +28,6 @@ export function visitorName(id: string): string {
   return ADJS[h % ADJS.length] + NOUNS[(h >> 4) % NOUNS.length];
 }
 
-// Consistent pastel hue from visitor_id.
 function visitorColor(id: string): string {
   const h = hashCode(id || "x");
   return `hsl(${h % 360}, 65%, 55%)`;
@@ -41,14 +39,25 @@ function pointColor(age_s: number) {
   return "rgba(251,146,60,0.55)";
 }
 
+// Spread label position radially from the actual point.
+// Each visitor gets a deterministic angle so positions are stable across polls.
+const SPREAD_DEG = 14;
+function labelPosition(lat: number, lng: number, visitorId: string) {
+  const h = hashCode(visitorId || "x");
+  const angleDeg = (h % 360);
+  const rad = (angleDeg * Math.PI) / 180;
+  return {
+    labelLat: Math.max(-85, Math.min(85, lat + SPREAD_DEG * Math.sin(rad))),
+    labelLng: lng + SPREAD_DEG * Math.cos(rad),
+  };
+}
+
 function makeAvatarEl(name: string, color: string): HTMLElement {
   const wrap = document.createElement("div");
   wrap.style.cssText = `
-    display:flex; flex-direction:column; align-items:center;
     pointer-events:none; user-select:none;
-    transform: translate(-50%, -120%);
+    transform: translate(-50%, -50%);
   `;
-
   const bubble = document.createElement("div");
   bubble.style.cssText = `
     background:${color};
@@ -56,33 +65,21 @@ function makeAvatarEl(name: string, color: string): HTMLElement {
     font-size:9px;
     font-weight:700;
     font-family:ui-sans-serif,system-ui,sans-serif;
-    padding:2px 5px;
+    padding:2px 6px;
     border-radius:10px;
     white-space:nowrap;
-    box-shadow:0 1px 4px rgba(0,0,0,.45);
+    box-shadow:0 1px 5px rgba(0,0,0,.5);
     line-height:1.4;
     letter-spacing:.02em;
-    max-width:72px;
+    max-width:80px;
     overflow:hidden;
     text-overflow:ellipsis;
   `;
   bubble.textContent = name;
-
-  const pin = document.createElement("div");
-  pin.style.cssText = `
-    width:0; height:0;
-    border-left:3px solid transparent;
-    border-right:3px solid transparent;
-    border-top:5px solid ${color};
-    margin-top:-1px;
-  `;
-
   wrap.appendChild(bubble);
-  wrap.appendChild(pin);
   return wrap;
 }
 
-// react-globe.gl is WebGL/Three.js — client-only.
 const Globe = dynamic(() => import("react-globe.gl"), {
   ssr: false,
   loading: () => (
@@ -92,31 +89,21 @@ const Globe = dynamic(() => import("react-globe.gl"), {
   ),
 });
 
-export function VisitorGlobe({
-  points,
-  isDark,
-}: {
-  points: GlobePoint[];
-  isDark: boolean;
-}) {
+export function VisitorGlobe({ points, isDark }: { points: GlobePoint[]; isDark: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const globeRef = useRef<any>(null);
-  const [size, setSize] = useState(200);
+  const [size, setSize] = useState(320);
   const [spinning, setSpinning] = useState(true);
 
-  // Measure container and fill it exactly.
   useEffect(() => {
     if (!containerRef.current) return;
-    const ro = new ResizeObserver(([e]) => {
-      setSize(Math.floor(e.contentRect.width));
-    });
+    const ro = new ResizeObserver(([e]) => setSize(Math.floor(e.contentRect.width)));
     ro.observe(containerRef.current);
     setSize(containerRef.current.clientWidth || 320);
     return () => ro.disconnect();
   }, []);
 
-  // Wire up auto-rotate once the globe is ready.
   const onGlobeReady = useCallback(() => {
     const ctrl = globeRef.current?.controls?.();
     if (!ctrl) return;
@@ -125,7 +112,6 @@ export function VisitorGlobe({
     ctrl.enableZoom = false;
   }, []);
 
-  // Sync spinning state to controls whenever it changes.
   useEffect(() => {
     const ctrl = globeRef.current?.controls?.();
     if (ctrl) ctrl.autoRotate = spinning;
@@ -133,19 +119,41 @@ export function VisitorGlobe({
 
   const toggleSpin = useCallback(() => setSpinning((s) => !s), []);
 
-  // Build HTML avatar elements (memoised by visitor_id list).
-  const htmlData = points.map((p) => ({
+  // Build per-visitor data with spread label positions.
+  const enriched = points.map((p) => {
+    const { labelLat, labelLng } = labelPosition(p.lat, p.lng, p.visitor_id);
+    return {
+      ...p,
+      name: visitorName(p.visitor_id),
+      color: visitorColor(p.visitor_id),
+      dotColor: pointColor(p.age_s),
+      labelLat,
+      labelLng,
+    };
+  });
+
+  // Dot at actual location.
+  const dotData = enriched.map((p) => ({
     lat: p.lat,
     lng: p.lng,
-    name: visitorName(p.visitor_id),
-    color: visitorColor(p.visitor_id),
-    visitor_id: p.visitor_id,
+    color: p.dotColor,
   }));
 
-  const dotData = points.map((p) => ({
-    lat: p.lat,
-    lng: p.lng,
-    color: pointColor(p.age_s),
+  // Avatar label at offset position.
+  const htmlData = enriched.map((p) => ({
+    lat: p.labelLat,
+    lng: p.labelLng,
+    name: p.name,
+    color: p.color,
+  }));
+
+  // Arc (leader line) from actual point → label position.
+  const arcData = enriched.map((p) => ({
+    startLat: p.lat,
+    startLng: p.lng,
+    endLat: p.labelLat,
+    endLng: p.labelLng,
+    color: p.color,
   }));
 
   return (
@@ -168,12 +176,23 @@ export function VisitorGlobe({
         }
         atmosphereColor={isDark ? "#1e40af" : "#3b82f6"}
         atmosphereAltitude={0.10}
-        // Dot per visitor (faint glow under the avatar)
+        // Dot at exact location
         pointsData={dotData}
         pointColor={(d: object) => (d as { color: string }).color}
-        pointRadius={0.3}
+        pointRadius={0.4}
         pointAltitude={0.005}
-        // HTML avatar labels
+        // Leader lines
+        arcsData={arcData}
+        arcStartLat={(d: object) => (d as { startLat: number }).startLat}
+        arcStartLng={(d: object) => (d as { startLng: number }).startLng}
+        arcEndLat={(d: object) => (d as { endLat: number }).endLat}
+        arcEndLng={(d: object) => (d as { endLng: number }).endLng}
+        arcColor={(d: object) => (d as { color: string }).color}
+        arcStroke={0.4}
+        arcAltitude={0.03}
+        arcDashLength={1}
+        arcDashGap={0}
+        // Avatar labels at offset position
         htmlElementsData={htmlData}
         htmlElement={(d: object) => {
           const p = d as { name: string; color: string };
@@ -181,14 +200,13 @@ export function VisitorGlobe({
         }}
         htmlLat={(d: object) => (d as { lat: number }).lat}
         htmlLng={(d: object) => (d as { lng: number }).lng}
-        htmlAltitude={0.02}
+        htmlAltitude={0.03}
         enablePointerInteraction={false}
         animateIn={false}
         onGlobeReady={onGlobeReady}
       />
-      {/* Pause/play badge */}
-      <span className="absolute bottom-1 right-1 text-[9px] text-[var(--color-muted)] opacity-60 pointer-events-none">
-        {spinning ? "⏸ click to pause" : "▶ click to resume"}
+      <span className="absolute bottom-1 right-2 text-[9px] text-[var(--color-muted)] opacity-50 pointer-events-none">
+        {spinning ? "⏸ pause" : "▶ resume"}
       </span>
     </div>
   );
