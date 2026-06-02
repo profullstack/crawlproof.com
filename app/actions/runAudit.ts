@@ -12,6 +12,7 @@ import {
   isAllowedTargetUrl,
   refundCredit,
 } from "@/lib/rateLimit";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
 import {
   dedupeEngines,
   engineAvailable,
@@ -213,13 +214,11 @@ export async function runScanForProject(input: {
   if (!check.ok) return { ok: false, error: check.reason };
   const target = check.url;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated." };
+  const access = await requireProjectAccess(input.projectId);
+  if (!access.ok) return { ok: false, error: "Not found." };
+  const { userId: uid, userEmail } = access;
 
-  if (!(await checkPerTargetLimit(target, user.id))) {
+  if (!(await checkPerTargetLimit(target, uid))) {
     return { ok: false, error: "You just audited this URL. Try again in 30 seconds." };
   }
 
@@ -238,7 +237,7 @@ export async function runScanForProject(input: {
   // Atomic multi-credit deduction up front. If anything below fails we
   // refund the lot.
   if (cost > 0) {
-    const ok = await consumeCredit(user.id, cost);
+    const ok = await consumeCredit(uid, cost);
     if (!ok.ok) {
       return { ok: false, error: `Need ${cost} credit${cost === 1 ? "" : "s"} for ${engines.length} engine${engines.length === 1 ? "" : "s"}; not enough balance.` };
     }
@@ -249,14 +248,14 @@ export async function runScanForProject(input: {
   // form takes an explicit email; the project page doesn't ask, so we use
   // the account email — matches the user's expectation of "I'll get the
   // report emailed to me."
-  const pdfEmail = user.email ?? null;
+  const pdfEmail = userEmail;
   // Shared scan_run_id ties the N audits from this click together so the
   // runs/<runId> page can show every engine side-by-side.
   const scanRunId = crypto.randomUUID();
   const inserts = engines.map((e) => ({
     target_url: target,
     project_id: input.projectId,
-    owner_id: user.id,
+    owner_id: uid,
     status: "queued",
     share_token: newShareToken(),
     triggered_by: "manual",
@@ -269,7 +268,7 @@ export async function runScanForProject(input: {
     .insert(inserts)
     .select("id, share_token, engine");
   if (error || !rows) {
-    if (cost > 0) await refundCredit(user.id, cost);
+    if (cost > 0) await refundCredit(uid, cost);
     return { ok: false, error: error?.message ?? "Failed to create audits." };
   }
 
@@ -277,7 +276,7 @@ export async function runScanForProject(input: {
   await Promise.all(
     rows.map((r) =>
       svc.from("usage_events").insert({
-        owner_id: user.id,
+        owner_id: uid,
         kind: "audit_run",
         audit_id: r.id,
         meta: {

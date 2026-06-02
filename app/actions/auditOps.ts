@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { consumeCredit, refundCredit } from "@/lib/rateLimit";
 import { ENGINES, type Engine } from "@/lib/credits";
 import { env } from "@/lib/env";
@@ -23,20 +23,9 @@ export async function abortAudit(input: {
   projectId: string;
   auditId: string;
 }): Promise<Ok | Err> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated." };
-
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id, owner_id")
-    .eq("id", input.projectId)
-    .maybeSingle();
-  if (!project || project.owner_id !== user.id) {
-    return { ok: false, error: "Not found." };
-  }
+  const access = await requireProjectAccess(input.projectId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { userId } = access;
 
   const svc = serviceClient();
   const { data: audit } = await svc
@@ -68,7 +57,7 @@ export async function abortAudit(input: {
   if (updErr) return { ok: false, error: updErr.message };
 
   const refund = ENGINES[audit.engine as Engine]?.cost ?? 0;
-  if (refund > 0) await refundCredit(user.id, refund);
+  if (refund > 0) await refundCredit(userId, refund);
 
   revalidatePath(`/projects/${input.projectId}/runs/${audit.scan_run_id}`);
   revalidatePath(`/projects/${input.projectId}`);
@@ -85,20 +74,9 @@ export async function retryAudit(input: {
   projectId: string;
   auditId: string;
 }): Promise<Ok | Err> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated." };
-
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id, owner_id")
-    .eq("id", input.projectId)
-    .maybeSingle();
-  if (!project || project.owner_id !== user.id) {
-    return { ok: false, error: "Not found." };
-  }
+  const access = await requireProjectAccess(input.projectId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { userId } = access;
 
   const svc = serviceClient();
   const { data: audit } = await svc
@@ -120,7 +98,7 @@ export async function retryAudit(input: {
   // Rule engine is free.
   const cost = ENGINES[audit.engine as Engine]?.cost ?? 0;
   if (cost > 0) {
-    const charged = await consumeCredit(user.id, cost);
+    const charged = await consumeCredit(userId, cost);
     if (!charged.ok) {
       return {
         ok: false,
@@ -151,7 +129,7 @@ export async function retryAudit(input: {
     .eq("status", "failed");
   if (resetErr) {
     // Refund the credit we just spent — the reset didn't take.
-    if (cost > 0) await refundCredit(user.id, cost);
+    if (cost > 0) await refundCredit(userId, cost);
     return { ok: false, error: resetErr.message };
   }
 

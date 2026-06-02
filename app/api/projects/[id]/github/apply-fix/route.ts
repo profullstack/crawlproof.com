@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { applyFix } from "@/lib/github/apply-fix";
 
@@ -45,13 +46,9 @@ export async function POST(
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
 
-  // Ownership: project + installation must belong to the caller.
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id, owner_id")
-    .eq("id", projectId)
-    .maybeSingle();
-  if (!project || project.owner_id !== user.id) {
+  // Project access (owner or member); installation must belong to this user.
+  const access = await requireProjectAccess(projectId);
+  if (!access.ok) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const { data: installation } = await supabase
@@ -73,11 +70,7 @@ export async function POST(
     .select("id, target_url, project_id, owner_id")
     .eq("id", body.audit_id)
     .maybeSingle();
-  if (
-    !audit ||
-    (audit as { project_id?: string }).project_id !== projectId ||
-    (audit as { owner_id?: string }).owner_id !== user.id
-  ) {
+  if (!audit || (audit as { project_id?: string }).project_id !== projectId) {
     return NextResponse.json({ error: "Audit not found" }, { status: 404 });
   }
   const { data: finding } = await supabase

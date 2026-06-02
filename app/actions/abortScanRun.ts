@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { refundCredit } from "@/lib/rateLimit";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { ENGINES, type Engine } from "@/lib/credits";
 
 type Ok = { ok: true; abortedCount: number; refundedCredits: number };
@@ -17,21 +17,9 @@ export async function abortScanRun(input: {
   projectId: string;
   runId: string;
 }): Promise<Ok | Err> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated." };
-
-  // Owner gate via the project; service client below to flip rows.
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id, owner_id")
-    .eq("id", input.projectId)
-    .maybeSingle();
-  if (!project || project.owner_id !== user.id) {
-    return { ok: false, error: "Not found." };
-  }
+  const access = await requireProjectAccess(input.projectId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { userId } = access;
 
   const svc = serviceClient();
   const { data: pending } = await svc
@@ -65,7 +53,7 @@ export async function abortScanRun(input: {
     0,
   );
   if (refundedCredits > 0) {
-    await refundCredit(user.id, refundedCredits);
+    await refundCredit(userId, refundedCredits);
   }
 
   revalidatePath(`/projects/${input.projectId}/runs/${input.runId}`);

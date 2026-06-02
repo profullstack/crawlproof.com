@@ -238,6 +238,46 @@ function normalizeProject(
   return { ...row, id: row.id as string, lx_site };
 }
 
+// Server-action / route-handler helper that verifies the signed-in user owns
+// or is a member of the given project. Returns the user id, an isOwner flag,
+// and the authenticated supabase client so callers can make further queries.
+export async function requireProjectAccess(projectId: string): Promise<
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      userId: string;
+      userEmail: string | null;
+      isOwner: boolean;
+      supabase: Awaited<ReturnType<typeof createClient>>;
+    }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id, owner_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Not found." };
+
+  const isOwner = (project as { owner_id: string }).owner_id === user.id;
+  if (!isOwner) {
+    const { data: membership } = await supabase
+      .from("project_members")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) return { ok: false, error: "Not found." };
+  }
+
+  return { ok: true, userId: user.id, userEmail: user.email ?? null, isOwner, supabase };
+}
+
 // Server-action / route-handler helper that writes the cookie. The
 // argument is the active project_id (or, for legacy callers, an
 // lx_site.id; the resolver above handles either).
