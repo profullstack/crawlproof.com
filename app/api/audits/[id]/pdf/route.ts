@@ -8,9 +8,9 @@ import {
 
 export const runtime = "nodejs";
 
-// Owner PDF download. For multi-engine scan runs the response is the
-// consolidated PDF (executive summary + every engine's full report).
-// Solo runs return the single audit's PDF as before.
+// PDF download for an audit. Accessible to the audit owner or any member of
+// the project the audit belongs to. For multi-engine scan runs the response
+// is the consolidated PDF; solo runs return the single audit's PDF.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -25,13 +25,27 @@ export async function GET(
   const { data: audit } = await supabase
     .from("audits")
     .select(
-      "id, share_token, owner_id, status, report_markdown, target_url, score, scan_run_id",
+      "id, share_token, owner_id, project_id, status, report_markdown, target_url, score, scan_run_id",
     )
     .eq("id", id)
     .maybeSingle();
-  if (!audit || audit.owner_id !== user.id) {
+  if (!audit) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+
+  // Access gate: own audit OR member of the project the audit belongs to.
+  if ((audit as { owner_id: string }).owner_id !== user.id) {
+    const projectId = (audit as { project_id?: string | null }).project_id;
+    if (!projectId) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const { data: membership } = await supabase
+      .from("project_members")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   if (audit.status !== "complete") {
     return NextResponse.json({ error: "Audit not complete yet" }, { status: 425 });
   }
@@ -47,14 +61,18 @@ export async function GET(
   let scoreForPdf: number | null = audit.score;
 
   if (audit.scan_run_id) {
-    const { data: siblings } = await supabase
+    const projectId = (audit as { project_id?: string | null }).project_id;
+    const siblingsQuery = supabase
       .from("audits")
       .select(
         "id, engine, status, score, share_token, summary, report_markdown, failed_reason, created_at",
       )
-      .eq("scan_run_id", audit.scan_run_id)
-      .eq("owner_id", user.id)
-      .order("created_at", { ascending: true });
+      .eq("scan_run_id", audit.scan_run_id);
+    // Scope siblings to the project (member-accessible) or fall back to owner.
+    const { data: siblings } = await (projectId
+      ? siblingsQuery.eq("project_id", projectId)
+      : siblingsQuery.eq("owner_id", user.id)
+    ).order("created_at", { ascending: true });
     const rows = (siblings ?? []) as SummaryRow[];
     if (rows.length > 1) {
       markdown = buildScanRunMarkdown({ targetUrl: audit.target_url, rows });

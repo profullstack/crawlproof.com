@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { dedupeEngines, engineAvailable, ENGINES, type Engine } from "@/lib/credits";
 
 // Persist the default engine list on a project. Used by manual scans (as the
@@ -21,17 +21,13 @@ export async function updateProjectEngines(input: {
     return { ok: false, error: `${ENGINES[bad].label} isn't available.` };
   }
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated." };
+  const access = await requireProjectAccess(input.projectId);
+  if (!access.ok) return { ok: false, error: access.error };
 
-  const { error } = await supabase
+  const { error } = await access.supabase
     .from("projects")
     .update({ engines: cleaned })
-    .eq("id", input.projectId)
-    .eq("owner_id", user.id);
+    .eq("id", input.projectId);
   if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/projects/${input.projectId}`);
@@ -47,20 +43,16 @@ async function setProjectStatus(
   projectId: string,
   next: ProjectStatus,
 ): Promise<StatusOk | StatusErr> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated." };
+  const access = await requireProjectAccess(projectId);
+  if (!access.ok) return { ok: false, error: access.error };
 
   const patch: Record<string, unknown> = { status: next };
   patch.archived_at = next === "archived" ? new Date().toISOString() : null;
 
-  const { error } = await supabase
+  const { error } = await access.supabase
     .from("projects")
     .update(patch)
-    .eq("id", projectId)
-    .eq("owner_id", user.id);
+    .eq("id", projectId);
   if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/projects/${projectId}`);
@@ -89,20 +81,16 @@ export async function setTrackerEnabled(input: {
   projectId: string;
   enabled: boolean;
 }): Promise<{ ok: true; enabled: boolean } | { ok: false; error: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated." };
+  const access = await requireProjectAccess(input.projectId);
+  if (!access.ok) return { ok: false, error: access.error };
 
   const patch: Record<string, unknown> = { tracker_enabled: input.enabled };
   if (input.enabled) patch.tracker_enabled_at = new Date().toISOString();
 
-  const { error } = await supabase
+  const { error } = await access.supabase
     .from("projects")
     .update(patch)
-    .eq("id", input.projectId)
-    .eq("owner_id", user.id);
+    .eq("id", input.projectId);
   if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/projects/${input.projectId}/stats`);

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
 
 const bodySchema = z.object({
   installation_id: z.number().int().positive(),
@@ -49,13 +50,9 @@ export async function POST(
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
 
-  // Project ownership.
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id, owner_id")
-    .eq("id", projectId)
-    .maybeSingle();
-  if (!project || project.owner_id !== user.id) {
+  // Project access (owner or member).
+  const access = await requireProjectAccess(projectId);
+  if (!access.ok) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import {
   installTracker,
@@ -51,17 +52,13 @@ export async function POST(
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
 
-  // Ownership check on the project.
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id, owner_id")
-    .eq("id", projectId)
-    .maybeSingle();
-  if (!project || project.owner_id !== user.id) {
+  // Project access (owner or member).
+  const projectAccess = await requireProjectAccess(projectId);
+  if (!projectAccess.ok) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Ownership check on the installation.
+  // Installation must belong to this user.
   const { data: installation } = await supabase
     .from("github_installations")
     .select("installation_id")
