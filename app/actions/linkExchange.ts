@@ -402,7 +402,6 @@ export async function createOrUpdateSite(
       .from("projects")
       .select("id")
       .eq("id", input.projectId)
-      .eq("owner_id", user.id)
       .maybeSingle();
     if (!owned) return { ok: false, error: "Project not found." };
     proj = { id: owned.id as string };
@@ -804,7 +803,7 @@ export async function setSitePaused(
 // ------------------------------------------------------------
 async function lookupSiteForProject(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
+  _userId: string,
   projectId: string,
 ): Promise<
   | { id: string; publish_days: number[]; publish_hour: number; daily_article_count: number }
@@ -814,7 +813,6 @@ async function lookupSiteForProject(
     .from("projects")
     .select("id")
     .eq("id", projectId)
-    .eq("owner_id", userId)
     .maybeSingle();
   if (!project) return { error: "Project not found." };
   const { data: site } = await supabase
