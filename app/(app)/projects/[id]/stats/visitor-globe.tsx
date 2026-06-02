@@ -105,14 +105,14 @@ export function VisitorGlobe({
   const [size, setSize] = useState(200);
   const [spinning, setSpinning] = useState(true);
 
-  // Measure container — globe is capped at 280px.
+  // Measure container and fill it exactly.
   useEffect(() => {
     if (!containerRef.current) return;
     const ro = new ResizeObserver(([e]) => {
-      setSize(Math.min(280, Math.floor(e.contentRect.width)));
+      setSize(Math.floor(e.contentRect.width));
     });
     ro.observe(containerRef.current);
-    setSize(Math.min(280, containerRef.current.clientWidth || 200));
+    setSize(containerRef.current.clientWidth || 320);
     return () => ro.disconnect();
   }, []);
 
@@ -152,7 +152,7 @@ export function VisitorGlobe({
     <div
       ref={containerRef}
       onClick={toggleSpin}
-      className="relative flex items-center justify-center cursor-pointer select-none"
+      className="relative w-full flex items-center justify-center cursor-pointer select-none"
       style={{ height: size }}
       title={spinning ? "Click to pause" : "Click to resume"}
     >

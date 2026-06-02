@@ -134,8 +134,8 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
         <>
           {/* Globe left + stats right */}
           <div className="flex items-center gap-0">
-            {/* Globe — capped at 280px, click to toggle spin */}
-            <div className="shrink-0 bg-[var(--color-bg-subtle)] dark:bg-slate-900">
+            {/* Globe — 50% of card width, click to toggle spin */}
+            <div className="w-1/2 shrink-0 bg-[var(--color-bg-subtle)] dark:bg-slate-900">
               <VisitorGlobe points={globePoints} isDark={isDark} />
             </div>
 
