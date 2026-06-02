@@ -14,6 +14,7 @@ import {
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { AutoInstall } from "./auto-install";
+import { LiveVisitors } from "./live-visitors";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
@@ -204,6 +205,8 @@ export default async function ProjectStatsPage({
       currentTab="stats"
     >
       <div className="space-y-6">
+        <LiveVisitors projectId={id} />
+
         <section className="card p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
             <div>

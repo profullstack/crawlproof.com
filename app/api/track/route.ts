@@ -232,6 +232,36 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   }
 
   const geo = await lookupGeo(clientIpFromHeaders(request.headers));
+
+  // Write a raw event row for the real-time "active in last 30 min" view.
+  // Fire-and-forget — never delays the 204 response. Also prunes rows
+  // older than 24h on the same project (cheap indexed DELETE).
+  void (async () => {
+    try {
+      await sb.from("tracker_events").insert({
+        project_id: site,
+        event,
+        page_path: pagePath,
+        referrer_host: referrerHost,
+        event_target: eventTarget,
+        bucket,
+        country_code: geo?.countryCode ?? "",
+        country_name: geo?.countryName ?? "",
+        city: geo?.city ?? "",
+        visitor_id: parsed.data.visitorId ?? "",
+        session_id: parsed.data.sessionId ?? "",
+      });
+      // Prune stale rows (best-effort; skip on error).
+      await sb
+        .from("tracker_events")
+        .delete()
+        .eq("project_id", site)
+        .lt("occurred_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+    } catch {
+      // Silent — analytics writes must never break the beacon response.
+    }
+  })();
+
   if (geo) {
     const { data: geoExisting } = await sb
       .from("tracker_geo_daily_stats")
