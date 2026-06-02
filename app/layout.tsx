@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
+import { ReferralProvider } from "@profullstack/referrals/react";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -111,12 +112,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body>
+        <ReferralProvider>
         <script
           type="application/ld+json"
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
         />
-        {children}
+          {children}
         <Script
           src="https://datafa.st/js/script.js"
           data-website-id="dfid_8BKVGnR966rQYogyWQoI8"
@@ -138,6 +140,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           src="https://crawlproof.com/stats.js"
           strategy="afterInteractive"
         />
+        </ReferralProvider>
       </body>
     </html>
   );
