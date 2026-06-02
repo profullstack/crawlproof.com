@@ -41,7 +41,19 @@ export default async function AuditPage({
     .eq("id", id)
     .maybeSingle();
   if (!audit) notFound();
-  if (audit.owner_id !== user!.id) notFound();
+
+  const isOwner = audit.owner_id === user!.id;
+  let isMember = false;
+  if (!isOwner && audit.project_id) {
+    const { data: memberCheck } = await supabase
+      .from("project_members")
+      .select("id")
+      .eq("project_id", audit.project_id)
+      .eq("user_id", user!.id)
+      .maybeSingle();
+    isMember = !!memberCheck;
+  }
+  if (!isOwner && !isMember) notFound();
 
   // Premium tab summarises EVERY non-rule audit in this scan_run — including
   // the one you're currently viewing. Filtering out audit.id would hide the
@@ -54,7 +66,6 @@ export default async function AuditPage({
         )
         .eq("scan_run_id", audit.scan_run_id)
         .neq("engine", "rule")
-        .eq("owner_id", user!.id)
         .order("created_at", { ascending: true })
     : { data: null };
   const premiumSiblingsBase = (siblingsData ?? []) as unknown as Omit<
@@ -112,7 +123,7 @@ export default async function AuditPage({
       .select("id, target_url, status, score, summary, completed_at, created_at, owner_id")
       .eq("id", diff)
       .maybeSingle();
-    if (other && other.owner_id === user!.id) {
+    if (other) {
       const { data: otherFindings } = await supabase
         .from("audit_findings")
         .select("section, check_key, status, title, detail, priority")
