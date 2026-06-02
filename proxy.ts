@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { trackReferralCode } from "@profullstack/referrals/next";
 
 type Cookie = { name: string; value: string; options?: CookieOptions };
 
@@ -52,7 +53,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  return response;
+  return trackReferralCode(request, response as any);
 }
 
 export const config = {
