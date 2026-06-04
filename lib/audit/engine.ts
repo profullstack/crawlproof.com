@@ -13,6 +13,7 @@ import { checkLinks } from "./checks/links";
 import { checkSecurity } from "./checks/security";
 import { checkPerformance } from "./checks/performance";
 import { checkSpecCompliance } from "./checks/spec-compliance";
+import { checkGeo } from "./checks/geo";
 import { scoreFindings } from "./score";
 import { deriveRecommendations } from "./recommendations";
 import type { AuditResult, CrawlContext, FetchedPage, Finding } from "./types";
@@ -189,6 +190,7 @@ export async function runAudit(
   findings.push(...checkPerformance(ctx));
   findings.push(...checkSecurity(ctx));
   findings.push(...checkRobotsAndSitemap(ctx));
+  findings.push(...checkGeo(ctx));
   findings.push(...checkPositioning(ctx));
   findings.push(...checkSpecCompliance(ctx));
 

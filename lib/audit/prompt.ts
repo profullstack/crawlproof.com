@@ -141,6 +141,7 @@ export const SECTIONS = [
   "Security",
   "robots.txt and sitemap.xml Audit",
   "LLM / AI Crawler Accessibility",
+  "Generative Engine Optimization (GEO)",
   "Positioning Clarity",
   "Foundations",
   "Accessibility",

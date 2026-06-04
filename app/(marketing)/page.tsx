@@ -7,7 +7,7 @@ import { env } from "@/lib/env";
 const faqs = [
   {
     q: "What does CrawlProof actually check?",
-    a: "We fetch your site as both an HTML-only crawler and as a JS-rendered browser, then audit content visibility, schema/JSON-LD, robots and sitemaps, AI-bot rules, llms.txt and skill.md, and positioning clarity. You get a prioritized to-do list.",
+    a: "We audit three pillars: SEO (crawlability, performance, meta), AEO (AI-bot access, structured data, content snippet-readiness), and GEO (llms.txt quality, knowledge graph sameAs links, AI agent integration, brand entity clarity). You get a single prioritized to-do list covering all three.",
   },
   {
     q: "Which AI crawlers do you check for?",
@@ -43,19 +43,20 @@ export default function HomePage() {
 
       <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-12 pt-12 sm:pb-16 sm:pt-20 text-center">
         <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
-          AEO audit · ChatGPT · Claude · Perplexity · Google AI Overviews
+          SEO · AEO · GEO — ChatGPT · Claude · Perplexity · Google AI Overviews
         </p>
         <h1 className="text-balance text-4xl font-extrabold leading-tight sm:text-5xl md:text-6xl">
           See your site the way AI crawlers do.
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-lg text-[var(--color-muted)]">
           <strong className="font-semibold text-[var(--color-text)]">
-            AEO is Answer Engine Optimization
+            AEO + GEO — Answer Engine &amp; Generative Engine Optimization
           </strong>{" "}
           — making sure ChatGPT, Claude, Perplexity, and Google AI Overviews can
-          actually read and describe your site. CrawlProof audits any URL and
-          shows you exactly what they find: content, schema, robots rules,
-          AI-bot access, and positioning.
+          actually read, cite, and recommend your site. CrawlProof audits any
+          URL and shows you exactly what they find: content, schema, robots
+          rules, AI-bot access, llms.txt quality, knowledge graph anchoring, and
+          positioning.
         </p>
         <div className="mx-auto mt-8 max-w-xl">
           <HeroAuditForm />
@@ -80,23 +81,35 @@ export default function HomePage() {
       </section>
 
       <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <h2 className="mb-8 text-center text-2xl font-bold">What we check</h2>
+        <h2 className="mb-2 text-center text-2xl font-bold">What we check</h2>
+        <p className="mx-auto mb-8 max-w-2xl text-center text-sm text-[var(--color-muted)]">
+          Three pillars — SEO (blue-link search), AEO (answer engines), and GEO (generative AI
+          citation) — unified in a single audit and priority to-do list.
+        </p>
         <div className="grid gap-4 md:grid-cols-3">
           <FeatureCard
-            title="Crawlability"
+            title="Crawlability (SEO)"
             body="Raw HTML vs. JS-rendered diff, sitemap coverage, robots rules, fetch-time, broken links."
           />
           <FeatureCard
-            title="Structured data"
+            title="Structured data (AEO)"
             body="JSON-LD presence and validity for Organization, Product, FAQ, Article, Breadcrumb, and more."
           />
           <FeatureCard
-            title="AI-bot access"
+            title="AI-bot access (AEO)"
             body="Whether GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, and CCBot can read you."
           />
           <FeatureCard
-            title="llms.txt + skill.md"
-            body="The two new files AI crawlers look for. We check both, and tell you what to put in them."
+            title="llms.txt quality (GEO)"
+            body="Existence is not enough — we check depth, sections, and linked resources so generative AI has rich context to cite."
+          />
+          <FeatureCard
+            title="Knowledge graph (GEO)"
+            body="Does your Organization schema have sameAs links to Wikipedia, Wikidata, or LinkedIn? AI needs these to resolve your brand as a known entity."
+          />
+          <FeatureCard
+            title="Agent integration (GEO)"
+            body="ai-plugin.json, agent-card.json, and skill.md let AI agents interact with your site. We check all three."
           />
           <FeatureCard
             title="Positioning clarity"
@@ -112,8 +125,9 @@ export default function HomePage() {
       <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
         <h2 className="mb-2 text-center text-2xl font-bold">What you get when you sign up</h2>
         <p className="mx-auto mb-8 max-w-2xl text-center text-sm text-[var(--color-muted)]">
-          Save URLs as projects and CrawlProof tracks AEO score, finding mix, section health,
-          and priority backlog across every re-audit — the same dashboard you&apos;ll see on any paid report.
+          Save URLs as projects and CrawlProof tracks SEO + AEO + GEO score, finding mix,
+          section health, and priority backlog across every re-audit — the same dashboard
+          you&apos;ll see on any paid report.
         </p>
         <PerformancePreview variant="home" />
       </section>
