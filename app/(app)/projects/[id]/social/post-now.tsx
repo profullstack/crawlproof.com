@@ -36,6 +36,7 @@ export function PostNowForm({
   const [pending, start] = useTransition();
   const [mode, setMode] = useState<"manual" | "url">("manual");
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [postToAll, setPostToAll] = useState(false);
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [subreddit, setSubreddit] = useState("");
@@ -43,10 +44,15 @@ export function PostNowForm({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const acct = accounts.find((a) => a.id === accountId);
-  const isReddit = acct?.platform === "reddit";
-  const charMax =
-    acct?.platform === "bluesky"
+  const selectedIds = postToAll ? accounts.map((a) => a.id) : accountId ? [accountId] : [];
+  const acct = postToAll ? undefined : accounts.find((a) => a.id === accountId);
+  const hasReddit = postToAll
+    ? accounts.some((a) => a.platform === "reddit")
+    : acct?.platform === "reddit";
+  const isReddit = !postToAll && acct?.platform === "reddit";
+  const charMax = postToAll
+    ? null
+    : acct?.platform === "bluesky"
       ? BLUESKY_MAX
       : acct?.platform === "x"
         ? X_MAX
@@ -64,15 +70,15 @@ export function PostNowForm({
                     ? THREADS_MAX
                     : null;
   const remaining = charMax !== null ? charMax - text.length : null;
-  const titleRemaining = isReddit ? REDDIT_TITLE_MAX - title.length : null;
+  const titleRemaining = hasReddit ? REDDIT_TITLE_MAX - title.length : null;
 
   const canSubmit =
     mode === "url"
-      ? !!accountId && !!url.trim()
-      : !!accountId &&
+      ? selectedIds.length > 0 && !!url.trim()
+      : selectedIds.length > 0 &&
         !!text.trim() &&
         (remaining === null || remaining >= 0) &&
-        (!isReddit || (!!subreddit.trim() && !!title.trim() && titleRemaining! >= 0));
+        (!hasReddit || (!!subreddit.trim() && !!title.trim() && titleRemaining! >= 0));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -83,7 +89,7 @@ export function PostNowForm({
         const r = await postNowFromUrl({
           projectId,
           url,
-          accountIds: accountId ? [accountId] : [],
+          accountIds: selectedIds,
         });
         if (!r.ok) {
           setError(r.error);
@@ -91,24 +97,36 @@ export function PostNowForm({
         }
         setUrl("");
         setNotice(
-          `Posted${r.errors.length ? ` (${r.errors.length} failed)` : ""}.`,
+          `Posted to ${r.posted} account${r.posted !== 1 ? "s" : ""}${r.errors.length ? ` (${r.errors.length} failed)` : ""}.`,
         );
         router.refresh();
         return;
       }
-      const r = await postNow({
-        accountId,
-        text,
-        ...(isReddit ? { subreddit, title } : {}),
-      });
-      if (!r.ok) {
-        setError(r.error);
+      // Manual mode — post to each selected account in sequence.
+      let postedCount = 0;
+      const errs: string[] = [];
+      for (const id of selectedIds) {
+        const acctPlatform = accounts.find((a) => a.id === id)?.platform;
+        const needsReddit = acctPlatform === "reddit";
+        const r = await postNow({
+          accountId: id,
+          text,
+          ...(needsReddit ? { subreddit, title } : {}),
+        });
+        if (r.ok) postedCount++;
+        else errs.push(`${acctPlatform ?? id}: ${r.error}`);
+      }
+      if (postedCount === 0) {
+        setError(errs.join("; ") || "Nothing was posted.");
         return;
       }
       setText("");
       setTitle("");
-      // Keep subreddit between posts — users typically iterate on the same sub.
-      setNotice(`Posted. View at ${r.webUrl}`);
+      setNotice(
+        postToAll
+          ? `Posted to ${postedCount} account${postedCount !== 1 ? "s" : ""}${errs.length ? ` (${errs.length} failed)` : ""}.`
+          : `Posted.`,
+      );
       router.refresh();
     });
   }
@@ -132,20 +150,39 @@ export function PostNowForm({
         </button>
       </div>
       <div>
-        <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          Post from
-        </label>
-        <select
-          className="input mt-1"
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-        >
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.handle} ({a.platform})
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center justify-between">
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Post from
+          </label>
+          {accounts.length > 1 && (
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-muted)]">
+              <input
+                type="checkbox"
+                checked={postToAll}
+                onChange={(e) => setPostToAll(e.target.checked)}
+                className="h-3.5 w-3.5"
+              />
+              Post to all accounts ({accounts.length})
+            </label>
+          )}
+        </div>
+        {postToAll ? (
+          <div className="input mt-1 text-sm text-[var(--color-muted)]">
+            {accounts.map((a) => `${a.handle} (${a.platform})`).join(", ")}
+          </div>
+        ) : (
+          <select
+            className="input mt-1"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+          >
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.handle} ({a.platform})
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       {mode === "url" && (
         <div>
@@ -197,12 +234,11 @@ export function PostNowForm({
             onChange={(e) => setUrl(e.target.value)}
           />
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            We fetch the page, render it in your brand voice for{" "}
-            {acct ? acct.platform : "the platform"}, and post immediately.
+            We fetch the page, render it in your brand voice for each platform, and post immediately.
           </p>
         </div>
       )}
-      {mode === "manual" && isReddit && (
+      {mode === "manual" && hasReddit && (
         <>
           <div>
             <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
