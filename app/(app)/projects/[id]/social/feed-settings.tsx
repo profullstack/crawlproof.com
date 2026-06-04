@@ -2,10 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  checkSocialFeedNow,
-  saveFeedAutopostSettings,
-} from "@/app/actions/socialPosting";
+import { saveFeedAutopostSettings } from "@/app/actions/socialPosting";
 import type { FeedType } from "@/lib/sp/feedAutopost";
 
 type Account = {
@@ -41,7 +38,8 @@ export function FeedSettingsForm({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [checking, startCheck] = useTransition();
+  const [checking, setChecking] = useState(false);
+  const [checkStatus, setCheckStatus] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(config?.enabled ?? false);
   const [feedType, setFeedType] = useState<FeedType>(config?.feed_type ?? "sitemap");
   const suggestedSitemapUrl = projectUrl
@@ -89,18 +87,54 @@ export function FeedSettingsForm({
   function checkNow() {
     setError(null);
     setNotice(null);
-    startCheck(async () => {
-      const result = await checkSocialFeedNow(projectId);
-      if (!result.ok) {
-        setError(result.error);
-        return;
+    setChecking(true);
+    setCheckStatus("Starting…");
+
+    const es = new EventSource(
+      `/api/social/feed-check?projectId=${encodeURIComponent(projectId)}`,
+    );
+
+    es.addEventListener("status", (e) => {
+      try {
+        setCheckStatus((JSON.parse(e.data) as { message: string }).message);
+      } catch {}
+    });
+
+    es.addEventListener("done", (e) => {
+      es.close();
+      setChecking(false);
+      setCheckStatus(null);
+      try {
+        const result = JSON.parse(e.data) as {
+          ok: boolean;
+          error?: string;
+          checked?: number;
+          newItems?: number;
+          posted?: number;
+          seeded?: number;
+        };
+        if (!result.ok) {
+          setError(result.error ?? "Feed check failed.");
+          return;
+        }
+        const seeded =
+          (result.seeded ?? 0) > 0
+            ? ` Seeded ${result.seeded} existing item(s).`
+            : "";
+        setNotice(
+          `Checked ${result.checked ?? 0} item(s), found ${result.newItems ?? 0} new, posted ${result.posted ?? 0}.${seeded}`,
+        );
+        router.refresh();
+      } catch {
+        setError("Unexpected response from feed check.");
       }
-      const seeded =
-        result.seeded > 0 ? ` Seeded ${result.seeded} existing item(s).` : "";
-      setNotice(
-        `Checked ${result.checked} item(s), found ${result.newItems} new, posted ${result.posted}.${seeded}`,
-      );
-      router.refresh();
+    });
+
+    es.addEventListener("error", () => {
+      es.close();
+      setChecking(false);
+      setCheckStatus(null);
+      setError("Feed check failed. Check the feed URL and try again.");
     });
   }
 
@@ -253,9 +287,16 @@ export function FeedSettingsForm({
           disabled={checking || !enabled}
           onClick={checkNow}
         >
-          {checking ? "Checking..." : "Check feed now"}
+          Check feed now
         </button>
       </div>
+
+      {checkStatus && (
+        <p className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          {checkStatus}
+        </p>
+      )}
     </form>
   );
 }
