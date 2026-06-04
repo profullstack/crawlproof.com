@@ -627,14 +627,19 @@ async function fetchSitemapItems(sitemapUrl: string): Promise<FeedItem[]> {
   const xml = await fetchText(sitemapUrl);
   const $ = cheerio.load(xml, { xmlMode: true });
   if ($("sitemapindex").length > 0) {
-    const childUrls = $("sitemap loc")
-      .map((_, el) => $(el).text().trim())
-      .get()
-      .filter(Boolean)
-      .slice(0, 10);
+    // Collect child sitemaps with optional lastmod for ordering
+    const children: Array<{ loc: string; lastmod: string | null }> = [];
+    $("sitemap").each((_, el) => {
+      const loc = $(el).children("loc").first().text().trim();
+      const lastmod = $(el).children("lastmod").first().text().trim() || null;
+      if (loc) children.push({ loc, lastmod });
+    });
+    // Sort most-recent-first: prefer lastmod if present, else reverse document
+    // order (most CMSes append newer child sitemaps at the end of the index).
+    const sorted = sortChildSitemaps(children).slice(0, 10);
     const nested: FeedItem[] = [];
-    for (const child of childUrls) {
-      nested.push(...(await fetchSitemapItems(normalizeAbsoluteUrl(child, sitemapUrl))));
+    for (const child of sorted) {
+      nested.push(...(await fetchSitemapItems(normalizeAbsoluteUrl(child.loc, sitemapUrl))));
       if (nested.length >= MAX_SITEMAP_URLS) break;
     }
     return nested.slice(0, MAX_SITEMAP_URLS);
@@ -642,7 +647,6 @@ async function fetchSitemapItems(sitemapUrl: string): Promise<FeedItem[]> {
 
   const items: FeedItem[] = [];
   $("url").each((_, el) => {
-    if (items.length >= MAX_SITEMAP_URLS) return false;
     const node = $(el);
     const loc = node.children("loc").first().text().trim();
     if (!loc) return;
@@ -653,7 +657,33 @@ async function fetchSitemapItems(sitemapUrl: string): Promise<FeedItem[]> {
       publishedAt,
     });
   });
-  return items;
+  // Sort by lastmod desc when timestamps are present so the most recent
+  // URLs are processed first and fill the cap.
+  const hasTimestamps = items.some((i) => i.publishedAt !== null);
+  if (hasTimestamps) {
+    items.sort((a, b) => {
+      const ta = a.publishedAt ? Date.parse(a.publishedAt) : 0;
+      const tb = b.publishedAt ? Date.parse(b.publishedAt) : 0;
+      return tb - ta;
+    });
+  }
+  return items.slice(0, MAX_SITEMAP_URLS);
+}
+
+function sortChildSitemaps(
+  children: Array<{ loc: string; lastmod: string | null }>,
+): Array<{ loc: string; lastmod: string | null }> {
+  const hasLastmod = children.some((c) => c.lastmod !== null);
+  if (hasLastmod) {
+    return [...children].sort((a, b) => {
+      const ta = a.lastmod ? Date.parse(a.lastmod) : 0;
+      const tb = b.lastmod ? Date.parse(b.lastmod) : 0;
+      return tb - ta;
+    });
+  }
+  // No lastmod on index entries — reverse document order so the most
+  // recently appended child (e.g. torrents-2026-06.xml) is first.
+  return [...children].reverse();
 }
 
 async function fetchText(url: string): Promise<string> {
