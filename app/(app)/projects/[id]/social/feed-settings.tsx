@@ -31,18 +31,22 @@ export function FeedSettingsForm({
   accounts,
   config,
   autopostAccountIds,
+  projectUrl,
 }: {
   projectId: string;
   accounts: Account[];
   config: FeedConfig | null;
   autopostAccountIds: string[];
+  projectUrl?: string | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [checking, startCheck] = useTransition();
   const [enabled, setEnabled] = useState(config?.enabled ?? false);
   const [feedType, setFeedType] = useState<FeedType>(config?.feed_type ?? "sitemap");
-  const [feedUrl, setFeedUrl] = useState(config?.feed_url ?? "");
+  const defaultFeedUrl = config?.feed_url ??
+    (projectUrl ? `${projectUrl.replace(/\/$/, "")}/sitemap.xml` : "");
+  const [feedUrl, setFeedUrl] = useState(defaultFeedUrl);
   const [ignorePaths, setIgnorePaths] = useState(
     (config?.ignore_paths ?? ["/terms", "/privacy", "/contact"]).join("\n"),
   );
