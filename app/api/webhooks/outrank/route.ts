@@ -138,6 +138,7 @@ export async function POST(req: NextRequest) {
   // per-slug paths — Outrank batches multiple articles per webhook,
   // and revalidating the index covers them all.
   revalidatePath("/blog");
+  revalidatePath("/sitemap.xml");
 
   return NextResponse.json({
     message: "Webhook processed successfully",
