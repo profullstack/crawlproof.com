@@ -5,6 +5,7 @@ import {
   ConnectBlueskyForm,
   ConnectDiscordForm,
   ConnectTelegramForm,
+  ConnectViaCookiesForm,
   DisconnectButton,
 } from "./form";
 import { AppPasswordReveal } from "./app-password-reveal";
@@ -166,50 +167,57 @@ export default async function SocialSetupPage({
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Connect Reddit</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Reddit uses standard OAuth. Click below to redirect to Reddit, grant
-          permission, and come back — we ask only for the <code>identity</code>{" "}
-          and <code>submit</code> scopes (read your username + post on your
-          behalf). Refresh tokens are stored encrypted.
+          Uses your browser session cookies — no API approval needed. Export
+          your cookies from reddit.com using the{" "}
+          <a href="https://cookie-editor.com" target="_blank" rel="noreferrer" className="underline">
+            Cookie-Editor
+          </a>{" "}
+          extension, then paste below. Cookies typically last 30–90 days.
         </p>
-        <a href="/api/sp/oauth/reddit/start" className="btn btn-primary mt-4">
-          Connect Reddit
-        </a>
+        <ConnectViaCookiesForm platform="reddit" />
       </section>
 
       {/* Connect Threads */}
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Connect Threads</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Threads OAuth — scopes <code>threads_basic</code> +{" "}
-          <code>threads_content_publish</code>. Same Meta app credentials
-          as Facebook. <strong>Posting on behalf of users beyond the app's
-          developers/testers requires Meta app review.</strong> Tokens are
-          long-lived (~60 days).
+          Uses your browser session cookies — no Meta app review needed. Export
+          your cookies from threads.net using{" "}
+          <a href="https://cookie-editor.com" target="_blank" rel="noreferrer" className="underline">
+            Cookie-Editor
+          </a>
+          , then paste below.
         </p>
-        <a
-          href="/api/sp/oauth/threads/start"
-          className="btn btn-primary mt-4"
-        >
-          Connect Threads
-        </a>
+        <ConnectViaCookiesForm platform="threads" />
       </section>
 
       {/* Connect Facebook Page */}
       <section className="card p-5">
-        <h2 className="text-lg font-semibold">Connect Facebook Pages</h2>
+        <h2 className="text-lg font-semibold">Connect Facebook Page</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Connect once; every Facebook Page you admin lands as its own
-          account here. We request <code>pages_manage_posts</code> +{" "}
-          <code>pages_read_engagement</code>. <strong>Posts to Pages you
-          don't admin in our Meta app require Meta app review</strong>{" "}
-          (takes 1–3 weeks). Pages you admin work in dev mode immediately.
+          Uses your browser session cookies — no Meta app review needed. Log in
+          to facebook.com as your Page admin, export cookies via{" "}
+          <a href="https://cookie-editor.com" target="_blank" rel="noreferrer" className="underline">
+            Cookie-Editor
+          </a>
+          , and paste below.
         </p>
-        <a
-          href="/api/sp/oauth/facebook/start"
-          className="btn btn-primary mt-4"
-        >
-          Connect Facebook
-        </a>
+        <ConnectViaCookiesForm platform="facebook_page" />
+      </section>
+
+      {/* Connect Instagram */}
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Connect Instagram</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Uses your browser session cookies — no Meta app review needed. Log in
+          to instagram.com, export cookies via{" "}
+          <a href="https://cookie-editor.com" target="_blank" rel="noreferrer" className="underline">
+            Cookie-Editor
+          </a>
+          , and paste below. An AI-generated image is attached to every post
+          (Instagram requires an image).
+        </p>
+        <ConnectViaCookiesForm platform="instagram" />
       </section>
 
       {/* Connect X */}

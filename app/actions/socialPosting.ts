@@ -237,6 +237,65 @@ export async function connectTelegram(input: {
 }
 
 // ------------------------------------------------------------
+// ------------------------------------------------------------
+// connectViaCookies — store browser session cookies (Cookie-Editor JSON
+// export) for platforms that require Playwright automation instead of
+// an official API (Reddit, Facebook, Threads, Instagram).
+// ------------------------------------------------------------
+export async function connectViaCookies(input: {
+  platform: "reddit" | "facebook_page" | "threads" | "instagram";
+  cookiesJson: string;
+  handle: string;
+  externalId?: string;
+  imageStyle?: string;
+}): Promise<Ok<{ accountId: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { platform, cookiesJson, handle, externalId, imageStyle } = input;
+  if (!cookiesJson.trim()) return { ok: false, error: "Paste your cookie JSON." };
+  if (!handle.trim()) return { ok: false, error: "Enter your username / page name." };
+
+  // Validate JSON structure
+  try {
+    const { parseCookies } = await import("@/lib/sp/platforms/browser");
+    const cookies = parseCookies(cookiesJson);
+    if (cookies.length === 0) throw new Error("No cookies found in JSON.");
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Invalid cookie JSON: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("sp_account")
+    .upsert(
+      {
+        user_id: user.id,
+        platform,
+        auth_mode: "cookie",
+        handle: handle.trim().replace(/^@/, ""),
+        external_id: (externalId ?? handle).trim(),
+        enc_access_token: encryptSecret(cookiesJson),
+        image_style: imageStyle ?? "editorial",
+        status: "active",
+      },
+      { onConflict: "user_id,platform,external_id" },
+    )
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Could not save account." };
+  }
+
+  revalidatePath("/projects", "layout");
+  return { ok: true, accountId: data.id };
+}
+
 // disconnectAccount — delete an sp_account row (RLS scopes to owner).
 // Cascades to sp_site_account + sp_post via the FK constraints.
 // ------------------------------------------------------------

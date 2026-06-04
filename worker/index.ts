@@ -26,6 +26,7 @@ import { generateArticle } from "../lib/lx/articleGen";
 import { deliverArticle } from "../lib/lx/webhookDeliver";
 import { repairStuckLxJobs } from "../lib/lx/repair";
 import { processDueSocialFeeds } from "../lib/sp/feedAutopost";
+import { processBrowserPost } from "../lib/sp/browserPost";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -956,6 +957,30 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  if (req.method === "POST" && req.url === "/sp/browser-post") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: { postId?: string };
+      try { payload = JSON.parse(body || "{}"); } catch {
+        res.writeHead(400); res.end("bad json"); return;
+      }
+      if (!payload.postId) {
+        res.writeHead(400); res.end("postId required"); return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      processBrowserPost({ postId: payload.postId, supabase, openai }).catch((e) =>
+        console.error("[worker] browser post unhandled", e),
+      );
+    });
+    return;
+  }
   if (req.method !== "POST" || req.url !== "/enqueue") {
     res.writeHead(404);
     res.end();
@@ -1078,6 +1103,21 @@ async function lxSweep() {
   }
 }
 
+async function browserPostSweep() {
+  const { data: posts, error } = await supabase
+    .from("sp_post")
+    .select("id")
+    .eq("status", "queued_browser")
+    .order("created_at", { ascending: true })
+    .limit(3);
+  if (error || !posts) return;
+  for (const post of posts) {
+    await processBrowserPost({ postId: post.id, supabase, openai }).catch((e) =>
+      console.error("[worker] browser post unhandled", e),
+    );
+  }
+}
+
 async function socialFeedSweep() {
   const results = await processDueSocialFeeds(supabase, {
     limit: 10,
@@ -1097,6 +1137,7 @@ async function socialFeedSweep() {
 }
 
 setInterval(() => sweep().catch(() => {}), 60_000);
+setInterval(() => browserPostSweep().catch((e) => console.error("[worker] browser post sweep", e)), 60_000);
 setInterval(() => lxSweep().catch((e) => console.error("[worker] lx sweep", e)), 60_000);
 setInterval(
   () => socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e)),

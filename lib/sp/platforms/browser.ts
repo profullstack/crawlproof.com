@@ -1,0 +1,307 @@
+// Browser-automation posting via Playwright.
+//
+// Used for platforms that require app-review approval or paid API access
+// (Reddit, Facebook, Threads, Instagram). The user exports their session
+// cookies via the Cookie-Editor browser extension and pastes the JSON into
+// CrawlProof; we encrypt and store it in sp_account.enc_access_token.
+//
+// Each platform function launches a new browser context, loads the cookies,
+// navigates to the post creation flow, fills the form, and submits. The
+// browser is always closed in a finally block.
+//
+// Stealth: we set a realistic user-agent, viewport, and locale. Platforms
+// do run bot detection but are less aggressive on posting flows than on
+// scraping flows. Add playwright-extra + stealth plugin if detection becomes
+// a problem.
+
+import { chromium, type Browser, type BrowserContext } from "playwright";
+
+export type BrowserCookie = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "Strict" | "Lax" | "None";
+};
+
+export type BrowserPostResult = {
+  platformPostId: string;
+  webUrl: string;
+};
+
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+async function launchContext(cookies: BrowserCookie[]): Promise<{
+  browser: Browser;
+  ctx: BrowserContext;
+}> {
+  const browser = await chromium.launch({ headless: true });
+  const ctx = await browser.newContext({
+    userAgent: UA,
+    viewport: { width: 1280, height: 800 },
+    locale: "en-US",
+    timezoneId: "America/New_York",
+  });
+  await ctx.addCookies(cookies);
+  return { browser, ctx };
+}
+
+export function parseCookies(raw: string): BrowserCookie[] {
+  const parsed = JSON.parse(raw);
+  const arr: unknown[] = Array.isArray(parsed) ? parsed : parsed.cookies ?? parsed;
+  if (!Array.isArray(arr)) throw new Error("Cookie JSON must be an array.");
+  return arr.map((c: any) => ({
+    name: c.name,
+    value: c.value,
+    domain: c.domain ?? c.host ?? "",
+    path: c.path ?? "/",
+    expires: c.expirationDate ?? c.expires ?? -1,
+    httpOnly: c.httpOnly ?? false,
+    secure: c.secure ?? false,
+    sameSite: (c.sameSite as BrowserCookie["sameSite"]) ?? "Lax",
+  }));
+}
+
+// ---------- Reddit ----------
+
+export async function redditBrowserPost(args: {
+  cookies: BrowserCookie[];
+  subreddit: string;
+  title: string;
+  text: string;
+}): Promise<BrowserPostResult> {
+  const { cookies, subreddit, title, text } = args;
+  const sr = subreddit.replace(/^\/?r\//, "");
+  const { browser, ctx } = await launchContext(cookies);
+  try {
+    const page = await ctx.newPage();
+    await page.goto(`https://www.reddit.com/r/${sr}/submit`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    // Select "Text" tab
+    const textTab = page.getByRole("tab", { name: /text/i });
+    if (await textTab.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await textTab.click();
+    }
+
+    // Title
+    await page.getByPlaceholder(/title/i).fill(title);
+
+    // Body — Reddit uses a contenteditable div in the new UI
+    const bodyEditor = page.locator('[data-testid="post-content"] [contenteditable="true"]')
+      .or(page.locator('.public-DraftEditor-content'))
+      .or(page.locator('textarea[name="text"]'))
+      .first();
+    await bodyEditor.waitFor({ timeout: 8_000 });
+    await bodyEditor.click();
+    await bodyEditor.fill(text);
+
+    // Submit
+    await page.getByRole("button", { name: /^post$/i }).click();
+
+    // Wait for redirect to the new post
+    await page.waitForURL(/\/r\/[^/]+\/comments\//, { timeout: 15_000 });
+    const postUrl = page.url();
+    const match = postUrl.match(/\/comments\/([a-z0-9]+)\//);
+    const postId = match ? `t3_${match[1]}` : postUrl;
+    return { platformPostId: postId, webUrl: postUrl };
+  } finally {
+    await browser.close();
+  }
+}
+
+// ---------- Facebook Page ----------
+
+export async function facebookBrowserPost(args: {
+  cookies: BrowserCookie[];
+  pageId: string;
+  text: string;
+  imageUrl?: string;
+}): Promise<BrowserPostResult> {
+  const { cookies, pageId, text, imageUrl } = args;
+  const { browser, ctx } = await launchContext(cookies);
+  try {
+    const page = await ctx.newPage();
+    await page.goto(`https://www.facebook.com/${pageId}`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    // Click the "Write something..." composer
+    const composer = page.getByPlaceholder(/write something/i)
+      .or(page.getByRole("button", { name: /write something/i }))
+      .or(page.locator('[aria-label*="create"]').first())
+      .first();
+    await composer.waitFor({ timeout: 10_000 });
+    await composer.click();
+
+    // Type in the post dialog
+    const editor = page.locator('[contenteditable="true"][role="textbox"]').first();
+    await editor.waitFor({ timeout: 8_000 });
+    await editor.fill(text);
+
+    if (imageUrl) {
+      // Photo/Video button
+      const photoBtn = page.getByRole("button", { name: /photo.*video|add photo/i }).first();
+      if (await photoBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await photoBtn.click();
+        // Download the image and upload via file input
+        const imgRes = await fetch(imageUrl);
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const tmpPath = `/tmp/fb-post-${Date.now()}.jpg`;
+        const fs = await import("node:fs/promises");
+        await fs.writeFile(tmpPath, buf);
+        const fileInput = page.locator('input[type="file"]').first();
+        await fileInput.setInputFiles(tmpPath);
+        await fs.unlink(tmpPath).catch(() => {});
+        await page.waitForTimeout(2_000);
+      }
+    }
+
+    // Post button
+    await page.getByRole("button", { name: /^post$/i }).last().click();
+
+    // Wait for the composer to close and extract the new post URL
+    await page.waitForTimeout(4_000);
+    // Facebook doesn't redirect after posting; try to find the latest post
+    const postLink = page.locator('a[href*="/posts/"]').first();
+    const href = await postLink.getAttribute("href").catch(() => null);
+    const postUrl = href
+      ? `https://www.facebook.com${href.startsWith("/") ? href : "/" + href}`
+      : `https://www.facebook.com/${pageId}`;
+    return { platformPostId: pageId, webUrl: postUrl };
+  } finally {
+    await browser.close();
+  }
+}
+
+// ---------- Threads ----------
+
+export async function threadsBrowserPost(args: {
+  cookies: BrowserCookie[];
+  text: string;
+  imageUrl?: string;
+}): Promise<BrowserPostResult> {
+  const { cookies, text, imageUrl } = args;
+  const { browser, ctx } = await launchContext(cookies);
+  try {
+    const page = await ctx.newPage();
+    await page.goto("https://www.threads.net", { waitUntil: "domcontentloaded" });
+
+    // New Thread button
+    const newThreadBtn = page
+      .getByRole("link", { name: /new thread/i })
+      .or(page.getByRole("button", { name: /new thread/i }))
+      .or(page.locator('[aria-label*="thread" i]').first())
+      .first();
+    await newThreadBtn.waitFor({ timeout: 10_000 });
+    await newThreadBtn.click();
+
+    // Text editor in the compose dialog
+    const editor = page.locator('[contenteditable="true"]').last();
+    await editor.waitFor({ timeout: 8_000 });
+    await editor.click();
+    await editor.fill(text);
+
+    if (imageUrl) {
+      const imgBtn = page.locator('[aria-label*="image" i], [aria-label*="photo" i]').first();
+      if (await imgBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await imgBtn.click();
+        const imgRes = await fetch(imageUrl);
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const tmpPath = `/tmp/threads-post-${Date.now()}.jpg`;
+        const fs = await import("node:fs/promises");
+        await fs.writeFile(tmpPath, buf);
+        const fileInput = page.locator('input[type="file"]').first();
+        await fileInput.setInputFiles(tmpPath);
+        await fs.unlink(tmpPath).catch(() => {});
+        await page.waitForTimeout(2_000);
+      }
+    }
+
+    // Post button
+    await page.getByRole("button", { name: /^post$/i }).last().click();
+
+    // Threads stays on the same page; grab the post URL from the toast or DOM
+    await page.waitForTimeout(4_000);
+    const postLink = page.locator('a[href*="/post/"]').first();
+    const href = await postLink.getAttribute("href").catch(() => null);
+    const postUrl = href
+      ? `https://www.threads.net${href.startsWith("/") ? href : "/" + href}`
+      : "https://www.threads.net";
+    return { platformPostId: href ?? "threads", webUrl: postUrl };
+  } finally {
+    await browser.close();
+  }
+}
+
+// ---------- Instagram ----------
+
+export async function instagramBrowserPost(args: {
+  cookies: BrowserCookie[];
+  caption: string;
+  imageUrl: string; // required — Instagram does not support text-only posts
+}): Promise<BrowserPostResult> {
+  const { cookies, caption, imageUrl } = args;
+  const { browser, ctx } = await launchContext(cookies);
+  try {
+    const page = await ctx.newPage();
+    await page.goto("https://www.instagram.com", { waitUntil: "domcontentloaded" });
+
+    // Download image to temp file
+    const imgRes = await fetch(imageUrl);
+    const buf = Buffer.from(await imgRes.arrayBuffer());
+    const tmpPath = `/tmp/ig-post-${Date.now()}.jpg`;
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(tmpPath, buf);
+
+    try {
+      // Click the "+" / Create button in the nav
+      const createBtn = page
+        .getByRole("link", { name: /create/i })
+        .or(page.locator('[aria-label="New post" i]'))
+        .or(page.locator('svg[aria-label="New post" i]').locator(".."))
+        .first();
+      await createBtn.waitFor({ timeout: 10_000 });
+      await createBtn.click();
+
+      // File input (hidden; activated by the create dialog)
+      const fileInput = page.locator('input[type="file"]').first();
+      await fileInput.waitFor({ timeout: 8_000 });
+      await fileInput.setInputFiles(tmpPath);
+
+      // Next → Next → caption → Share flow
+      const nextBtn = page.getByRole("button", { name: /next/i });
+      await nextBtn.first().waitFor({ timeout: 8_000 });
+      await nextBtn.first().click(); // crop step
+      await page.waitForTimeout(1_000);
+      await nextBtn.first().click(); // filter step
+      await page.waitForTimeout(1_000);
+
+      // Caption
+      const captionBox = page.locator('textarea[aria-label*="caption" i], [contenteditable="true"]').first();
+      await captionBox.waitFor({ timeout: 8_000 });
+      await captionBox.fill(caption);
+
+      // Share
+      await page.getByRole("button", { name: /share/i }).last().click();
+      await page.waitForTimeout(5_000);
+
+      // Try to get the post URL from the success dialog
+      const viewPostLink = page.getByRole("link", { name: /view post/i });
+      const href = await viewPostLink.getAttribute("href").catch(() => null);
+      const postUrl = href
+        ? `https://www.instagram.com${href.startsWith("/") ? href : "/" + href}`
+        : "https://www.instagram.com";
+      return { platformPostId: href ?? "instagram", webUrl: postUrl };
+    } finally {
+      await fs.unlink(tmpPath).catch(() => {});
+    }
+  } finally {
+    await browser.close();
+  }
+}
