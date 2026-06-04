@@ -243,11 +243,12 @@ export async function connectTelegram(input: {
 // an official API (Reddit, Facebook, Threads, Instagram).
 // ------------------------------------------------------------
 export async function connectViaCookies(input: {
-  platform: "reddit" | "facebook_page" | "threads" | "instagram";
+  platform: "reddit" | "facebook_page" | "threads" | "instagram" | "x" | "linkedin" | "mastodon";
   cookiesJson: string;
   handle: string;
   externalId?: string;
   imageStyle?: string;
+  instanceUrl?: string;
 }): Promise<Ok<{ accountId: string }> | Err> {
   const supabase = await createClient();
   const {
@@ -255,7 +256,7 @@ export async function connectViaCookies(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const { platform, cookiesJson, handle, externalId, imageStyle } = input;
+  const { platform, cookiesJson, handle, externalId, imageStyle, instanceUrl } = input;
   if (!cookiesJson.trim()) return { ok: false, error: "Paste your cookie JSON." };
   if (!handle.trim()) return { ok: false, error: "Enter your username / page name." };
 
@@ -282,6 +283,7 @@ export async function connectViaCookies(input: {
         external_id: (externalId ?? handle).trim(),
         enc_access_token: encryptSecret(cookiesJson),
         image_style: imageStyle ?? "editorial",
+        ...(instanceUrl ? { instance_url: instanceUrl.trim() } : {}),
         status: "active",
       },
       { onConflict: "user_id,platform,external_id" },

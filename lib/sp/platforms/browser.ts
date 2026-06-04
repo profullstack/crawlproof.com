@@ -305,3 +305,179 @@ export async function instagramBrowserPost(args: {
     await browser.close();
   }
 }
+
+// ---------- X (Twitter) ----------
+
+export async function xBrowserPost(args: {
+  cookies: BrowserCookie[];
+  text: string;
+  imageUrl?: string;
+}): Promise<BrowserPostResult> {
+  const { cookies, text, imageUrl } = args;
+  const { browser, ctx } = await launchContext(cookies);
+  try {
+    const page = await ctx.newPage();
+    await page.goto("https://x.com/home", { waitUntil: "domcontentloaded" });
+
+    // Click the compose box
+    const compose = page
+      .getByRole("textbox", { name: /what is happening/i })
+      .or(page.locator('[data-testid="tweetTextarea_0"]'))
+      .first();
+    await compose.waitFor({ timeout: 10_000 });
+    await compose.click();
+    await compose.fill(text);
+
+    if (imageUrl) {
+      const imgBtn = page.locator('[data-testid="fileInput"]').first()
+        .or(page.locator('input[type="file"]').first());
+      if (await imgBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        const imgRes = await fetch(imageUrl);
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const tmpPath = `/tmp/x-post-${Date.now()}.jpg`;
+        const fs = await import("node:fs/promises");
+        await fs.writeFile(tmpPath, buf);
+        await imgBtn.setInputFiles(tmpPath);
+        await fs.unlink(tmpPath).catch(() => {});
+        await page.waitForTimeout(2_000);
+      }
+    }
+
+    // Post button
+    await page.locator('[data-testid="tweetButtonInline"]')
+      .or(page.getByRole("button", { name: /^post$/i }))
+      .first()
+      .click();
+
+    await page.waitForTimeout(4_000);
+    // Try to find the new tweet URL from the response/DOM
+    const tweetLink = page.locator('a[href*="/status/"]').first();
+    const href = await tweetLink.getAttribute("href").catch(() => null);
+    const postUrl = href
+      ? `https://x.com${href.startsWith("/") ? href : "/" + href}`
+      : "https://x.com";
+    return { platformPostId: href ?? "x", webUrl: postUrl };
+  } finally {
+    await browser.close();
+  }
+}
+
+// ---------- LinkedIn ----------
+
+export async function linkedinBrowserPost(args: {
+  cookies: BrowserCookie[];
+  text: string;
+  imageUrl?: string;
+}): Promise<BrowserPostResult> {
+  const { cookies, text, imageUrl } = args;
+  const { browser, ctx } = await launchContext(cookies);
+  try {
+    const page = await ctx.newPage();
+    await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" });
+
+    // Start a post
+    const startPost = page
+      .getByRole("button", { name: /start a post/i })
+      .or(page.locator('[data-control-name="share.sharebox_headline"]'))
+      .first();
+    await startPost.waitFor({ timeout: 10_000 });
+    await startPost.click();
+
+    // Editor in the share dialog
+    const editor = page.locator('[data-placeholder*="talk about" i], [contenteditable="true"]').first();
+    await editor.waitFor({ timeout: 8_000 });
+    await editor.fill(text);
+
+    if (imageUrl) {
+      const photoBtn = page.getByLabel(/add a photo/i)
+        .or(page.locator('[data-control-name="add_photo"]'))
+        .first();
+      if (await photoBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await photoBtn.click();
+        const imgRes = await fetch(imageUrl);
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const tmpPath = `/tmp/li-post-${Date.now()}.jpg`;
+        const fs = await import("node:fs/promises");
+        await fs.writeFile(tmpPath, buf);
+        const fileInput = page.locator('input[type="file"]').first();
+        await fileInput.setInputFiles(tmpPath);
+        await fs.unlink(tmpPath).catch(() => {});
+        await page.waitForTimeout(2_000);
+        // Done button in media uploader
+        const doneBtn = page.getByRole("button", { name: /done/i }).last();
+        if (await doneBtn.isVisible({ timeout: 4_000 }).catch(() => false)) {
+          await doneBtn.click();
+          await page.waitForTimeout(1_000);
+        }
+      }
+    }
+
+    // Post button
+    await page.getByRole("button", { name: /^post$/i }).last().click();
+    await page.waitForTimeout(4_000);
+
+    const postLink = page.locator('a[href*="/posts/"]').first();
+    const href = await postLink.getAttribute("href").catch(() => null);
+    const postUrl = href
+      ? `https://www.linkedin.com${href.startsWith("/") ? href : "/" + href}`
+      : "https://www.linkedin.com/feed/";
+    return { platformPostId: href ?? "linkedin", webUrl: postUrl };
+  } finally {
+    await browser.close();
+  }
+}
+
+// ---------- Mastodon ----------
+
+export async function mastodonBrowserPost(args: {
+  cookies: BrowserCookie[];
+  instanceUrl: string;
+  text: string;
+  imageUrl?: string;
+}): Promise<BrowserPostResult> {
+  const { cookies, instanceUrl, text, imageUrl } = args;
+  const base = instanceUrl.startsWith("http") ? instanceUrl : `https://${instanceUrl}`;
+  const { browser, ctx } = await launchContext(cookies);
+  try {
+    const page = await ctx.newPage();
+    await page.goto(base, { waitUntil: "domcontentloaded" });
+
+    // Mastodon web app — compose textarea
+    const compose = page
+      .locator('textarea.autosuggest-textarea__textarea')
+      .or(page.locator('[placeholder*="what" i]').first())
+      .or(page.getByRole("textbox").first());
+    await compose.waitFor({ timeout: 10_000 });
+    await compose.fill(text);
+
+    if (imageUrl) {
+      const attachBtn = page.locator('[title*="Attach" i], [aria-label*="attach" i], [aria-label*="image" i]').first();
+      if (await attachBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await attachBtn.click();
+        const imgRes = await fetch(imageUrl);
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const tmpPath = `/tmp/masto-post-${Date.now()}.jpg`;
+        const fs = await import("node:fs/promises");
+        await fs.writeFile(tmpPath, buf);
+        const fileInput = page.locator('input[type="file"]').first();
+        await fileInput.setInputFiles(tmpPath);
+        await fs.unlink(tmpPath).catch(() => {});
+        await page.waitForTimeout(2_000);
+      }
+    }
+
+    // Toot / Publish button
+    await page
+      .getByRole("button", { name: /publish|toot/i })
+      .last()
+      .click();
+
+    await page.waitForTimeout(3_000);
+    const postLink = page.locator('a.status__relative-time, a[href*="/statuses/"]').first();
+    const href = await postLink.getAttribute("href").catch(() => null);
+    const postUrl = href ?? base;
+    return { platformPostId: href ?? "mastodon", webUrl: postUrl };
+  } finally {
+    await browser.close();
+  }
+}
