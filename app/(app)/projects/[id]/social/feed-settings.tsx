@@ -45,7 +45,9 @@ export function FeedSettingsForm({
   const suggestedSitemapUrl = projectUrl
     ? `${projectUrl.replace(/\/$/, "")}/sitemap.xml`
     : null;
-  const [feedUrl, setFeedUrl] = useState(config?.feed_url ?? "");
+  const [feedUrl, setFeedUrl] = useState(
+    config?.feed_url ?? suggestedSitemapUrl ?? "",
+  );
   const [ignorePaths, setIgnorePaths] = useState(
     (config?.ignore_paths ?? ["/terms", "/privacy", "/contact"]).join("\n"),
   );
@@ -200,7 +202,7 @@ export function FeedSettingsForm({
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Feed URL
           </label>
-          {feedType === "sitemap" && suggestedSitemapUrl && !feedUrl && (
+          {feedType === "sitemap" && suggestedSitemapUrl && feedUrl !== suggestedSitemapUrl && (
             <button
               type="button"
               className="text-xs text-[var(--color-accent)] hover:underline"
