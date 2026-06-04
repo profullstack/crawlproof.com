@@ -592,7 +592,11 @@ export function SetupForm({
         return;
       }
       setNotice("Settings saved.");
-      router.refresh();
+      if (!initial) {
+        router.push(`/projects/${projectId}/autoblog`);
+      } else {
+        router.refresh();
+      }
     });
   }
 
