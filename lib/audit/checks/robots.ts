@@ -39,7 +39,7 @@ export function checkRobotsAndSitemap(ctx: CrawlContext): Finding[] {
   const robots = ctx.wellKnown.robots;
   const sitemap = ctx.wellKnown.sitemap;
 
-  if (!robots || robots.status >= 400) {
+  if (!robots || robots.status === 404) {
     out.push({
       section: "robots.txt and sitemap.xml Audit",
       check_key: "robots.exists",
@@ -47,6 +47,16 @@ export function checkRobotsAndSitemap(ctx: CrawlContext): Finding[] {
       title: "robots.txt not found",
       detail:
         "No /robots.txt was reachable. Add one explicitly — silence is read differently by different crawlers, and you lose the chance to control AI bots.",
+      priority: 2,
+    });
+  } else if (robots.status >= 400) {
+    out.push({
+      section: "robots.txt and sitemap.xml Audit",
+      check_key: "robots.exists",
+      status: "warn",
+      title: `robots.txt probe returned HTTP ${robots.status}`,
+      detail: `Could not read /robots.txt — got ${robots.status}. This may be a WAF block. Ensure robots.txt is publicly accessible.`,
+      evidence: { status: robots.status },
       priority: 2,
     });
   } else {
@@ -130,16 +140,15 @@ export function checkRobotsAndSitemap(ctx: CrawlContext): Finding[] {
     }
   }
 
-  if (!sitemap || sitemap.status >= 400) {
-    out.push({
-      section: "robots.txt and sitemap.xml Audit",
-      check_key: "sitemap.exists",
-      status: "fail",
-      title: "sitemap.xml not found",
-      detail: "Add /sitemap.xml — required for reliable AI/SERP discovery.",
-      priority: 1,
-    });
-  } else {
+  // Extract any Sitemap: URLs declared in robots.txt — treat as evidence the
+  // sitemap exists even if our direct probe of /sitemap.xml failed.
+  const declaredSitemaps = robots
+    ? (robots.content.match(/^\s*Sitemap:\s*(.+)$/gim) ?? []).map((l) =>
+        l.split(":").slice(1).join(":").trim()
+      )
+    : [];
+
+  if (sitemap && sitemap.status === 200) {
     const urlCount = (sitemap.content.match(/<loc>/g) ?? []).length;
     out.push({
       section: "robots.txt and sitemap.xml Audit",
@@ -159,21 +168,62 @@ export function checkRobotsAndSitemap(ctx: CrawlContext): Finding[] {
         priority: 2,
       });
     }
+  } else if (declaredSitemaps.length > 0) {
+    // robots.txt references a sitemap — it exists but our probe couldn't fetch it
+    const reason = !sitemap
+      ? "request timed out or was refused"
+      : `HTTP ${sitemap.status}`;
+    out.push({
+      section: "robots.txt and sitemap.xml Audit",
+      check_key: "sitemap.exists",
+      status: "warn",
+      title: "Sitemap declared in robots.txt but could not be fetched",
+      detail: `robots.txt references: ${declaredSitemaps.join(", ")}. Direct probe returned: ${reason}. This may be a WAF/bot-protection block or a slow dynamic sitemap — verify the URL is publicly reachable.`,
+      evidence: { declaredSitemaps, probeStatus: sitemap?.status ?? null },
+      priority: 2,
+    });
+  } else if (!sitemap || sitemap.status === 404) {
+    out.push({
+      section: "robots.txt and sitemap.xml Audit",
+      check_key: "sitemap.exists",
+      status: "fail",
+      title: "sitemap.xml not found",
+      detail: "No /sitemap.xml was reachable and robots.txt has no Sitemap: directive. Add /sitemap.xml — required for reliable AI/SERP discovery.",
+      priority: 1,
+    });
+  } else {
+    // Got a non-404 error (403 WAF block, 429 rate limit, 500 server error, etc.)
+    out.push({
+      section: "robots.txt and sitemap.xml Audit",
+      check_key: "sitemap.exists",
+      status: "warn",
+      title: `sitemap.xml probe returned HTTP ${sitemap.status}`,
+      detail: `The sitemap URL responded with ${sitemap.status} — this is likely a WAF/bot-protection block, a rate limit, or a server error rather than a missing sitemap. Verify that /sitemap.xml is publicly accessible without bot-blocking.`,
+      evidence: { status: sitemap.status },
+      priority: 2,
+    });
   }
 
   // llms.txt / skill.md
   const llms = ctx.wellKnown.llmsTxt;
+  const llmsOk = llms && llms.status === 200;
+  const llmsBlocked = llms && llms.status !== 200 && llms.status !== 404;
   out.push({
     section: "LLM / AI Crawler Accessibility",
     check_key: "llms_txt",
-    status: llms && llms.status === 200 ? "pass" : "warn",
-    title: llms && llms.status === 200 ? "llms.txt present" : "llms.txt missing",
-    detail:
-      llms && llms.status === 200
-        ? `${llms.content.length} chars`
+    status: llmsOk ? "pass" : "warn",
+    title: llmsOk
+      ? "llms.txt present"
+      : llmsBlocked
+        ? `llms.txt probe returned HTTP ${llms!.status}`
+        : "llms.txt missing",
+    detail: llmsOk
+      ? `${llms!.content.length} chars`
+      : llmsBlocked
+        ? `Got HTTP ${llms!.status} fetching /llms.txt — may be a WAF block. Verify the file is publicly accessible.`
         : "Add /llms.txt — a concise, link-rich summary that helps LLMs orient on your site.",
-    evidence: llms?.status === 200 ? { snippet: llms.content.slice(0, 400) } : undefined,
-    priority: llms?.status === 200 ? 5 : 2,
+    evidence: llmsOk ? { snippet: llms!.content.slice(0, 400) } : undefined,
+    priority: llmsOk ? 5 : 2,
   });
 
   const skill = ctx.wellKnown.skillMd;
