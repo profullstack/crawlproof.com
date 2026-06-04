@@ -44,9 +44,10 @@ export function FeedSettingsForm({
   const [checking, startCheck] = useTransition();
   const [enabled, setEnabled] = useState(config?.enabled ?? false);
   const [feedType, setFeedType] = useState<FeedType>(config?.feed_type ?? "sitemap");
-  const defaultFeedUrl = config?.feed_url ??
-    (projectUrl ? `${projectUrl.replace(/\/$/, "")}/sitemap.xml` : "");
-  const [feedUrl, setFeedUrl] = useState(defaultFeedUrl);
+  const suggestedSitemapUrl = projectUrl
+    ? `${projectUrl.replace(/\/$/, "")}/sitemap.xml`
+    : null;
+  const [feedUrl, setFeedUrl] = useState(config?.feed_url ?? "");
   const [ignorePaths, setIgnorePaths] = useState(
     (config?.ignore_paths ?? ["/terms", "/privacy", "/contact"]).join("\n"),
   );
@@ -161,15 +162,26 @@ export function FeedSettingsForm({
       </div>
 
       <div>
-        <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          Feed URL
-        </label>
+        <div className="flex items-baseline gap-2">
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Feed URL
+          </label>
+          {feedType === "sitemap" && suggestedSitemapUrl && !feedUrl && (
+            <button
+              type="button"
+              className="text-xs text-[var(--color-accent)] hover:underline"
+              onClick={() => setFeedUrl(suggestedSitemapUrl)}
+            >
+              use {suggestedSitemapUrl}
+            </button>
+          )}
+        </div>
         <input
           className="input mt-1"
           type="url"
           placeholder={
             feedType === "sitemap"
-              ? "https://example.com/sitemap.xml"
+              ? (suggestedSitemapUrl ?? "https://example.com/sitemap.xml")
               : "https://example.com/feed.xml"
           }
           value={feedUrl}
@@ -177,7 +189,7 @@ export function FeedSettingsForm({
         />
         {feedType === "sitemap" && (
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            Leave blank to auto-detect the sitemap from the project URL.
+            Leave blank to auto-detect (checks robots.txt, /sitemap.xml, /sitemap_index.xml).
           </p>
         )}
       </div>
