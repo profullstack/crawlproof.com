@@ -461,7 +461,11 @@ export async function createOrUpdateSite(
 
   // Check for domain conflict before attempting insert so the user gets
   // a readable error instead of a raw Postgres constraint violation.
-  const { data: domainConflict } = await supabase
+  // Use the service client so RLS doesn't hide rows owned by other
+  // users (or orphaned rows with null user_id), which would let the
+  // INSERT proceed and crash with a raw unique-constraint error.
+  const svcForConflict = serviceClient();
+  const { data: domainConflict } = await svcForConflict
     .from("lx_site")
     .select("id, project_id")
     .eq("domain", domain)
@@ -546,6 +550,28 @@ export async function createOrUpdateSite(
     .single();
 
   if (error || !inserted) {
+    // If we still hit the domain unique constraint despite our pre-check
+    // (race between two concurrent saves), re-fetch and update instead.
+    if (error?.code === "23505" && error.message.includes("lx_site_domain_unique")) {
+      const { data: raceRow } = await svcForConflict
+        .from("lx_site")
+        .select("id")
+        .eq("domain", domain)
+        .maybeSingle();
+      if (raceRow) {
+        const { error: raceErr } = await supabase
+          .from("lx_site")
+          .update({ project_id: proj.id })
+          .eq("id", raceRow.id);
+        if (!raceErr) {
+          await enqueueSitemapCrawl(raceRow.id as string);
+          await setCurrentSite(proj.id);
+          revalidatePath("/autoblog");
+          return { ok: true, siteId: raceRow.id as string };
+        }
+      }
+      return { ok: false, error: `The domain "${domain}" is already registered. Delete the existing autoblog first.` };
+    }
     return { ok: false, error: error?.message ?? "Could not save site." };
   }
 
