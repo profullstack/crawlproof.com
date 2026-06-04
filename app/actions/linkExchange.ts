@@ -473,10 +473,14 @@ export async function createOrUpdateSite(
     .maybeSingle();
   if (domainConflict) {
     if (domainConflict.project_id === proj.id) {
-      // Race: existingByProject lookup missed it — just update.
-      const { error: raceErr } = await supabase
+      // Race: existingByProject lookup missed it (likely because the row has
+      // a null/stale user_id that RLS hides from the regular client). Use the
+      // service client so the update always lands, and reclaim user_id so the
+      // owner can see the row again via the "lx_site owner all" RLS policy.
+      const { error: raceErr } = await svcForConflict
         .from("lx_site")
         .update({
+          user_id: user.id,
           domain,
           url: `https://${domain}`,
           blog_root_url: blogRootUrl,
@@ -561,9 +565,9 @@ export async function createOrUpdateSite(
         .eq("domain", domain)
         .maybeSingle();
       if (raceRow) {
-        const { error: raceErr } = await supabase
+        const { error: raceErr } = await svcForConflict
           .from("lx_site")
-          .update({ project_id: proj.id })
+          .update({ user_id: user.id, project_id: proj.id })
           .eq("id", raceRow.id);
         if (!raceErr) {
           await enqueueSitemapCrawl(raceRow.id as string);
