@@ -123,6 +123,8 @@ export type FeedProcessResult = {
   error?: string;
 };
 
+export type ProgressCallback = (msg: string) => void;
+
 export async function processDueSocialFeeds(
   supabase: SupabaseClient<any>,
   opts: { now?: Date; limit?: number; clients?: FeedAutopostClients } = {},
@@ -153,7 +155,7 @@ export async function processDueSocialFeeds(
 export async function processProjectSocialFeed(
   supabase: SupabaseClient<any>,
   projectId: string,
-  opts: { now?: Date; clients?: FeedAutopostClients } = {},
+  opts: { now?: Date; clients?: FeedAutopostClients; onProgress?: ProgressCallback } = {},
 ): Promise<FeedProcessResult> {
   const { data: config, error } = await supabase
     .from("sp_feed_config")
@@ -166,14 +168,16 @@ export async function processProjectSocialFeed(
   return processSocialFeedConfig(supabase, config as FeedConfig, {
     now: opts.now ?? new Date(),
     clients: opts.clients,
+    onProgress: opts.onProgress,
   });
 }
 
 async function processSocialFeedConfig(
   supabase: SupabaseClient<any>,
   config: FeedConfig,
-  opts: { now: Date; clients?: FeedAutopostClients },
+  opts: { now: Date; clients?: FeedAutopostClients; onProgress?: ProgressCallback },
 ): Promise<FeedProcessResult> {
+  const progress = opts.onProgress ?? (() => {});
   const nowIso = opts.now.toISOString();
   const { data: claimed } = await supabase
     .from("sp_feed_config")
@@ -194,6 +198,7 @@ async function processSocialFeedConfig(
     if (projectErr) throw new Error(projectErr.message);
     if (!project) throw new Error("Project not found.");
 
+    progress("Resolving feed URL…");
     const feedUrl = await resolveFeedUrl(config, project as ProjectRow);
     if (!feedUrl) {
       throw new Error(
@@ -203,6 +208,7 @@ async function processSocialFeedConfig(
       );
     }
 
+    progress(`Fetching ${config.feed_type === "sitemap" ? "sitemap" : "RSS"} feed…`);
     const fetched =
       config.feed_type === "sitemap"
         ? await fetchSitemapItems(feedUrl)
@@ -244,12 +250,16 @@ async function processSocialFeedConfig(
       if (insErr && insErr.code !== "23505") throw new Error(insErr.message);
     }
 
+    progress(
+      `Checked ${items.length} item(s)${newItems.length > 0 ? `, ${newItems.length} new` : ", nothing new"}…`,
+    );
+
     // Drain pending items regardless of whether this sweep added any —
     // earlier sweeps may have left 'seen' rows that couldn't ship
     // because their platform was inside the 4h throttle window.
     let posted = 0;
     if (!isFirstCheck) {
-      posted = await drainPendingFeedItems(supabase, config, opts.clients ?? {});
+      posted = await drainPendingFeedItems(supabase, config, opts.clients ?? {}, progress);
     }
 
     await supabase
@@ -336,6 +346,7 @@ async function drainPendingFeedItems(
   supabase: SupabaseClient<any>,
   config: FeedConfig,
   clients: FeedAutopostClients,
+  progress: ProgressCallback = () => {},
 ): Promise<number> {
   const { data: bindings, error: bindErr } = await supabase
     .from("sp_site_account")
@@ -369,10 +380,13 @@ async function drainPendingFeedItems(
     const item = await findOldestUndeliveredItem(supabase, config.id, platform);
     if (!item) continue;
 
+    progress(`Processing item for ${platform}…`);
+
     // Sitemap feeds carry no titles, so item.title is derived from the URL
     // slug (e.g. a UUID). Fetch the real page <title>/og:title so the render
     // has good input — and persist it so history shows the real title.
     if (config.feed_type === "sitemap" && !item.rendered_per_platform) {
+      progress(`Fetching page title for ${platform}…`);
       const real = await fetchPageTitle(item.url);
       if (real && real !== item.title) {
         await supabase.from("sp_feed_item").update({ title: real }).eq("id", item.id);
@@ -385,6 +399,7 @@ async function drainPendingFeedItems(
     // rather than posting a raw title+url spam fallback.
     let rendered: RenderedPost;
     try {
+      progress(`Rendering post for ${platform}…`);
       rendered = await ensureRendered({
         supabase,
         item,
@@ -421,6 +436,7 @@ async function drainPendingFeedItems(
     const platformAccounts = accounts.filter((a) => a.platform === platform);
     const errors: string[] = [];
     for (const account of platformAccounts) {
+      progress(`Posting to ${platform} (@${account.handle})…`);
       const result = await postViaAccount({
         supabase,
         userId: config.user_id,
