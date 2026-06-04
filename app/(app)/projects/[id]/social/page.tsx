@@ -377,6 +377,7 @@ export default async function SocialDashboardPage({
             accounts={accountList}
             config={(feedConfig as any) ?? null}
             autopostAccountIds={autopostAccountIds}
+            projectUrl={projectUrl}
           />
         </div>
       </section>
