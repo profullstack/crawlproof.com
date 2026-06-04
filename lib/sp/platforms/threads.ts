@@ -42,9 +42,9 @@ export function getThreadsAuthorizeUrl(input: {
   redirectUri: string;
   scopes?: readonly string[];
 }): string {
-  if (!env.metaAppId) throw new Error("META_APP_ID not configured.");
+  if (!env.threadsAppId) throw new Error("THREADS_APP_ID not configured.");
   const params = new URLSearchParams({
-    client_id: env.metaAppId,
+    client_id: env.threadsAppId,
     redirect_uri: input.redirectUri,
     state: input.state,
     response_type: "code",
@@ -65,8 +65,8 @@ export async function exchangeThreadsCode(input: {
   redirectUri: string;
 }): Promise<ThreadsToken> {
   const body = new URLSearchParams({
-    client_id: env.metaAppId,
-    client_secret: env.metaAppSecret,
+    client_id: env.threadsAppId,
+    client_secret: env.threadsAppSecret,
     grant_type: "authorization_code",
     redirect_uri: input.redirectUri,
     code: input.code,
@@ -103,7 +103,7 @@ export async function exchangeForLongLivedThreadsToken(input: {
 }): Promise<ThreadsLongLivedToken> {
   const params = new URLSearchParams({
     grant_type: "th_exchange_token",
-    client_secret: env.metaAppSecret,
+    client_secret: env.threadsAppSecret,
     access_token: input.shortLivedToken,
   });
   const res = await fetch(`${LONG_LIVED_TOKEN_URL}?${params.toString()}`);

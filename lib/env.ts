@@ -80,6 +80,9 @@ export const env = {
   // Graph API version pin. Bump quarterly; Meta deprecates the oldest
   // version every ~2 years.
   metaGraphVersion: process.env.META_GRAPH_VERSION ?? "v21.0",
+  // Threads has its own separate Meta app (different app id/secret).
+  threadsAppId: process.env.THREADS_APP_ID ?? "",
+  threadsAppSecret: process.env.THREADS_APP_SECRET ?? "",
   // Pinterest — OAuth2; /v5 API. Register at developers.pinterest.com.
   pinterestClientId: process.env.PINTEREST_CLIENT_ID ?? "",
   pinterestClientSecret: process.env.PINTEREST_CLIENT_SECRET ?? "",
