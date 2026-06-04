@@ -459,6 +459,58 @@ export async function createOrUpdateSite(
     return { ok: true, siteId: existingByProject.id as string };
   }
 
+  // Check for domain conflict before attempting insert so the user gets
+  // a readable error instead of a raw Postgres constraint violation.
+  const { data: domainConflict } = await supabase
+    .from("lx_site")
+    .select("id, project_id")
+    .eq("domain", domain)
+    .maybeSingle();
+  if (domainConflict) {
+    if (domainConflict.project_id === proj.id) {
+      // Race: existingByProject lookup missed it — just update.
+      const { error: raceErr } = await supabase
+        .from("lx_site")
+        .update({
+          domain,
+          url: `https://${domain}`,
+          blog_root_url: blogRootUrl,
+          sitemap_url: sitemapUrl,
+          niche,
+          target_audiences: audiences,
+          description,
+          seed_keywords: seedKeywords,
+          modifiers,
+          preserve_keywords: preserveKeywords,
+          keywords,
+          seo_title: seoTitle,
+          seo_description: seoDescription,
+          tone,
+          competitors,
+          webhook_url: webhookUrl,
+          webhook_secret: webhookSecret,
+          daily_article_count: dailyArticleCount,
+          publish_days: publishDays,
+          publish_hour: publishHour,
+          internal_links_per_article: internalLinks,
+          backlinks_enabled: backlinksEnabled,
+          external_links_per_article: externalLinks,
+          banner_style: bannerStyle,
+          next_publish_at: nextAt?.toISOString() ?? null,
+        })
+        .eq("id", domainConflict.id);
+      if (raceErr) return { ok: false, error: raceErr.message };
+      await enqueueSitemapCrawl(domainConflict.id as string);
+      await setCurrentSite(proj.id);
+      revalidatePath("/autoblog");
+      return { ok: true, siteId: domainConflict.id as string };
+    }
+    return {
+      ok: false,
+      error: `The domain "${domain}" is already enrolled in another autoblog. Delete that autoblog first, then try again.`,
+    };
+  }
+
   const { data: inserted, error } = await supabase
     .from("lx_site")
     .insert({
