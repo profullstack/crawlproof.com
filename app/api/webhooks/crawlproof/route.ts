@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
   // of waiting up to 60s for the next revalidate.
   revalidatePath("/blog");
   revalidatePath(`/blog/${post.slug}`);
+  revalidatePath("/sitemap.xml");
 
   return NextResponse.json({
     message: "Webhook processed successfully",
