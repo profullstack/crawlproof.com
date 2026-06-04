@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
 import { postNow, postNowFromUrl } from "@/app/actions/socialPosting";
 
@@ -43,7 +44,9 @@ export function PostNowForm({
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [statusLog, setStatusLog] = useState<
+    Array<{ label: string; status: "pending" | "ok" | "error"; msg?: string }>
+  >([]);
 
   const selectedIds = postToAll ? accounts.map((a) => a.id) : accountId ? [accountId] : [];
   const acct = postToAll ? undefined : accounts.find((a) => a.id === accountId);
@@ -85,20 +88,32 @@ export function PostNowForm({
     e.preventDefault();
     setError(null);
     setNotice(null);
-    setStatusMsg(null);
+    setStatusLog([]);
     start(async () => {
       if (mode === "url") {
-        setStatusMsg("Fetching page and generating posts…");
+        flushSync(() =>
+          setStatusLog([{ label: "Fetching page and generating posts…", status: "pending" }]),
+        );
         const r = await postNowFromUrl({
           projectId,
           url,
           accountIds: selectedIds,
         });
-        setStatusMsg(null);
         if (!r.ok) {
+          flushSync(() =>
+            setStatusLog([{ label: "Failed", status: "error", msg: r.error }]),
+          );
           setError(r.error);
           return;
         }
+        flushSync(() =>
+          setStatusLog([
+            {
+              label: `Posted to ${r.posted} account${r.posted !== 1 ? "s" : ""}${r.errors.length ? ` (${r.errors.length} failed)` : ""}`,
+              status: "ok",
+            },
+          ]),
+        );
         setUrl("");
         setNotice(
           `Posted to ${r.posted} account${r.posted !== 1 ? "s" : ""}${r.errors.length ? ` (${r.errors.length} failed)` : ""}.`,
@@ -107,23 +122,28 @@ export function PostNowForm({
         return;
       }
       // Manual mode — post to each selected account in sequence.
+      const log: Array<{ label: string; status: "pending" | "ok" | "error"; msg?: string }> = [];
       let postedCount = 0;
       const errs: string[] = [];
       for (const id of selectedIds) {
         const acct = accounts.find((a) => a.id === id);
         const acctPlatform = acct?.platform;
         const label = acct ? `${acct.handle} (${acctPlatform})` : id;
-        setStatusMsg(`Posting to ${label}…`);
+        log.push({ label, status: "pending" });
+        flushSync(() => setStatusLog([...log]));
         const needsReddit = acctPlatform === "reddit";
         const r = await postNow({
           accountId: id,
           text,
           ...(needsReddit ? { subreddit, title } : {}),
         });
+        log[log.length - 1] = r.ok
+          ? { label, status: "ok" }
+          : { label, status: "error", msg: r.error };
+        flushSync(() => setStatusLog([...log]));
         if (r.ok) postedCount++;
         else errs.push(`${acctPlatform ?? id}: ${r.error}`);
       }
-      setStatusMsg(null);
       if (postedCount === 0) {
         setError(errs.join("; ") || "Nothing was posted.");
         return;
@@ -320,6 +340,35 @@ export function PostNowForm({
         />
       </div>
       )}
+      {statusLog.length > 0 && (
+        <ul className="rounded-md border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-sm space-y-1">
+          {statusLog.map((entry, i) => (
+            <li key={i} className="flex items-center gap-2">
+              {entry.status === "pending" && (
+                <span className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent text-[var(--color-muted)]" />
+              )}
+              {entry.status === "ok" && (
+                <span className="shrink-0 text-[var(--color-pass)]">✓</span>
+              )}
+              {entry.status === "error" && (
+                <span className="shrink-0 text-[var(--color-fail)]">✗</span>
+              )}
+              <span
+                className={
+                  entry.status === "ok"
+                    ? "text-[var(--color-pass)]"
+                    : entry.status === "error"
+                      ? "text-[var(--color-fail)]"
+                      : "text-[var(--color-muted)]"
+                }
+              >
+                {entry.label}
+                {entry.msg ? ` — ${entry.msg}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
       {notice && <p className="text-sm text-[var(--color-pass)]">{notice}</p>}
       <button
@@ -329,12 +378,6 @@ export function PostNowForm({
       >
         {pending ? "Posting…" : mode === "url" ? "Generate & post" : "Post now"}
       </button>
-      {statusMsg && (
-        <p className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          {statusMsg}
-        </p>
-      )}
     </form>
   );
 }
