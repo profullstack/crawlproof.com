@@ -1,4 +1,4 @@
-// AEO Score trend chart — server component. Renders the latest score, a
+// AEO + GEO Score trend chart — server component. Renders the latest score, a
 // small inline-SVG sparkline of recent project_scores rows, and the change
 // since the start of the window. No charting library; the SVG is hand-
 // rolled to keep the bundle clean.
@@ -30,9 +30,9 @@ export async function AeoScoreTrend({ projectId, limit = 30 }: AeoScoreTrendProp
   if (rows.length === 0) {
     return (
       <section className="card p-4">
-        <h2 className="text-lg font-semibold">AEO Score</h2>
+        <h2 className="text-lg font-semibold">AEO + GEO Score</h2>
         <p className="mt-2 text-sm text-[var(--color-muted)]">
-          No scored runs yet. Once a scan completes, your AEO Score trend
+          No scored runs yet. Once a scan completes, your AEO + GEO Score trend
           will appear here.
         </p>
       </section>
@@ -69,7 +69,7 @@ export async function AeoScoreTrend({ projectId, limit = 30 }: AeoScoreTrendProp
     <section className="card p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
         <div className="flex items-baseline gap-3">
-          <h2 className="text-lg font-semibold">AEO Score</h2>
+          <h2 className="text-lg font-semibold">AEO + GEO Score</h2>
           <span
             className={`text-3xl font-bold ${
               tone === "pass"
@@ -105,7 +105,7 @@ export async function AeoScoreTrend({ projectId, limit = 30 }: AeoScoreTrendProp
         viewBox={`0 0 ${W} ${H}`}
         className="h-16 w-full"
         preserveAspectRatio="none"
-        aria-label="AEO Score trend"
+        aria-label="AEO + GEO Score trend"
       >
         {rows.length > 1 && (
           <polyline

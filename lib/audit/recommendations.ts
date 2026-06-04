@@ -339,6 +339,91 @@ const RECS: Record<string, { title: string; how: string }> = {
     title: "Set a Permissions-Policy",
     how: "Restrict browser features you don't use, e.g. `Permissions-Policy: camera=(), microphone=(), geolocation=()`.",
   },
+
+  // --- GEO (Generative Engine Optimization) ---
+  "geo.llms_txt": {
+    title: "Create or enrich /llms.txt",
+    how:
+      "Follow the llmstxt.org spec:\n\n" +
+      "```\n" +
+      "# Your Brand\n\n" +
+      "> One-line description of your site.\n\n" +
+      "## Docs\n\n" +
+      "- [Getting Started](https://yoursite.com/docs/start): How to get up and running.\n" +
+      "- [API Reference](https://yoursite.com/docs/api): Full API details.\n\n" +
+      "## About\n\n" +
+      "- [About us](https://yoursite.com/about): Mission and team.\n" +
+      "```\n\n" +
+      "Include at least 2 section headings, 3+ linked resources, and a brief description per link. " +
+      "A rich llms.txt dramatically increases how often generative AI systems cite your content.",
+  },
+  "geo.llms_full_txt": {
+    title: "Generate /llms-full.txt for RAG pipelines",
+    how:
+      "llms-full.txt is a concatenation of the full markdown text of every resource listed in llms.txt. " +
+      "Generate it statically at build time and serve it from your root:\n\n" +
+      "```\n" +
+      "# Your Brand — Full Content\n\n" +
+      "## Getting Started\n" +
+      "<full markdown content of /docs/start>\n\n" +
+      "## API Reference\n" +
+      "<full markdown content of /docs/api>\n" +
+      "```\n\n" +
+      "Large-context models can ingest your entire knowledge base in a single request, " +
+      "dramatically improving recall and citation accuracy.",
+  },
+  "geo.knowledge_graph": {
+    title: "Add sameAs knowledge graph links to Organization schema",
+    how:
+      "Extend your Organization JSON-LD to include `sameAs` pointing to authoritative directories:\n\n" +
+      "```json\n" +
+      "{\n" +
+      '  "@context": "https://schema.org",\n' +
+      '  "@type": "Organization",\n' +
+      '  "name": "Your Brand",\n' +
+      '  "url": "https://yoursite.com",\n' +
+      '  "sameAs": [\n' +
+      '    "https://en.wikipedia.org/wiki/Your_Brand",\n' +
+      '    "https://www.wikidata.org/wiki/Q12345678",\n' +
+      '    "https://www.linkedin.com/company/your-brand",\n' +
+      '    "https://www.crunchbase.com/organization/your-brand"\n' +
+      "  ]\n" +
+      "}\n" +
+      "```\n\n" +
+      "These links anchor your brand as a known entity in AI knowledge graphs, " +
+      "making it far more likely that generative models cite you by name rather than paraphrase.",
+  },
+  "geo.agent_integration": {
+    title: "Add an AI agent integration file",
+    how:
+      "At minimum, add a skill.md at /skill.md so Claude and similar agents can discover your API:\n\n" +
+      "```markdown\n" +
+      "# Your Brand Skill\n\n" +
+      "API endpoint: https://yoursite.com/api\n" +
+      "Auth: Bearer token\n\n" +
+      "## Tools\n\n" +
+      "- search: Search the knowledge base\n" +
+      "- get_article: Retrieve a full article by ID\n" +
+      "```\n\n" +
+      "Also consider /.well-known/ai-plugin.json (ChatGPT plugin discovery) and " +
+      "/.well-known/agent-card.json (Google A2A protocol) for broader agent compatibility.",
+  },
+  "geo.brand_entity": {
+    title: "Declare your brand name in Organization JSON-LD",
+    how:
+      'Add `"name": "Your Brand"` to your Organization or SoftwareApplication schema block. ' +
+      "AI systems match structured-data names against training data to resolve your brand " +
+      "as a distinct entity. Without it, mentions of your brand may not be attributed to you.",
+  },
+  "geo.citation_signals": {
+    title: "Add outbound links to authoritative sources",
+    how:
+      "Link to Wikipedia, .gov or .edu resources, peer-reviewed studies, or major news outlets " +
+      "when making factual claims. Generative AI systems treat pages that cite authoritative sources " +
+      "as more trustworthy, which raises citation likelihood.\n\n" +
+      "Examples: statistics from Statista or Census.gov, definitions from Wikipedia, " +
+      "research from nature.com or pubmed.ncbi.nlm.nih.gov.",
+  },
 };
 
 // Add an aibot.* template for every blocked AI bot.
