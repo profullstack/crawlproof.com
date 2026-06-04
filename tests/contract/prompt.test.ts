@@ -12,7 +12,7 @@ import {
 // dashboard, and the Markdown report.
 describe("audit prompt constants", () => {
   it("exposes the canonical sections in the prompt order", () => {
-    expect(SECTIONS).toHaveLength(20);
+    expect(SECTIONS).toHaveLength(21);
     expect(SECTIONS[0]).toBe("Crawl Summary");
     expect(SECTIONS[1]).toBe("Data Found");
     expect(SECTIONS[2]).toBe("Homepage Audit");
