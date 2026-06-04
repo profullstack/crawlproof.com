@@ -18,6 +18,9 @@ import {
   facebookBrowserPost,
   threadsBrowserPost,
   instagramBrowserPost,
+  xBrowserPost,
+  linkedinBrowserPost,
+  mastodonBrowserPost,
 } from "@/lib/sp/platforms/browser";
 import {
   generateSocialImage,
@@ -49,7 +52,7 @@ export async function processBrowserPost(args: {
 
   const { data: account } = await supabase
     .from("sp_account")
-    .select("id, platform, handle, external_id, enc_access_token, image_style, user_id")
+    .select("id, platform, handle, external_id, enc_access_token, image_style, instance_url, user_id")
     .eq("id", claimed.account_id)
     .maybeSingle();
   if (!account?.enc_access_token) {
@@ -126,6 +129,13 @@ export async function processBrowserPost(args: {
         caption: text,
         imageUrl: imageUrl!,
       });
+    } else if (account.platform === "x") {
+      result = await xBrowserPost({ cookies, text, imageUrl });
+    } else if (account.platform === "linkedin") {
+      result = await linkedinBrowserPost({ cookies, text, imageUrl });
+    } else if (account.platform === "mastodon") {
+      const instanceUrl = account.instance_url ?? "mastodon.social";
+      result = await mastodonBrowserPost({ cookies, instanceUrl, text, imageUrl });
     } else {
       throw new Error(`Browser posting not implemented for platform: ${account.platform}`);
     }

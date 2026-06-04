@@ -232,6 +232,9 @@ const PLATFORM_LABELS: Record<string, string> = {
   facebook_page: "Facebook Page",
   threads: "Threads",
   instagram: "Instagram",
+  x: "X (Twitter)",
+  linkedin: "LinkedIn",
+  mastodon: "Mastodon",
 };
 
 const PLATFORM_HINTS: Record<string, string> = {
@@ -241,12 +244,16 @@ const PLATFORM_HINTS: Record<string, string> = {
   threads: "Log in to threads.net, then export cookies with Cookie-Editor.",
   instagram:
     "Log in to instagram.com, then export cookies with Cookie-Editor. An AI-generated image will be attached to every post (Instagram requires an image).",
+  x: "Log in to x.com, then export cookies with Cookie-Editor. No paid API needed.",
+  linkedin: "Log in to linkedin.com, then export cookies with Cookie-Editor.",
+  mastodon:
+    "Log in to your Mastodon instance, then export cookies with Cookie-Editor. Enter your instance URL below.",
 };
 
 export function ConnectViaCookiesForm({
   platform,
 }: {
-  platform: "reddit" | "facebook_page" | "threads" | "instagram";
+  platform: "reddit" | "facebook_page" | "threads" | "instagram" | "x" | "linkedin" | "mastodon";
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -255,6 +262,7 @@ export function ConnectViaCookiesForm({
   const [imageStyle, setImageStyle] = useState(
     platform === "instagram" ? "editorial" : "none",
   );
+  const [instanceUrl, setInstanceUrl] = useState("mastodon.social");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -263,7 +271,13 @@ export function ConnectViaCookiesForm({
     setError(null);
     setNotice(null);
     start(async () => {
-      const r = await connectViaCookies({ platform, cookiesJson, handle, imageStyle });
+      const r = await connectViaCookies({
+        platform,
+        cookiesJson,
+        handle,
+        imageStyle,
+        ...(platform === "mastodon" ? { instanceUrl } : {}),
+      });
       if (!r.ok) {
         setError(r.error);
         return;
@@ -277,6 +291,22 @@ export function ConnectViaCookiesForm({
   return (
     <form onSubmit={submit} className="mt-4 space-y-3">
       <p className="text-xs text-[var(--color-muted)]">{PLATFORM_HINTS[platform]}</p>
+      {platform === "mastodon" && (
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Instance URL
+          </label>
+          <input
+            className="input mt-1"
+            type="text"
+            placeholder="mastodon.social"
+            autoComplete="off"
+            required
+            value={instanceUrl}
+            onChange={(e) => setInstanceUrl(e.target.value)}
+          />
+        </div>
+      )}
       <div>
         <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
           {platform === "facebook_page" ? "Page name or ID" : "Username"}

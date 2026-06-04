@@ -224,62 +224,42 @@ export default async function SocialSetupPage({
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Connect X (Twitter)</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          OAuth2 + PKCE; we request <code>tweet.read</code>,{" "}
-          <code>tweet.write</code>, <code>users.read</code>, and{" "}
-          <code>offline.access</code>. <strong>Posting requires a paid X
-          API tier</strong> (Basic ≈ $200/mo) — the OAuth flow works on the
-          free tier but <code>POST /2/tweets</code> returns 403 until you
-          upgrade.
+          Uses your browser session cookies — no paid API needed. Log in to{" "}
+          x.com, export cookies via{" "}
+          <a href="https://cookie-editor.com" target="_blank" rel="noreferrer" className="underline">
+            Cookie-Editor
+          </a>
+          , and paste below.
         </p>
-        <a href="/api/sp/oauth/x/start" className="btn btn-primary mt-4">
-          Connect X
-        </a>
+        <ConnectViaCookiesForm platform="x" />
       </section>
 
       {/* Connect LinkedIn */}
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Connect LinkedIn</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          LinkedIn uses standard OAuth. We request <code>openid</code>,{" "}
-          <code>profile</code>, <code>email</code>, and{" "}
-          <code>w_member_social</code> (post as you). The access token
-          lasts 60 days — you'll be prompted to reconnect after that.
+          Uses your browser session cookies. Log in to linkedin.com, export
+          cookies via{" "}
+          <a href="https://cookie-editor.com" target="_blank" rel="noreferrer" className="underline">
+            Cookie-Editor
+          </a>
+          , and paste below.
         </p>
-        <a
-          href="/api/sp/oauth/linkedin/start"
-          className="btn btn-primary mt-4"
-        >
-          Connect LinkedIn
-        </a>
+        <ConnectViaCookiesForm platform="linkedin" />
       </section>
 
       {/* Connect Mastodon */}
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Connect Mastodon</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Mastodon is federated — every instance is its own OAuth provider.
-          Enter the URL of your instance (e.g. <code>mastodon.social</code> or{" "}
-          <code>fosstodon.org</code>). We register a Crawlproof app there
-          automatically the first time, then redirect you to grant{" "}
-          <code>read</code> + <code>write:statuses</code> permission.
+          Uses your browser session cookies. Log in to your Mastodon instance,
+          export cookies via{" "}
+          <a href="https://cookie-editor.com" target="_blank" rel="noreferrer" className="underline">
+            Cookie-Editor
+          </a>
+          , and paste below.
         </p>
-        <form
-          method="POST"
-          action="/api/sp/oauth/mastodon/start"
-          className="mt-4 flex flex-wrap gap-2"
-        >
-          <input
-            className="input min-w-[16rem] flex-1"
-            type="text"
-            name="instance_url"
-            placeholder="mastodon.social"
-            autoComplete="off"
-            required
-          />
-          <button type="submit" className="btn btn-primary">
-            Connect Mastodon
-          </button>
-        </form>
+        <ConnectViaCookiesForm platform="mastodon" />
       </section>
 
       {/* Connect Discord */}
