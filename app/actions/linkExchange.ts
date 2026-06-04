@@ -456,6 +456,7 @@ export async function createOrUpdateSite(
     await enqueueSitemapCrawl(existingByProject.id as string);
     await setCurrentSite(proj.id);
     revalidatePath("/autoblog");
+    revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
     return { ok: true, siteId: existingByProject.id as string };
   }
 
@@ -507,6 +508,7 @@ export async function createOrUpdateSite(
       await enqueueSitemapCrawl(domainConflict.id as string);
       await setCurrentSite(proj.id);
       revalidatePath("/autoblog");
+      revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
       return { ok: true, siteId: domainConflict.id as string };
     }
     return {
@@ -567,6 +569,7 @@ export async function createOrUpdateSite(
           await enqueueSitemapCrawl(raceRow.id as string);
           await setCurrentSite(proj.id);
           revalidatePath("/autoblog");
+          revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
           return { ok: true, siteId: raceRow.id as string };
         }
       }
@@ -578,6 +581,7 @@ export async function createOrUpdateSite(
   await enqueueSitemapCrawl(inserted.id);
   await setCurrentSite(proj.id);
   revalidatePath("/autoblog");
+  revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
   return { ok: true, siteId: inserted.id };
 }
 
