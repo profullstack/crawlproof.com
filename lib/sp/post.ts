@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
+import { enqueueBrowserPost } from "@/lib/lx/workerClient";
 import {
   createBlueskyPost,
   createBlueskySession,
@@ -92,7 +93,7 @@ export async function postViaAccount(args: {
   const { data: account } = await supabase
     .from("sp_account")
     .select(
-      "id, platform, handle, external_id, instance_url, enc_access_token, enc_refresh_token, enc_app_password, token_expires_at, status, consecutive_failures",
+      "id, platform, handle, external_id, instance_url, auth_mode, enc_access_token, enc_refresh_token, enc_app_password, token_expires_at, status, consecutive_failures",
     )
     .eq("id", input.accountId)
     .eq("user_id", userId)
@@ -101,8 +102,34 @@ export async function postViaAccount(args: {
   if (account.status !== "active") {
     return { ok: false, error: `Account is ${account.status}.` };
   }
-  if (!account.enc_access_token || !account.external_id) {
+  if (!account.enc_access_token) {
     return { ok: false, error: "Account has no stored token." };
+  }
+
+  // Cookie-auth accounts post via Playwright in the worker.
+  if (account.auth_mode === "cookie") {
+    const { data: row, error: insErr } = await supabase
+      .from("sp_post")
+      .insert({
+        user_id: userId,
+        account_id: account.id,
+        project_id: projectId ?? null,
+        source,
+        rendered_text: text,
+        rendered_media_url: input.mediaUrl ?? [],
+        subreddit: input.subreddit ?? null,
+        title: input.title ?? null,
+        scheduled_for: new Date().toISOString(),
+        status: "queued_browser",
+        publish_attempts: 1,
+      })
+      .select("id")
+      .single();
+    if (insErr || !row) {
+      return { ok: false, error: insErr?.message ?? "Could not queue post." };
+    }
+    await enqueueBrowserPost(row.id);
+    return { ok: true, postId: row.id, webUrl: "", platformPostId: "" };
   }
 
   let title: string | null = null;

@@ -51,6 +51,12 @@ export async function enqueueGuestPostGenerate(
   });
 }
 
+export async function enqueueBrowserPost(
+  postId: string,
+): Promise<WorkerEnqueueResult> {
+  return postToWorker("/sp/browser-post", { postId });
+}
+
 async function postToWorker(
   path: string,
   body: unknown,
