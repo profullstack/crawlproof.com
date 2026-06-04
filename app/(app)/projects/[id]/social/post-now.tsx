@@ -43,6 +43,7 @@ export function PostNowForm({
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   const selectedIds = postToAll ? accounts.map((a) => a.id) : accountId ? [accountId] : [];
   const acct = postToAll ? undefined : accounts.find((a) => a.id === accountId);
@@ -84,13 +85,16 @@ export function PostNowForm({
     e.preventDefault();
     setError(null);
     setNotice(null);
+    setStatusMsg(null);
     start(async () => {
       if (mode === "url") {
+        setStatusMsg("Fetching page and generating posts…");
         const r = await postNowFromUrl({
           projectId,
           url,
           accountIds: selectedIds,
         });
+        setStatusMsg(null);
         if (!r.ok) {
           setError(r.error);
           return;
@@ -106,7 +110,10 @@ export function PostNowForm({
       let postedCount = 0;
       const errs: string[] = [];
       for (const id of selectedIds) {
-        const acctPlatform = accounts.find((a) => a.id === id)?.platform;
+        const acct = accounts.find((a) => a.id === id);
+        const acctPlatform = acct?.platform;
+        const label = acct ? `${acct.handle} (${acctPlatform})` : id;
+        setStatusMsg(`Posting to ${label}…`);
         const needsReddit = acctPlatform === "reddit";
         const r = await postNow({
           accountId: id,
@@ -116,6 +123,7 @@ export function PostNowForm({
         if (r.ok) postedCount++;
         else errs.push(`${acctPlatform ?? id}: ${r.error}`);
       }
+      setStatusMsg(null);
       if (postedCount === 0) {
         setError(errs.join("; ") || "Nothing was posted.");
         return;
@@ -321,6 +329,12 @@ export function PostNowForm({
       >
         {pending ? "Posting…" : mode === "url" ? "Generate & post" : "Post now"}
       </button>
+      {statusMsg && (
+        <p className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          {statusMsg}
+        </p>
+      )}
     </form>
   );
 }
