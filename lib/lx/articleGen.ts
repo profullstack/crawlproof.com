@@ -68,6 +68,8 @@ type KeywordRow = {
   id: string;
   keyword: string;
   scheduled_for: string;
+  article_type: string | null;
+  custom_instructions: string | null;
 };
 
 type LinkCandidate = {
@@ -321,6 +323,10 @@ type LabeledCandidate = LinkCandidate & { kind: "site_page" | "prior_post" };
 function buildUserPrompt(input: {
   site: SiteRow;
   keyword: string;
+  keywordMeta: {
+    articleType: string | null;
+    customInstructions: string | null;
+  };
   candidates: LabeledCandidate[];
   linkSlots: number;
   exchangeCandidates: ExchangeCandidate[];
@@ -330,6 +336,7 @@ function buildUserPrompt(input: {
   const {
     site,
     keyword,
+    keywordMeta,
     candidates,
     linkSlots,
     exchangeCandidates,
@@ -378,6 +385,10 @@ function buildUserPrompt(input: {
     `- Brand one-liner: ${brandOneLiner(site)}`,
     `- Niche/audience: ${niche}`,
     `- Main topic/keyword: "${keyword}"`,
+    keywordMeta.articleType ? `- Planned article type: ${keywordMeta.articleType}` : "",
+    keywordMeta.customInstructions
+      ? `- User instructions for this article: ${keywordMeta.customInstructions}`
+      : "",
     `- Target reader: ${audiences}`,
     `- Desired CTA URL/text: ${ctaUrl} / ${ctaText}`,
     `- Current year: ${year}`,
@@ -411,7 +422,7 @@ async function pickKeyword(
   // earliest queued slot is in the future.
   let q = supabase
     .from("lx_keyword")
-    .select("id, keyword, scheduled_for")
+    .select("id, keyword, scheduled_for, article_type, custom_instructions")
     .eq("site_id", siteId)
     .eq("status", "queued");
   if (!opts.manual) {
@@ -1101,6 +1112,10 @@ export async function generateArticle(
       user: buildUserPrompt({
         site: typedSite,
         keyword: keyword.keyword,
+        keywordMeta: {
+          articleType: keyword.article_type,
+          customInstructions: keyword.custom_instructions,
+        },
         candidates,
         linkSlots,
         exchangeCandidates,
