@@ -197,6 +197,9 @@ export default async function AutoblogDashboardPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link href={`/projects/${projectId}/autoblog/plan`} className="btn">
+            Plan
+          </Link>
           <Link href={`/projects/${projectId}/autoblog/setup`} className="btn">
             Settings
           </Link>
