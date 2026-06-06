@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-const email = process.env.PLAYWRIGHT_AUTH_EMAIL;
+const email = process.env.PLAYWRIGHT_AUTH_EMAIL ?? "anthony+riotcoder@profullstack.com";
 const password = process.env.PLAYWRIGHT_AUTH_PASSWORD;
 
-test.skip(!email || !password, "Set PLAYWRIGHT_AUTH_EMAIL/PASSWORD for owner flow e2e.");
+test.skip(!password, "Set PLAYWRIGHT_AUTH_PASSWORD for owner flow e2e.");
 
 test("authenticated owner can reach dashboard and recent outreach controls", async ({ page }) => {
   await page.goto("/login?redirect=/dashboard");
