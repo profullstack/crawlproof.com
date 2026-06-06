@@ -6,7 +6,9 @@
 //          matching.
 //
 // Behavior:
-//  * Handles both <urlset> and <sitemapindex> shapes (one level of nesting).
+//  * Handles <urlset>, <sitemapindex>, and nested sitemapindex (up to 3 levels).
+//  * Sorts sub-sitemaps most-recent-first (lastmod desc, or reverse document
+//    order when lastmod is absent) so the MAX_PAGES cap fills from new content.
 //  * Caps at MAX_PAGES per site to bound cost on huge sitemaps.
 //  * Fetches page HTML with HTML_CONCURRENCY parallel requests.
 //  * Embeds titles+descriptions in batches of EMBED_BATCH.
@@ -61,27 +63,83 @@ export function extractLocs(xml: string): string[] {
   return out;
 }
 
+export type SitemapEntry = { loc: string; lastmod: string | null };
+
+// Extract <sitemap> index entries with optional lastmod.
+export function extractSitemapEntries(xml: string): SitemapEntry[] {
+  const out: SitemapEntry[] = [];
+  const re = /<sitemap(?:\s[^>]*)?>[\s\S]*?<\/sitemap>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const loc = m[0].match(/<loc>\s*([^<\s]+)\s*<\/loc>/i);
+    if (!loc) continue;
+    const lm = m[0].match(/<lastmod>\s*(\S+)\s*<\/lastmod>/i);
+    out.push({ loc: loc[1], lastmod: lm ? lm[1] : null });
+  }
+  return out;
+}
+
+// Extract <url> leaf entries with optional lastmod.
+export function extractUrlEntries(xml: string): SitemapEntry[] {
+  const out: SitemapEntry[] = [];
+  const re = /<url(?:\s[^>]*)?>[\s\S]*?<\/url>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const loc = m[0].match(/<loc>\s*([^<\s]+)\s*<\/loc>/i);
+    if (!loc) continue;
+    const lm = m[0].match(/<lastmod>\s*(\S+)\s*<\/lastmod>/i);
+    out.push({ loc: loc[1], lastmod: lm ? lm[1] : null });
+  }
+  return out;
+}
+
+// Sort most-recent-first: by lastmod desc when available, else reverse
+// document order (CMSes typically append newer entries at the end).
+export function sortByRecency(entries: SitemapEntry[]): SitemapEntry[] {
+  if (entries.some((e) => e.lastmod !== null)) {
+    return [...entries].sort((a, b) => {
+      const ta = a.lastmod ? Date.parse(a.lastmod) : 0;
+      const tb = b.lastmod ? Date.parse(b.lastmod) : 0;
+      return tb - ta;
+    });
+  }
+  return [...entries].reverse();
+}
+
 export function isSitemapIndex(xml: string): boolean {
   return /<sitemapindex[\s>]/i.test(xml);
+}
+
+// Recursive URL collector. Handles up to MAX_SITEMAP_DEPTH levels of nesting.
+// Fills acc in recency order; stops as soon as acc.length >= MAX_PAGES.
+const MAX_SITEMAP_DEPTH = 3;
+
+async function collectUrls(xml: string, depth: number, acc: string[]): Promise<void> {
+  if (acc.length >= MAX_PAGES || depth >= MAX_SITEMAP_DEPTH) return;
+
+  if (!isSitemapIndex(xml)) {
+    for (const e of sortByRecency(extractUrlEntries(xml))) {
+      acc.push(e.loc);
+      if (acc.length >= MAX_PAGES) return;
+    }
+    return;
+  }
+
+  const subEntries = sortByRecency(extractSitemapEntries(xml)).slice(0, MAX_NESTED_SITEMAPS);
+  for (const sub of subEntries) {
+    if (acc.length >= MAX_PAGES) return;
+    const body = await fetchText(sub.loc);
+    if (!body) continue;
+    await collectUrls(body, depth + 1, acc);
+  }
 }
 
 async function discoverUrls(sitemapUrl: string): Promise<string[]> {
   const root = await fetchText(sitemapUrl);
   if (!root) return [];
-  if (!isSitemapIndex(root)) return extractLocs(root);
-
-  // One level of nesting.
-  const subSitemaps = extractLocs(root).slice(0, MAX_NESTED_SITEMAPS);
-  const all: string[] = [];
-  for (const sm of subSitemaps) {
-    const body = await fetchText(sm);
-    if (!body) continue;
-    for (const u of extractLocs(body)) {
-      all.push(u);
-      if (all.length >= MAX_PAGES) return all.slice(0, MAX_PAGES);
-    }
-  }
-  return all;
+  const acc: string[] = [];
+  await collectUrls(root, 0, acc);
+  return acc;
 }
 
 function decodeEntities(s: string): string {
