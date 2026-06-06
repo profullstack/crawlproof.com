@@ -10,6 +10,7 @@ import {
   type OutreachConfig,
 } from "@/lib/outreach";
 import { missingOrgSchema } from "@/lib/orgs";
+import { postViaAccount } from "@/lib/sp/post";
 
 type Ok = { ok: true; provider: string };
 type Err = { ok: false; error: string };
@@ -25,6 +26,7 @@ export async function sendRecentAuditOutreach(input: {
   organizationId: string;
   channel: OutreachChannel;
   visibility?: OutreachVisibility;
+  socialAccountIds?: string[];
   subject?: string;
   body: string;
 }): Promise<Ok | Err> {
@@ -70,24 +72,89 @@ export async function sendRecentAuditOutreach(input: {
   if (input.channel === "social") {
     const subject =
       cleanSubject(input.subject) ?? `CrawlProof social follow-up for ${hostOf(audit.target_url)}`;
-    const { error: recordError } = await svc.from("recent_outreach_messages").insert({
-      organization_id: input.organizationId,
-      audit_id: input.auditId,
-      sender_id: user.id,
-      channel: input.channel,
-      provider: config?.provider ?? "manual",
-      recipient_hash: recipientHash(`${input.auditId}:${reportUrl}`),
-      subject,
-      body,
-      status: "queued",
-      provider_message_id: null,
-      error: null,
-      visibility: input.visibility === "public" ? "public" : "private",
-    });
-    if (recordError) return { ok: false, error: recordError.message };
+    const visibility = input.visibility === "public" ? "public" : "private";
+    const finalBody = `${body}\n\nReport: ${reportUrl}`;
+    const accountIds = [...new Set(input.socialAccountIds ?? [])]
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .slice(0, 10);
+
+    if (accountIds.length === 0) {
+      const { error: recordError } = await svc.from("recent_outreach_messages").insert({
+        organization_id: input.organizationId,
+        audit_id: input.auditId,
+        sender_id: user.id,
+        channel: input.channel,
+        provider: config?.provider ?? "manual",
+        recipient_hash: recipientHash(`${input.auditId}:${reportUrl}`),
+        subject,
+        body,
+        status: "queued",
+        provider_message_id: null,
+        error: null,
+        visibility,
+      });
+      if (recordError) return { ok: false, error: recordError.message };
+
+      revalidatePath("/recent");
+      return { ok: true, provider: config?.provider ?? "manual" };
+    }
+
+    const { data: accounts, error: accountError } = await svc
+      .from("sp_account")
+      .select("id, platform, handle")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .in("id", accountIds);
+    if (accountError) return { ok: false, error: accountError.message };
+    if (!accounts || accounts.length === 0) {
+      return { ok: false, error: "No selected social accounts were found." };
+    }
+    if (accounts.length !== accountIds.length) {
+      return { ok: false, error: "One selected social account was not found." };
+    }
+
+    let posted = 0;
+    const errors: string[] = [];
+    for (const account of accounts as Array<{ id: string; platform: string; handle: string }>) {
+      const result = await postViaAccount({
+        supabase: svc,
+        userId: user.id,
+        input: {
+          accountId: account.id,
+          text: finalBody,
+          title: subject,
+        },
+        source: "outreach",
+      });
+      const ok = result.ok;
+      if (ok) posted++;
+      else errors.push(`${account.platform}: ${result.error}`);
+
+      const { error: recordError } = await svc.from("recent_outreach_messages").insert({
+        organization_id: input.organizationId,
+        audit_id: input.auditId,
+        sender_id: user.id,
+        channel: input.channel,
+        provider: account.platform,
+        recipient_hash: recipientHash(`social:${account.id}:${input.auditId}`),
+        subject,
+        body,
+        status: ok ? (result.webUrl || result.platformPostId ? "sent" : "queued") : "failed",
+        provider_message_id: ok ? result.platformPostId || null : null,
+        error: ok ? null : result.error,
+        visibility,
+        social_post_id: ok ? result.postId : null,
+      });
+      if (recordError) return { ok: false, error: recordError.message };
+    }
 
     revalidatePath("/recent");
-    return { ok: true, provider: config?.provider ?? "manual" };
+    if (posted === 0) return { ok: false, error: errors.join("; ") || "No social posts sent." };
+    return {
+      ok: true,
+      provider: `${posted} social account${posted === 1 ? "" : "s"}`,
+    };
   }
 
   const recipient =
@@ -149,7 +216,7 @@ async function loadOutreachConfig(
   const { data, error } = await svc
     .from("organization_outreach_configs")
     .select(
-      "provider, from_email, from_phone, reply_to, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, api_key, account_sid, auth_token",
+      "provider, from_email, from_phone, reply_to, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, api_key, account_sid, auth_token, enc_smtp_user, enc_smtp_pass, enc_api_key, enc_auth_token",
     )
     .eq("organization_id", organizationId)
     .eq("channel", channel)

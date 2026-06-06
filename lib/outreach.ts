@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
 import { env } from "@/lib/env";
+import { decryptSecret } from "@/lib/sp/vault";
 
 export type DeliveryResult = {
   sent: boolean;
@@ -23,6 +24,10 @@ export type OutreachConfig = {
   api_key?: string | null;
   account_sid?: string | null;
   auth_token?: string | null;
+  enc_smtp_user?: string | null;
+  enc_smtp_pass?: string | null;
+  enc_api_key?: string | null;
+  enc_auth_token?: string | null;
 };
 
 export function recipientHash(value: string) {
@@ -36,6 +41,24 @@ export async function sendOutreachEmail(input: {
   replyTo?: string | null;
   config?: OutreachConfig | null;
 }): Promise<DeliveryResult> {
+  let smtpUser: string | null;
+  let smtpPass: string | null;
+  let resendApiKey: string;
+  try {
+    smtpUser = secretValue(input.config?.enc_smtp_user, input.config?.smtp_user);
+    smtpPass = secretValue(input.config?.enc_smtp_pass, input.config?.smtp_pass);
+    resendApiKey =
+      input.config?.provider === "resend"
+        ? (secretValue(input.config.enc_api_key, input.config.api_key) ?? "")
+        : "";
+  } catch (error) {
+    return {
+      sent: false,
+      provider: input.config?.provider ?? "email",
+      error: error instanceof Error ? error.message : "Could not decrypt sender config.",
+    };
+  }
+
   const smtpHost =
     input.config?.provider === "smtp" && input.config.smtp_host
       ? input.config.smtp_host
@@ -49,11 +72,13 @@ export async function sendOutreachEmail(input: {
         auth:
           input.config?.smtp_user ||
           input.config?.smtp_pass ||
+          input.config?.enc_smtp_user ||
+          input.config?.enc_smtp_pass ||
           env.smtpUser ||
           env.smtpPass
             ? {
-                user: input.config?.smtp_user ?? env.smtpUser,
-                pass: input.config?.smtp_pass ?? env.smtpPass,
+                user: smtpUser ?? env.smtpUser,
+                pass: smtpPass ?? env.smtpPass,
               }
             : undefined,
       });
@@ -79,10 +104,7 @@ export async function sendOutreachEmail(input: {
     }
   }
 
-  const resendApiKey =
-    input.config?.provider === "resend" && input.config.api_key
-      ? input.config.api_key
-      : env.resendApiKey;
+  resendApiKey ||= env.resendApiKey;
   if (!resendApiKey) {
     return { sent: false, provider: "email", error: "SMTP_HOST or RESEND_API_KEY is required." };
   }
@@ -107,6 +129,19 @@ export async function sendOutreachSms(input: {
   body: string;
   config?: OutreachConfig | null;
 }): Promise<DeliveryResult> {
+  try {
+    if (input.config?.enc_api_key) input.config.api_key = decryptSecret(input.config.enc_api_key);
+    if (input.config?.enc_auth_token) {
+      input.config.auth_token = decryptSecret(input.config.enc_auth_token);
+    }
+  } catch (error) {
+    return {
+      sent: false,
+      provider: input.config?.provider ?? "sms",
+      error: error instanceof Error ? error.message : "Could not decrypt SMS config.",
+    };
+  }
+
   if (input.config?.provider === "twilio") {
     return sendTwilioSms(input, input.config);
   }
@@ -124,6 +159,14 @@ export async function sendOutreachSms(input: {
     provider: "sms",
     error: "TWILIO_* or TELNYX_* SMS env vars are required.",
   };
+}
+
+function secretValue(
+  encrypted: string | null | undefined,
+  plaintext: string | null | undefined,
+) {
+  if (encrypted) return decryptSecret(encrypted);
+  return plaintext ?? null;
 }
 
 async function sendTwilioSms(

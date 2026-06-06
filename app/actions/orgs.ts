@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
+import { encryptSecret } from "@/lib/sp/vault";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -163,6 +164,8 @@ export async function saveOrganizationOutreachConfig(input: {
   if (!validOutreachProvider(input.channel, input.provider)) {
     return { ok: false, error: "Provider is not valid for this channel." };
   }
+  const encryptedSecrets = encryptOutreachSecrets(input);
+  if (!encryptedSecrets.ok) return encryptedSecrets;
 
   const patch = {
     organization_id: input.organizationId,
@@ -178,11 +181,15 @@ export async function saveOrganizationOutreachConfig(input: {
     smtp_host: clean(input.smtpHost),
     smtp_port: Number(input.smtpPort || 0) || null,
     smtp_secure: !!input.smtpSecure,
-    smtp_user: clean(input.smtpUser),
-    smtp_pass: clean(input.smtpPass),
-    api_key: clean(input.apiKey),
+    smtp_user: null,
+    smtp_pass: null,
+    api_key: null,
     account_sid: clean(input.accountSid),
-    auth_token: clean(input.authToken),
+    auth_token: null,
+    enc_smtp_user: encryptedSecrets.encSmtpUser,
+    enc_smtp_pass: encryptedSecrets.encSmtpPass,
+    enc_api_key: encryptedSecrets.encApiKey,
+    enc_auth_token: encryptedSecrets.encAuthToken,
   };
 
   await svc
@@ -246,4 +253,42 @@ function validOutreachProvider(
   if (channel === "email") return provider === "smtp" || provider === "resend";
   if (channel === "sms") return provider === "twilio" || provider === "telnyx";
   return provider === "manual";
+}
+
+function encryptOutreachSecrets(input: {
+  smtpUser?: string;
+  smtpPass?: string;
+  apiKey?: string;
+  authToken?: string;
+}):
+  | {
+      ok: true;
+      encSmtpUser: string | null;
+      encSmtpPass: string | null;
+      encApiKey: string | null;
+      encAuthToken: string | null;
+    }
+  | Err {
+  try {
+    return {
+      ok: true,
+      encSmtpUser: encryptClean(input.smtpUser),
+      encSmtpPass: encryptClean(input.smtpPass),
+      encApiKey: encryptClean(input.apiKey),
+      encAuthToken: encryptClean(input.authToken),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not encrypt sender credentials.",
+    };
+  }
+}
+
+function encryptClean(value: string | undefined) {
+  const cleanValue = clean(value);
+  return cleanValue ? encryptSecret(cleanValue) : null;
 }
