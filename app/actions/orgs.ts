@@ -182,6 +182,13 @@ export async function saveOrganizationOutreachConfig(input: {
     auth_token: clean(input.authToken),
   };
 
+  await svc
+    .from("organization_outreach_configs")
+    .update({ is_default: false })
+    .eq("organization_id", input.organizationId)
+    .eq("channel", input.channel)
+    .eq("is_default", true);
+
   const { data, error } = await svc
     .from("organization_outreach_configs")
     .insert(patch)
