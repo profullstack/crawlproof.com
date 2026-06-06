@@ -109,6 +109,12 @@ const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     voice:
       "Title is a question or claim that earns the click without clickbait. Body is plain prose, no hashtags, no emojis.",
   },
+  instagram: {
+    maxChars: 1800,
+    usesHashtags: "many",
+    voice:
+      "Visual-first caption. Lead with one punchy hook sentence, add 2-3 lines of context, close with 5-10 relevant hashtags.",
+  },
 };
 
 const HASHTAG_GUIDANCE: Record<PlatformProfile["usesHashtags"], string> = {
@@ -133,9 +139,12 @@ export async function renderPostForPlatform(args: {
   config: ProjectSocialConfig;
 }): Promise<RenderedPost> {
   const { anthropic, openai, platform, url, articleTitle, config } = args;
-  const profile = PLATFORM_PROFILES[platform];
-  if (!profile) {
-    throw new Error(`No platform profile configured for "${platform}".`);
+  const profile = PLATFORM_PROFILES[platform] ?? PLATFORM_PROFILES["threads"];
+  if (!PLATFORM_PROFILES[platform]) {
+    // Unknown platform — use a generic short-form profile so the item
+    // doesn't get permanently failed. postViaAccount will return the
+    // "ships in a later phase" error gracefully.
+    console.warn(`[sp] no platform profile for "${platform}", using generic fallback`);
   }
   if (!anthropic && !openai) {
     throw new Error(
@@ -217,6 +226,7 @@ const PLATFORM_HARD_LIMIT: Record<string, number> = {
   discord: 2000,
   telegram: 4096,
   reddit: 40_000,
+  instagram: 2200,
 };
 
 const ELLIPSIS = "…";
