@@ -16,15 +16,16 @@ export function RecentOutreachForm({
   hasEmail: boolean;
   hasPhone: boolean;
 }) {
-  const initialChannel = hasEmail ? "email" : "sms";
-  const [channel, setChannel] = useState<"email" | "sms">(initialChannel);
+  const initialChannel = hasEmail ? "email" : hasPhone ? "sms" : "social";
+  const [channel, setChannel] = useState<"email" | "sms" | "social">(initialChannel);
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
   const [subject, setSubject] = useState(`Quick follow-up on your ${host} AEO audit`);
   const [body, setBody] = useState(defaultBody(host));
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const disabled = useMemo(
-    () => (channel === "email" ? !hasEmail : !hasPhone),
+    () => (channel === "email" ? !hasEmail : channel === "sms" ? !hasPhone : false),
     [channel, hasEmail, hasPhone],
   );
 
@@ -36,6 +37,7 @@ export function RecentOutreachForm({
         auditId,
         organizationId,
         channel,
+        visibility,
         subject,
         body,
       });
@@ -43,16 +45,12 @@ export function RecentOutreachForm({
         setMessage(result.error);
         return;
       }
-      setMessage(`Sent via ${result.provider}.`);
+      setMessage(
+        channel === "social"
+          ? `Recorded via ${result.provider}.`
+          : `Sent via ${result.provider}.`,
+      );
     });
-  }
-
-  if (!hasEmail && !hasPhone) {
-    return (
-      <p className="mt-3 text-xs text-[var(--color-muted)]">
-        No captured email or phone for this scan.
-      </p>
-    );
   }
 
   return (
@@ -86,9 +84,20 @@ export function RecentOutreachForm({
           >
             SMS {hasPhone ? "" : "unavailable"}
           </button>
+          <button
+            type="button"
+            onClick={() => setChannel("social")}
+            className={`rounded border px-2 py-1 ${
+              channel === "social"
+                ? "border-[var(--color-accent)]"
+                : "border-[var(--color-border)] text-[var(--color-muted)]"
+            }`}
+          >
+            Social
+          </button>
         </div>
 
-        {channel === "email" && (
+        {(channel === "email" || channel === "social") && (
           <label className="block text-xs">
             <span className="font-medium">Subject</span>
             <input
@@ -97,6 +106,20 @@ export function RecentOutreachForm({
               className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
               maxLength={120}
             />
+          </label>
+        )}
+
+        {channel === "social" && (
+          <label className="block text-xs">
+            <span className="font-medium">Visibility</span>
+            <select
+              value={visibility}
+              onChange={(event) => setVisibility(event.target.value as typeof visibility)}
+              className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
+            >
+              <option value="private">Private</option>
+              <option value="public">Public</option>
+            </select>
           </label>
         )}
 
@@ -117,12 +140,20 @@ export function RecentOutreachForm({
             className="btn btn-primary text-xs"
             disabled={pending || disabled}
           >
-            {pending ? "Sending..." : `Send ${channel.toUpperCase()}`}
+            {pending
+              ? channel === "social"
+                ? "Recording..."
+                : "Sending..."
+              : channel === "social"
+                ? "Record SOCIAL"
+                : `Send ${channel.toUpperCase()}`}
           </button>
           {message && (
             <p
               className={`text-xs ${
-                message.startsWith("Sent") ? "text-green-700" : "text-red-600"
+                message.startsWith("Sent") || message.startsWith("Recorded")
+                  ? "text-green-700"
+                  : "text-red-600"
               }`}
             >
               {message}

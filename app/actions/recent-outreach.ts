@@ -17,11 +17,14 @@ type Err = { ok: false; error: string };
 const MAX_SUBJECT = 120;
 const MAX_EMAIL_BODY = 4000;
 const MAX_SMS_BODY = 480;
+type OutreachChannel = "email" | "sms" | "social";
+type OutreachVisibility = "private" | "public";
 
 export async function sendRecentAuditOutreach(input: {
   auditId: string;
   organizationId: string;
-  channel: "email" | "sms";
+  channel: OutreachChannel;
+  visibility?: OutreachVisibility;
   subject?: string;
   body: string;
 }): Promise<Ok | Err> {
@@ -38,6 +41,9 @@ export async function sendRecentAuditOutreach(input: {
   }
   if (input.channel === "email" && body.length > MAX_EMAIL_BODY) {
     return { ok: false, error: `Email must be ${MAX_EMAIL_BODY} characters or fewer.` };
+  }
+  if (input.channel === "social" && body.length > MAX_EMAIL_BODY) {
+    return { ok: false, error: `Social message must be ${MAX_EMAIL_BODY} characters or fewer.` };
   }
 
   const svc = serviceClient();
@@ -58,6 +64,32 @@ export async function sendRecentAuditOutreach(input: {
     return { ok: false, error: "Recent scan is not available for outreach." };
   }
 
+  const reportUrl = `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://crawlproof.com"}/r/${audit.share_token}`;
+  const config = await loadOutreachConfig(svc, input.organizationId, input.channel);
+
+  if (input.channel === "social") {
+    const subject =
+      cleanSubject(input.subject) ?? `CrawlProof social follow-up for ${hostOf(audit.target_url)}`;
+    const { error: recordError } = await svc.from("recent_outreach_messages").insert({
+      organization_id: input.organizationId,
+      audit_id: input.auditId,
+      sender_id: user.id,
+      channel: input.channel,
+      provider: config?.provider ?? "manual",
+      recipient_hash: recipientHash(`${input.auditId}:${reportUrl}`),
+      subject,
+      body,
+      status: "queued",
+      provider_message_id: null,
+      error: null,
+      visibility: input.visibility === "public" ? "public" : "private",
+    });
+    if (recordError) return { ok: false, error: recordError.message };
+
+    revalidatePath("/recent");
+    return { ok: true, provider: config?.provider ?? "manual" };
+  }
+
   const recipient =
     input.channel === "email"
       ? cleanEmail(audit.pdf_email)
@@ -72,11 +104,9 @@ export async function sendRecentAuditOutreach(input: {
     };
   }
 
-  const reportUrl = `${process.env.NEXT_PUBLIC_SITE_URL ?? "https://crawlproof.com"}/r/${audit.share_token}`;
   const finalBody = `${body}\n\nReport: ${reportUrl}`;
   const subject =
     cleanSubject(input.subject) ?? `CrawlProof follow-up for ${hostOf(audit.target_url)}`;
-  const config = await loadOutreachConfig(svc, input.organizationId, input.channel);
 
   const result =
     input.channel === "email"
@@ -89,7 +119,7 @@ export async function sendRecentAuditOutreach(input: {
         })
       : await sendOutreachSms({ to: recipient, body: finalBody, config });
 
-  await svc.from("recent_outreach_messages").insert({
+  const { error: recordError } = await svc.from("recent_outreach_messages").insert({
     organization_id: input.organizationId,
     audit_id: input.auditId,
     sender_id: user.id,
@@ -101,7 +131,9 @@ export async function sendRecentAuditOutreach(input: {
     status: result.sent ? "sent" : "failed",
     provider_message_id: result.providerMessageId ?? null,
     error: result.error ?? null,
+    visibility: "private",
   });
+  if (recordError) return { ok: false, error: recordError.message };
 
   if (!result.sent) return { ok: false, error: result.error ?? "Message failed to send." };
 
@@ -112,7 +144,7 @@ export async function sendRecentAuditOutreach(input: {
 async function loadOutreachConfig(
   svc: ReturnType<typeof serviceClient>,
   organizationId: string,
-  channel: "email" | "sms",
+  channel: OutreachChannel,
 ): Promise<OutreachConfig | null> {
   const { data, error } = await svc
     .from("organization_outreach_configs")
