@@ -79,15 +79,19 @@ export async function sendOutreachEmail(input: {
     }
   }
 
-  if (!env.resendApiKey) {
+  const resendApiKey =
+    input.config?.provider === "resend" && input.config.api_key
+      ? input.config.api_key
+      : env.resendApiKey;
+  if (!resendApiKey) {
     return { sent: false, provider: "email", error: "SMTP_HOST or RESEND_API_KEY is required." };
   }
 
-  const resend = new Resend(env.resendApiKey);
+  const resend = new Resend(resendApiKey);
   const result = await resend.emails.send({
-    from: env.resendFrom,
+    from: input.config?.from_email ?? env.resendFrom,
     to: input.to,
-    replyTo: input.replyTo ?? undefined,
+    replyTo: input.config?.reply_to ?? input.replyTo ?? undefined,
     subject: input.subject,
     text: input.body,
     html: paragraphHtml(input.body),
