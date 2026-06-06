@@ -217,18 +217,15 @@ async function processSocialFeedConfig(
     const items = dedupeItems(fetched).filter((item) => !isIgnored(item.url, ignorePaths));
     const ignored = fetched.length - items.length;
 
-    const urls = items.map((item) => item.url);
+    // Fetch all known URLs for this config in one query keyed by config_id
+    // only — avoids .in("url", urls) whose query string grows to tens of KB
+    // for large feeds and triggers PostgREST 400 "Bad Request".
     const existingUrls = new Set<string>();
-    // Batch .in() to avoid PostgREST's query-string size limit (returns
-    // "Bad Request" for ~500 URLs which can exceed 50 KB).
-    const URL_CHECK_CHUNK = 100;
-    for (let i = 0; i < urls.length; i += URL_CHECK_CHUNK) {
-      const chunk = urls.slice(i, i + URL_CHECK_CHUNK);
+    {
       const { data: existing, error: existingErr } = await supabase
         .from("sp_feed_item")
         .select("url")
-        .eq("config_id", config.id)
-        .in("url", chunk);
+        .eq("config_id", config.id);
       if (existingErr) throw new Error(existingErr.message);
       for (const row of existing ?? []) existingUrls.add(row.url as string);
     }
@@ -288,6 +285,7 @@ async function processSocialFeedConfig(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    console.error(`[sp] feed check ${config.id} (${config.feed_url ?? "auto"}) failed: ${message}`);
     await supabase
       .from("sp_feed_config")
       .update({ status: "error", last_error: message })
