@@ -8,6 +8,8 @@ import { Countdown } from "./countdown";
 import { checkAutoblogReadiness, readinessLabel } from "@/lib/lx/readiness";
 import { DeleteAutoblogButton } from "./delete-autoblog-button";
 import { AutoblogAutoRefresh } from "./auto-refresh";
+import { getCurrentProjectEntitlement } from "@/lib/autopilot/entitlements";
+import { serviceClient } from "@/lib/supabase/service";
 
 export const metadata = { title: "Autoblog" };
 
@@ -47,9 +49,10 @@ export default async function AutoblogDashboardPage({
   const project = await getProjectById(projectId, {
     siteColumns:
       "id, domain, status, sitemap_status, last_sitemap_fetch_at, publish_days, publish_hour, daily_article_count, next_publish_at, webhook_url",
-    projectColumns: "id, name, url",
+    projectColumns: "id, name, url, owner_id",
   });
   if (!project) notFound();
+  const ownerId = (project as { owner_id?: string }).owner_id ?? user.id;
   const site = project.lx_site as
     | {
         id: string;
@@ -162,7 +165,10 @@ export default async function AutoblogDashboardPage({
   ]);
   const inFlightCount = (inFlight ?? []).length;
 
-  const readiness = await readinessPromise;
+  const [readiness, entitlement] = await Promise.all([
+    readinessPromise,
+    getCurrentProjectEntitlement(serviceClient(), projectId, ownerId),
+  ]);
 
   const publishDayLabels = (site.publish_days as number[])
     .map((n) => DAY_NAMES[n - 1])
@@ -299,8 +305,17 @@ export default async function AutoblogDashboardPage({
       </section>
 
       {/* Stats */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat label="Published / month" value={publishedThisMonth ?? 0} />
+        <Stat
+          label="Included articles"
+          value={
+            entitlement
+              ? `${entitlement.articlesRemaining}/${entitlement.articlesIncluded}`
+              : "—"
+          }
+          small
+        />
         <Stat label="Queued keywords" value={queuedKeywords ?? 0} />
         <Stat
           label="Failed deliveries"
