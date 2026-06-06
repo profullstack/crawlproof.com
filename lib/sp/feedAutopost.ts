@@ -219,12 +219,16 @@ async function processSocialFeedConfig(
 
     const urls = items.map((item) => item.url);
     const existingUrls = new Set<string>();
-    if (urls.length > 0) {
+    // Batch .in() to avoid PostgREST's query-string size limit (returns
+    // "Bad Request" for ~500 URLs which can exceed 50 KB).
+    const URL_CHECK_CHUNK = 100;
+    for (let i = 0; i < urls.length; i += URL_CHECK_CHUNK) {
+      const chunk = urls.slice(i, i + URL_CHECK_CHUNK);
       const { data: existing, error: existingErr } = await supabase
         .from("sp_feed_item")
         .select("url")
         .eq("config_id", config.id)
-        .in("url", urls);
+        .in("url", chunk);
       if (existingErr) throw new Error(existingErr.message);
       for (const row of existing ?? []) existingUrls.add(row.url as string);
     }
