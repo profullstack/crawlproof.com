@@ -3,10 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
 import { backfillProjectLogo } from "@/app/actions/createProject";
-import { getOrCreateDefaultOrg, listUserOrgs } from "@/lib/orgs";
+import { getOrCreateDefaultOrg, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
 import {
   OrgDashboardControls,
   ProjectOrgMoveControl,
+  type DashboardSenderConfig,
   type DashboardOrg,
 } from "./org-controls";
 
@@ -85,7 +86,7 @@ export default async function DashboardPage({
       ? projectsQuery.or(accessFilter)
       : projectsQuery.eq("owner_id", user!.id);
 
-  const [{ data: projectsRaw }, { data: audits }, counts] = await Promise.all([
+  const [{ data: projectsRaw }, { data: audits }, counts, senderConfigs] = await Promise.all([
     scopedProjectsQuery,
     supabase
       .from("audits")
@@ -94,6 +95,7 @@ export default async function DashboardPage({
       .order("created_at", { ascending: false })
       .limit(10),
     countByStatus(supabase, user!.id, accessFilter, selectedOrgId),
+    fetchSenderConfigs(supabase, selectedOrgId),
   ]);
   const projects = ((projectsRaw ?? []) as unknown) as DashboardProject[];
 
@@ -131,6 +133,7 @@ export default async function DashboardPage({
         <OrgDashboardControls
           orgs={orgs as DashboardOrg[]}
           selectedOrgId={selectedOrgId}
+          senderConfigs={senderConfigs}
         />
       )}
 
@@ -468,4 +471,21 @@ async function countByStatus(
     }),
   );
   return Object.fromEntries(rows) as Record<StatusFilter, number>;
+}
+
+async function fetchSenderConfigs(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  organizationId: string | null,
+): Promise<DashboardSenderConfig[]> {
+  if (!organizationId) return [];
+  const { data, error } = await supabase
+    .from("organization_outreach_configs")
+    .select("id,label,channel,provider,enabled,is_default,from_email,from_phone,created_at")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    if (missingOrgSchema(error)) return [];
+    throw error;
+  }
+  return ((data ?? []) as unknown) as DashboardSenderConfig[];
 }

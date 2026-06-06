@@ -128,8 +128,8 @@ export async function ensureDefaultOrganization(): Promise<Ok<{ id: string }> | 
 export async function saveOrganizationOutreachConfig(input: {
   organizationId: string;
   label: string;
-  channel: "email" | "sms";
-  provider: "smtp" | "resend" | "twilio" | "telnyx";
+  channel: "email" | "sms" | "social";
+  provider: "smtp" | "resend" | "twilio" | "telnyx" | "manual";
   fromEmail?: string;
   fromPhone?: string;
   replyTo?: string;
@@ -160,6 +160,9 @@ export async function saveOrganizationOutreachConfig(input: {
 
   const label = input.label.trim().replace(/\s+/g, " ").slice(0, 80);
   if (!label) return { ok: false, error: "Label is required." };
+  if (!validOutreachProvider(input.channel, input.provider)) {
+    return { ok: false, error: "Provider is not valid for this channel." };
+  }
 
   const patch = {
     organization_id: input.organizationId,
@@ -200,7 +203,47 @@ export async function saveOrganizationOutreachConfig(input: {
   return { ok: true, id: data.id as string };
 }
 
+export async function deleteOrganizationOutreachConfig(input: {
+  organizationId: string;
+  configId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const svc = serviceClient();
+  const { data: member } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", input.organizationId)
+    .eq("user_id", user.id)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (!member) return { ok: false, error: "You must own this org." };
+
+  const { error } = await svc
+    .from("organization_outreach_configs")
+    .delete()
+    .eq("id", input.configId)
+    .eq("organization_id", input.organizationId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
 function clean(value: string | undefined) {
   const trimmed = value?.trim();
   return trimmed || null;
+}
+
+function validOutreachProvider(
+  channel: "email" | "sms" | "social",
+  provider: "smtp" | "resend" | "twilio" | "telnyx" | "manual",
+) {
+  if (channel === "email") return provider === "smtp" || provider === "resend";
+  if (channel === "sms") return provider === "twilio" || provider === "telnyx";
+  return provider === "manual";
 }

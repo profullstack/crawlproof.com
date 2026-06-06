@@ -4,6 +4,7 @@ import { FormEvent, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   createOrganization,
+  deleteOrganizationOutreachConfig,
   moveProjectToOrganization,
   saveOrganizationOutreachConfig,
 } from "@/app/actions/orgs";
@@ -14,12 +15,26 @@ export type DashboardOrg = {
   role: "owner" | "member";
 };
 
+export type DashboardSenderConfig = {
+  id: string;
+  label: string;
+  channel: "email" | "sms" | "social";
+  provider: "smtp" | "resend" | "twilio" | "telnyx" | "manual";
+  enabled: boolean;
+  is_default: boolean;
+  from_email: string | null;
+  from_phone: string | null;
+  created_at: string;
+};
+
 export function OrgDashboardControls({
   orgs,
   selectedOrgId,
+  senderConfigs,
 }: {
   orgs: DashboardOrg[];
   selectedOrgId: string | null;
+  senderConfigs: DashboardSenderConfig[];
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -95,15 +110,133 @@ export function OrgDashboardControls({
         </p>
       )}
       {selectedOrgId && orgs.find((org) => org.id === selectedOrgId)?.role === "owner" && (
-        <SenderConfigForm organizationId={selectedOrgId} />
+        <SenderConfigPanel
+          organizationId={selectedOrgId}
+          senderConfigs={senderConfigs}
+        />
       )}
     </section>
   );
 }
 
+type SenderChannel = "email" | "sms" | "social";
+type SenderProvider = "smtp" | "resend" | "twilio" | "telnyx" | "manual";
+
+function SenderConfigPanel({
+  organizationId,
+  senderConfigs,
+}: {
+  organizationId: string;
+  senderConfigs: DashboardSenderConfig[];
+}) {
+  return (
+    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <summary className="cursor-pointer text-sm font-medium">
+        Outreach sender config
+      </summary>
+      <div className="mt-3 space-y-3">
+        <SenderConfigList
+          organizationId={organizationId}
+          senderConfigs={senderConfigs}
+        />
+        <SenderConfigForm organizationId={organizationId} />
+      </div>
+    </details>
+  );
+}
+
+function SenderConfigList({
+  organizationId,
+  senderConfigs,
+}: {
+  organizationId: string;
+  senderConfigs: DashboardSenderConfig[];
+}) {
+  if (senderConfigs.length === 0) {
+    return (
+      <p className="text-xs text-[var(--color-muted)]">
+        No org sender configs yet.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="grid gap-2 md:grid-cols-2">
+      {senderConfigs.map((config) => (
+        <li
+          key={config.id}
+          className="rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">{config.label}</div>
+              <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-[var(--color-muted)]">
+                <span className="badge">{config.channel}</span>
+                <span className="badge">{config.provider}</span>
+                {config.is_default && <span className="badge badge-pass">default</span>}
+                {!config.enabled && <span className="badge badge-unknown">off</span>}
+              </div>
+              {(config.from_email || config.from_phone) && (
+                <div className="mt-2 truncate text-xs text-[var(--color-muted)]">
+                  {config.from_email ?? config.from_phone}
+                </div>
+              )}
+            </div>
+            <DeleteSenderConfigButton
+              organizationId={organizationId}
+              configId={config.id}
+            />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function DeleteSenderConfigButton({
+  organizationId,
+  configId,
+}: {
+  organizationId: string;
+  configId: string;
+}) {
+  const router = useRouter();
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function remove() {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await deleteOrganizationOutreachConfig({
+        organizationId,
+        configId,
+      });
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="shrink-0 text-right">
+      <button
+        type="button"
+        onClick={remove}
+        disabled={pending}
+        className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+      >
+        {pending ? "Deleting..." : "Delete"}
+      </button>
+      {message && <p className="mt-1 max-w-32 text-xs text-red-600">{message}</p>}
+    </div>
+  );
+}
+
 function SenderConfigForm({ organizationId }: { organizationId: string }) {
-  const [channel, setChannel] = useState<"email" | "sms">("email");
-  const [provider, setProvider] = useState<"smtp" | "resend" | "twilio" | "telnyx">("smtp");
+  const [channel, setChannel] = useState<SenderChannel>("email");
+  const [provider, setProvider] = useState<SenderProvider>("smtp");
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -135,26 +268,26 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
     });
   }
 
-  function setNextChannel(next: "email" | "sms") {
+  function setNextChannel(next: SenderChannel) {
     setChannel(next);
-    setProvider(next === "email" ? "smtp" : "twilio");
+    setProvider(next === "email" ? "smtp" : next === "sms" ? "twilio" : "manual");
   }
 
   return (
-    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-      <summary className="cursor-pointer text-sm font-medium">
-        Outreach sender config
-      </summary>
-      <form onSubmit={submit} className="mt-3 grid gap-3 text-sm md:grid-cols-2">
+    <form
+      onSubmit={submit}
+      className="grid gap-3 border-t border-[var(--color-border)] pt-3 text-sm md:grid-cols-2"
+    >
         <label>
           <span className="text-xs font-medium">Channel</span>
           <select
             value={channel}
-            onChange={(event) => setNextChannel(event.target.value as "email" | "sms")}
+            onChange={(event) => setNextChannel(event.target.value as SenderChannel)}
             className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
           >
             <option value="email">Email</option>
             <option value="sms">SMS</option>
+            <option value="social">Social</option>
           </select>
         </label>
         <label>
@@ -169,15 +302,22 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
                 <option value="smtp">SMTP</option>
                 <option value="resend">Resend</option>
               </>
-            ) : (
+            ) : channel === "sms" ? (
               <>
                 <option value="twilio">Twilio</option>
                 <option value="telnyx">Telnyx</option>
               </>
+            ) : (
+              <option value="manual">Manual</option>
             )}
           </select>
         </label>
-        <Field name="label" label="Label" placeholder="Prospects email" required />
+        <Field
+          name="label"
+          label="Label"
+          placeholder={channel === "social" ? "Prospects social" : "Prospects email"}
+          required
+        />
         {channel === "email" ? (
           <>
             <Field name="fromEmail" label="From email" placeholder="CrawlProof <hello@crawlproof.com>" />
@@ -198,7 +338,7 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
               <Field name="apiKey" label="Resend API key" type="password" />
             )}
           </>
-        ) : (
+        ) : channel === "sms" ? (
           <>
             <Field name="fromPhone" label="From phone" placeholder="+15551234567" />
             {provider === "twilio" ? (
@@ -210,7 +350,7 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
               <Field name="apiKey" label="Telnyx API key" type="password" />
             )}
           </>
-        )}
+        ) : null}
         <div className="flex items-center gap-3 md:col-span-2">
           <button type="submit" className="btn btn-secondary text-sm" disabled={pending}>
             {pending ? "Saving..." : "Save sender"}
@@ -221,8 +361,7 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
             </p>
           )}
         </div>
-      </form>
-    </details>
+    </form>
   );
 }
 
