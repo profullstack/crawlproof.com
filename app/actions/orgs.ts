@@ -124,3 +124,76 @@ export async function ensureDefaultOrganization(): Promise<Ok<{ id: string }> | 
     };
   }
 }
+
+export async function saveOrganizationOutreachConfig(input: {
+  organizationId: string;
+  label: string;
+  channel: "email" | "sms";
+  provider: "smtp" | "resend" | "twilio" | "telnyx";
+  fromEmail?: string;
+  fromPhone?: string;
+  replyTo?: string;
+  smtpHost?: string;
+  smtpPort?: string;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPass?: string;
+  apiKey?: string;
+  accountSid?: string;
+  authToken?: string;
+}): Promise<Ok<{ id: string }> | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const svc = serviceClient();
+  const { data: member } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", input.organizationId)
+    .eq("user_id", user.id)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (!member) return { ok: false, error: "You must own this org." };
+
+  const label = input.label.trim().replace(/\s+/g, " ").slice(0, 80);
+  if (!label) return { ok: false, error: "Label is required." };
+
+  const patch = {
+    organization_id: input.organizationId,
+    created_by: user.id,
+    label,
+    channel: input.channel,
+    provider: input.provider,
+    enabled: true,
+    is_default: true,
+    from_email: clean(input.fromEmail),
+    from_phone: clean(input.fromPhone),
+    reply_to: clean(input.replyTo),
+    smtp_host: clean(input.smtpHost),
+    smtp_port: Number(input.smtpPort || 0) || null,
+    smtp_secure: !!input.smtpSecure,
+    smtp_user: clean(input.smtpUser),
+    smtp_pass: clean(input.smtpPass),
+    api_key: clean(input.apiKey),
+    account_sid: clean(input.accountSid),
+    auth_token: clean(input.authToken),
+  };
+
+  const { data, error } = await svc
+    .from("organization_outreach_configs")
+    .insert(patch)
+    .select("id")
+    .single();
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true, id: data.id as string };
+}
+
+function clean(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed || null;
+}

@@ -7,7 +7,9 @@ import {
   recipientHash,
   sendOutreachEmail,
   sendOutreachSms,
+  type OutreachConfig,
 } from "@/lib/outreach";
+import { missingOrgSchema } from "@/lib/orgs";
 
 type Ok = { ok: true; provider: string };
 type Err = { ok: false; error: string };
@@ -74,6 +76,7 @@ export async function sendRecentAuditOutreach(input: {
   const finalBody = `${body}\n\nReport: ${reportUrl}`;
   const subject =
     cleanSubject(input.subject) ?? `CrawlProof follow-up for ${hostOf(audit.target_url)}`;
+  const config = await loadOutreachConfig(svc, input.organizationId, input.channel);
 
   const result =
     input.channel === "email"
@@ -82,8 +85,9 @@ export async function sendRecentAuditOutreach(input: {
           subject,
           body: finalBody,
           replyTo: user.email,
+          config,
         })
-      : await sendOutreachSms({ to: recipient, body: finalBody });
+      : await sendOutreachSms({ to: recipient, body: finalBody, config });
 
   await svc.from("recent_outreach_messages").insert({
     organization_id: input.organizationId,
@@ -103,6 +107,30 @@ export async function sendRecentAuditOutreach(input: {
 
   revalidatePath("/recent");
   return { ok: true, provider: result.provider };
+}
+
+async function loadOutreachConfig(
+  svc: ReturnType<typeof serviceClient>,
+  organizationId: string,
+  channel: "email" | "sms",
+): Promise<OutreachConfig | null> {
+  const { data, error } = await svc
+    .from("organization_outreach_configs")
+    .select(
+      "provider, from_email, from_phone, reply_to, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, api_key, account_sid, auth_token",
+    )
+    .eq("organization_id", organizationId)
+    .eq("channel", channel)
+    .eq("enabled", true)
+    .order("is_default", { ascending: false })
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (missingOrgSchema(error)) return null;
+    throw error;
+  }
+  return (data as OutreachConfig | null) ?? null;
 }
 
 async function paidOrgOwner(

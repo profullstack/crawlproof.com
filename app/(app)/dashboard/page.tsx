@@ -13,6 +13,16 @@ import {
 export const metadata = { title: "Dashboard" };
 
 type StatusFilter = "active" | "paused" | "archived";
+type DashboardProject = {
+  id: string;
+  name: string;
+  url: string;
+  schedule: string;
+  next_run_at: string | null;
+  status: string;
+  logo_url: string | null;
+  organization_id?: string | null;
+};
 
 const FILTERS: { id: StatusFilter; label: string }[] = [
   { id: "active", label: "Active" },
@@ -52,15 +62,20 @@ export default async function DashboardPage({
       userId: user!.id,
       email: user!.email,
     });
-    orgs = [org];
+    orgs = org.id ? [org] : [];
   }
   const selectedOrg =
     orgs.find((org) => org.id === orgParam) ?? orgs[0] ?? null;
   const selectedOrgId = selectedOrg?.id ?? null;
+  const orgSchemaReady = orgs.length > 0;
+
+  const projectColumns = orgSchemaReady
+    ? "id,name,url,schedule,next_run_at,status,logo_url,organization_id"
+    : "id,name,url,schedule,next_run_at,status,logo_url";
 
   const projectsQuery = supabase
     .from("projects")
-    .select("id,name,url,schedule,next_run_at,status,logo_url,organization_id")
+    .select(projectColumns)
     .eq("status", status)
     .order("created_at", { ascending: false });
 
@@ -70,7 +85,7 @@ export default async function DashboardPage({
       ? projectsQuery.or(accessFilter)
       : projectsQuery.eq("owner_id", user!.id);
 
-  const [{ data: projects }, { data: audits }, counts] = await Promise.all([
+  const [{ data: projectsRaw }, { data: audits }, counts] = await Promise.all([
     scopedProjectsQuery,
     supabase
       .from("audits")
@@ -80,6 +95,7 @@ export default async function DashboardPage({
       .limit(10),
     countByStatus(supabase, user!.id, accessFilter, selectedOrgId),
   ]);
+  const projects = ((projectsRaw ?? []) as unknown) as DashboardProject[];
 
   // Per-project autoblog/social enablement. Autoblog is "on" when the
   // project has an lx_site row in status=active; social is "on" when at
@@ -111,10 +127,12 @@ export default async function DashboardPage({
         </Link>
       </section>
 
-      <OrgDashboardControls
-        orgs={orgs as DashboardOrg[]}
-        selectedOrgId={selectedOrgId}
-      />
+      {orgSchemaReady && (
+        <OrgDashboardControls
+          orgs={orgs as DashboardOrg[]}
+          selectedOrgId={selectedOrgId}
+        />
+      )}
 
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -226,11 +244,13 @@ export default async function DashboardPage({
                   </div>
                   <FontSparkline samples={trafficSamples(trafficByProject.get(p.id))} />
                 </div>
-                <ProjectOrgMoveControl
-                  projectId={p.id}
-                  currentOrgId={(p as { organization_id?: string | null }).organization_id ?? null}
-                  orgs={orgs as DashboardOrg[]}
-                />
+                {orgSchemaReady && (
+                  <ProjectOrgMoveControl
+                    projectId={p.id}
+                    currentOrgId={(p as { organization_id?: string | null }).organization_id ?? null}
+                    orgs={orgs as DashboardOrg[]}
+                  />
+                )}
               </li>
             ))}
           </ul>

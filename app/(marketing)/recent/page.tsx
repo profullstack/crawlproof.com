@@ -260,7 +260,9 @@ async function firstPaidOwnedOrg(
   userId: string,
 ) {
   const orgs = await listUserOrgs(supabase, userId);
-  const owned = orgs.find((org) => org.role === "owner");
+  const owned =
+    orgs.find((org) => org.role === "owner" && org.name.toLowerCase() === "prospects") ??
+    orgs.find((org) => org.role === "owner");
   if (!owned) return null;
 
   const { data: profile } = await supabase

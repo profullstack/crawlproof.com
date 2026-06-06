@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   createOrganization,
   moveProjectToOrganization,
+  saveOrganizationOutreachConfig,
 } from "@/app/actions/orgs";
 
 export type DashboardOrg = {
@@ -93,7 +94,162 @@ export function OrgDashboardControls({
           {message}
         </p>
       )}
+      {selectedOrgId && orgs.find((org) => org.id === selectedOrgId)?.role === "owner" && (
+        <SenderConfigForm organizationId={selectedOrgId} />
+      )}
     </section>
+  );
+}
+
+function SenderConfigForm({ organizationId }: { organizationId: string }) {
+  const [channel, setChannel] = useState<"email" | "sms">("email");
+  const [provider, setProvider] = useState<"smtp" | "resend" | "twilio" | "telnyx">("smtp");
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formEl = event.currentTarget;
+    const form = new FormData(formEl);
+    setMessage(null);
+    startTransition(async () => {
+      const result = await saveOrganizationOutreachConfig({
+        organizationId,
+        label: String(form.get("label") ?? ""),
+        channel,
+        provider,
+        fromEmail: String(form.get("fromEmail") ?? ""),
+        fromPhone: String(form.get("fromPhone") ?? ""),
+        replyTo: String(form.get("replyTo") ?? ""),
+        smtpHost: String(form.get("smtpHost") ?? ""),
+        smtpPort: String(form.get("smtpPort") ?? ""),
+        smtpSecure: form.get("smtpSecure") === "on",
+        smtpUser: String(form.get("smtpUser") ?? ""),
+        smtpPass: String(form.get("smtpPass") ?? ""),
+        apiKey: String(form.get("apiKey") ?? ""),
+        accountSid: String(form.get("accountSid") ?? ""),
+        authToken: String(form.get("authToken") ?? ""),
+      });
+      setMessage(result.ok ? "Sender saved." : result.error);
+      if (result.ok) formEl.reset();
+    });
+  }
+
+  function setNextChannel(next: "email" | "sms") {
+    setChannel(next);
+    setProvider(next === "email" ? "smtp" : "twilio");
+  }
+
+  return (
+    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <summary className="cursor-pointer text-sm font-medium">
+        Outreach sender config
+      </summary>
+      <form onSubmit={submit} className="mt-3 grid gap-3 text-sm md:grid-cols-2">
+        <label>
+          <span className="text-xs font-medium">Channel</span>
+          <select
+            value={channel}
+            onChange={(event) => setNextChannel(event.target.value as "email" | "sms")}
+            className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
+          >
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+          </select>
+        </label>
+        <label>
+          <span className="text-xs font-medium">Provider</span>
+          <select
+            value={provider}
+            onChange={(event) => setProvider(event.target.value as typeof provider)}
+            className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
+          >
+            {channel === "email" ? (
+              <>
+                <option value="smtp">SMTP</option>
+                <option value="resend">Resend</option>
+              </>
+            ) : (
+              <>
+                <option value="twilio">Twilio</option>
+                <option value="telnyx">Telnyx</option>
+              </>
+            )}
+          </select>
+        </label>
+        <Field name="label" label="Label" placeholder="Prospects email" required />
+        {channel === "email" ? (
+          <>
+            <Field name="fromEmail" label="From email" placeholder="CrawlProof <hello@crawlproof.com>" />
+            <Field name="replyTo" label="Reply-to" placeholder="hello@crawlproof.com" />
+            {provider === "smtp" && (
+              <>
+                <Field name="smtpHost" label="SMTP host" placeholder="smtp.example.com" />
+                <Field name="smtpPort" label="SMTP port" placeholder="587" />
+                <Field name="smtpUser" label="SMTP user" />
+                <Field name="smtpPass" label="SMTP password" type="password" />
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" name="smtpSecure" />
+                  Use SMTP TLS wrapper
+                </label>
+              </>
+            )}
+            {provider === "resend" && (
+              <Field name="apiKey" label="Resend API key" type="password" />
+            )}
+          </>
+        ) : (
+          <>
+            <Field name="fromPhone" label="From phone" placeholder="+15551234567" />
+            {provider === "twilio" ? (
+              <>
+                <Field name="accountSid" label="Twilio account SID" />
+                <Field name="authToken" label="Twilio auth token" type="password" />
+              </>
+            ) : (
+              <Field name="apiKey" label="Telnyx API key" type="password" />
+            )}
+          </>
+        )}
+        <div className="flex items-center gap-3 md:col-span-2">
+          <button type="submit" className="btn btn-secondary text-sm" disabled={pending}>
+            {pending ? "Saving..." : "Save sender"}
+          </button>
+          {message && (
+            <p className={`text-sm ${message === "Sender saved." ? "text-green-700" : "text-red-600"}`}>
+              {message}
+            </p>
+          )}
+        </div>
+      </form>
+    </details>
+  );
+}
+
+function Field({
+  name,
+  label,
+  placeholder,
+  type = "text",
+  required = false,
+}: {
+  name: string;
+  label: string;
+  placeholder?: string;
+  type?: string;
+  required?: boolean;
+}) {
+  return (
+    <label>
+      <span className="text-xs font-medium">{label}</span>
+      <input
+        name={name}
+        type={type}
+        required={required}
+        placeholder={placeholder}
+        className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
+      />
+    </label>
   );
 }
 
