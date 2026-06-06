@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { serviceClient } from "@/lib/supabase/service";
+import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+import { listUserOrgs } from "@/lib/orgs";
+import { RecentOutreachForm } from "./outreach-form";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 60;
@@ -10,6 +13,7 @@ const PAGE_SIZE = 20;
 const MAX_PAGES = 5; // 100 most recent
 
 type Row = {
+  id: string;
   share_token: string | null;
   target_url: string;
   status: string;
@@ -17,6 +21,8 @@ type Row = {
   completed_at: string | null;
   created_at: string;
   engine: string | null;
+  pdf_email: string | null;
+  phone: string | null;
 };
 
 function hostOf(url: string): string {
@@ -110,7 +116,7 @@ export default async function RecentPage({
   const { data, count } = await svc
     .from("audits")
     .select(
-      "share_token, target_url, status, score, completed_at, created_at, engine",
+      "id, share_token, target_url, status, score, completed_at, created_at, engine, pdf_email, phone",
       { count: "exact" },
     )
     .eq("listed_public", true)
@@ -120,6 +126,11 @@ export default async function RecentPage({
     .range(offset, offset + PAGE_SIZE - 1);
 
   const rows = (data ?? []) as Row[];
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const outreachOrg = user ? await firstPaidOwnedOrg(supabase, user.id) : null;
   const totalReachable = Math.min(count ?? 0, MAX_PAGES * PAGE_SIZE);
   const lastPage = Math.max(1, Math.min(MAX_PAGES, Math.ceil(totalReachable / PAGE_SIZE)));
 
@@ -206,6 +217,15 @@ export default async function RecentPage({
                     {formatScore(r.score, r.status)}
                   </span>
                 </Link>
+                {outreachOrg && (
+                  <RecentOutreachForm
+                    auditId={r.id}
+                    organizationId={outreachOrg.id}
+                    host={host}
+                    hasEmail={!!r.pdf_email}
+                    hasPhone={!!r.phone}
+                  />
+                )}
               </li>
             );
           })}
@@ -233,4 +253,29 @@ export default async function RecentPage({
       </nav>
     </main>
   );
+}
+
+async function firstPaidOwnedOrg(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+) {
+  const orgs = await listUserOrgs(supabase, userId);
+  const owned = orgs.find((org) => org.role === "owner");
+  if (!owned) return null;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("plan")
+    .eq("id", userId)
+    .maybeSingle();
+  if (profile?.plan === "pro" || profile?.plan === "team") return owned;
+
+  const { data: purchase } = await supabase
+    .from("credit_purchases")
+    .select("id")
+    .eq("owner_id", userId)
+    .eq("status", "complete")
+    .limit(1)
+    .maybeSingle();
+  return purchase ? owned : null;
 }

@@ -3,6 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
 import { backfillProjectLogo } from "@/app/actions/createProject";
+import { getOrCreateDefaultOrg, listUserOrgs } from "@/lib/orgs";
+import {
+  OrgDashboardControls,
+  ProjectOrgMoveControl,
+  type DashboardOrg,
+} from "./org-controls";
 
 export const metadata = { title: "Dashboard" };
 
@@ -17,9 +23,9 @@ const FILTERS: { id: StatusFilter; label: string }[] = [
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; org?: string }>;
 }) {
-  const { status: statusParam } = await searchParams;
+  const { status: statusParam, org: orgParam } = await searchParams;
   const status: StatusFilter =
     statusParam === "paused" || statusParam === "archived"
       ? statusParam
@@ -40,23 +46,39 @@ export default async function DashboardPage({
       ? `owner_id.eq.${user!.id},id.in.(${memberIds.join(",")})`
       : null;
 
+  let orgs = await listUserOrgs(supabase, user!.id);
+  if (orgs.length === 0) {
+    const org = await getOrCreateDefaultOrg({
+      userId: user!.id,
+      email: user!.email,
+    });
+    orgs = [org];
+  }
+  const selectedOrg =
+    orgs.find((org) => org.id === orgParam) ?? orgs[0] ?? null;
+  const selectedOrgId = selectedOrg?.id ?? null;
+
   const projectsQuery = supabase
     .from("projects")
-    .select("id,name,url,schedule,next_run_at,status,logo_url")
+    .select("id,name,url,schedule,next_run_at,status,logo_url,organization_id")
     .eq("status", status)
     .order("created_at", { ascending: false });
 
-  const [{ data: projects }, { data: audits }, counts] = await Promise.all([
-    accessFilter
+  const scopedProjectsQuery = selectedOrgId
+    ? projectsQuery.eq("organization_id", selectedOrgId)
+    : accessFilter
       ? projectsQuery.or(accessFilter)
-      : projectsQuery.eq("owner_id", user!.id),
+      : projectsQuery.eq("owner_id", user!.id);
+
+  const [{ data: projects }, { data: audits }, counts] = await Promise.all([
+    scopedProjectsQuery,
     supabase
       .from("audits")
       .select("id,target_url,status,score,created_at,share_token")
       .eq("owner_id", user!.id)
       .order("created_at", { ascending: false })
       .limit(10),
-    countByStatus(supabase, user!.id, accessFilter),
+    countByStatus(supabase, user!.id, accessFilter, selectedOrgId),
   ]);
 
   // Per-project autoblog/social enablement. Autoblog is "on" when the
@@ -89,6 +111,11 @@ export default async function DashboardPage({
         </Link>
       </section>
 
+      <OrgDashboardControls
+        orgs={orgs as DashboardOrg[]}
+        selectedOrgId={selectedOrgId}
+      />
+
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Projects</h2>
@@ -102,7 +129,7 @@ export default async function DashboardPage({
               return (
                 <Link
                   key={f.id}
-                  href={f.id === "active" ? "/dashboard" : `/dashboard?status=${f.id}`}
+                  href={dashboardHref(f.id, selectedOrgId)}
                   role="tab"
                   aria-selected={active}
                   className={`rounded-md px-3 py-1 ${
@@ -199,6 +226,11 @@ export default async function DashboardPage({
                   </div>
                   <FontSparkline samples={trafficSamples(trafficByProject.get(p.id))} />
                 </div>
+                <ProjectOrgMoveControl
+                  projectId={p.id}
+                  currentOrgId={(p as { organization_id?: string | null }).organization_id ?? null}
+                  orgs={orgs as DashboardOrg[]}
+                />
               </li>
             ))}
           </ul>
@@ -373,6 +405,14 @@ function totalTraffic(points: TrafficPoint[]) {
   return points.reduce((sum, point) => sum + point.count, 0);
 }
 
+function dashboardHref(status: StatusFilter, organizationId: string | null) {
+  const params = new URLSearchParams();
+  if (status !== "active") params.set("status", status);
+  if (organizationId) params.set("org", organizationId);
+  const query = params.toString();
+  return `/dashboard${query ? `?${query}` : ""}`;
+}
+
 async function fetchEnabledProjectIds(
   supabase: Awaited<ReturnType<typeof createClient>>,
   table: "lx_site" | "sp_site_account",
@@ -390,6 +430,7 @@ async function countByStatus(
   supabase: Awaited<ReturnType<typeof createClient>>,
   ownerId: string,
   accessFilter: string | null,
+  organizationId: string | null,
 ): Promise<Record<StatusFilter, number>> {
   const rows = await Promise.all(
     FILTERS.map(async (f) => {
@@ -397,7 +438,11 @@ async function countByStatus(
         .from("projects")
         .select("id", { count: "exact", head: true })
         .eq("status", f.id);
-      q = accessFilter ? q.or(accessFilter) : q.eq("owner_id", ownerId);
+      q = organizationId
+        ? q.eq("organization_id", organizationId)
+        : accessFilter
+          ? q.or(accessFilter)
+          : q.eq("owner_id", ownerId);
       const { count } = await q;
       return [f.id, count ?? 0] as const;
     }),
