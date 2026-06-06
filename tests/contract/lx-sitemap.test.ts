@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { extractLocs, isSitemapIndex, isBlogPost, extractMeta } from "@/lib/lx/sitemapCrawl";
+import {
+  extractLocs,
+  extractSitemapEntries,
+  extractUrlEntries,
+  sortByRecency,
+  isSitemapIndex,
+  isBlogPost,
+  extractMeta,
+} from "@/lib/lx/sitemapCrawl";
 
 describe("extractLocs", () => {
   it("pulls all <loc> values from a urlset", () => {
@@ -32,6 +40,95 @@ describe("extractLocs", () => {
 
   it("returns [] on garbage input", () => {
     expect(extractLocs("not xml at all")).toEqual([]);
+  });
+});
+
+describe("extractSitemapEntries", () => {
+  it("extracts loc and lastmod from each <sitemap> block", () => {
+    const xml = `<sitemapindex>
+      <sitemap><loc>https://example.com/s1.xml</loc><lastmod>2026-03-01</lastmod></sitemap>
+      <sitemap><loc>https://example.com/s2.xml</loc></sitemap>
+    </sitemapindex>`;
+    expect(extractSitemapEntries(xml)).toEqual([
+      { loc: "https://example.com/s1.xml", lastmod: "2026-03-01" },
+      { loc: "https://example.com/s2.xml", lastmod: null },
+    ]);
+  });
+
+  it("handles multiline <loc> (bittorrented.com pattern)", () => {
+    const xml = `<sitemapindex>
+<sitemap>
+<loc>
+https://bittorrented.com/sitemaps/torrents-2026-01.xml
+</loc>
+</sitemap>
+<sitemap>
+</sitemap>
+<sitemap>
+<loc>
+https://bittorrented.com/sitemaps/torrents-2026-06.xml
+</loc>
+</sitemap>
+</sitemapindex>`;
+    expect(extractSitemapEntries(xml)).toEqual([
+      { loc: "https://bittorrented.com/sitemaps/torrents-2026-01.xml", lastmod: null },
+      { loc: "https://bittorrented.com/sitemaps/torrents-2026-06.xml", lastmod: null },
+    ]);
+  });
+});
+
+describe("extractUrlEntries", () => {
+  it("extracts loc and lastmod from each <url> block", () => {
+    const xml = `<urlset>
+      <url><loc>https://example.com/a</loc><lastmod>2026-01-15</lastmod></url>
+      <url><loc>https://example.com/b</loc></url>
+    </urlset>`;
+    expect(extractUrlEntries(xml)).toEqual([
+      { loc: "https://example.com/a", lastmod: "2026-01-15" },
+      { loc: "https://example.com/b", lastmod: null },
+    ]);
+  });
+
+  it("handles multiline <loc> inside <url>", () => {
+    const xml = `<urlset>
+<url>
+<loc>
+https://example.com/page-1
+</loc>
+<lastmod>2026-06-01</lastmod>
+</url>
+</urlset>`;
+    expect(extractUrlEntries(xml)).toEqual([
+      { loc: "https://example.com/page-1", lastmod: "2026-06-01" },
+    ]);
+  });
+});
+
+describe("sortByRecency", () => {
+  it("sorts by lastmod desc when present", () => {
+    const entries = [
+      { loc: "a", lastmod: "2026-01-01" },
+      { loc: "b", lastmod: "2026-06-01" },
+      { loc: "c", lastmod: "2026-03-01" },
+    ];
+    expect(sortByRecency(entries).map((e) => e.loc)).toEqual(["b", "c", "a"]);
+  });
+
+  it("reverses document order when no lastmod (newer appended last)", () => {
+    const entries = [
+      { loc: "2026-01", lastmod: null },
+      { loc: "2026-04", lastmod: null },
+      { loc: "2026-06", lastmod: null },
+    ];
+    expect(sortByRecency(entries).map((e) => e.loc)).toEqual(["2026-06", "2026-04", "2026-01"]);
+  });
+
+  it("treats missing lastmod as oldest when mixed", () => {
+    const entries = [
+      { loc: "a", lastmod: null },
+      { loc: "b", lastmod: "2026-06-01" },
+    ];
+    expect(sortByRecency(entries).map((e) => e.loc)).toEqual(["b", "a"]);
   });
 });
 
