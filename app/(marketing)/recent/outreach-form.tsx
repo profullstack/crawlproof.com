@@ -9,16 +9,19 @@ export function RecentOutreachForm({
   host,
   hasEmail,
   hasPhone,
+  socialAccounts,
 }: {
   auditId: string;
   organizationId: string;
   host: string;
   hasEmail: boolean;
   hasPhone: boolean;
+  socialAccounts: Array<{ id: string; platform: string; handle: string }>;
 }) {
   const initialChannel = hasEmail ? "email" : hasPhone ? "sms" : "social";
   const [channel, setChannel] = useState<"email" | "sms" | "social">(initialChannel);
   const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [socialAccountIds, setSocialAccountIds] = useState<string[]>([]);
   const [subject, setSubject] = useState(`Quick follow-up on your ${host} AEO audit`);
   const [body, setBody] = useState(defaultBody(host));
   const [message, setMessage] = useState<string | null>(null);
@@ -38,6 +41,7 @@ export function RecentOutreachForm({
         organizationId,
         channel,
         visibility,
+        socialAccountIds: channel === "social" ? socialAccountIds : [],
         subject,
         body,
       });
@@ -47,10 +51,20 @@ export function RecentOutreachForm({
       }
       setMessage(
         channel === "social"
-          ? `Recorded via ${result.provider}.`
+          ? socialAccountIds.length > 0
+            ? `Posted via ${result.provider}.`
+            : `Recorded via ${result.provider}.`
           : `Sent via ${result.provider}.`,
       );
     });
+  }
+
+  function toggleSocialAccount(accountId: string, checked: boolean) {
+    setSocialAccountIds((current) =>
+      checked
+        ? [...new Set([...current, accountId])]
+        : current.filter((id) => id !== accountId),
+    );
   }
 
   return (
@@ -110,17 +124,40 @@ export function RecentOutreachForm({
         )}
 
         {channel === "social" && (
-          <label className="block text-xs">
-            <span className="font-medium">Visibility</span>
-            <select
-              value={visibility}
-              onChange={(event) => setVisibility(event.target.value as typeof visibility)}
-              className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
-            >
-              <option value="private">Private</option>
-              <option value="public">Public</option>
-            </select>
-          </label>
+          <div className="space-y-3">
+            <label className="block text-xs">
+              <span className="font-medium">Visibility</span>
+              <select
+                value={visibility}
+                onChange={(event) => setVisibility(event.target.value as typeof visibility)}
+                className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
+              >
+                <option value="private">Private</option>
+                <option value="public">Public</option>
+              </select>
+            </label>
+            {socialAccounts.length > 0 && (
+              <fieldset className="rounded border border-[var(--color-border)] bg-[var(--color-card)] p-2 text-xs">
+                <legend className="px-1 font-medium">Post from</legend>
+                <div className="mt-1 grid gap-1 sm:grid-cols-2">
+                  {socialAccounts.map((account) => (
+                    <label key={account.id} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={socialAccountIds.includes(account.id)}
+                        onChange={(event) =>
+                          toggleSocialAccount(account.id, event.target.checked)
+                        }
+                      />
+                      <span className="min-w-0 truncate">
+                        {account.platform} · {account.handle}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+          </div>
         )}
 
         <label className="block text-xs">
@@ -145,13 +182,17 @@ export function RecentOutreachForm({
                 ? "Recording..."
                 : "Sending..."
               : channel === "social"
-                ? "Record SOCIAL"
+                ? socialAccountIds.length > 0
+                  ? "Post SOCIAL"
+                  : "Record SOCIAL"
                 : `Send ${channel.toUpperCase()}`}
           </button>
           {message && (
             <p
               className={`text-xs ${
-                message.startsWith("Sent") || message.startsWith("Recorded")
+                message.startsWith("Sent") ||
+                message.startsWith("Posted") ||
+                message.startsWith("Recorded")
                   ? "text-green-700"
                   : "text-red-600"
               }`}

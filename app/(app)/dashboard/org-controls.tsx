@@ -324,9 +324,9 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
             <Field name="replyTo" label="Reply-to" placeholder="hello@crawlproof.com" />
             {provider === "smtp" && (
               <>
-                <Field name="smtpHost" label="SMTP host" placeholder="smtp.example.com" />
-                <Field name="smtpPort" label="SMTP port" placeholder="587" />
-                <Field name="smtpUser" label="SMTP user" />
+                <Field name="smtpHost" label="SMTP host" placeholder="smtp.forwardemail.net" />
+                <Field name="smtpPort" label="SMTP port" placeholder="465" />
+                <Field name="smtpUser" label="SMTP user" placeholder="hello@example.com" />
                 <Field name="smtpPass" label="SMTP password" type="password" />
                 <label className="flex items-center gap-2 text-xs">
                   <input type="checkbox" name="smtpSecure" />

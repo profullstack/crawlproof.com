@@ -25,6 +25,12 @@ type Row = {
   phone: string | null;
 };
 
+type SocialAccount = {
+  id: string;
+  platform: string;
+  handle: string;
+};
+
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -131,6 +137,7 @@ export default async function RecentPage({
     data: { user },
   } = await supabase.auth.getUser();
   const outreachOrg = user ? await firstPaidOwnedOrg(supabase, user.id) : null;
+  const socialAccounts = user && outreachOrg ? await listSocialAccounts(supabase, user.id) : [];
   const totalReachable = Math.min(count ?? 0, MAX_PAGES * PAGE_SIZE);
   const lastPage = Math.max(1, Math.min(MAX_PAGES, Math.ceil(totalReachable / PAGE_SIZE)));
 
@@ -224,6 +231,7 @@ export default async function RecentPage({
                     host={host}
                     hasEmail={!!r.pdf_email}
                     hasPhone={!!r.phone}
+                    socialAccounts={socialAccounts}
                   />
                 )}
               </li>
@@ -253,6 +261,20 @@ export default async function RecentPage({
       </nav>
     </main>
   );
+}
+
+async function listSocialAccounts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<SocialAccount[]> {
+  const { data, error } = await supabase
+    .from("sp_account")
+    .select("id, platform, handle")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false });
+  if (error) return [];
+  return ((data ?? []) as unknown) as SocialAccount[];
 }
 
 async function firstPaidOwnedOrg(

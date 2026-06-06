@@ -50,7 +50,7 @@ import {
   THREADS_MAX_CHARS,
 } from "@/lib/sp/platforms/threads";
 
-export type PostSource = "manual" | "api" | "autoblog" | "rss" | "sitemap";
+export type PostSource = "manual" | "api" | "autoblog" | "rss" | "sitemap" | "outreach";
 
 export type PostInput = {
   accountId: string;
