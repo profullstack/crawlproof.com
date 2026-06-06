@@ -26,6 +26,11 @@ import {
   type ExchangeCandidate,
 } from "./exchangeMatcher";
 import { generateStructuredOutput } from "./backendAi";
+import {
+  consumeArticleGenerationCharge,
+  refundArticleGenerationCharge,
+  type ArticleChargeSource,
+} from "../autopilot/entitlements";
 
 const EMBED_MODEL = "text-embedding-3-small";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
@@ -47,6 +52,7 @@ const MAX_SEO_LINKS = 3;
 type SiteRow = {
   id: string;
   user_id: string;
+  project_id: string;
   domain: string;
   blog_root_url: string;
   niche: string | null;
@@ -924,7 +930,7 @@ export async function generateArticle(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, user_id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, backlinks_enabled, external_links_per_article, banner_style, status",
+      "id, user_id, project_id, domain, blog_root_url, niche, target_audiences, description, internal_links_per_article, backlinks_enabled, external_links_per_article, banner_style, status",
     )
     .eq("id", siteId)
     .maybeSingle();
@@ -938,20 +944,28 @@ export async function generateArticle(
   const claimed = await claimKeyword(supabase, keyword.id);
   if (!claimed) return { ok: true, skipped: "claim-race" };
 
-  // Gate generation behind a credit deduction. Atomic at the SQL layer
-  // (consume_credit RPC) so two parallel generations can't both succeed
-  // when only one credit is left. Refunded on any downstream failure.
-  const { data: hasCredit } = await supabase.rpc("consume_credit", {
-    p_owner: typedSite.user_id,
-    p_count: 1,
-  });
-  if (!hasCredit) {
+  // Gate generation behind Autopilot quota first, then existing credits.
+  // Atomic at the SQL layer so two parallel generations can't both succeed
+  // when only one included article / credit is left. Refunded on any
+  // downstream failure.
+  const chargeSource: ArticleChargeSource =
+    await consumeArticleGenerationCharge(
+      supabase,
+      typedSite.project_id,
+      typedSite.user_id,
+    );
+  const charge = {
+    projectId: typedSite.project_id,
+    ownerId: typedSite.user_id,
+    source: chargeSource,
+  };
+  if (chargeSource === "none") {
     // Return the claim — the keyword can run later once credits exist.
     await supabase
       .from("lx_keyword")
       .update({ status: "queued" })
       .eq("id", keyword.id);
-    return { ok: false, error: "out of credits" };
+    return { ok: false, error: "out of article quota and credits" };
   }
 
   // Find internal links.
@@ -977,7 +991,7 @@ export async function generateArticle(
       keyword.id,
       `embedding failed: ${err instanceof Error ? err.message : String(err)}`,
     );
-    await refundCredit(supabase, typedSite.user_id);
+    await refundArticleGenerationCharge(supabase, charge);
     return { ok: false, error: "embedding failed" };
   }
 
@@ -1120,14 +1134,14 @@ export async function generateArticle(
         .from("lx_keyword")
         .update({ status: "queued" })
         .eq("id", keyword.id);
-      await refundCredit(supabase, typedSite.user_id);
+      await refundArticleGenerationCharge(supabase, charge);
       console.warn(
         `[lx] keyword ${keyword.id} requeued (transient backend AI error): ${errMsg}`,
       );
       return { ok: false, error: "backend AI transient error" };
     }
     await failKeyword(supabase, keyword.id, `backend AI error: ${errMsg}`);
-    await refundCredit(supabase, typedSite.user_id);
+    await refundArticleGenerationCharge(supabase, charge);
     return { ok: false, error: "backend AI error" };
   }
 
@@ -1142,7 +1156,7 @@ export async function generateArticle(
       keyword.id,
       `model claimed links not present: ${linkCheck.missing.join(", ")}`,
     );
-    await refundCredit(supabase, typedSite.user_id);
+    await refundArticleGenerationCharge(supabase, charge);
     return { ok: false, error: "internal-link validation failed" };
   }
 
@@ -1161,7 +1175,7 @@ export async function generateArticle(
       keyword.id,
       `model used exchange URLs not in candidate list: ${phantomExchange.join(", ")}`,
     );
-    await refundCredit(supabase, typedSite.user_id);
+    await refundArticleGenerationCharge(supabase, charge);
     return { ok: false, error: "exchange-link validation failed" };
   }
   const exchangeCheck = validateInternalLinks(
@@ -1174,7 +1188,7 @@ export async function generateArticle(
       keyword.id,
       `model claimed exchange links not present: ${exchangeCheck.missing.join(", ")}`,
     );
-    await refundCredit(supabase, typedSite.user_id);
+    await refundArticleGenerationCharge(supabase, charge);
     return { ok: false, error: "exchange-link validation failed" };
   }
 
@@ -1270,7 +1284,7 @@ export async function generateArticle(
       keyword.id,
       `markdown render failed: ${err instanceof Error ? err.message : String(err)}`,
     );
-    await refundCredit(supabase, typedSite.user_id);
+    await refundArticleGenerationCharge(supabase, charge);
     return { ok: false, error: "markdown render failed" };
   }
 
@@ -1308,7 +1322,7 @@ export async function generateArticle(
     .single();
   if (insErr || !inserted) {
     await failKeyword(supabase, keyword.id, `insert failed: ${insErr?.message}`);
-    await refundCredit(supabase, typedSite.user_id);
+    await refundArticleGenerationCharge(supabase, charge);
     return { ok: false, error: insErr?.message ?? "insert failed" };
   }
 

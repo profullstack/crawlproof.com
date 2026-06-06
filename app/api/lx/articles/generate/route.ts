@@ -7,6 +7,7 @@ import {
 import { getProjectById, getCurrentSite } from "@/lib/lx/currentSite";
 import { repairStuckLxJobs } from "@/lib/lx/repair";
 import { serviceClient } from "@/lib/supabase/service";
+import { getArticleGenerationCapacity } from "@/lib/autopilot/entitlements";
 
 export const runtime = "nodejs";
 
@@ -25,19 +26,34 @@ export async function POST(req: NextRequest) {
 
   const projectIdParam = req.nextUrl.searchParams.get("projectId");
   let lxSiteId: string | null = null;
+  let projectId: string | null = null;
+  let ownerId = user.id;
   let siteStatus: string | null = null;
   if (projectIdParam) {
     const project = await getProjectById(projectIdParam, {
-      siteColumns: "id, status",
+      projectColumns: "id, name, url, owner_id",
+      siteColumns: "id, project_id, status",
     });
-    const lxSite = project?.lx_site as { id?: string; status?: string } | null;
+    const lxSite = project?.lx_site as {
+      id?: string;
+      project_id?: string;
+      status?: string;
+    } | null;
     lxSiteId = lxSite?.id ?? null;
+    projectId = lxSite?.project_id ?? null;
+    ownerId = (project as { owner_id?: string } | null)?.owner_id ?? user.id;
     siteStatus = lxSite?.status ?? null;
   } else {
     const site = (await getCurrentSite("id, status")) as
-      | { id: string; status: string; lx_site_id: string | null }
+      | {
+          id: string;
+          status: string;
+          lx_site_id: string | null;
+          project_id?: string | null;
+        }
       | null;
     lxSiteId = site?.lx_site_id ?? null;
+    projectId = site?.project_id ?? site?.id ?? null;
     siteStatus = site?.status ?? null;
   }
   if (!lxSiteId) {
@@ -53,27 +69,30 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Cheap upfront check so the UI surfaces "out of credits" instead of
-  // silently no-op'ing in the worker. The worker still re-checks
-  // atomically via consume_credit before generation begins.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("credits_balance")
-    .eq("id", user.id)
-    .maybeSingle();
-  const balance = (profile?.credits_balance as number | null | undefined) ?? 0;
-  if (balance < 1) {
+  // Cheap upfront check so the UI surfaces "out of quota / credits"
+  // instead of silently no-op'ing in the worker. The worker still
+  // re-checks atomically via consume_article_generation before
+  // generation begins.
+  if (!projectId) {
+    return NextResponse.json(
+      { ok: false, error: "project not resolved for this autoblog site" },
+      { status: 400 },
+    );
+  }
+  const svc = serviceClient();
+  const capacity = await getArticleGenerationCapacity(svc, projectId, ownerId);
+  if (!capacity.ok) {
     return NextResponse.json(
       {
         ok: false,
-        error: "Out of credits. Buy more to generate articles.",
-        credits_balance: balance,
+        error: "Out of included articles and credits. Buy more credits or renew Autopilot to generate articles.",
+        credits_balance: capacity.creditsBalance,
+        article_entitlement: capacity.entitlement,
       },
       { status: 402 },
     );
   }
 
-  const svc = serviceClient();
   await repairStuckLxJobs(svc, { siteId: lxSiteId });
   const { count: queuedCount } = await svc
     .from("lx_keyword")
