@@ -43,6 +43,12 @@ export const env = {
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",
+  // PostHog — internal-first analytics + workflow webhook integration.
+  // POSTHOG_PROJECT_API_KEY is server-only and should never be rendered into
+  // browser settings pages.
+  posthogHost: process.env.POSTHOG_HOST ?? "https://app.posthog.com",
+  posthogProjectApiKey: process.env.POSTHOG_PROJECT_API_KEY ?? "",
+  posthogInboundWebhookSecret: process.env.POSTHOG_INBOUND_WEBHOOK_SECRET ?? "",
   // Paid engines — 1 credit each. All four non-Anthropic providers go
   // through the OpenAI-compatible adapter; base URLs are baked-in defaults
   // so the only env var per provider is the API key.

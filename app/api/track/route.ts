@@ -7,6 +7,7 @@ import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
+import { enqueuePostHogEvent } from "@/lib/posthog/events";
 
 export const runtime = "nodejs";
 
@@ -159,12 +160,12 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   // leaking which check failed; 204 either way.
   const { data: project } = await sb
     .from("projects")
-    .select("id, tracker_enabled")
+    .select("id, owner_id, organization_id, url, tracker_enabled")
     .eq("id", site)
     .maybeSingle();
   if (!project || !project.tracker_enabled) return ok(request);
 
-  const { bucket } = categorize({ referrer, userAgent });
+  const { bucket, isAi } = categorize({ referrer, userAgent });
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
 
   // UPSERT increment. Supabase JS doesn't expose a raw .increment() helper
@@ -304,6 +305,34 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         count: 1,
       });
     }
+  }
+
+  if (bucket.startsWith("bot:")) {
+    void enqueuePostHogEvent({
+      event: isAi ? "ai_bot_detected" : "crawler_detected",
+      distinctId: project.organization_id
+        ? `org_${project.organization_id}`
+        : `project_${site}`,
+      orgId: project.organization_id ?? null,
+      userId: project.owner_id ?? null,
+      domain: hostFromUrl(project.url),
+      category: "bot",
+      sourceRecordId: `${site}:${today}:${bucket}:${pagePath}:${event}`,
+      properties: {
+        project_id: site,
+        crawler_name: bucket.split(":", 2)[1] ?? "unknown",
+        crawler_category: isAi ? "ai_agent" : "crawler",
+        user_agent: userAgent,
+        path: pagePath || "/",
+        method: request.method,
+        country: geo?.countryCode ?? null,
+        confidence: bucket === "bot:other" ? 0.65 : 0.9,
+        action: "observe",
+        source_event: event,
+      },
+    }).catch(() => {
+      // PostHog delivery is best-effort and must never affect beacons.
+    });
   }
 
   return ok(request);
