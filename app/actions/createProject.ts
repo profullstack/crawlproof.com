@@ -37,19 +37,35 @@ export async function createProject(input: {
     userId: user.id,
     email: user.email,
   });
+  const insertPayload: Record<string, unknown> = {
+    owner_id: user.id,
+    name: input.name,
+    url: check.url,
+    schedule: input.schedule,
+    next_run_at: nextRunAt,
+  };
+  if (org.id) insertPayload.organization_id = org.id;
 
   const { data, error } = await supabase
     .from("projects")
-    .insert({
-      owner_id: user.id,
-      organization_id: org.id,
-      name: input.name,
-      url: check.url,
-      schedule: input.schedule,
-      next_run_at: nextRunAt,
-    })
+    .insert(insertPayload)
     .select("id")
     .single();
+  if (error && org.id && /organization_id|schema cache|column/i.test(error.message ?? "")) {
+    delete insertPayload.organization_id;
+    const retry = await supabase
+      .from("projects")
+      .insert(insertPayload)
+      .select("id")
+      .single();
+    if (retry.error || !retry.data) {
+      return { ok: false, error: retry.error?.message ?? "Failed." };
+    }
+    await setCurrentSite(retry.data.id);
+    void backfillProjectLogo(retry.data.id, check.url);
+    revalidatePath("/dashboard");
+    return { ok: true, id: retry.data.id };
+  }
   if (error || !data) return { ok: false, error: error?.message ?? "Failed." };
 
   // Make the new project the active one so autoblog/social tabs land

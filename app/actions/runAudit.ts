@@ -23,6 +23,7 @@ import {
 import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
 import { recordMarketingConsent, recordLead } from "@/lib/marketing";
+import { getProspectsOrgId } from "@/lib/orgs";
 
 type ScanOk = {
   ok: true;
@@ -124,6 +125,7 @@ export async function startAuditFromForm(input: {
   }
 
   const svc = serviceClient();
+  const prospectsOrgId = await getProspectsOrgId().catch(() => null);
   // For the hero form we only create ONE audit (the form is single-engine
   // for anonymous; signed-in users use the project page for multi-engine).
   const firstEngine = engines[0];
@@ -143,6 +145,9 @@ export async function startAuditFromForm(input: {
     estimated_monthly_sales: salesParsed,
     listed_public: !!input.listPublic,
   };
+  if (!user && prospectsOrgId) {
+    insertPayload.organization_id = prospectsOrgId;
+  }
   let { data: row, error } = await svc
     .from("audits")
     .insert(insertPayload)
@@ -150,9 +155,14 @@ export async function startAuditFromForm(input: {
     .single();
   if (
     error &&
-    /listed_public|schema cache|column/i.test(error.message ?? "")
+    /listed_public|organization_id|schema cache|column/i.test(error.message ?? "")
   ) {
-    delete insertPayload.listed_public;
+    if (/listed_public/i.test(error.message ?? "")) {
+      delete insertPayload.listed_public;
+    }
+    if (/organization_id|schema cache|column/i.test(error.message ?? "")) {
+      delete insertPayload.organization_id;
+    }
     const retry = await svc
       .from("audits")
       .insert(insertPayload)
