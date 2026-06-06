@@ -15,6 +15,7 @@ import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { AutoInstall } from "./auto-install";
 import { LiveVisitors } from "./live-visitors";
+import { StatsSubnav } from "./stats-subnav";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
@@ -205,6 +206,8 @@ export default async function ProjectStatsPage({
       currentTab="stats"
     >
       <div className="space-y-6">
+        <StatsSubnav projectId={id} />
+
         <LiveVisitors projectId={id} />
 
         <section className="card p-4">

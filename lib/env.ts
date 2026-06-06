@@ -22,6 +22,24 @@ export const env = {
   coinpayWebhookSecret: process.env.COINPAY_WEBHOOK_SECRET ?? "",
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   resendFrom: process.env.RESEND_FROM ?? "CrawlProof <reports@crawlproof.com>",
+  smtpHost: process.env.SMTP_HOST ?? "",
+  smtpPort: Number(process.env.SMTP_PORT ?? "587"),
+  smtpUser: process.env.SMTP_USER ?? "",
+  smtpPass: process.env.SMTP_PASS ?? "",
+  smtpSecure: process.env.SMTP_SECURE === "true",
+  smtpFrom:
+    process.env.SMTP_FROM ??
+    process.env.RESEND_FROM ??
+    "CrawlProof <reports@crawlproof.com>",
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
+  twilioFrom: process.env.TWILIO_FROM ?? "",
+  telnyxApiKey:
+    process.env.TELNYX_API_KEY ??
+    // Common misspelling; keep this alias so deploy envs don't silently fail.
+    process.env.TELYNX_API_KEY ??
+    "",
+  telnyxFrom: process.env.TELNYX_FROM ?? process.env.TELYNX_FROM ?? "",
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",

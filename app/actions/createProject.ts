@@ -6,6 +6,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { setCurrentSite } from "@/lib/lx/currentSite";
 import { discoverLogoUrl } from "@/lib/discoverLogo";
+import { getOrCreateDefaultOrg } from "@/lib/orgs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -32,11 +33,16 @@ export async function createProject(input: {
   if (!check.ok) return { ok: false, error: check.reason };
 
   const nextRunAt = nextRunForSchedule(input.schedule);
+  const org = await getOrCreateDefaultOrg({
+    userId: user.id,
+    email: user.email,
+  });
 
   const { data, error } = await supabase
     .from("projects")
     .insert({
       owner_id: user.id,
+      organization_id: org.id,
       name: input.name,
       url: check.url,
       schedule: input.schedule,
