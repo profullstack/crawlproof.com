@@ -4,15 +4,31 @@ import { FormEvent, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   createOrganization,
+  deleteOrganization,
   deleteOrganizationOutreachConfig,
+  mergeOrganization,
   moveProjectToOrganization,
+  renameOrganization,
   saveOrganizationOutreachConfig,
 } from "@/app/actions/orgs";
+import {
+  inviteOrgMember,
+  removeOrgMember,
+  revokeOrgInvitation,
+  type OrgPendingInvitation,
+  type OrgTeamMember,
+} from "@/app/actions/org-members";
 
 export type DashboardOrg = {
   id: string;
   name: string;
   role: "owner" | "member";
+};
+
+export type DashboardOrgTeam = {
+  isOwner: boolean;
+  members: OrgTeamMember[];
+  invitations: OrgPendingInvitation[];
 };
 
 export type DashboardSenderConfig = {
@@ -31,16 +47,20 @@ export function OrgDashboardControls({
   orgs,
   selectedOrgId,
   senderConfigs,
+  orgTeam,
 }: {
   orgs: DashboardOrg[];
   selectedOrgId: string | null;
   senderConfigs: DashboardSenderConfig[];
+  orgTeam: DashboardOrgTeam | null;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [name, setName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const selectedOrg = orgs.find((org) => org.id === selectedOrgId) ?? null;
+  const isOwner = selectedOrg?.role === "owner";
 
   function selectOrg(orgId: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -109,13 +129,275 @@ export function OrgDashboardControls({
           {message}
         </p>
       )}
-      {selectedOrgId && orgs.find((org) => org.id === selectedOrgId)?.role === "owner" && (
-        <SenderConfigPanel
-          organizationId={selectedOrgId}
-          senderConfigs={senderConfigs}
+      {selectedOrgId && isOwner && (
+        <RenameOrgForm
+          key={selectedOrgId}
+          orgId={selectedOrgId}
+          currentName={selectedOrg?.name ?? ""}
         />
       )}
+
+      {selectedOrgId && orgTeam && (
+        <OrgMembersPanel
+          key={selectedOrgId}
+          orgId={selectedOrgId}
+          isOwner={orgTeam.isOwner}
+          members={orgTeam.members}
+          invitations={orgTeam.invitations}
+        />
+      )}
+
+      {selectedOrgId && isOwner && (
+        <>
+          <SenderConfigPanel
+            organizationId={selectedOrgId}
+            senderConfigs={senderConfigs}
+          />
+          <DangerZonePanel
+            orgId={selectedOrgId}
+            orgs={orgs}
+          />
+        </>
+      )}
     </section>
+  );
+}
+
+function RenameOrgForm({
+  orgId,
+  currentName,
+}: {
+  orgId: string;
+  currentName: string;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState(currentName);
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    startTransition(async () => {
+      const result = await renameOrganization({ orgId, name });
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      setMessage("Saved.");
+      router.refresh();
+    });
+  }
+
+  const dirty = name.trim() !== currentName.trim();
+
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
+      <label className="text-sm font-medium text-[var(--color-muted)]">Rename</label>
+      <input
+        value={name}
+        onChange={(event) => {
+          setName(event.target.value);
+          setMessage(null);
+        }}
+        className="min-w-56 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+        placeholder="Organization name"
+        maxLength={80}
+      />
+      <button
+        type="submit"
+        className="btn btn-secondary text-sm"
+        disabled={pending || !dirty || !name.trim()}
+      >
+        {pending ? "Saving..." : "Save"}
+      </button>
+      {message && (
+        <span className={`text-sm ${message === "Saved." ? "text-green-700" : "text-red-600"}`}>
+          {message}
+        </span>
+      )}
+    </form>
+  );
+}
+
+function OrgMembersPanel({
+  orgId,
+  isOwner,
+  members,
+  invitations,
+}: {
+  orgId: string;
+  isOwner: boolean;
+  members: OrgTeamMember[];
+  invitations: OrgPendingInvitation[];
+}) {
+  return (
+    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <summary className="cursor-pointer text-sm font-medium">
+        Team members
+        <span className="ml-1.5 text-xs text-[var(--color-muted)]">{members.length}</span>
+      </summary>
+      <div className="mt-3 space-y-4">
+        {isOwner && <OrgInviteForm orgId={orgId} />}
+
+        <ul className="divide-y divide-[var(--color-border)] rounded-md border border-[var(--color-border)]">
+          {members.map((m) => (
+            <OrgMemberRow key={m.id} orgId={orgId} member={m} isOwner={isOwner} />
+          ))}
+        </ul>
+
+        {isOwner && invitations.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-[var(--color-muted)]">
+              Pending invitations
+            </p>
+            <ul className="divide-y divide-[var(--color-border)] rounded-md border border-[var(--color-border)]">
+              {invitations.map((inv) => (
+                <OrgInvitationRow key={inv.id} orgId={orgId} invitation={inv} />
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function OrgInviteForm({ orgId }: { orgId: string }) {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    startTransition(async () => {
+      const result = await inviteOrgMember(orgId, email);
+      if (result.ok) {
+        setEmail("");
+        setMessage({ ok: true, text: "Invitation sent." });
+        router.refresh();
+      } else {
+        setMessage({ ok: false, text: result.error ?? "Something went wrong." });
+      }
+    });
+  }
+
+  return (
+    <div>
+      <p className="text-xs text-[var(--color-muted)]">
+        Invited people can see every project in this org.
+      </p>
+      <form onSubmit={submit} className="mt-2 flex flex-wrap gap-2">
+        <input
+          type="email"
+          required
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          autoComplete="off"
+          placeholder="teammate@company.com"
+          className="min-w-56 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-sm"
+        />
+        <button type="submit" className="btn btn-secondary text-sm" disabled={pending}>
+          {pending ? "Sending…" : "Send invite"}
+        </button>
+      </form>
+      {message && (
+        <p className={`mt-2 text-sm ${message.ok ? "text-green-700" : "text-red-600"}`}>
+          {message.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function OrgMemberRow({
+  orgId,
+  member,
+  isOwner,
+}: {
+  orgId: string;
+  member: OrgTeamMember;
+  isOwner: boolean;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const label =
+    member.profile?.display_name || member.profile?.email || "Unknown user";
+  const sub = member.profile?.display_name
+    ? member.profile.email
+    : new Date(member.created_at).toLocaleDateString();
+
+  function remove() {
+    startTransition(async () => {
+      await removeOrgMember(orgId, member.user_id);
+      router.refresh();
+    });
+  }
+
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 p-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">
+          {label}
+          {member.role === "owner" && (
+            <span className="ml-2 badge badge-pass align-middle text-[11px]">owner</span>
+          )}
+        </p>
+        {sub && <p className="truncate text-xs text-[var(--color-muted)]">{sub}</p>}
+      </div>
+      {isOwner && member.role === "member" && (
+        <button
+          type="button"
+          onClick={remove}
+          disabled={pending}
+          className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+        >
+          {pending ? "Removing…" : "Remove"}
+        </button>
+      )}
+    </li>
+  );
+}
+
+function OrgInvitationRow({
+  orgId,
+  invitation,
+}: {
+  orgId: string;
+  invitation: OrgPendingInvitation;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const expired = new Date(invitation.expires_at) < new Date();
+
+  function revoke() {
+    startTransition(async () => {
+      await revokeOrgInvitation(orgId, invitation.id);
+      router.refresh();
+    });
+  }
+
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 p-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{invitation.email}</p>
+        <p className="text-xs text-[var(--color-muted)]">
+          {expired
+            ? "Expired"
+            : `Expires ${new Date(invitation.expires_at).toLocaleDateString()}`}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={revoke}
+        disabled={pending}
+        className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)] disabled:opacity-50"
+      >
+        {pending ? "Revoking…" : "Revoke"}
+      </button>
+    </li>
   );
 }
 
@@ -389,6 +671,119 @@ function Field({
         className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
       />
     </label>
+  );
+}
+
+function DangerZonePanel({
+  orgId,
+  orgs,
+}: {
+  orgId: string;
+  orgs: DashboardOrg[];
+}) {
+  const router = useRouter();
+  const ownedOrgs = orgs.filter((org) => org.role === "owner" && org.id !== orgId);
+
+  const [mergeTarget, setMergeTarget] = useState(ownedOrgs[0]?.id ?? "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmMerge, setConfirmMerge] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function handleDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setMessage(null);
+    startTransition(async () => {
+      const result = await deleteOrganization({ orgId });
+      if (!result.ok) { setMessage(result.error); setConfirmDelete(false); return; }
+      router.push("/dashboard");
+      router.refresh();
+    });
+  }
+
+  function handleMerge() {
+    if (!mergeTarget) return;
+    if (!confirmMerge) { setConfirmMerge(true); return; }
+    setMessage(null);
+    startTransition(async () => {
+      const result = await mergeOrganization({ sourceOrgId: orgId, targetOrgId: mergeTarget });
+      if (!result.ok) { setMessage(result.error); setConfirmMerge(false); return; }
+      router.push(`/dashboard?org=${mergeTarget}`);
+      router.refresh();
+    });
+  }
+
+  return (
+    <details className="rounded-md border border-red-200 bg-[var(--color-bg)] p-3">
+      <summary className="cursor-pointer text-sm font-medium text-red-700">
+        Danger zone
+      </summary>
+      <div className="mt-3 space-y-4">
+        {ownedOrgs.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-[var(--color-muted)]">
+              Move all projects and audits from this org into another org, then delete this org.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={mergeTarget}
+                onChange={(e) => { setMergeTarget(e.target.value); setConfirmMerge(false); }}
+                disabled={pending}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
+              >
+                {ownedOrgs.map((org) => (
+                  <option key={org.id} value={org.id}>{org.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleMerge}
+                disabled={pending || !mergeTarget}
+                className="rounded border border-red-400 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                {pending ? "Merging..." : confirmMerge ? "Confirm merge & delete" : "Merge into org"}
+              </button>
+              {confirmMerge && !pending && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmMerge(false)}
+                  className="text-xs text-[var(--color-muted)] underline"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-2 border-t border-[var(--color-border)] pt-3">
+          <p className="text-xs text-[var(--color-muted)]">
+            Delete this org permanently. Only works if the org has no projects.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={pending}
+              className="rounded border border-red-400 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              {pending ? "Deleting..." : confirmDelete ? "Confirm delete org" : "Delete org"}
+            </button>
+            {confirmDelete && !pending && (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="text-xs text-[var(--color-muted)] underline"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+
+        {message && <p className="text-sm text-red-600">{message}</p>}
+      </div>
+    </details>
   );
 }
 

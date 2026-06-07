@@ -4,11 +4,13 @@ import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
 import { backfillProjectLogo } from "@/app/actions/createProject";
 import { getOrCreateDefaultOrg, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
+import { listOrgTeam } from "@/app/actions/org-members";
 import {
   OrgDashboardControls,
   ProjectOrgMoveControl,
   type DashboardSenderConfig,
   type DashboardOrg,
+  type DashboardOrgTeam,
 } from "./org-controls";
 
 export const metadata = { title: "Dashboard" };
@@ -86,7 +88,7 @@ export default async function DashboardPage({
       ? projectsQuery.or(accessFilter)
       : projectsQuery.eq("owner_id", user!.id);
 
-  const [{ data: projectsRaw }, { data: audits }, counts, senderConfigs] = await Promise.all([
+  const [{ data: projectsRaw }, { data: audits }, counts, senderConfigs, orgTeam] = await Promise.all([
     scopedProjectsQuery,
     supabase
       .from("audits")
@@ -96,6 +98,7 @@ export default async function DashboardPage({
       .limit(10),
     countByStatus(supabase, user!.id, accessFilter, selectedOrgId),
     fetchSenderConfigs(supabase, selectedOrgId),
+    fetchOrgTeam(selectedOrgId),
   ]);
   const projects = ((projectsRaw ?? []) as unknown) as DashboardProject[];
 
@@ -134,6 +137,7 @@ export default async function DashboardPage({
           orgs={orgs as DashboardOrg[]}
           selectedOrgId={selectedOrgId}
           senderConfigs={senderConfigs}
+          orgTeam={orgTeam}
         />
       )}
 
@@ -471,6 +475,19 @@ async function countByStatus(
     }),
   );
   return Object.fromEntries(rows) as Record<StatusFilter, number>;
+}
+
+async function fetchOrgTeam(
+  organizationId: string | null,
+): Promise<DashboardOrgTeam | null> {
+  if (!organizationId) return null;
+  const result = await listOrgTeam(organizationId);
+  if (!result.ok) return null;
+  return {
+    isOwner: result.isOwner,
+    members: result.members,
+    invitations: result.invitations,
+  };
 }
 
 async function fetchSenderConfigs(
