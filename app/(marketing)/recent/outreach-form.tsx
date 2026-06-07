@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useMemo, useState, useTransition } from "react";
 import { sendRecentAuditOutreach } from "@/app/actions/recent-outreach";
+import { OUTREACH_CREDITS } from "@/lib/credits";
 
 export function RecentOutreachForm({
   auditId,
@@ -10,6 +12,7 @@ export function RecentOutreachForm({
   hasEmail,
   hasPhone,
   socialAccounts,
+  creditsBalance,
 }: {
   auditId: string;
   organizationId: string;
@@ -17,6 +20,7 @@ export function RecentOutreachForm({
   hasEmail: boolean;
   hasPhone: boolean;
   socialAccounts: Array<{ id: string; platform: string; handle: string }>;
+  creditsBalance: number;
 }) {
   const initialChannel = hasEmail ? "email" : hasPhone ? "sms" : "social";
   const [channel, setChannel] = useState<"email" | "sms" | "social">(initialChannel);
@@ -31,6 +35,17 @@ export function RecentOutreachForm({
     () => (channel === "email" ? !hasEmail : channel === "sms" ? !hasPhone : false),
     [channel, hasEmail, hasPhone],
   );
+
+  // Credit cost of the current action: 1 per email/SMS, 1 per selected social
+  // account (a bare social "record" with no accounts is free).
+  const cost = useMemo(
+    () =>
+      channel === "social"
+        ? socialAccountIds.length * OUTREACH_CREDITS
+        : OUTREACH_CREDITS,
+    [channel, socialAccountIds],
+  );
+  const insufficient = cost > 0 && creditsBalance < cost;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -172,21 +187,31 @@ export function RecentOutreachForm({
         </label>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="submit"
-            className="btn btn-primary text-xs"
-            disabled={pending || disabled}
-          >
-            {pending
-              ? channel === "social"
-                ? "Recording..."
-                : "Sending..."
-              : channel === "social"
-                ? socialAccountIds.length > 0
-                  ? "Post SOCIAL"
-                  : "Record SOCIAL"
-                : `Send ${channel.toUpperCase()}`}
-          </button>
+          {insufficient ? (
+            <Link href="/settings/billing" className="btn btn-primary text-xs">
+              Buy credits to send
+            </Link>
+          ) : (
+            <button
+              type="submit"
+              className="btn btn-primary text-xs"
+              disabled={pending || disabled}
+            >
+              {pending
+                ? channel === "social"
+                  ? "Recording..."
+                  : "Sending..."
+                : channel === "social"
+                  ? socialAccountIds.length > 0
+                    ? "Post SOCIAL"
+                    : "Record SOCIAL"
+                  : `Send ${channel.toUpperCase()}`}
+            </button>
+          )}
+          <span className="text-xs text-[var(--color-muted)]">
+            {cost > 0 ? `${cost} credit${cost === 1 ? "" : "s"} · ` : "Free · "}
+            balance {creditsBalance}
+          </span>
           {message && (
             <p
               className={`text-xs ${

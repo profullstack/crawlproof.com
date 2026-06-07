@@ -2,7 +2,13 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { BuyCreditsButton } from "./buy-credits-button";
 import { PurchaseStatusBanner } from "./purchase-status-banner";
-import { CREDIT_PACKS, discountPct, dollars, perScanCents } from "@/lib/credits";
+import {
+  CREDIT_PACKS,
+  CREDIT_RACK_CENTS,
+  discountPct,
+  dollars,
+  perScanCents,
+} from "@/lib/credits";
 
 export const metadata = { title: "Billing" };
 
@@ -98,12 +104,12 @@ export default async function BillingPage({
                   <span className="text-2xl font-extrabold">{dollars(p.amountCents)}</span>
                   {off > 0 && (
                     <span className="text-xs text-[var(--color-muted)] line-through">
-                      {dollars(p.credits * 100)}
+                      {dollars(p.credits * CREDIT_RACK_CENTS)}
                     </span>
                   )}
                 </div>
                 <div className="text-xs text-[var(--color-muted)]">
-                  {p.credits} scan{p.credits === 1 ? "" : "s"} ·{" "}
+                  {p.credits} credit{p.credits === 1 ? "" : "s"} ·{" "}
                   <span className="font-mono">{dollars(perScanCents(p))}/scan</span>
                 </div>
                 <BuyCreditsButton packId={p.id} />

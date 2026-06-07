@@ -41,6 +41,7 @@ import {
   validateInternalLinks,
 } from "./articleGen";
 import { generateStructuredOutput } from "./backendAi";
+import { SCAN_CREDITS } from "@/lib/credits";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 
@@ -160,10 +161,10 @@ export async function generateGuestPost(
     return { ok: false, error: "target site is not eligible to receive guest posts" };
   }
 
-  // Burn an AUTHOR credit. Atomic RPC matches the own-blog flow.
+  // Burn AUTHOR credits. Atomic RPC matches the own-blog flow.
   const { data: hasCredit } = await supabase.rpc("consume_credit", {
     p_owner: author.user_id,
-    p_count: 1,
+    p_count: SCAN_CREDITS,
   });
   if (!hasCredit) {
     return { ok: false, error: "out of credits (author)" };

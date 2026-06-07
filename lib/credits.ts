@@ -1,5 +1,19 @@
-// Credit pack catalog. 1 credit = 1 scan.
-// Larger packs come with a sliding-scale discount off the $1/credit rack rate.
+// Credit pack catalog.
+// 1 credit ≈ $0.05 (a "nickel credit") at full rack rate. Larger packs come
+// with a sliding-scale discount off that rate. Credits are the universal,
+// integer-only spend unit: cheap actions (outreach) cost 1 credit, expensive
+// AI actions (a scan, an article, a guest post, a GitHub auto-fix) cost
+// SCAN_CREDITS each — which keeps an AI action at ~$1 rack like before.
+
+// Rack price of one credit, in cents. Drives discount math + UI strikethroughs.
+export const CREDIT_RACK_CENTS = 5;
+
+// Credits charged for one expensive AI action (scan / article / guest post /
+// auto-fix). 20 × $0.05 = $1.00 rack, unchanged from the old 1-credit-=-$1 era.
+export const SCAN_CREDITS = 20;
+
+// Credits charged for one outreach send (email / SMS recipient / social post).
+export const OUTREACH_CREDITS = 1;
 
 export type CreditPack = {
   id: string;
@@ -9,15 +23,17 @@ export type CreditPack = {
   popular?: boolean;
 };
 
+// credits = scan-equivalents × SCAN_CREDITS; amountCents unchanged from the
+// $1/scan era, so the same dollars now buy 20× the (smaller) credits.
 export const CREDIT_PACKS: CreditPack[] = [
-  { id: "pack-1", label: "Starter", credits: 1, amountCents: 100 }, // $1.00/scan — full rack rate
-  { id: "pack-10", label: "10 scans", credits: 10, amountCents: 900 }, // $0.90/scan — 10% off
-  { id: "pack-50", label: "50 scans", credits: 50, amountCents: 3500, popular: true }, // $0.70/scan — 30% off
+  { id: "pack-1", label: "Starter", credits: 20, amountCents: 100 }, // $1.00/scan — full rack rate
+  { id: "pack-10", label: "10 scans", credits: 200, amountCents: 900 }, // $0.90/scan — 10% off
+  { id: "pack-50", label: "50 scans", credits: 1000, amountCents: 3500, popular: true }, // $0.70/scan — 30% off
   // Deepest bundle is anchored at ~2× the worst-case per-scan cost
-  // (Claude Sonnet 4.6 ~$0.26 → cap of $0.52). Rounded to $0.50/credit
+  // (Claude Sonnet 4.6 ~$0.26 → cap of $0.52). Rounded to $0.50/scan
   // so Claude lands at ~92% markup and the floor stays at or below
   // the 100% markup ceiling.
-  { id: "pack-100", label: "100 scans", credits: 100, amountCents: 5000 }, // $0.50/scan — 50% off
+  { id: "pack-100", label: "100 scans", credits: 2000, amountCents: 5000 }, // $0.50/scan — 50% off
 ];
 
 export function findPack(id: string): CreditPack | undefined {
@@ -30,7 +46,13 @@ export function dollars(cents: number): string {
   })}`;
 }
 
+// Effective price of one scan (= SCAN_CREDITS credits) under this pack, in cents.
 export function perScanCents(pack: CreditPack): number {
+  return Math.round((pack.amountCents * SCAN_CREDITS) / pack.credits);
+}
+
+// Effective price of a single credit under this pack, in cents.
+export function perCreditCents(pack: CreditPack): number {
   return Math.round(pack.amountCents / pack.credits);
 }
 
@@ -71,7 +93,7 @@ export const ENGINES: Record<Engine, EngineMeta> = {
   },
   claude: {
     label: "Claude Sonnet 4.6",
-    cost: 1,
+    cost: SCAN_CREDITS,
     available: true,
     popular: true,
     blurb:
@@ -79,42 +101,42 @@ export const ENGINES: Record<Engine, EngineMeta> = {
   },
   openai: {
     label: "OpenAI GPT-5 Mini",
-    cost: 1,
+    cost: SCAN_CREDITS,
     available: true,
     blurb:
       "OpenAI's fast tier with live web search. Snappy second opinion framed the way an OpenAI-tier answer engine would.",
   },
   qwen: {
     label: "Qwen Max",
-    cost: 1,
+    cost: SCAN_CREDITS,
     available: true,
     blurb:
       "Alibaba's flagship model via DashScope. Cost-efficient second opinion on Chinese / cross-language sites.",
   },
   kimi: {
     label: "Kimi v2.6",
-    cost: 1,
+    cost: SCAN_CREDITS,
     available: true,
     blurb:
       "Moonshot AI's flagship via OpenAI-compatible API. Strong long-context reasoning over your full homepage.",
   },
   gemini: {
     label: "Gemini 2.5 Pro",
-    cost: 1,
+    cost: SCAN_CREDITS,
     available: true,
     blurb:
       "Google's flagship with live Search grounding. Frames your site the way Google AI Overviews would.",
   },
   deepseek: {
     label: "DeepSeek V3",
-    cost: 1,
+    cost: SCAN_CREDITS,
     available: true,
     blurb:
       "Cost-efficient open-weight model. Strong reasoning, OpenAI-compatible API — quick, lightweight second opinion.",
   },
   perplexity: {
     label: "Perplexity Sonar Pro",
-    cost: 1,
+    cost: SCAN_CREDITS,
     available: true,
     blurb:
       "Web-grounded with live citations. Frames your site the way Perplexity's answer engine would surface it to users.",
@@ -146,7 +168,7 @@ export function dedupeEngines(engines: Engine[]): Engine[] {
 }
 
 export function discountPct(pack: CreditPack): number {
-  const rack = pack.credits * 100;
+  const rack = pack.credits * CREDIT_RACK_CENTS;
   if (pack.amountCents >= rack) return 0;
   return Math.round(((rack - pack.amountCents) / rack) * 100);
 }

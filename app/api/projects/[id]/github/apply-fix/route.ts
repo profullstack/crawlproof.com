@@ -1,7 +1,7 @@
 // POST /api/projects/[id]/github/apply-fix
 // Body: { owner, repo, installation_id, audit_id, finding_key }
-// Consumes 1 credit, asks Claude to patch the repo for one specific
-// audit finding, opens a PR. Refunds the credit on any failure.
+// Consumes SCAN_CREDITS credits, asks Claude to patch the repo for one
+// specific audit finding, opens a PR. Refunds the credits on any failure.
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -10,6 +10,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { applyFix } from "@/lib/github/apply-fix";
+import { SCAN_CREDITS } from "@/lib/credits";
 
 export const runtime = "nodejs";
 // Agentic mode runs up to 20 Claude tool turns; each turn ~5s. Worst
@@ -89,7 +90,7 @@ export async function POST(
   // is atomic — returns false when the balance is insufficient.
   const { data: charged, error: chargeErr } = await (svc as any).rpc(
     "consume_credit",
-    { p_owner: user.id, p_count: 1 },
+    { p_owner: user.id, p_count: SCAN_CREDITS },
   );
   if (chargeErr) {
     return NextResponse.json({ error: chargeErr.message }, { status: 500 });
@@ -114,7 +115,7 @@ export async function POST(
       audit_id: body.audit_id,
       finding_key: body.finding_key,
       status: "running",
-      credits_consumed: 1,
+      credits_consumed: SCAN_CREDITS,
     })
     .select("id")
     .single();
@@ -127,12 +128,12 @@ export async function POST(
         .update({
           status: "failed",
           error: message,
-          credits_refunded: 1,
+          credits_refunded: SCAN_CREDITS,
           updated_at: new Date().toISOString(),
         })
         .eq("id", runId);
     }
-    // Refund: increment the user's balance back by 1.
+    // Refund: increment the user's balance back by the amount charged.
     const { data: prof } = await (svc as any)
       .from("profiles")
       .select("credits_balance")
@@ -141,7 +142,7 @@ export async function POST(
     if (prof) {
       await (svc as any)
         .from("profiles")
-        .update({ credits_balance: (prof.credits_balance ?? 0) + 1 })
+        .update({ credits_balance: (prof.credits_balance ?? 0) + SCAN_CREDITS })
         .eq("id", user!.id);
     }
   }

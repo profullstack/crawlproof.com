@@ -1,5 +1,12 @@
 import Link from "next/link";
-import { CREDIT_PACKS, ENGINES, discountPct, dollars, perScanCents } from "@/lib/credits";
+import {
+  CREDIT_PACKS,
+  CREDIT_RACK_CENTS,
+  ENGINES,
+  discountPct,
+  dollars,
+  perCreditCents,
+} from "@/lib/credits";
 
 export const metadata = {
   title: "Pricing",
@@ -71,14 +78,14 @@ export default function PricingPage() {
                 <span className="text-3xl font-extrabold">{dollars(p.amountCents)}</span>
                 {off > 0 && (
                   <span className="text-sm text-[var(--color-muted)] line-through">
-                    {dollars(p.credits * 100)}
+                    {dollars(p.credits * CREDIT_RACK_CENTS)}
                   </span>
                 )}
               </div>
               <div className="mt-1 text-sm text-[var(--color-muted)]">
                 {p.credits} credit{p.credits === 1 ? "" : "s"} ·{" "}
                 <span className="font-mono text-xs">
-                  {dollars(perScanCents(p))}/credit
+                  {dollars(perCreditCents(p))}/credit
                 </span>
               </div>
               <Link

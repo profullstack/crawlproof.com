@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CREDIT_PACKS,
+  SCAN_CREDITS,
   discountPct,
   dollars,
   findPack,
@@ -24,7 +25,7 @@ describe("credit packs catalog", () => {
   });
 
   it("findPack returns the right pack, undefined for unknown id", () => {
-    expect(findPack("pack-1")?.credits).toBe(1);
+    expect(findPack("pack-1")?.credits).toBe(SCAN_CREDITS);
     expect(findPack("nonexistent")).toBeUndefined();
   });
 

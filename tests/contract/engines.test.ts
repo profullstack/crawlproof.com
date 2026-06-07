@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ENGINES,
   type Engine,
+  SCAN_CREDITS,
   dedupeEngines,
   engineAvailable,
   engineCost,
@@ -48,8 +49,8 @@ describe("ENGINES catalog", () => {
 describe("engineCost / engineAvailable", () => {
   it("engineCost matches the catalog", () => {
     expect(engineCost("rule")).toBe(0);
-    expect(engineCost("claude")).toBe(1);
-    expect(engineCost("openai")).toBe(1);
+    expect(engineCost("claude")).toBe(SCAN_CREDITS);
+    expect(engineCost("openai")).toBe(SCAN_CREDITS);
   });
 
   it("engineAvailable reflects the available flag", () => {
@@ -64,10 +65,10 @@ describe("selectionCost", () => {
     expect(selectionCost(["rule"])).toBe(0);
   });
 
-  it("sums one credit per paid engine, rule rides free", () => {
-    expect(selectionCost(["rule", "claude"])).toBe(1);
-    expect(selectionCost(["claude", "openai"])).toBe(2);
-    expect(selectionCost(["rule", "claude", "openai", "gemini"])).toBe(3);
+  it("sums SCAN_CREDITS per paid engine, rule rides free", () => {
+    expect(selectionCost(["rule", "claude"])).toBe(SCAN_CREDITS);
+    expect(selectionCost(["claude", "openai"])).toBe(2 * SCAN_CREDITS);
+    expect(selectionCost(["rule", "claude", "openai", "gemini"])).toBe(3 * SCAN_CREDITS);
   });
 
   it("returns 0 for an empty selection", () => {

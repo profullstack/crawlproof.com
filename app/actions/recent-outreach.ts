@@ -11,6 +11,10 @@ import {
 } from "@/lib/outreach";
 import { missingOrgSchema } from "@/lib/orgs";
 import { postViaAccount } from "@/lib/sp/post";
+import { OUTREACH_CREDITS } from "@/lib/credits";
+
+const INSUFFICIENT_CREDITS =
+  "Not enough credits — buy more in Billing to send outreach.";
 
 type Ok = { ok: true; provider: string };
 type Err = { ok: false; error: string };
@@ -49,7 +53,7 @@ export async function sendRecentAuditOutreach(input: {
   }
 
   const svc = serviceClient();
-  const access = await paidOrgOwner(svc, input.organizationId, user.id);
+  const access = await orgOwner(svc, input.organizationId, user.id);
   if (!access.ok) return { ok: false, error: access.error };
 
   const { data: audit } = await svc
@@ -93,6 +97,7 @@ export async function sendRecentAuditOutreach(input: {
         provider_message_id: null,
         error: null,
         visibility,
+        credits_spent: 0,
       });
       if (recordError) return { ok: false, error: recordError.message };
 
@@ -112,6 +117,12 @@ export async function sendRecentAuditOutreach(input: {
     }
     if (accounts.length !== accountIds.length) {
       return { ok: false, error: "One selected social account was not found." };
+    }
+
+    // 1 credit per posted account; refund any that fail to post.
+    const socialCost = accounts.length * OUTREACH_CREDITS;
+    if (!(await chargeCredits(svc, user.id, socialCost))) {
+      return { ok: false, error: INSUFFICIENT_CREDITS };
     }
 
     let posted = 0;
@@ -145,9 +156,18 @@ export async function sendRecentAuditOutreach(input: {
         error: ok ? null : result.error,
         visibility,
         social_post_id: ok ? result.postId : null,
+        credits_spent: ok ? OUTREACH_CREDITS : 0,
       });
-      if (recordError) return { ok: false, error: recordError.message };
+      if (recordError) {
+        // Bookkeeping failed mid-campaign — don't strand the user's credits.
+        await refundCredits(svc, user.id, socialCost);
+        return { ok: false, error: recordError.message };
+      }
     }
+
+    // Refund credits for any accounts that didn't actually post.
+    const socialRefund = (accounts.length - posted) * OUTREACH_CREDITS;
+    if (socialRefund > 0) await refundCredits(svc, user.id, socialRefund);
 
     revalidatePath("/recent");
     if (posted === 0) return { ok: false, error: errors.join("; ") || "No social posts sent." };
@@ -175,6 +195,11 @@ export async function sendRecentAuditOutreach(input: {
   const subject =
     cleanSubject(input.subject) ?? `CrawlProof follow-up for ${hostOf(audit.target_url)}`;
 
+  // 1 credit per email / SMS recipient; refunded below if delivery fails.
+  if (!(await chargeCredits(svc, user.id, OUTREACH_CREDITS))) {
+    return { ok: false, error: INSUFFICIENT_CREDITS };
+  }
+
   const result =
     input.channel === "email"
       ? await sendOutreachEmail({
@@ -185,6 +210,8 @@ export async function sendRecentAuditOutreach(input: {
           config,
         })
       : await sendOutreachSms({ to: recipient, body: finalBody, config });
+
+  if (!result.sent) await refundCredits(svc, user.id, OUTREACH_CREDITS);
 
   const { error: recordError } = await svc.from("recent_outreach_messages").insert({
     organization_id: input.organizationId,
@@ -199,6 +226,7 @@ export async function sendRecentAuditOutreach(input: {
     provider_message_id: result.providerMessageId ?? null,
     error: result.error ?? null,
     visibility: "private",
+    credits_spent: result.sent ? OUTREACH_CREDITS : 0,
   });
   if (recordError) return { ok: false, error: recordError.message };
 
@@ -232,7 +260,8 @@ async function loadOutreachConfig(
   return (data as OutreachConfig | null) ?? null;
 }
 
-async function paidOrgOwner(
+// Outreach is open to any org owner; access is gated by credits, not plan.
+async function orgOwner(
   svc: ReturnType<typeof serviceClient>,
   organizationId: string,
   userId: string,
@@ -245,24 +274,42 @@ async function paidOrgOwner(
     .eq("role", "owner")
     .maybeSingle();
   if (!member) return { ok: false, error: "Only org owners can send outreach." };
+  return { ok: true };
+}
 
-  const { data: profile } = await svc
+// Atomically spend `count` credits from the owner's balance. Returns false
+// when the balance is insufficient (the RPC leaves the balance untouched).
+async function chargeCredits(
+  svc: ReturnType<typeof serviceClient>,
+  userId: string,
+  count: number,
+): Promise<boolean> {
+  if (count <= 0) return true;
+  const { data } = await svc.rpc("consume_credit", {
+    p_owner: userId,
+    p_count: count,
+  });
+  return data === true;
+}
+
+// Best-effort credit refund (read-then-write, mirrors the article/auto-fix
+// refund paths). Used when a charged send/post ultimately fails.
+async function refundCredits(
+  svc: ReturnType<typeof serviceClient>,
+  userId: string,
+  count: number,
+): Promise<void> {
+  if (count <= 0) return;
+  const { data: prof } = await svc
     .from("profiles")
-    .select("plan")
+    .select("credits_balance")
     .eq("id", userId)
     .maybeSingle();
-  if (profile?.plan === "pro" || profile?.plan === "team") return { ok: true };
-
-  const { data: purchase } = await svc
-    .from("credit_purchases")
-    .select("id")
-    .eq("owner_id", userId)
-    .eq("status", "complete")
-    .limit(1)
-    .maybeSingle();
-  if (purchase) return { ok: true };
-
-  return { ok: false, error: "Outreach is available to paid org owners." };
+  if (!prof) return;
+  await svc
+    .from("profiles")
+    .update({ credits_balance: (prof.credits_balance ?? 0) + count })
+    .eq("id", userId);
 }
 
 function cleanEmail(value: string | null | undefined) {
