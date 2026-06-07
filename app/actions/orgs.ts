@@ -49,6 +49,39 @@ export async function createOrganization(input: {
   return { ok: true, id: org.id as string };
 }
 
+export async function renameOrganization(input: {
+  orgId: string;
+  name: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const name = input.name.trim().replace(/\s+/g, " ").slice(0, 80);
+  if (!name) return { ok: false, error: "Organization name is required." };
+
+  const svc = serviceClient();
+  const { data: member } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", input.orgId)
+    .eq("user_id", user.id)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (!member) return { ok: false, error: "You must own this org to rename it." };
+
+  const { error } = await svc
+    .from("organizations")
+    .update({ name, updated_at: new Date().toISOString() })
+    .eq("id", input.orgId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
 export async function moveProjectToOrganization(input: {
   projectId: string;
   organizationId: string;
@@ -236,6 +269,106 @@ export async function deleteOrganizationOutreachConfig(input: {
     .eq("id", input.configId)
     .eq("organization_id", input.organizationId);
   if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function deleteOrganization(input: {
+  orgId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const svc = serviceClient();
+  const { data: member } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", input.orgId)
+    .eq("user_id", user.id)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (!member) return { ok: false, error: "You must own this org to delete it." };
+
+  const { count } = await svc
+    .from("projects")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", input.orgId);
+  if (count && count > 0) {
+    return { ok: false, error: `Move or delete the ${count} project(s) in this org first.` };
+  }
+
+  const { error } = await svc.from("organizations").delete().eq("id", input.orgId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function mergeOrganization(input: {
+  sourceOrgId: string;
+  targetOrgId: string;
+}): Promise<Ok | Err> {
+  if (input.sourceOrgId === input.targetOrgId) {
+    return { ok: false, error: "Source and target org must be different." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const svc = serviceClient();
+
+  // Verify ownership of both orgs
+  const { data: sourceOwner } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", input.sourceOrgId)
+    .eq("user_id", user.id)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (!sourceOwner) return { ok: false, error: "You must own the source org." };
+
+  const { data: targetOwner } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", input.targetOrgId)
+    .eq("user_id", user.id)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (!targetOwner) return { ok: false, error: "You must own the target org." };
+
+  // Move all projects
+  const { error: projectsError } = await svc
+    .from("projects")
+    .update({ organization_id: input.targetOrgId, owner_id: user.id })
+    .eq("organization_id", input.sourceOrgId);
+  if (projectsError) return { ok: false, error: projectsError.message };
+
+  // Move all audits
+  const { error: auditsError } = await svc
+    .from("audits")
+    .update({ organization_id: input.targetOrgId })
+    .eq("organization_id", input.sourceOrgId);
+  if (auditsError) return { ok: false, error: auditsError.message };
+
+  // Fix default_org_id for any profiles pointing at source org
+  await svc
+    .from("profiles")
+    .update({ default_org_id: input.targetOrgId })
+    .eq("default_org_id", input.sourceOrgId);
+
+  // Delete source org (cascades members, outreach configs, recent_outreach_messages)
+  const { error: deleteError } = await svc
+    .from("organizations")
+    .delete()
+    .eq("id", input.sourceOrgId);
+  if (deleteError) return { ok: false, error: deleteError.message };
 
   revalidatePath("/dashboard");
   return { ok: true };

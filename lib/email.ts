@@ -604,3 +604,52 @@ export async function sendProjectInviteEmail(input: {
   if (res.error) return { sent: false, error: String(res.error) };
   return { sent: true };
 }
+
+export async function sendOrgInviteEmail(input: {
+  to: string;
+  invitedBy: string;
+  orgName: string;
+  acceptUrl: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+
+  const innerHtml = `
+    <tr>
+      <td style="padding:28px 32px 8px;">
+        <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#e7e9ee;">You've been invited</h1>
+        <p style="margin:0;font-size:15px;line-height:1.6;color:#94a3b8;">
+          <strong style="color:#e7e9ee;">${escapeHtml(input.invitedBy)}</strong> invited you to join the
+          <strong style="color:#e7e9ee;">${escapeHtml(input.orgName)}</strong> organization on CrawlProof.
+        </p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:16px 32px 32px;">
+        <a href="${input.acceptUrl}"
+           style="display:inline-block;background:#6ee7b7;color:#042f1a;font-weight:700;font-size:15px;
+                  text-decoration:none;padding:12px 28px;border-radius:8px;">
+          Accept Invitation
+        </a>
+        <p style="margin:20px 0 0;font-size:13px;color:#64748b;">
+          This link expires in 7 days. If you don't have a CrawlProof account you'll be prompted to create one.
+        </p>
+      </td>
+    </tr>
+  `;
+
+  const html = emailShell({
+    title: `Invitation to join ${input.orgName} on CrawlProof`,
+    innerHtml,
+    footerNote: "If you weren't expecting this invitation, you can safely ignore this email.",
+  });
+
+  const res = await c.emails.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: `${escapeHtml(input.invitedBy)} invited you to ${escapeHtml(input.orgName)} on CrawlProof`,
+    html,
+  });
+  if (res.error) return { sent: false, error: String(res.error) };
+  return { sent: true };
+}
