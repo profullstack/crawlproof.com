@@ -59,6 +59,7 @@ export function OrgDashboardControls({
   const [name, setName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [open, setOpen] = useState(false);
   const selectedOrg = orgs.find((org) => org.id === selectedOrgId) ?? null;
   const isOwner = selectedOrg?.role === "owner";
 
@@ -86,27 +87,38 @@ export function OrgDashboardControls({
   }
 
   return (
-    <section className="card space-y-3 p-4">
+    <section className="card p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <h2 className="text-lg font-semibold">Organization</h2>
-          <p className="text-sm text-[var(--color-muted)]">
-            Group projects and move them between owned orgs.
-          </p>
+          <select
+            value={selectedOrgId ?? ""}
+            onChange={(event) => selectOrg(event.target.value)}
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          >
+            {orgs.length === 0 && <option value="">Default workspace</option>}
+            {orgs.map((org) => (
+              <option key={org.id} value={org.id}>
+                {org.name} ({org.role})
+              </option>
+            ))}
+          </select>
         </div>
-        <select
-          value={selectedOrgId ?? ""}
-          onChange={(event) => selectOrg(event.target.value)}
-          className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          className="btn btn-secondary text-sm"
         >
-          {orgs.length === 0 && <option value="">Default workspace</option>}
-          {orgs.map((org) => (
-            <option key={org.id} value={org.id}>
-              {org.name} ({org.role})
-            </option>
-          ))}
-        </select>
+          {open ? "Hide settings" : "Manage"}
+        </button>
       </div>
+
+      {!open ? null : (
+      <div className="mt-4 space-y-3 border-t border-[var(--color-border)] pt-4">
+      <p className="text-sm text-[var(--color-muted)]">
+        Group projects and move them between owned orgs.
+      </p>
 
       <form onSubmit={submit} className="flex flex-wrap gap-2">
         <input
@@ -158,6 +170,8 @@ export function OrgDashboardControls({
             orgs={orgs}
           />
         </>
+      )}
+      </div>
       )}
     </section>
   );
