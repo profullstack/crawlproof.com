@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { SCAN_CREDITS } from "@/lib/credits";
 
 export type ArticleChargeSource = "entitlement" | "credit" | "none";
 
@@ -135,8 +136,8 @@ export async function getArticleGenerationCapacity(
   const creditsBalance =
     (profile?.credits_balance as number | null | undefined) ?? 0;
   return {
-    ok: creditsBalance >= 1,
-    source: creditsBalance >= 1 ? "credit" : "none",
+    ok: creditsBalance >= SCAN_CREDITS,
+    source: creditsBalance >= SCAN_CREDITS ? "credit" : "none",
     entitlement,
     creditsBalance,
   };
@@ -189,7 +190,7 @@ export async function refundArticleGenerationCharge(
     }
     const { error: updErr } = await supabase
       .from("profiles")
-      .update({ credits_balance: (prof.credits_balance ?? 0) + 1 })
+      .update({ credits_balance: (prof.credits_balance ?? 0) + SCAN_CREDITS })
       .eq("id", input.ownerId);
     if (updErr) {
       console.warn("[autopilot] credit refund update failed", updErr.message);

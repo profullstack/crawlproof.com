@@ -136,8 +136,8 @@ export default async function RecentPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const outreachOrg = user ? await firstPaidOwnedOrg(supabase, user.id) : null;
-  const socialAccounts = user && outreachOrg ? await listSocialAccounts(supabase, user.id) : [];
+  const outreach = user ? await firstOwnedOrg(supabase, user.id) : null;
+  const socialAccounts = user && outreach ? await listSocialAccounts(supabase, user.id) : [];
   const totalReachable = Math.min(count ?? 0, MAX_PAGES * PAGE_SIZE);
   const lastPage = Math.max(1, Math.min(MAX_PAGES, Math.ceil(totalReachable / PAGE_SIZE)));
 
@@ -224,14 +224,15 @@ export default async function RecentPage({
                     {formatScore(r.score, r.status)}
                   </span>
                 </Link>
-                {outreachOrg && (
+                {outreach && (
                   <RecentOutreachForm
                     auditId={r.id}
-                    organizationId={outreachOrg.id}
+                    organizationId={outreach.org.id}
                     host={host}
                     hasEmail={!!r.pdf_email}
                     hasPhone={!!r.phone}
                     socialAccounts={socialAccounts}
+                    creditsBalance={outreach.creditsBalance}
                   />
                 )}
               </li>
@@ -277,7 +278,9 @@ async function listSocialAccounts(
   return ((data ?? []) as unknown) as SocialAccount[];
 }
 
-async function firstPaidOwnedOrg(
+// Outreach UX is shown to every org owner; sending is metered by credits, so
+// we surface the owner's balance and let the form prompt a top-up when low.
+async function firstOwnedOrg(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
 ) {
@@ -289,17 +292,10 @@ async function firstPaidOwnedOrg(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan")
+    .select("credits_balance")
     .eq("id", userId)
     .maybeSingle();
-  if (profile?.plan === "pro" || profile?.plan === "team") return owned;
-
-  const { data: purchase } = await supabase
-    .from("credit_purchases")
-    .select("id")
-    .eq("owner_id", userId)
-    .eq("status", "complete")
-    .limit(1)
-    .maybeSingle();
-  return purchase ? owned : null;
+  const creditsBalance =
+    (profile?.credits_balance as number | null | undefined) ?? 0;
+  return { org: owned, creditsBalance };
 }

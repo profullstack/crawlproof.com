@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { enqueueGuestPostGenerate } from "@/lib/lx/workerClient";
 import { getProjectById } from "@/lib/lx/currentSite";
 import { serviceClient } from "@/lib/supabase/service";
+import { SCAN_CREDITS } from "@/lib/credits";
 
 export const runtime = "nodejs";
 
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
     .eq("id", user.id)
     .maybeSingle();
   const balance = (profile?.credits_balance as number | null | undefined) ?? 0;
-  if (balance < 1) {
+  if (balance < SCAN_CREDITS) {
     return NextResponse.json(
       {
         ok: false,

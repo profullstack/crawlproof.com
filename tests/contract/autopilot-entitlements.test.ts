@@ -188,7 +188,7 @@ describe("Autopilot entitlement helpers", () => {
     const supabase = new FakeSupabase({
       project_entitlements: [entitlement({ articles_used: 30 })],
       subscriptions: [{ id: "sub-1", user_id: "owner-1", status: "active" }],
-      profiles: [{ id: "owner-1", credits_balance: 7 }],
+      profiles: [{ id: "owner-1", credits_balance: 60 }],
     }) as any;
 
     const capacity = await getArticleGenerationCapacity(
@@ -199,7 +199,7 @@ describe("Autopilot entitlement helpers", () => {
 
     expect(capacity.ok).toBe(true);
     expect(capacity.source).toBe("credit");
-    expect(capacity.creditsBalance).toBe(7);
+    expect(capacity.creditsBalance).toBe(60);
   });
 
   it("maps article generation charge RPC results and refund RPC args", async () => {

@@ -21,6 +21,7 @@ import Anthropic from "@anthropic-ai/sdk";
 // schemas whose `_def` shape v4 can't read.
 import { z } from "zod/v4";
 import { markdownToHtml } from "../markdown";
+import { SCAN_CREDITS } from "@/lib/credits";
 import {
   findExchangeCandidates,
   type ExchangeCandidate,
@@ -1389,10 +1390,10 @@ async function failKeyword(
     .eq("id", keywordId);
 }
 
-// Bump the user's credit balance back by 1 — called when generation was
-// gated by consume_credit but then failed before producing an article.
+// Bump the user's credit balance back by SCAN_CREDITS — called when generation
+// was gated by consume_credit but then failed before producing an article.
 // Best-effort: if the balance read or update fails, we log and move on
-// rather than retry-loop. The cost is one wasted credit, not corruption.
+// rather than retry-loop. The cost is wasted credits, not corruption.
 export async function refundCredit(
   supabase: SupabaseClient<any>,
   ownerId: string,
@@ -1408,7 +1409,7 @@ export async function refundCredit(
   }
   const { error: updErr } = await supabase
     .from("profiles")
-    .update({ credits_balance: (prof.credits_balance ?? 0) + 1 })
+    .update({ credits_balance: (prof.credits_balance ?? 0) + SCAN_CREDITS })
     .eq("id", ownerId);
   if (updErr) {
     console.warn(`[lx] credit refund update failed`, updErr.message);
