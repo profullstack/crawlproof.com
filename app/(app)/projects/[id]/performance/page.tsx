@@ -6,7 +6,7 @@ import { EngineTrend, type EngineTrendPoint } from "@/components/charts/engine-t
 import { StatusPie } from "@/components/charts/status-pie";
 import { SectionBar, type SectionRow } from "@/components/charts/section-bar";
 import { PriorityBar } from "@/components/charts/priority-bar";
-import type { Engine } from "@/lib/credits";
+import { DEFAULT_PROJECT_ENGINES, type Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 
 type AuditRow = {
@@ -132,7 +132,7 @@ export default async function ProjectPerformancePage({
         url: project.url,
         schedule: project.schedule,
         status: (project.status ?? "active") as ProjectStatus,
-        engines: (project.engines ?? ["rule"]) as Engine[],
+        engines: (project.engines ?? DEFAULT_PROJECT_ENGINES) as Engine[],
         logo_url: (project as { logo_url?: string | null }).logo_url ?? null,
       }}
       currentTab="performance"

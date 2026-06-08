@@ -4,7 +4,7 @@ import { ProjectShell } from "@/components/project-shell";
 import { bucketLabel } from "@/lib/tracker/categorize";
 import { countryNameFromCode } from "@/lib/tracker/country";
 import { env } from "@/lib/env";
-import type { Engine } from "@/lib/credits";
+import { DEFAULT_PROJECT_ENGINES, type Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 import {
   TrackerAnalytics,
@@ -200,7 +200,7 @@ export default async function ProjectStatsPage({
         url: project.url,
         schedule: project.schedule,
         status: (project.status ?? "active") as ProjectStatus,
-        engines: (project.engines ?? ["rule"]) as Engine[],
+        engines: (project.engines ?? DEFAULT_PROJECT_ENGINES) as Engine[],
         logo_url: (project as { logo_url?: string | null }).logo_url ?? null,
       }}
       currentTab="stats"

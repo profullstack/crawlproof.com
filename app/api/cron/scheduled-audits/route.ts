@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { newShareToken } from "@/lib/shareToken";
 import {
+  DEFAULT_PROJECT_ENGINES,
   dedupeEngines,
   engineAvailable,
   selectionCost,
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
   for (const p of due ?? []) {
     // Read the project's CURRENT engine list — user edits flow through here.
     const engines: Engine[] = dedupeEngines(
-      ((p.engines as Engine[] | null) ?? ["rule"]).filter((e) => engineAvailable(e)),
+      ((p.engines as Engine[] | null) ?? DEFAULT_PROJECT_ENGINES).filter((e) => engineAvailable(e)),
     );
     const days =
       p.schedule === "daily" ? 1 : p.schedule === "weekly" ? 7 : 30;

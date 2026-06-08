@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  DEFAULT_PROJECT_ENGINES,
   ENGINES,
   type Engine,
   SCAN_CREDITS,
@@ -11,6 +12,9 @@ import {
 
 const ALL_ENGINES: Engine[] = [
   "rule",
+  "spec",
+  "dns",
+  "links",
   "claude",
   "openai",
   "qwen",
@@ -31,12 +35,19 @@ describe("ENGINES catalog", () => {
     }
   });
 
-  it("rule is the only free engine", () => {
+  it("keeps the local utility engines free", () => {
     expect(ENGINES.rule.cost).toBe(0);
+    expect(ENGINES.spec.cost).toBe(0);
+    expect(ENGINES.dns.cost).toBe(0);
+    expect(ENGINES.links.cost).toBe(0);
     for (const e of ALL_ENGINES) {
-      if (e === "rule") continue;
+      if (ENGINES[e].cost === 0) continue;
       expect(ENGINES[e].cost).toBeGreaterThan(0);
     }
+  });
+
+  it("defaults new projects to the free rule + DNS engines", () => {
+    expect(DEFAULT_PROJECT_ENGINES).toEqual(["rule", "dns"]);
   });
 
   it("every engine in the catalog is available", () => {
@@ -49,12 +60,14 @@ describe("ENGINES catalog", () => {
 describe("engineCost / engineAvailable", () => {
   it("engineCost matches the catalog", () => {
     expect(engineCost("rule")).toBe(0);
+    expect(engineCost("dns")).toBe(0);
     expect(engineCost("claude")).toBe(SCAN_CREDITS);
     expect(engineCost("openai")).toBe(SCAN_CREDITS);
   });
 
   it("engineAvailable reflects the available flag", () => {
     expect(engineAvailable("rule")).toBe(true);
+    expect(engineAvailable("dns")).toBe(true);
     expect(engineAvailable("claude")).toBe(true);
     expect(engineAvailable("kimi")).toBe(true);
   });
@@ -63,6 +76,10 @@ describe("engineCost / engineAvailable", () => {
 describe("selectionCost", () => {
   it("returns 0 for rule-only", () => {
     expect(selectionCost(["rule"])).toBe(0);
+  });
+
+  it("returns 0 for free utility engines", () => {
+    expect(selectionCost(["rule", "spec", "dns", "links"])).toBe(0);
   });
 
   it("sums SCAN_CREDITS per paid engine, rule rides free", () => {

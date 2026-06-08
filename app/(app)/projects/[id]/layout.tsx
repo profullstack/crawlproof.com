@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { DEFAULT_PROJECT_ENGINES } from "@/lib/credits";
 import { ProjectLayoutClient } from "./layout-client";
 
 export default async function ProjectLayout({
@@ -26,7 +27,7 @@ export default async function ProjectLayout({
       logoUrl={project.logo_url ?? null}
       schedule={project.schedule}
       status={project.status ?? "active"}
-      engines={project.engines ?? ["rule"]}
+      engines={project.engines ?? DEFAULT_PROJECT_ENGINES}
     >
       {children}
     </ProjectLayoutClient>

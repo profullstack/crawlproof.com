@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ENGINES, selectionCost, type Engine } from "@/lib/credits";
+import { DEFAULT_PROJECT_ENGINES, ENGINES, selectionCost, type Engine } from "@/lib/credits";
 import { runScanForProject } from "@/app/actions/runAudit";
 import { updateProjectEngines } from "@/app/actions/projects";
 
@@ -19,7 +19,7 @@ export function EnginesPanel({
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Engine[]>(
-    defaultEngines.length > 0 ? defaultEngines : ["rule"],
+    defaultEngines.length > 0 ? defaultEngines : DEFAULT_PROJECT_ENGINES,
   );
   const [confirming, setConfirming] = useState(false);
   const [pending, start] = useTransition();

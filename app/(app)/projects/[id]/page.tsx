@@ -6,7 +6,7 @@ import { AeoScoreTrend } from "@/components/aeo-score-trend";
 import { ProjectShell } from "@/components/project-shell";
 import { DeleteProjectButton } from "./delete-project-button";
 import { ScoreBadge } from "@/components/score-badge";
-import type { Engine } from "@/lib/credits";
+import { DEFAULT_PROJECT_ENGINES, type Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 
 type AuditRow = {
@@ -64,7 +64,7 @@ export default async function ProjectOverviewPage({
         url: project.url,
         schedule: project.schedule,
         status: (project.status ?? "active") as ProjectStatus,
-        engines: (project.engines ?? ["rule"]) as Engine[],
+        engines: (project.engines ?? DEFAULT_PROJECT_ENGINES) as Engine[],
         logo_url: (project as { logo_url?: string | null }).logo_url ?? null,
       }}
       currentTab="overview"
@@ -73,7 +73,7 @@ export default async function ProjectOverviewPage({
         <EnginesPanel
           projectId={project.id}
           url={project.url}
-          defaultEngines={(project.engines ?? ["rule"]) as Engine[]}
+          defaultEngines={(project.engines ?? DEFAULT_PROJECT_ENGINES) as Engine[]}
         />
 
         <AeoScoreTrend projectId={project.id} />
