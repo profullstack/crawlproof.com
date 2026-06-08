@@ -4,6 +4,7 @@
 // rolled to keep the bundle clean.
 
 import { createClient } from "@/lib/supabase/server";
+import { ENGINES, type Engine } from "@/lib/credits";
 
 interface AeoScoreTrendProps {
   projectId: string;
@@ -143,7 +144,7 @@ export async function AeoScoreTrend({ projectId, limit = 30 }: AeoScoreTrendProp
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-muted)]">
           {componentEntries.map(([engine, score]) => (
             <span key={engine}>
-              <span className="capitalize">{engine}</span>:{" "}
+              <span>{ENGINES[engine as Engine]?.label ?? engine}</span>:{" "}
               <span className="font-medium text-[var(--color-foreground)]">
                 {score}
               </span>

@@ -6,7 +6,7 @@ import { AeoScoreTrend } from "@/components/aeo-score-trend";
 import { ProjectShell } from "@/components/project-shell";
 import { DeleteProjectButton } from "./delete-project-button";
 import { ScoreBadge } from "@/components/score-badge";
-import { DEFAULT_PROJECT_ENGINES, type Engine } from "@/lib/credits";
+import { DEFAULT_PROJECT_ENGINES, ENGINES, type Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 
 type AuditRow = {
@@ -16,6 +16,15 @@ type AuditRow = {
   created_at: string;
   engine: string;
   scan_run_id: string | null;
+};
+
+type SectionSummary = {
+  section: string;
+  pass: number;
+  warn: number;
+  fail: number;
+  unknown: number;
+  engines: string[];
 };
 
 export default async function ProjectOverviewPage({
@@ -55,6 +64,53 @@ export default async function ProjectOverviewPage({
   const latestRunAudits = latestRunId
     ? rows.filter((a) => a.scan_run_id === latestRunId)
     : rows.slice(0, 1);
+  const latestRunEngineByAuditId = new Map(
+    latestRunAudits.map((a) => [a.id, a.engine]),
+  );
+  const latestRunAuditIds = latestRunAudits.map((a) => a.id);
+  let latestRunSections: SectionSummary[] = [];
+  if (latestRunAuditIds.length > 0) {
+    const { data: latestFindings } = await supabase
+      .from("audit_findings")
+      .select("audit_id, section, status")
+      .in("audit_id", latestRunAuditIds);
+    const bySection = new Map<
+      string,
+      Omit<SectionSummary, "engines"> & { engines: Set<string> }
+    >();
+    for (const f of latestFindings ?? []) {
+      const section = (f.section as string | null) ?? "Other";
+      const row =
+        bySection.get(section) ??
+        {
+          section,
+          pass: 0,
+          warn: 0,
+          fail: 0,
+          unknown: 0,
+          engines: new Set<string>(),
+        };
+      const status = f.status as "pass" | "warn" | "fail" | "unknown";
+      if (status === "pass") row.pass++;
+      else if (status === "warn") row.warn++;
+      else if (status === "fail") row.fail++;
+      else row.unknown++;
+      const engine = latestRunEngineByAuditId.get(f.audit_id as string);
+      if (engine) row.engines.add(engine);
+      bySection.set(section, row);
+    }
+    latestRunSections = Array.from(bySection.values())
+      .map((row) => ({
+        ...row,
+        engines: Array.from(row.engines),
+      }))
+      .sort(
+        (a, b) =>
+          b.fail - a.fail ||
+          b.warn - a.warn ||
+          a.section.localeCompare(b.section),
+      );
+  }
 
   return (
     <ProjectShell
@@ -142,12 +198,46 @@ export default async function ProjectOverviewPage({
                     href={`/audits/${a.id}`}
                     className="text-sm font-medium hover:underline"
                   >
-                    {a.engine}
+                    {ENGINES[a.engine as Engine]?.label ?? a.engine}
                   </Link>
                   <ScoreBadge score={a.score} status={a.status} />
                 </li>
               ))}
             </ul>
+            {latestRunSections.length > 0 && (
+              <div className="mt-5 border-t border-[var(--color-border)] pt-4">
+                <h3 className="text-sm font-semibold">
+                  Latest run analytics sections
+                </h3>
+                <div className="mt-3 grid gap-2">
+                  {latestRunSections.map((section) => (
+                    <div
+                      key={section.section}
+                      className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium">{section.section}</div>
+                        <div className="flex flex-wrap gap-3 text-xs text-[var(--color-muted)]">
+                          <Count label="pass" value={section.pass} tone="pass" />
+                          <Count label="warn" value={section.warn} tone="warn" />
+                          <Count label="fail" value={section.fail} tone="fail" />
+                          {section.unknown > 0 && (
+                            <span>{section.unknown} unknown</span>
+                          )}
+                        </div>
+                      </div>
+                      {section.engines.length > 0 && (
+                        <div className="mt-1 text-xs text-[var(--color-muted)]">
+                          {section.engines
+                            .map((engine) => ENGINES[engine as Engine]?.label ?? engine)
+                            .join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {latestRunId && (
               <div className="mt-3 flex flex-wrap gap-3 text-sm">
                 <Link
@@ -186,6 +276,31 @@ export default async function ProjectOverviewPage({
         </section>
       </div>
     </ProjectShell>
+  );
+}
+
+function Count({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "pass" | "warn" | "fail";
+}) {
+  const color =
+    tone === "pass"
+      ? "var(--color-pass)"
+      : tone === "warn"
+        ? "var(--color-warn)"
+        : "var(--color-fail)";
+  return (
+    <span>
+      <span className="font-semibold" style={{ color }}>
+        {value}
+      </span>{" "}
+      {label}
+    </span>
   );
 }
 
