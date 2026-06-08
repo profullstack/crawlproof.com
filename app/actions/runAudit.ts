@@ -61,7 +61,7 @@ function normalizeEngines(input: unknown, signedIn: boolean): Engine[] {
 
 // Anonymous + signed-in entry from the homepage hero form. Anonymous always
 // runs the rule engine; signed-in users get the per-target free quota for
-// 'rule' and spend 1 credit each for paid engines.
+// 'rule' and spend SCAN_CREDITS (20) each for paid engines.
 export async function startAuditFromForm(input: {
   url: string;
   email?: string;
