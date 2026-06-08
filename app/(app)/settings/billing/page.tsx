@@ -78,7 +78,7 @@ export default async function BillingPage({
           <span className="text-[var(--color-muted)]">credits</span>
         </div>
         <div className="mt-2 text-xs text-[var(--color-muted)]">
-          1 credit = 1 scan. Scheduled re-runs spend 1 credit each.
+          1 AI-model scan = 20 credits (~$1). Scheduled re-runs spend the same per engine.
         </div>
       </div>
 

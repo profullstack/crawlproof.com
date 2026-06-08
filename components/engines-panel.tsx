@@ -82,7 +82,7 @@ export function EnginesPanel({
       <div className="flex items-baseline justify-between">
         <h3 className="font-semibold">Engines</h3>
         <span className="text-xs text-[var(--color-muted)]">
-          Pick one or more — each paid engine adds 1 credit per scan.
+          Pick one or more — each paid engine adds 20 credits per scan.
         </span>
       </div>
 

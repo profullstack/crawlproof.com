@@ -6,11 +6,11 @@ import { SignupForm } from "./form";
 export const metadata = {
   title: "Sign up",
   description:
-    "Create a free CrawlProof account — get 3 free credits to run AEO audits across LLM engines.",
+    "Create a free CrawlProof account — get 20 free credits to run AEO audits across LLM engines.",
   alternates: { canonical: "/signup" },
   openGraph: {
     title: "Sign up for CrawlProof",
-    description: "Create a free CrawlProof account — get 3 free credits to start.",
+    description: "Create a free CrawlProof account — get 20 free credits to start.",
     url: "/signup",
   },
 };

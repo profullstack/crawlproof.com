@@ -128,9 +128,9 @@ export function ApplyFixButton({
               {findingTitle}
             </p>
             <p className="mt-2 text-xs text-[var(--color-muted)]">
-              Costs <strong>1 credit</strong>. Claude reads the relevant
+              Costs <strong>20 credits (~$1)</strong>. Claude reads the relevant
               files, proposes a minimal patch, and opens a PR. We refund
-              the credit if the run fails.
+              the credits if the run fails.
             </p>
 
             {repos.length === 0 ? (
@@ -179,7 +179,7 @@ export function ApplyFixButton({
                         onClick={() => run(r)}
                         className="btn btn-primary text-xs"
                       >
-                        {submitting === r.full_name ? "Working…" : "Use 1 credit"}
+                        {submitting === r.full_name ? "Working…" : "Use 20 credits"}
                       </button>
                     </li>
                   ))}
