@@ -60,6 +60,7 @@ export function perCreditCents(pack: CreditPack): number {
 export type Engine =
   | "rule"
   | "spec"
+  | "links"
   | "claude"
   | "openai"
   | "qwen"
@@ -90,6 +91,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Runs your URL against the specification.website checklist — 114 checks across Foundations, SEO, Security, Accessibility, Agent Readiness, Performance, Privacy, Resilience, and Internationalisation. Free.",
+  },
+  links: {
+    label: "Link checker",
+    cost: 0,
+    available: true,
+    blurb:
+      "Recursively crawls your root domain (powered by linkinator) and reports every broken link — 404s, dead redirects, unreachable hosts — with the page each was found on. Free.",
   },
   claude: {
     label: "Claude Sonnet 4.6",
