@@ -14,6 +14,7 @@ import {
 } from "@/lib/rateLimit";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
 import {
+  DEFAULT_PROJECT_ENGINES,
   dedupeEngines,
   engineAvailable,
   ENGINES,
@@ -50,13 +51,13 @@ const ALL_ENGINES: Engine[] = ["rule", "spec", "dns", "links", "claude", "openai
 
 function normalizeEngines(input: unknown, signedIn: boolean): Engine[] {
   if (!signedIn) return ["rule"];
-  if (!Array.isArray(input) || input.length === 0) return ["rule"];
+  if (!Array.isArray(input) || input.length === 0) return DEFAULT_PROJECT_ENGINES;
   const cleaned = dedupeEngines(
     input.filter((e): e is Engine =>
       typeof e === "string" && (ALL_ENGINES as string[]).includes(e),
     ),
   );
-  return cleaned.length === 0 ? ["rule"] : cleaned;
+  return cleaned.length === 0 ? DEFAULT_PROJECT_ENGINES : cleaned;
 }
 
 // Anonymous + signed-in entry from the homepage hero form. Anonymous always

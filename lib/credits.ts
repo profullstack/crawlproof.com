@@ -70,6 +70,8 @@ export type Engine =
   | "deepseek"
   | "perplexity";
 
+export const DEFAULT_PROJECT_ENGINES: Engine[] = ["rule", "dns"];
+
 export type EngineMeta = {
   label: string;
   cost: number;
