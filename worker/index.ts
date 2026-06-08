@@ -3,6 +3,8 @@ import WebSocket from "ws";
 import { createClient } from "@supabase/supabase-js";
 import { runAudit } from "../lib/audit/engine";
 import { specAudit } from "../lib/audit/spec-engine";
+import { dnsAudit } from "../lib/audit/dns-engine";
+import { linksAudit } from "../lib/audit/links-engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
 import { openaiAudit } from "../lib/audit/openai-engine";
 import { geminiAudit } from "../lib/audit/gemini-engine";
@@ -294,6 +296,8 @@ async function processJob(job: Job) {
       (audit.engine as
         | "rule"
         | "spec"
+        | "dns"
+        | "links"
         | "claude"
         | "openai"
         | "gemini"
@@ -316,7 +320,10 @@ async function processJob(job: Job) {
     }>;
     let markdown: string;
 
+    // DNS Analyzer returns the same { score, summary, findings, markdown }
+    // shape as the LLM engines, so it rides the same dispatch branch.
     const llmEngines = {
+      dns: dnsAudit,
       claude: claudeAudit,
       openai: openaiAudit,
       gemini: geminiAudit,
@@ -328,6 +335,12 @@ async function processJob(job: Job) {
 
     if (engine === "spec") {
       const r = await specAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = r.markdown;
+    } else if (engine === "links") {
+      const r = await linksAudit(audit.target_url);
       score = r.score;
       summary = r.summary;
       findings = r.findings;
