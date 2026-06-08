@@ -20,9 +20,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <header className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-bg)]/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link
-            href="/dashboard"
+            href="/"
             className="flex shrink-0 items-center"
-            aria-label="CrawlProof — Dashboard"
+            aria-label="CrawlProof — Home"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -35,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Link>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
+            <Link href="/recent">Recent</Link>
             <Link href="/projects/new">New</Link>
             <Link href="/settings/integrations/github">GitHub</Link>
             <a href="/blog" target="_blank" rel="noreferrer">Blog ↗</a>
