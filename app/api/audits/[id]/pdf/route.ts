@@ -43,7 +43,22 @@ export async function GET(
       .eq("project_id", projectId)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (!membership) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!membership) {
+      const { data: project } = await supabase
+        .from("projects")
+        .select("organization_id")
+        .eq("id", projectId)
+        .maybeSingle();
+      const orgId = (project as { organization_id?: string | null } | null)?.organization_id;
+      if (!orgId) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      const { data: orgMembership } = await supabase
+        .from("organization_members")
+        .select("id")
+        .eq("organization_id", orgId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!orgMembership) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
   }
 
   if (audit.status !== "complete") {

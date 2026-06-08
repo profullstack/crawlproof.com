@@ -15,6 +15,7 @@ import { CopyLink } from "@/components/copy-link";
 import { PdfButton } from "@/components/pdf-button";
 import { ShareBanner } from "@/components/share-banner";
 import type { Finding } from "@/lib/audit/types";
+import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
 import { env } from "@/lib/env";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
@@ -231,6 +232,14 @@ export default async function AuditPage({
     : null;
   const scoreLabel =
     typeof audit.score === "number" ? `${audit.score}/100` : undefined;
+  const markdown =
+    audit.status === "complete" && audit.report_markdown
+      ? ((await loadConsolidatedOrSoloMarkdown(supabase, {
+          scan_run_id: audit.scan_run_id,
+          target_url: audit.target_url,
+          report_markdown: audit.report_markdown,
+        })) ?? audit.report_markdown)
+      : audit.report_markdown;
 
   return (
     <div className="space-y-6">
@@ -249,7 +258,7 @@ export default async function AuditPage({
           rawMarkdownUrl={
             audit.share_token ? `/r/${audit.share_token}/prompt.md` : undefined
           }
-          markdownView={<MarkdownView markdown={audit.report_markdown} />}
+          markdownView={<MarkdownView markdown={markdown ?? audit.report_markdown} />}
           structuredView={
             <ReportView
               audit={audit as AuditRow}

@@ -12,6 +12,7 @@ export type AuditRow = {
   completed_at: string | null;
   created_at: string;
   share_token?: string | null;
+  engine?: string | null;
 };
 
 interface FixContext {
@@ -38,6 +39,7 @@ export function ReportView({
     source: string | null;
     notes: string | null;
   }>;
+  const sections = reportSections(findings, audit.engine);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[16rem_1fr] lg:gap-8">
@@ -47,7 +49,7 @@ export function ReportView({
             Sections
           </summary>
           <nav className="mt-3 flex flex-col gap-1">
-            {SECTIONS.map((s, i) => (
+            {sections.map((s, i) => (
               <a key={s} href={`#section-${i + 1}`} className="rounded px-2 py-1 hover:bg-[var(--color-bg)]">
                 {i + 1}. {s}
               </a>
@@ -77,7 +79,7 @@ export function ReportView({
           </div>
         </header>
 
-        {SECTIONS.map((s, i) => {
+        {sections.map((s, i) => {
           const sectionFindings = findings.filter((f) => f.section === s);
           if (s === "Data Found") {
             return (
@@ -98,6 +100,23 @@ export function ReportView({
       </article>
     </div>
   );
+}
+
+export function reportSections(findings: Finding[], engine?: string | null): string[] {
+  const findingSections = Array.from(
+    new Set(findings.map((f) => f.section).filter(Boolean)),
+  );
+  const compactEngine = engine === "dns" || engine === "links" || engine === "spec";
+  if (compactEngine) {
+    return findingSections.length > 0 ? findingSections : [...SECTIONS];
+  }
+  const out = [...SECTIONS];
+  for (const section of findingSections) {
+    if (!out.includes(section as (typeof SECTIONS)[number])) {
+      out.push(section as (typeof SECTIONS)[number]);
+    }
+  }
+  return out;
 }
 
 function SectionShell({
