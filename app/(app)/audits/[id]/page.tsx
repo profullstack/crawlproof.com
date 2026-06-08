@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { ReportView, type AuditRow } from "@/components/report/report-view";
+import {
+  MultiEngineReportView,
+  ReportView,
+  type AuditRow,
+  type MultiEngineAuditRow,
+} from "@/components/report/report-view";
 import { MarkdownView } from "@/components/report/markdown-view";
 import { ViewTabs } from "@/components/report/view-tabs";
 import { PerformancePreview } from "@/components/report/performance-preview";
@@ -73,66 +78,95 @@ export default async function AuditPage({
   }
   if (!isOwner && !isMember) notFound();
 
-  // Premium tab summarises EVERY non-rule audit in this scan_run — including
-  // the one you're currently viewing. Filtering out audit.id would hide the
-  // current engine from its own summary when you click into it.
-  const { data: siblingsData } = audit.scan_run_id
+  // The visible report must represent the whole scan run, not just the
+  // specific engine row whose URL the user opened.
+  const { data: scanRunAuditsData } = audit.scan_run_id
     ? await supabase
         .from("audits")
         .select(
-          "id, engine, status, score, share_token, failed_reason, completed_at, summary",
+          "id, target_url, status, score, summary, completed_at, created_at, share_token, engine, failed_reason",
         )
         .eq("scan_run_id", audit.scan_run_id)
-        .neq("engine", "rule")
         .order("created_at", { ascending: true })
     : { data: null };
-  const premiumSiblingsBase = (siblingsData ?? []) as unknown as Omit<
-    PremiumSibling,
-    "topFindings"
-  >[];
+  const reportAudits =
+    ((scanRunAuditsData ?? []) as unknown as MultiEngineAuditRow[]).length > 0
+      ? ((scanRunAuditsData ?? []) as unknown as MultiEngineAuditRow[])
+      : [audit as MultiEngineAuditRow];
+  const reportAuditIds = reportAudits.map((row) => row.id);
+
+  const { data: allFindingsData } =
+    reportAuditIds.length > 0
+      ? await supabase
+          .from("audit_findings")
+          .select("audit_id, section, check_key, status, title, detail, evidence, priority")
+          .in("audit_id", reportAuditIds)
+          .order("priority", { ascending: true })
+      : { data: null };
+  const findingsByAuditId = new Map<string, Finding[]>();
+  for (const row of (allFindingsData ?? []) as Array<
+    Finding & { audit_id: string }
+  >) {
+    const list = findingsByAuditId.get(row.audit_id) ?? [];
+    list.push({
+      section: row.section,
+      check_key: row.check_key,
+      status: row.status,
+      title: row.title,
+      detail: row.detail,
+      evidence: row.evidence,
+      priority: row.priority,
+    });
+    findingsByAuditId.set(row.audit_id, list);
+  }
+  const findings = findingsByAuditId.get(audit.id) ?? [];
+
+  // Premium tab summarises every non-rule audit in this scan_run — including
+  // the one you're currently viewing. Filtering out audit.id would hide the
+  // current engine from its own summary when you click into it.
+  const premiumSiblingsBase = reportAudits.filter(
+    (row) => row.engine && row.engine !== "rule",
+  ) as unknown as Omit<PremiumSibling, "topFindings">[];
 
   // Pull a handful of top-priority findings per sibling for inline display.
   // One round-trip via IN; we filter to fail/warn priorities ≤3 and slice
   // client-side because PostgREST doesn't do per-group LIMIT.
   let premiumSiblings: PremiumSibling[] = [];
   if (premiumSiblingsBase.length > 0) {
-    const siblingIds = premiumSiblingsBase.map((s) => s.id);
-    const { data: findingsForSiblings } = await supabase
-      .from("audit_findings")
-      .select("audit_id, section, status, title, detail, priority")
-      .in("audit_id", siblingIds)
-      .in("status", ["fail", "warn"])
-      .lte("priority", 3)
-      .order("priority", { ascending: true });
     const byAudit = new Map<
       string,
       { section: string; status: string; title: string; detail: string | null; priority: number }[]
     >();
-    for (const f of findingsForSiblings ?? []) {
-      const arr = byAudit.get(f.audit_id as string) ?? [];
-      if (arr.length < 4) {
+    for (const sibling of premiumSiblingsBase) {
+      const topFindings = (findingsByAuditId.get(sibling.id) ?? [])
+        .filter(
+          (f) =>
+            (f.status === "fail" || f.status === "warn") && f.priority <= 3,
+        )
+        .slice(0, 4);
+      const arr: {
+        section: string;
+        status: string;
+        title: string;
+        detail: string | null;
+        priority: number;
+      }[] = [];
+      for (const f of topFindings) {
         arr.push({
-          section: f.section as string,
-          status: f.status as string,
-          title: f.title as string,
-          detail: (f.detail as string | null) ?? null,
-          priority: f.priority as number,
+          section: f.section,
+          status: f.status,
+          title: f.title,
+          detail: f.detail ?? null,
+          priority: f.priority,
         });
       }
-      byAudit.set(f.audit_id as string, arr);
+      byAudit.set(sibling.id, arr);
     }
     premiumSiblings = premiumSiblingsBase.map((s) => ({
       ...s,
       topFindings: byAudit.get(s.id) ?? [],
     })) as PremiumSibling[];
   }
-
-  const { data: findingsData } = await supabase
-    .from("audit_findings")
-    .select("section, check_key, status, title, detail, evidence, priority")
-    .eq("audit_id", id);
-
-  const findings = (findingsData ?? []) as unknown as Finding[];
 
   // Diff branch
   if (diff) {
@@ -240,6 +274,22 @@ export default async function AuditPage({
           report_markdown: audit.report_markdown,
         })) ?? audit.report_markdown)
       : audit.report_markdown;
+  const structuredReport =
+    reportAudits.length > 1 ? (
+      <MultiEngineReportView
+        audits={reportAudits}
+        findingsByAuditId={findingsByAuditId}
+        ownerActions={ownerActions}
+        fixContext={fixContext}
+      />
+    ) : (
+      <ReportView
+        audit={audit as AuditRow}
+        findings={findings}
+        ownerActions={ownerActions}
+        fixContext={fixContext}
+      />
+    );
 
   return (
     <div className="space-y-6">
@@ -259,14 +309,7 @@ export default async function AuditPage({
             audit.share_token ? `/r/${audit.share_token}/prompt.md` : undefined
           }
           markdownView={<MarkdownView markdown={markdown ?? audit.report_markdown} />}
-          structuredView={
-            <ReportView
-              audit={audit as AuditRow}
-              findings={findings}
-              ownerActions={ownerActions}
-              fixContext={fixContext}
-            />
-          }
+          structuredView={structuredReport}
           performanceView={
             premiumSiblings.length > 0 ? (
               <PremiumEngines siblings={premiumSiblings} />
@@ -279,12 +322,7 @@ export default async function AuditPage({
           }
         />
       ) : (
-        <ReportView
-          audit={audit as AuditRow}
-          findings={findings}
-          ownerActions={ownerActions}
-          fixContext={fixContext}
-        />
+        structuredReport
       )}
     </div>
   );

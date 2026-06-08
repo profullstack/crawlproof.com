@@ -2,7 +2,12 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { ReportView, type AuditRow } from "@/components/report/report-view";
+import {
+  MultiEngineReportView,
+  ReportView,
+  type AuditRow,
+  type MultiEngineAuditRow,
+} from "@/components/report/report-view";
 import { MarkdownView } from "@/components/report/markdown-view";
 import { ViewTabs } from "@/components/report/view-tabs";
 import { PerformancePreview } from "@/components/report/performance-preview";
@@ -197,29 +202,66 @@ export default async function PublicReportPage({
     .eq("share_token", token)
     .maybeSingle();
   const auditScanRunId = (scanLink?.scan_run_id ?? null) as string | null;
+  const { data: scanRunAuditsData } = auditScanRunId
+    ? await svc
+        .from("audits")
+        .select(
+          "id, target_url, status, score, summary, completed_at, created_at, share_token, engine, failed_reason",
+        )
+        .eq("scan_run_id", auditScanRunId)
+        .order("created_at", { ascending: true })
+    : { data: null };
+  const reportAudits =
+    ((scanRunAuditsData ?? []) as unknown as MultiEngineAuditRow[]).length > 0
+      ? ((scanRunAuditsData ?? []) as unknown as MultiEngineAuditRow[])
+      : [audit as MultiEngineAuditRow];
+  const reportAuditIds = reportAudits.map((row) => row.id);
 
   const seo = await loadSeoAudit(token);
   const canonicalUrl = `${env.siteUrl.replace(/\/$/, "")}/r/${token}`;
 
-  let findings: Finding[] = [];
-  if (audit.status === "complete") {
-    const { data } = await svc.rpc("get_public_findings", { token });
-    findings = ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
-      section: r.section as string,
-      check_key: r.check_key as string,
-      status: r.status as Finding["status"],
-      title: r.title as string,
-      detail: (r.detail ?? undefined) as string | undefined,
-      evidence: (r.evidence ?? {}) as Record<string, unknown>,
-      priority: r.priority as Finding["priority"],
-    }));
+  const findingsByAuditId = new Map<string, Finding[]>();
+  if (reportAuditIds.length > 0) {
+    const { data } = await svc
+      .from("audit_findings")
+      .select("audit_id, section, check_key, status, title, detail, evidence, priority")
+      .in("audit_id", reportAuditIds)
+      .order("priority", { ascending: true });
+    for (const row of (data ?? []) as Array<Finding & { audit_id: string }>) {
+      const list = findingsByAuditId.get(row.audit_id) ?? [];
+      list.push({
+        section: row.section,
+        check_key: row.check_key,
+        status: row.status,
+        title: row.title,
+        detail: row.detail,
+        evidence: row.evidence,
+        priority: row.priority,
+      });
+      findingsByAuditId.set(row.audit_id, list);
+    }
   }
+  const findings = findingsByAuditId.get(audit.id) ?? [];
 
   const ownerActions = (
     <div className="flex flex-col gap-2 sm:flex-row">
       <CopyLink url={canonicalUrl} />
     </div>
   );
+  const structuredReport =
+    reportAudits.length > 1 ? (
+      <MultiEngineReportView
+        audits={reportAudits}
+        findingsByAuditId={findingsByAuditId}
+        ownerActions={ownerActions}
+      />
+    ) : (
+      <ReportView
+        audit={audit as AuditRow}
+        findings={findings}
+        ownerActions={ownerActions}
+      />
+    );
 
   return (
     <>
@@ -262,20 +304,12 @@ export default async function PublicReportPage({
               />
             }
             structuredView={
-              <ReportView
-                audit={audit as AuditRow}
-                findings={findings}
-                ownerActions={ownerActions}
-              />
+              structuredReport
             }
             performanceView={<PerformancePreview />}
           />
         ) : (
-          <ReportView
-            audit={audit as AuditRow}
-            findings={findings}
-            ownerActions={ownerActions}
-          />
+          structuredReport
         )}
 
         {audit.status !== "failed" && (
