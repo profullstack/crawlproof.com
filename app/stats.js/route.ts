@@ -25,19 +25,49 @@ const snippet = `(function(){
       } catch (_) {}
       return prefix + Math.random().toString(16).slice(2) + '-' + Date.now().toString(16);
     }
-    function storedId(key, prefix) {
-      try {
-        var existing = sessionStorage.getItem(key);
-        if (existing) return existing;
-        var id = uuid(prefix);
-        sessionStorage.setItem(key, id);
-        return id;
-      } catch (_) {
-        return uuid(prefix);
-      }
+    function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+    function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+    // In-memory fallbacks for when localStorage is blocked (private mode, etc.)
+    // so a single page load still reports one stable visitor/session.
+    var memVisitor = null, memSession = null, memSessionTs = 0;
+    // Persistent visitor id — stored in localStorage so it survives tab close,
+    // reload, and browser restart. localStorage is partitioned per site origin,
+    // making this a stable per-site visitor identifier (not per-tab, which would
+    // count every new tab as a new visitor).
+    function getVisitorId() {
+      var k = 'crawlproof.visitor';
+      var id = lsGet(k);
+      if (id) return id;
+      if (memVisitor) return memVisitor;
+      id = uuid('v');
+      lsSet(k, id);
+      memVisitor = id;
+      return id;
     }
-    var visitorId = storedId('crawlproof.visitor', 'v');
-    var sessionId = storedId('crawlproof.session', 's');
+    // Session id with a 30-minute inactivity window, shared across tabs. The
+    // window slides on every event, so an active visit stays one session and
+    // reopening within 30 min reuses it instead of minting a new one.
+    var SESSION_TTL = 1800000; // 30 min
+    function getSessionId() {
+      var k = 'crawlproof.session', now = Date.now();
+      var raw = lsGet(k);
+      if (raw) {
+        var sep = raw.lastIndexOf('|');
+        if (sep > 0) {
+          var id = raw.slice(0, sep);
+          var ts = parseInt(raw.slice(sep + 1), 10) || 0;
+          if (id && (now - ts) < SESSION_TTL) { lsSet(k, id + '|' + now); return id; }
+        }
+      }
+      if (memSession && (now - memSessionTs) < SESSION_TTL) {
+        memSessionTs = now; lsSet(k, memSession + '|' + now); return memSession;
+      }
+      var fresh = uuid('s');
+      memSession = fresh; memSessionTs = now;
+      lsSet(k, fresh + '|' + now);
+      return fresh;
+    }
+    var visitorId = getVisitorId();
     function labelFor(el) {
       try {
         return el.getAttribute('data-cp-label')
@@ -63,7 +93,7 @@ const snippet = `(function(){
             height: Math.max(0, window.innerHeight || 0)
           },
           visitorId: visitorId,
-          sessionId: sessionId,
+          sessionId: getSessionId(),
           language: navigator.language || '',
           timezone: (window.Intl && Intl.DateTimeFormat) ? Intl.DateTimeFormat().resolvedOptions().timeZone : '',
           screenWidth: screen && screen.width ? screen.width : 0,

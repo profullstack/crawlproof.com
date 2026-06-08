@@ -17,3 +17,6 @@ playwright-cache
 tsconfig.tsbuildinfo
 *.tsbuildinfo
 supabase/.temp/
+
+# Claude Code local worktrees/state
+.claude/
