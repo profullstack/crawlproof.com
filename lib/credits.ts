@@ -103,7 +103,6 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     label: "Claude Sonnet 4.6",
     cost: SCAN_CREDITS,
     available: true,
-    popular: true,
     blurb:
       "Anthropic's fast tier with web_fetch + web_search. Snappy AEO audit framed the way ClaudeBot would discover your site.",
   },
