@@ -45,10 +45,31 @@ async function memberProjectIds(
   return (data ?? []).map((r: { project_id: string }) => r.project_id);
 }
 
-// Builds a filter string for "projects the user can access" — owner or member.
-function accessFilter(userId: string, memberIds: string[]): string | null {
-  if (memberIds.length === 0) return null;
-  return `owner_id.eq.${userId},id.in.(${memberIds.join(",")})`;
+// Returns org IDs the user belongs to. Org membership grants org-wide project
+// visibility; project_members grants access to specific projects.
+async function memberOrgIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("organization_members")
+    .select("organization_id")
+    .eq("user_id", userId);
+  if (error) return [];
+  return (data ?? []).map((r: { organization_id: string }) => r.organization_id);
+}
+
+// Builds a filter string for "projects the user can access": owned projects,
+// explicit project memberships, and org-level project access.
+function accessFilter(userId: string, projectMemberIds: string[], orgMemberIds: string[]): string {
+  const clauses = [`owner_id.eq.${userId}`];
+  if (projectMemberIds.length > 0) {
+    clauses.push(`id.in.(${projectMemberIds.join(",")})`);
+  }
+  if (orgMemberIds.length > 0) {
+    clauses.push(`organization_id.in.(${orgMemberIds.join(",")})`);
+  }
+  return clauses.join(",");
 }
 
 // All projects the signed-in user owns or is a member of, with an autoblog badge.
@@ -59,14 +80,17 @@ export async function listUserProjects(): Promise<ProjectSummary[]> {
   } = await supabase.auth.getUser();
   if (!user) return [];
 
-  const memberIds = await memberProjectIds(supabase, user.id);
-  const filter = accessFilter(user.id, memberIds);
+  const [projectMemberIds, orgMemberIds] = await Promise.all([
+    memberProjectIds(supabase, user.id),
+    memberOrgIds(supabase, user.id),
+  ]);
+  const filter = accessFilter(user.id, projectMemberIds, orgMemberIds);
 
   let query = supabase
     .from("projects")
     .select("id, name, url, lx_site(status)")
     .order("created_at", { ascending: true });
-  query = filter ? query.or(filter) : query.eq("owner_id", user.id);
+  query = query.or(filter);
   const { data } = await query;
 
   return ((data ?? []) as Array<{
@@ -152,7 +176,7 @@ export async function getProjectById(
 
   const { data } = await supabase
     .from("projects")
-    .select(`${select}, owner_id`)
+    .select(`${select}, owner_id, organization_id`)
     .eq("id", projectId)
     .maybeSingle();
   if (!data) return null;
@@ -164,7 +188,17 @@ export async function getProjectById(
       .eq("project_id", projectId)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (!membership) return null;
+    if (!membership) {
+      const orgId = row.organization_id as string | null | undefined;
+      if (!orgId) return null;
+      const { data: orgMembership } = await supabase
+        .from("organization_members")
+        .select("id")
+        .eq("organization_id", orgId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!orgMembership) return null;
+    }
   }
   return normalizeProject(row);
 }
@@ -186,18 +220,19 @@ export async function getCurrentProject(opts: {
   const siteColumns = opts.siteColumns ?? "*";
   const select = `${projectColumns}, lx_site(${siteColumns})`;
 
-  const [cookieStore, memberIds] = await Promise.all([
+  const [cookieStore, projectMemberIds, orgMemberIds] = await Promise.all([
     cookies(),
     memberProjectIds(supabase, user.id),
+    memberOrgIds(supabase, user.id),
   ]);
-  const filter = accessFilter(user.id, memberIds);
+  const filter = accessFilter(user.id, projectMemberIds, orgMemberIds);
   const cookieId = cookieStore.get(CURRENT_SITE_COOKIE)?.value;
 
   if (cookieId) {
     // The cookie may hold a project_id (new) or an lx_site.id (legacy).
     // Try project first; if no hit, look up the project_id from lx_site.
     let q = supabase.from("projects").select(select).eq("id", cookieId);
-    q = filter ? q.or(filter) : q.eq("owner_id", user.id);
+    q = q.or(filter);
     const { data: byProject } = await q.maybeSingle();
     if (byProject) return normalizeProject(byProject as unknown as Record<string, unknown>);
 
@@ -209,7 +244,7 @@ export async function getCurrentProject(opts: {
       .maybeSingle();
     if (viaSite?.project_id) {
       let hq = supabase.from("projects").select(select).eq("id", viaSite.project_id);
-      hq = filter ? hq.or(filter) : hq.eq("owner_id", user.id);
+      hq = hq.or(filter);
       const { data: hopped } = await hq.maybeSingle();
       if (hopped) return normalizeProject(hopped as unknown as Record<string, unknown>);
     }
@@ -220,7 +255,7 @@ export async function getCurrentProject(opts: {
     .select(select)
     .order("created_at", { ascending: true })
     .limit(1);
-  fallback = filter ? fallback.or(filter) : fallback.eq("owner_id", user.id);
+  fallback = fallback.or(filter);
   const { data: first } = await fallback.maybeSingle();
   return first ? normalizeProject(first as unknown as Record<string, unknown>) : null;
 }
@@ -259,20 +294,30 @@ export async function requireProjectAccess(projectId: string): Promise<
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, owner_id")
+    .select("id, owner_id, organization_id")
     .eq("id", projectId)
     .maybeSingle();
   if (!project) return { ok: false, error: "Not found." };
 
   const isOwner = (project as { owner_id: string }).owner_id === user.id;
   if (!isOwner) {
-    const { data: membership } = await supabase
+    const { data: projectMembership } = await supabase
       .from("project_members")
       .select("id")
       .eq("project_id", projectId)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (!membership) return { ok: false, error: "Not found." };
+    if (!projectMembership) {
+      const orgId = (project as { organization_id?: string | null }).organization_id;
+      if (!orgId) return { ok: false, error: "Not found." };
+      const { data: orgMembership } = await supabase
+        .from("organization_members")
+        .select("id")
+        .eq("organization_id", orgId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!orgMembership) return { ok: false, error: "Not found." };
+    }
   }
 
   return { ok: true, userId: user.id, userEmail: user.email ?? null, isOwner, supabase };
