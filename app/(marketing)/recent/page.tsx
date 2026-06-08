@@ -4,7 +4,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { listUserOrgs } from "@/lib/orgs";
-import { RecentOutreachForm } from "./outreach-form";
+import { RecentOutreachForm, type OutreachHistoryItem } from "./outreach-form";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 60;
@@ -138,6 +138,14 @@ export default async function RecentPage({
   } = await supabase.auth.getUser();
   const outreach = user ? await firstOwnedOrg(supabase, user.id) : null;
   const socialAccounts = user && outreach ? await listSocialAccounts(supabase, user.id) : [];
+  const historyByAudit =
+    outreach && rows.length > 0
+      ? await fetchOutreachHistory(
+          supabase,
+          outreach.org.id,
+          rows.map((r) => r.id),
+        )
+      : new Map<string, OutreachHistoryItem[]>();
   const totalReachable = Math.min(count ?? 0, MAX_PAGES * PAGE_SIZE);
   const lastPage = Math.max(1, Math.min(MAX_PAGES, Math.ceil(totalReachable / PAGE_SIZE)));
 
@@ -233,6 +241,7 @@ export default async function RecentPage({
                     hasPhone={!!r.phone}
                     socialAccounts={socialAccounts}
                     creditsBalance={outreach.creditsBalance}
+                    history={historyByAudit.get(r.id) ?? []}
                   />
                 )}
               </li>
@@ -298,4 +307,55 @@ async function firstOwnedOrg(
   const creditsBalance =
     (profile?.credits_balance as number | null | undefined) ?? 0;
   return { org: owned, creditsBalance };
+}
+
+// Per-audit outreach send history for this org (most recent first). Social
+// rows embed the published post URL via the social_post_id FK.
+async function fetchOutreachHistory(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  organizationId: string,
+  auditIds: string[],
+): Promise<Map<string, OutreachHistoryItem[]>> {
+  const byAudit = new Map<string, OutreachHistoryItem[]>();
+  const { data } = await supabase
+    .from("recent_outreach_messages")
+    .select(
+      "id, audit_id, channel, provider, status, subject, error, created_at, social_post:sp_post(platform_post_url)",
+    )
+    .eq("organization_id", organizationId)
+    .in("audit_id", auditIds)
+    .order("created_at", { ascending: false });
+
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    audit_id: string;
+    channel: string;
+    provider: string;
+    status: "sent" | "failed" | "queued";
+    subject: string | null;
+    error: string | null;
+    created_at: string;
+    social_post:
+      | { platform_post_url: string | null }
+      | { platform_post_url: string | null }[]
+      | null;
+  }>) {
+    const post = Array.isArray(row.social_post)
+      ? row.social_post[0] ?? null
+      : row.social_post;
+    const item: OutreachHistoryItem = {
+      id: row.id,
+      channel: row.channel,
+      provider: row.provider,
+      status: row.status,
+      subject: row.subject,
+      error: row.error,
+      createdAt: row.created_at,
+      url: post?.platform_post_url ?? null,
+    };
+    const list = byAudit.get(row.audit_id) ?? [];
+    list.push(item);
+    byAudit.set(row.audit_id, list);
+  }
+  return byAudit;
 }

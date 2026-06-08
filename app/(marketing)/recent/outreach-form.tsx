@@ -5,6 +5,17 @@ import { FormEvent, useMemo, useState, useTransition } from "react";
 import { sendRecentAuditOutreach } from "@/app/actions/recent-outreach";
 import { OUTREACH_CREDITS } from "@/lib/credits";
 
+export type OutreachHistoryItem = {
+  id: string;
+  channel: string;
+  provider: string;
+  status: "sent" | "failed" | "queued";
+  subject: string | null;
+  error: string | null;
+  createdAt: string;
+  url: string | null;
+};
+
 export function RecentOutreachForm({
   auditId,
   organizationId,
@@ -13,6 +24,7 @@ export function RecentOutreachForm({
   hasPhone,
   socialAccounts,
   creditsBalance,
+  history,
 }: {
   auditId: string;
   organizationId: string;
@@ -21,6 +33,7 @@ export function RecentOutreachForm({
   hasPhone: boolean;
   socialAccounts: Array<{ id: string; platform: string; handle: string }>;
   creditsBalance: number;
+  history: OutreachHistoryItem[];
 }) {
   const initialChannel = hasEmail ? "email" : hasPhone ? "sms" : "social";
   const [channel, setChannel] = useState<"email" | "sms" | "social">(initialChannel);
@@ -86,7 +99,42 @@ export function RecentOutreachForm({
     <details className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
       <summary className="cursor-pointer text-sm font-medium">
         Send outreach
+        {history.length > 0 && (
+          <span className="ml-2 font-normal text-[var(--color-muted)]">
+            ({history.length})
+          </span>
+        )}
       </summary>
+
+      {history.length > 0 && (
+        <div className="mt-3 space-y-1.5 border-b border-[var(--color-border)] pb-3 text-xs">
+          <div className="font-medium text-[var(--color-muted)]">History</div>
+          {history.map((h) => (
+            <div key={h.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className={statusClass(h.status)}>{h.status}</span>
+              <span className="text-[var(--color-muted)]">
+                {new Date(h.createdAt).toLocaleString()} · {h.channel} · {h.provider}
+              </span>
+              {h.url && (
+                <a
+                  href={h.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  view post ↗
+                </a>
+              )}
+              {h.status === "failed" && h.error && (
+                <span className="w-full truncate text-red-600" title={h.error}>
+                  {h.error}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <form onSubmit={submit} className="mt-3 space-y-3">
         <div className="flex flex-wrap gap-2 text-xs">
           <button
@@ -233,4 +281,11 @@ export function RecentOutreachForm({
 
 function defaultBody(host: string) {
   return `I saw your CrawlProof audit for ${host}. There are a few concrete fixes that would improve how AI engines understand the site.`;
+}
+
+function statusClass(status: "sent" | "failed" | "queued") {
+  const base = "rounded px-1.5 py-0.5 font-medium";
+  if (status === "sent") return `${base} bg-green-100 text-green-800`;
+  if (status === "failed") return `${base} bg-red-100 text-red-700`;
+  return `${base} bg-[var(--color-border)] text-[var(--color-muted)]`;
 }
