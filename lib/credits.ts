@@ -61,6 +61,7 @@ export type Engine =
   | "rule"
   | "spec"
   | "dns"
+  | "links"
   | "claude"
   | "openai"
   | "qwen"
@@ -99,11 +100,17 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     blurb:
       "Resolves your domain's full DNS footprint — A/AAAA, MX, NS, SOA, CAA plus email auth (SPF, DKIM, DMARC, MTA-STS, BIMI) — then has AI flag missing, weak, or harmful records and hand you paste-ready fixes. Free.",
   },
+  links: {
+    label: "Link checker",
+    cost: 0,
+    available: true,
+    blurb:
+      "Recursively crawls your root domain (powered by linkinator) and reports every broken link — 404s, dead redirects, unreachable hosts — with the page each was found on. Free.",
+  },
   claude: {
     label: "Claude Sonnet 4.6",
     cost: SCAN_CREDITS,
     available: true,
-    popular: true,
     blurb:
       "Anthropic's fast tier with web_fetch + web_search. Snappy AEO audit framed the way ClaudeBot would discover your site.",
   },
