@@ -42,7 +42,14 @@ export function ProjectLayoutClient({
           <ProjectHeaderLogo url={logoUrl} name={name} />
           <h1 className="text-3xl font-bold">{name}</h1>
         </div>
-        <p className="mt-1 break-all text-[var(--color-muted)]">{url}</p>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 block break-all text-[var(--color-muted)] hover:text-[var(--color-accent)] hover:underline"
+        >
+          {url}
+        </a>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

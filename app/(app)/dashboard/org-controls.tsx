@@ -10,6 +10,7 @@ import {
   moveProjectToOrganization,
   renameOrganization,
   saveOrganizationOutreachConfig,
+  setDefaultOrganization,
 } from "@/app/actions/orgs";
 import {
   inviteOrgMember,
@@ -67,7 +68,18 @@ export function OrgDashboardControls({
     const params = new URLSearchParams(searchParams.toString());
     if (orgId) params.set("org", orgId);
     else params.delete("org");
-    router.push(`/dashboard${params.size ? `?${params}` : ""}`);
+    setMessage(null);
+    startTransition(async () => {
+      if (orgId) {
+        const result = await setDefaultOrganization({ orgId });
+        if (!result.ok) {
+          setMessage(result.error);
+          return;
+        }
+      }
+      router.push(`/dashboard${params.size ? `?${params}` : ""}`);
+      router.refresh();
+    });
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {

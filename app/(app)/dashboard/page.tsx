@@ -67,8 +67,16 @@ export default async function DashboardPage({
     });
     orgs = org.id ? [org] : [];
   }
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("default_org_id")
+    .eq("id", user!.id)
+    .maybeSingle();
   const selectedOrg =
-    orgs.find((org) => org.id === orgParam) ?? orgs[0] ?? null;
+    orgs.find((org) => org.id === orgParam) ??
+    orgs.find((org) => org.id === profile?.default_org_id) ??
+    orgs[0] ??
+    null;
   const selectedOrgId = selectedOrg?.id ?? null;
   const orgSchemaReady = orgs.length > 0;
 

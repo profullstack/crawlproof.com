@@ -42,8 +42,7 @@ export async function createOrganization(input: {
   await svc
     .from("profiles")
     .update({ default_org_id: org.id })
-    .eq("id", user.id)
-    .is("default_org_id", null);
+    .eq("id", user.id);
 
   revalidatePath("/dashboard");
   return { ok: true, id: org.id as string };
@@ -157,6 +156,34 @@ export async function ensureDefaultOrganization(): Promise<Ok<{ id: string }> | 
       error: error instanceof Error ? error.message : "Could not create default org.",
     };
   }
+}
+
+export async function setDefaultOrganization(input: {
+  orgId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const svc = serviceClient();
+  const { data: member } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", input.orgId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!member) return { ok: false, error: "Organization not found." };
+
+  const { error } = await svc
+    .from("profiles")
+    .update({ default_org_id: input.orgId })
+    .eq("id", user.id);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true };
 }
 
 export async function saveOrganizationOutreachConfig(input: {
