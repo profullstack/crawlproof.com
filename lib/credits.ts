@@ -56,10 +56,11 @@ export function perCreditCents(pack: CreditPack): number {
   return Math.round(pack.amountCents / pack.credits);
 }
 
-// ----- Engines (rule + 6 LLM providers) -----------------------------------
+// ----- Engines (rule + spec + dns + 6 LLM providers) -----------------------
 export type Engine =
   | "rule"
   | "spec"
+  | "dns"
   | "claude"
   | "openai"
   | "qwen"
@@ -90,6 +91,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Runs your URL against the specification.website checklist — 114 checks across Foundations, SEO, Security, Accessibility, Agent Readiness, Performance, Privacy, Resilience, and Internationalisation. Free.",
+  },
+  dns: {
+    label: "DNS Analyzer",
+    cost: 0,
+    available: true,
+    blurb:
+      "Resolves your domain's full DNS footprint — A/AAAA, MX, NS, SOA, CAA plus email auth (SPF, DKIM, DMARC, MTA-STS, BIMI) — then has AI flag missing, weak, or harmful records and hand you paste-ready fixes. Free.",
   },
   claude: {
     label: "Claude Sonnet 4.6",
