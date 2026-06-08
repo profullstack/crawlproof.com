@@ -43,7 +43,7 @@ export function SoftwareApplicationJsonLd() {
             price: "0",
             priceCurrency: "USD",
             description:
-              "10 anonymous audits/day per IP, plus 3 free credits on signup.",
+              "10 anonymous audits/day per IP, plus 20 free credits on signup.",
           },
           // Real catalog — pay-per-scan credit packs, no subscription tier.
           ...CREDIT_PACKS.map((p) => ({

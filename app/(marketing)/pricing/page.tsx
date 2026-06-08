@@ -11,12 +11,12 @@ import {
 export const metadata = {
   title: "Pricing",
   description:
-    "Rule-based AEO scans are free up to the daily limit. AI-model scans cost 1 credit each, with volume discounts up to 50% off.",
+    "Rule-based AEO scans are free up to the daily limit. AI-model scans cost 20 credits (~$1) each, with volume discounts up to 50% off.",
   alternates: { canonical: "/pricing" },
   openGraph: {
     title: "Pricing · CrawlProof",
     description:
-      "Rule-based scans are free up to the daily limit. AI-model scans cost 1 credit each, volume discounts to 50%.",
+      "Rule-based scans are free up to the daily limit. AI-model scans cost 20 credits (~$1) each, volume discounts to 50%.",
     url: "/pricing",
   },
 };
@@ -27,7 +27,7 @@ export default function PricingPage() {
       <h1 className="text-center text-4xl font-extrabold">Pay per scan</h1>
       <p className="mx-auto mt-2 max-w-2xl text-center text-[var(--color-muted)]">
         Rule-based scans are free up to the daily limit. AI-model scans cost{" "}
-        <strong>1 credit each</strong>. Buy credits with crypto via CoinPay;
+        <strong>20 credits (~$1) each</strong>. Buy credits with crypto via CoinPay;
         no subscription, no expiry.
       </p>
       <div className="mx-auto mt-8 grid max-w-6xl gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -100,7 +100,7 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-center text-xs text-[var(--color-muted)]">
-        Sign-ups include 3 free credits for paid AI-model scans. Anonymous visitors get 10
+        Sign-ups include 20 free credits (1 AI-model scan). Anonymous visitors get 10
         free rule-based scans per day per IP.
       </p>
     </main>

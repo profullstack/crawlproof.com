@@ -190,8 +190,8 @@ export default async function ProjectReposPage({
             </li>
             <li>
               <strong>Apply Fix</strong> (audit findings) opens a Claude-
-              authored PR that patches one specific check. Costs 1 credit
-              per run; refunded on failure.
+              authored PR that patches one specific check. Costs 20 credits
+              (~$1) per run; refunded on failure.
             </li>
             <li>
               <strong>Future:</strong> webhook-triggered audits on push to

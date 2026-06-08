@@ -8,3 +8,8 @@
 # here rather than force-push master.
 
 3b253859e66d682d38537375b0e61f41e7ebb977:app/(marketing)/docs/autoblog-webhook/page.tsx:curl-auth-header:130
+
+# 64a7711 ships a fake "pk_test_..." publishable key inside a sample <script>
+# tag fixture for the tracker integration analyzer test. Not a real secret —
+# it's asserted on by the test, so pin the historical blob rather than rewrite.
+64a771186801871e191fb913b801b086d9ef3235:tests/contract/tracker-integrations.test.ts:generic-api-key:8

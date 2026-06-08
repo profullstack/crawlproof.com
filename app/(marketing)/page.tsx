@@ -19,7 +19,7 @@ const faqs = [
   },
   {
     q: "Is the free tier really free?",
-    a: "Yes — anonymous visitors get 10 audits per day per IP with no signup, and signing up unlocks 3 free credits. Paid scans are $1/credit with volume discounts down to $0.50/credit at 100 scans. No subscription, credits never expire.",
+    a: "Yes — anonymous visitors get 10 audits per day per IP with no signup, and signing up unlocks 20 free credits (1 AI-model scan). Paid scans cost 20 credits (~$1) with volume discounts down to $0.50/scan at the 100-scan pack. No subscription, credits never expire.",
   },
 ];
 
@@ -144,10 +144,10 @@ export default function HomePage() {
             <p className="mt-4 text-[var(--color-muted)]">
               Connect a webhook once and CrawlProof can research topics, draft long-form
               posts, attach a hero image, and deliver articles to your CMS on schedule.
-              Each published post uses 1 credit.
+              Each published post uses 20 credits (~$1).
             </p>
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <LaunchStat label="Cost model" value="1 credit" />
+              <LaunchStat label="Cost model" value="20 credits" />
               <LaunchStat label="Delivery" value="Webhook" />
               <LaunchStat label="Cadence" value="Scheduled" />
             </div>
@@ -214,7 +214,7 @@ function AutoblogLaunchGraphic() {
   return (
     <div
       className="rounded-xl border border-[var(--color-border)] bg-[#101820] p-5 shadow-2xl shadow-black/20 sm:p-6"
-      aria-label="Backlink marketplace examples ranged from $445 to $4,090, compared with CrawlProof Autoblog at 1 credit per post."
+      aria-label="Backlink marketplace examples ranged from $445 to $4,090, compared with CrawlProof Autoblog at 20 credits (~$1) per post."
     >
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -225,7 +225,7 @@ function AutoblogLaunchGraphic() {
         </div>
         <div className="rounded-lg border border-[rgba(110,231,183,0.35)] bg-[rgba(110,231,183,0.12)] px-3 py-2 text-right">
           <div className="text-xs text-[var(--color-muted)]">Autoblog</div>
-          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">1 credit</div>
+          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">~$1</div>
         </div>
       </div>
 
@@ -255,7 +255,7 @@ function AutoblogLaunchGraphic() {
         </div>
         <div className="rounded-lg bg-[#17202a] p-3">
           <div className="text-xs text-[var(--color-muted)]">CrawlProof</div>
-          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">1 credit</div>
+          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">~$1</div>
         </div>
       </div>
 
