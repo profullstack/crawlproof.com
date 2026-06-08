@@ -27,53 +27,64 @@ const bodySchema = z.object({
   root_path: z.string().max(500).optional(),
 });
 
-export async function POST(
-  request: NextRequest,
-  ctx: { params: Promise<{ id: string }> },
-) {
-  const { id: projectId } = await ctx.params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+const querySchema = bodySchema.extend({
+  installation_id: z.coerce.number().int().positive(),
+});
 
-  let body;
-  try {
-    body = bodySchema.parse(await request.json());
-  } catch {
-    return NextResponse.json({ error: "Bad request" }, { status: 400 });
-  }
+type ApplyFixBody = z.infer<typeof bodySchema>;
 
-  // Project access (owner or member); installation must belong to this user.
+class RouteError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function routeErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function runApplyFixJob(args: {
+  projectId: string;
+  userId: string;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  body: ApplyFixBody;
+  onProgress?: (message: string) => void | Promise<void>;
+}) {
+  const { projectId, userId, supabase, body, onProgress } = args;
+  const progress = async (message: string) => {
+    await onProgress?.(message);
+  };
+
+  await progress("Checking project access…");
   const access = await requireProjectAccess(projectId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    throw new RouteError(404, "Not found");
   }
+
+  await progress("Verifying GitHub installation…");
   const { data: installation } = await supabase
     .from("github_installations")
     .select("installation_id")
     .eq("installation_id", body.installation_id)
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .maybeSingle();
   if (!installation) {
-    return NextResponse.json(
-      { error: "Installation not connected to this account" },
-      { status: 403 },
-    );
+    throw new RouteError(403, "Installation not connected to this account");
   }
 
-  // Load the audit + finding to make sure both belong to this project.
+  await progress("Loading audit and finding…");
   const { data: audit } = await supabase
     .from("audits")
     .select("id, target_url, project_id, owner_id")
     .eq("id", body.audit_id)
     .maybeSingle();
   if (!audit || (audit as { project_id?: string }).project_id !== projectId) {
-    return NextResponse.json({ error: "Audit not found" }, { status: 404 });
+    throw new RouteError(404, "Audit not found");
   }
+
   const { data: finding } = await supabase
     .from("audit_findings")
     .select("check_key, title, detail, section, priority, evidence")
@@ -81,33 +92,32 @@ export async function POST(
     .eq("check_key", body.finding_key)
     .maybeSingle();
   if (!finding) {
-    return NextResponse.json({ error: "Finding not found" }, { status: 404 });
+    throw new RouteError(404, "Finding not found");
   }
 
   const svc = serviceClient();
 
-  // Consume the credit BEFORE doing any expensive work. The PG function
-  // is atomic — returns false when the balance is insufficient.
+  await progress(`Charging ${SCAN_CREDITS} credits…`);
   const { data: charged, error: chargeErr } = await (svc as any).rpc(
     "consume_credit",
-    { p_owner: user.id, p_count: SCAN_CREDITS },
+    { p_owner: userId, p_count: SCAN_CREDITS },
   );
   if (chargeErr) {
-    return NextResponse.json({ error: chargeErr.message }, { status: 500 });
+    throw new RouteError(500, chargeErr.message);
   }
   if (!charged) {
-    return NextResponse.json(
-      { error: "Insufficient credits. Top up to apply fixes via GitHub." },
-      { status: 402 },
+    throw new RouteError(
+      402,
+      "Insufficient credits. Top up to apply fixes via GitHub.",
     );
   }
 
-  // Stamp the run row up front.
+  await progress("Recording PR run…");
   const { data: run } = await (svc as any)
     .from("project_pr_runs")
     .insert({
       project_id: projectId,
-      owner_id: user.id,
+      owner_id: userId,
       kind: "apply_fix",
       installation_id: body.installation_id,
       repo_owner: body.owner,
@@ -133,22 +143,23 @@ export async function POST(
         })
         .eq("id", runId);
     }
-    // Refund: increment the user's balance back by the amount charged.
     const { data: prof } = await (svc as any)
       .from("profiles")
       .select("credits_balance")
-      .eq("id", user!.id)
+      .eq("id", userId)
       .maybeSingle();
     if (prof) {
       await (svc as any)
         .from("profiles")
         .update({ credits_balance: (prof.credits_balance ?? 0) + SCAN_CREDITS })
-        .eq("id", user!.id);
+        .eq("id", userId);
     }
   }
 
   try {
+    await progress("Minting GitHub installation token…");
     const token = await getOrMintInstallationToken(body.installation_id);
+    await progress("Starting Claude fix agent…");
     const result = await applyFix({
       token,
       owner: body.owner,
@@ -163,12 +174,11 @@ export async function POST(
       },
       targetUrl: (audit as { target_url: string }).target_url,
       rootPath: body.root_path,
+      onProgress,
     });
 
-    // A "noop" result still consumed the credit because we did call
-    // Claude. That's the right behavior — paying for inference, not for
-    // a PR specifically.
     if (runId) {
+      await progress("Saving PR run result…");
       await (svc as any)
         .from("project_pr_runs")
         .update({
@@ -180,10 +190,122 @@ export async function POST(
         })
         .eq("id", runId);
     }
+    await progress(
+      result.status === "opened"
+        ? "Pull request opened."
+        : "Finished without opening a PR.",
+    );
+    return result;
+  } catch (err) {
+    const msg = routeErrorMessage(err);
+    await progress(`Failed: ${msg}`);
+    await refundAndFail(msg);
+    throw new RouteError(500, msg);
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id: projectId } = await ctx.params;
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: ApplyFixBody;
+  try {
+    body = bodySchema.parse(await request.json());
+  } catch {
+    return NextResponse.json({ error: "Bad request" }, { status: 400 });
+  }
+
+  try {
+    const result = await runApplyFixJob({
+      projectId,
+      userId: user.id,
+      supabase,
+      body,
+    });
     return NextResponse.json({ data: result });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await refundAndFail(msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const status = err instanceof RouteError ? err.status : 500;
+    return NextResponse.json({ error: routeErrorMessage(err) }, { status });
   }
+}
+
+export async function GET(
+  request: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id: projectId } = await ctx.params;
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  let body: ApplyFixBody;
+  try {
+    const url = new URL(request.url);
+    body = querySchema.parse(Object.fromEntries(url.searchParams.entries()));
+  } catch {
+    return new Response("Bad request", { status: 400 });
+  }
+
+  const encoder = new TextEncoder();
+  const stream = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = stream.writable.getWriter();
+
+  const send = (event: string, data: unknown) => {
+    try {
+      void writer.write(
+        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+      );
+    } catch {
+      // Client disconnected.
+    }
+  };
+
+  (async () => {
+    try {
+      send("status", {
+        message: `Starting fix for ${body.owner}/${body.repo}…`,
+      });
+      const result = await runApplyFixJob({
+        projectId,
+        userId: user.id,
+        supabase,
+        body,
+        onProgress: (message) => send("status", { message }),
+      });
+      send("done", result);
+    } catch (err) {
+      send("failed", {
+        message: routeErrorMessage(err),
+        status: err instanceof RouteError ? err.status : 500,
+      });
+    } finally {
+      try {
+        await writer.close();
+      } catch {
+        // Already closed.
+      }
+    }
+  })();
+
+  return new Response(stream.readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

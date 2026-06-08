@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Repo {
   full_name: string;
@@ -39,6 +39,13 @@ export function ApplyFixButton({
   const [result, setResult] = useState<FixResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(boundRepos.length === 0);
+  const [statusLog, setStatusLog] = useState<string[]>([]);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  function closeStream() {
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -48,6 +55,20 @@ export function ApplyFixButton({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+
+  useEffect(() => {
+    return () => closeStream();
+  }, []);
+
+  function closeModal() {
+    closeStream();
+    setOpen(false);
+    setSubmitting(null);
+  }
+
+  function addStatus(message: string) {
+    setStatusLog((prev) => [...prev, message].slice(-80));
+  }
 
   const source = showAll ? repos : boundRepos;
   const filtered = useMemo(() => {
@@ -60,31 +81,59 @@ export function ApplyFixButton({
     setError(null);
     setSubmitting(repo.full_name);
     setResult(null);
+    setStatusLog([]);
+    closeStream();
     const [owner, name] = repo.full_name.split("/");
     try {
-      const res = await fetch(
-        `/api/projects/${projectId}/github/apply-fix`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            owner,
-            repo: name,
-            installation_id: repo.installation_id,
-            audit_id: auditId,
-            finding_key: findingKey,
-          }),
-        },
+      const params = new URLSearchParams({
+        owner,
+        repo: name,
+        installation_id: String(repo.installation_id),
+        audit_id: auditId,
+        finding_key: findingKey,
+      });
+      const es = new EventSource(
+        `/api/projects/${projectId}/github/apply-fix?${params.toString()}`,
       );
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json.error || "Failed to open fix PR");
-        return;
-      }
-      setResult(json.data);
+      eventSourceRef.current = es;
+
+      es.addEventListener("status", (event) => {
+        try {
+          const data = JSON.parse(event.data) as { message?: string };
+          if (data.message) addStatus(data.message);
+        } catch {
+          addStatus(event.data);
+        }
+      });
+
+      es.addEventListener("done", (event) => {
+        closeStream();
+        setSubmitting(null);
+        try {
+          setResult(JSON.parse(event.data) as FixResult);
+        } catch {
+          setError("Fix finished, but the response could not be read.");
+        }
+      });
+
+      es.addEventListener("failed", (event) => {
+        closeStream();
+        setSubmitting(null);
+        try {
+          const data = JSON.parse(event.data) as { message?: string };
+          setError(data.message || "Failed to open fix PR");
+        } catch {
+          setError("Failed to open fix PR");
+        }
+      });
+
+      es.onerror = () => {
+        closeStream();
+        setSubmitting(null);
+        setError("Lost connection to the fix worker. The run may still finish server-side.");
+      };
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
-    } finally {
       setSubmitting(null);
     }
   }
@@ -98,6 +147,7 @@ export function ApplyFixButton({
           setOpen(true);
           setResult(null);
           setError(null);
+          setStatusLog([]);
         }}
       >
         Fix via PR
@@ -106,10 +156,10 @@ export function ApplyFixButton({
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 sm:items-center"
-          onClick={() => setOpen(false)}
+          onClick={closeModal}
         >
           <div
-            className="w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-lg"
+            className="w-full max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-baseline justify-between">
@@ -118,7 +168,7 @@ export function ApplyFixButton({
               </h2>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={closeModal}
                 className="text-sm text-[var(--color-muted)] hover:text-[var(--color-foreground)]"
               >
                 Close
@@ -184,6 +234,33 @@ export function ApplyFixButton({
                     </li>
                   ))}
                 </ul>
+
+                {(submitting || statusLog.length > 0) && (
+                  <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                      <span className="font-medium">Status log</span>
+                      {submitting && (
+                        <span className="text-[var(--color-muted)]">
+                          Working…
+                        </span>
+                      )}
+                    </div>
+                    <div className="max-h-44 space-y-1 overflow-y-auto font-mono text-xs leading-relaxed text-[var(--color-muted)]">
+                      {statusLog.length === 0 ? (
+                        <div>Opening stream…</div>
+                      ) : (
+                        statusLog.map((line, i) => (
+                          <div key={`${i}-${line}`}>
+                            <span className="select-none text-[var(--color-muted)]/70">
+                              {String(i + 1).padStart(2, "0")}{" "}
+                            </span>
+                            {line}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {error && (
                   <div className="mt-4 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700">

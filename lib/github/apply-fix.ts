@@ -36,6 +36,7 @@ interface ApplyFixInput {
   targetUrl: string;
   /** Optional subdirectory hint (e.g. "apps/web") to start exploration in. */
   rootPath?: string;
+  onProgress?: (message: string) => void | Promise<void>;
 }
 
 export interface ApplyFixResult {
@@ -307,10 +308,37 @@ async function executeTool(
 
 const BRANCH_PREFIX = "crawlproof/fix";
 
+function toolProgressLabel(
+  name: string,
+  input: Record<string, unknown>,
+): string {
+  if (name === "list_directory") {
+    return `Listing ${String(input.path ?? "") || "repo root"}`;
+  }
+  if (name === "read_file") {
+    return `Reading ${String(input.path ?? "")}`;
+  }
+  if (name === "search_code") {
+    return `Searching for "${String(input.query ?? "").slice(0, 80)}"`;
+  }
+  if (name === "write_file") {
+    return `Staging ${String(input.path ?? "")}`;
+  }
+  if (name === "done") {
+    return "Claude marked the fix complete";
+  }
+  return `Running ${name}`;
+}
+
 export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
+  const progress = async (message: string) => {
+    await input.onProgress?.(message);
+  };
+
   if (!env.anthropicApiKey) {
     throw new Error("ANTHROPIC_API_KEY not configured.");
   }
+  await progress(`Reading repository metadata for ${input.owner}/${input.repo}…`);
   const client = new Anthropic({ apiKey: env.anthropicApiKey });
   const repoMeta = await getRepo({
     token: input.token,
@@ -318,6 +346,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     repo: input.repo,
   });
   const ref = repoMeta.default_branch;
+  await progress(`Default branch is ${ref}. Preparing Claude fix agent…`);
 
   const state: RunState = {
     writes: new Map(),
@@ -341,6 +370,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
   let iteration = 0;
   while (iteration < MAX_ITERATIONS && !state.doneReached) {
     iteration++;
+    await progress(`Claude iteration ${iteration}/${MAX_ITERATIONS}: analyzing the finding and repo context…`);
     const resp = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 4096,
@@ -361,6 +391,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
 
     if (toolUses.length === 0) {
       // Claude finished without calling done — capture any final text.
+      await progress("Claude returned a final response without tool calls.");
       const text = resp.content
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
         .map((b) => b.text)
@@ -372,11 +403,16 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
 
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const tu of toolUses) {
+      const toolInput = (tu.input as Record<string, unknown>) || {};
+      await progress(toolProgressLabel(tu.name, toolInput));
       const result = await executeTool(
         tu.name,
-        (tu.input as Record<string, unknown>) || {},
+        toolInput,
         { token: input.token, owner: input.owner, repo: input.repo, ref, state },
       );
+      if (tu.name === "write_file" || tu.name === "done") {
+        await progress(result);
+      }
       toolResults.push({
         type: "tool_result",
         tool_use_id: tu.id,
@@ -390,6 +426,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
   }
 
   if (state.writes.size === 0) {
+    await progress("No file changes were staged. Finishing without opening a PR.");
     return {
       status: "noop",
       detail:
@@ -402,6 +439,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const safeKey = input.finding.check_key.replace(/[^a-z0-9.]/gi, "-");
   const branch = `${BRANCH_PREFIX}/${safeKey}-${ts}`;
+  await progress(`Creating branch ${branch} from ${ref}…`);
   await createBranch({
     token: input.token,
     owner: input.owner,
@@ -413,7 +451,9 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
   // For each staged write, look up the existing sha so the PUT replaces
   // rather than failing with "sha required".
   const changed: string[] = [];
+  await progress(`Writing ${state.writes.size} staged file change${state.writes.size === 1 ? "" : "s"} to GitHub…`);
   for (const [path, content] of state.writes) {
+    await progress(`Updating ${path}…`);
     const existing = await getFileContent({
       token: input.token,
       owner: input.owner,
@@ -434,6 +474,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     changed.push(path);
   }
 
+  await progress("Opening pull request…");
   const pr = await openPullRequest({
     token: input.token,
     owner: input.owner,
