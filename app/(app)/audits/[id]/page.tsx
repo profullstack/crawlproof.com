@@ -52,6 +52,23 @@ export default async function AuditPage({
       .eq("user_id", user!.id)
       .maybeSingle();
     isMember = !!memberCheck;
+    if (!isMember) {
+      const { data: project } = await supabase
+        .from("projects")
+        .select("organization_id")
+        .eq("id", audit.project_id)
+        .maybeSingle();
+      const orgId = (project as { organization_id?: string | null } | null)?.organization_id;
+      if (orgId) {
+        const { data: orgMemberCheck } = await supabase
+          .from("organization_members")
+          .select("id")
+          .eq("organization_id", orgId)
+          .eq("user_id", user!.id)
+          .maybeSingle();
+        isMember = !!orgMemberCheck;
+      }
+    }
   }
   if (!isOwner && !isMember) notFound();
 

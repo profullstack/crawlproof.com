@@ -57,7 +57,7 @@ export default async function DashboardPage({
   const accessFilter =
     memberIds.length > 0
       ? `owner_id.eq.${user!.id},id.in.(${memberIds.join(",")})`
-      : null;
+      : `owner_id.eq.${user!.id}`;
 
   let orgs = await listUserOrgs(supabase, user!.id);
   if (orgs.length === 0) {
@@ -82,11 +82,11 @@ export default async function DashboardPage({
     .eq("status", status)
     .order("created_at", { ascending: false });
 
-  const scopedProjectsQuery = selectedOrgId
-    ? projectsQuery.eq("organization_id", selectedOrgId)
-    : accessFilter
-      ? projectsQuery.or(accessFilter)
-      : projectsQuery.eq("owner_id", user!.id);
+  const scopedProjectsQuery = projectsQuery.or(
+    selectedOrgId
+      ? `${accessFilter},organization_id.eq.${selectedOrgId}`
+      : accessFilter,
+  );
 
   const [{ data: projectsRaw }, { data: audits }, counts, senderConfigs, orgTeam] = await Promise.all([
     scopedProjectsQuery,
@@ -466,10 +466,8 @@ async function countByStatus(
         .select("id", { count: "exact", head: true })
         .eq("status", f.id);
       q = organizationId
-        ? q.eq("organization_id", organizationId)
-        : accessFilter
-          ? q.or(accessFilter)
-          : q.eq("owner_id", ownerId);
+        ? q.or(`${accessFilter ?? `owner_id.eq.${ownerId}`},organization_id.eq.${organizationId}`)
+        : q.or(accessFilter ?? `owner_id.eq.${ownerId}`);
       const { count } = await q;
       return [f.id, count ?? 0] as const;
     }),
