@@ -37,6 +37,7 @@ export function ApplyFixButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [fixPrompt, setFixPrompt] = useState("");
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [result, setResult] = useState<FixResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +95,8 @@ export function ApplyFixButton({
         audit_id: auditId,
         finding_key: findingKey,
       });
+      const guidance = fixPrompt.trim();
+      if (guidance) params.set("fix_prompt", guidance);
       const es = new EventSource(
         `/api/projects/${projectId}/github/apply-fix?${params.toString()}`,
       );
@@ -199,6 +202,19 @@ export function ApplyFixButton({
               </p>
             ) : (
               <>
+                <label className="mt-4 block text-sm font-medium" htmlFor={`fix-prompt-${findingKey}`}>
+                  PR guidance
+                </label>
+                <textarea
+                  id={`fix-prompt-${findingKey}`}
+                  value={fixPrompt}
+                  onChange={(e) => setFixPrompt(e.target.value)}
+                  disabled={submitting !== null}
+                  maxLength={2000}
+                  rows={3}
+                  placeholder="Example: use Profullstack.com and Profullstack, Inc. for all company references"
+                  className="mt-2 w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+                />
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <input
                     type="text"
