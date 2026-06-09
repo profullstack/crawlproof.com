@@ -1,5 +1,5 @@
 import { SECTIONS } from "@/lib/audit/prompt";
-import { SectionFindings } from "./section";
+import { SectionFindings, type FixRun } from "./section";
 import { DataFoundTable } from "./data-found";
 import type { Finding } from "@/lib/audit/types";
 import { ENGINES, type Engine } from "@/lib/credits";
@@ -25,6 +25,7 @@ interface FixContext {
   auditId: string;
   repos: Array<{ full_name: string; installation_id: number }>;
   boundRepos: Array<{ full_name: string; installation_id: number }>;
+  fixesByAuditId?: Record<string, FixRun[]>;
 }
 
 export function ReportView({

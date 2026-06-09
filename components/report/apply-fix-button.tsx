@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Repo {
@@ -33,6 +34,7 @@ export function ApplyFixButton({
   repos,
   boundRepos,
 }: ApplyFixButtonProps) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -111,6 +113,7 @@ export function ApplyFixButton({
         setSubmitting(null);
         try {
           setResult(JSON.parse(event.data) as FixResult);
+          router.refresh();
         } catch {
           setError("Fix finished, but the response could not be read.");
         }
