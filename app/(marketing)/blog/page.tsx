@@ -43,7 +43,7 @@ export default async function BlogIndex() {
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
                   src={p.image_url}
-                  alt=""
+                  alt={`${p.title} featured image`}
                   loading="lazy"
                   width={120}
                   height={120}
