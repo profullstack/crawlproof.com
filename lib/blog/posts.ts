@@ -32,14 +32,25 @@ type BlogPostRow = {
   content_markdown: string | null;
   image_url: string | null;
   published_at: string;
+  source_created_at: string | null;
   source: string;
 };
+
+// Resolve the best date string (YYYY-MM-DD) for a post row.
+// Prefer source_created_at (the date the article was actually written/
+// published by the autoblog source) over published_at (which reflects
+// the server clock at ingest time and may be skewed into the future
+// if the server's system clock is ahead of wall-clock time).
+function resolveDate(row: BlogPostRow): string {
+  const candidate = row.source_created_at ?? row.published_at;
+  return candidate.slice(0, 10);
+}
 
 function rowToPost(row: BlogPostRow): Post {
   return {
     slug: row.slug,
     title: row.title,
-    date: row.published_at.slice(0, 10),
+    date: resolveDate(row),
     excerpt: row.meta_description ?? "",
     body: "",
     html: row.content_html,
@@ -59,7 +70,7 @@ export async function loadDbPosts(): Promise<Post[]> {
     const { data, error } = await sb
       .from("blog_posts")
       .select(
-        "slug, title, meta_description, content_html, content_markdown, image_url, published_at, source",
+        "slug, title, meta_description, content_html, content_markdown, image_url, published_at, source_created_at, source",
       )
       .order("published_at", { ascending: false })
       .limit(200);
@@ -89,7 +100,7 @@ export async function findAnyPost(slug: string): Promise<Post | undefined> {
     const { data } = await sb
       .from("blog_posts")
       .select(
-        "slug, title, meta_description, content_html, content_markdown, image_url, published_at, source",
+        "slug, title, meta_description, content_html, content_markdown, image_url, published_at, source_created_at, source",
       )
       .eq("slug", slug)
       .maybeSingle();
