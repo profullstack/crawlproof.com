@@ -65,6 +65,15 @@ export const metadata: Metadata = {
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://crawlproof.com";
 
+// Authoritative external profiles — used in sameAs for knowledge graph anchoring.
+// AI systems (and Google's brand panel) use these to resolve "CrawlProof" as a
+// distinct, known entity rather than an ambiguous string.
+const SAME_AS = [
+  "https://github.com/profullstack/crawlproof.com",
+  "https://www.linkedin.com/company/crawlproof",
+  "https://www.crunchbase.com/organization/crawlproof",
+];
+
 // Structured data — gives Google's brand panel, AI engines, and sitelinks
 // searchbox real entities to attach to instead of guessing from <title>.
 const JSON_LD = {
@@ -93,7 +102,7 @@ const JSON_LD = {
       name: "CrawlProof",
       url: SITE_URL,
       logo: `${SITE_URL}/icon`,
-      sameAs: [],
+      sameAs: SAME_AS,
     },
     {
       "@type": "SoftwareApplication",
