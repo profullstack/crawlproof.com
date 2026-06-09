@@ -2,7 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { grantCredits, saveVu1nzIntegration } from "@/app/actions/admin";
+import {
+  grantCredits,
+  revealVu1nzIntegrationToken,
+  saveVu1nzIntegration,
+} from "@/app/actions/admin";
 
 export function GrantCreditsForm() {
   const router = useRouter();
@@ -115,6 +119,8 @@ export function Vu1nzIntegrationForm({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [apiToken, setApiToken] = useState("");
+  const [revealedToken, setRevealedToken] = useState<string | null>(null);
+  const [revealing, startReveal] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -129,6 +135,7 @@ export function Vu1nzIntegrationForm({
         return;
       }
       setApiToken("");
+      setRevealedToken(null);
       setNotice("Vu1nz API token saved.");
       router.refresh();
     });
@@ -144,8 +151,51 @@ export function Vu1nzIntegrationForm({
         return;
       }
       setApiToken("");
+      setRevealedToken(null);
       setNotice("Vu1nz API token cleared.");
       router.refresh();
+    });
+  }
+
+  function reveal() {
+    setError(null);
+    setNotice(null);
+    startReveal(async () => {
+      const res = await revealVu1nzIntegrationToken();
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setRevealedToken(res.apiToken);
+      setNotice("Vu1nz API token revealed.");
+    });
+  }
+
+  function hide() {
+    setRevealedToken(null);
+    setNotice(null);
+  }
+
+  function copy() {
+    setError(null);
+    setNotice(null);
+    startReveal(async () => {
+      let apiToken = revealedToken;
+      if (!apiToken) {
+        const res = await revealVu1nzIntegrationToken();
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        apiToken = res.apiToken;
+        setRevealedToken(apiToken);
+      }
+      try {
+        await navigator.clipboard.writeText(apiToken);
+        setNotice("Vu1nz API token copied.");
+      } catch {
+        setError("Could not copy token to clipboard.");
+      }
     });
   }
 
@@ -189,6 +239,46 @@ export function Vu1nzIntegrationForm({
           autoComplete="off"
         />
       </div>
+
+      {configured && (
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Stored token
+          </label>
+          <div className="mt-1 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <input
+              className="input font-mono"
+              type={revealedToken ? "text" : "password"}
+              value={revealedToken ?? "stored-vu1nz-api-token"}
+              readOnly
+            />
+            <div className="flex flex-wrap gap-2">
+              {revealedToken ? (
+                <button type="button" className="btn" onClick={hide}>
+                  Hide
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={revealing || pending}
+                  onClick={reveal}
+                >
+                  {revealing ? "Revealing..." : "Reveal"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn"
+                disabled={revealing || pending}
+                onClick={copy}
+              >
+                {revealing ? "Working..." : "Copy"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
       {notice && <p className="text-sm text-[var(--color-pass)]">{notice}</p>}
