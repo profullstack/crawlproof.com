@@ -87,6 +87,10 @@ export async function POST(req: NextRequest) {
   }
 
   const { post } = parsed;
+  // Use the article's own publication date as published_at so the blog
+  // shows the real authorship date rather than the server-clock time at
+  // ingest (which can be skewed if the server's system clock is ahead).
+  const publishedAt = post.published_at ?? new Date().toISOString();
   const row = {
     source: "crawlproof",
     source_id: post.id,
@@ -98,7 +102,7 @@ export async function POST(req: NextRequest) {
     image_url: post.featured_image?.url ?? null,
     tags: post.tags,
     source_created_at: post.published_at,
-    published_at: new Date().toISOString(),
+    published_at: publishedAt,
     updated_at: new Date().toISOString(),
   };
 
