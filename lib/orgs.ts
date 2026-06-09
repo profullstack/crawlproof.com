@@ -5,8 +5,14 @@ import { serviceClient } from "@/lib/supabase/service";
 export type OrgSummary = {
   id: string;
   name: string;
-  role: "owner" | "member";
+  role: OrgRole;
 };
+
+export type OrgRole = "owner" | "member" | "project_member";
+
+export function isOrgWideRole(role: OrgRole | null | undefined): role is "owner" | "member" {
+  return role === "owner" || role === "member";
+}
 
 export function missingOrgSchema(error: unknown) {
   const message =
@@ -46,7 +52,7 @@ export async function listUserOrgs(
   }
 
   return ((data ?? []) as Array<{
-    role: "owner" | "member";
+    role: OrgRole;
     organization: { id: string; name: string } | { id: string; name: string }[] | null;
   }>)
     .map((row) => {

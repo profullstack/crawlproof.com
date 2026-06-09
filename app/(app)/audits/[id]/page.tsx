@@ -72,6 +72,7 @@ export default async function AuditPage({
           .select("id")
           .eq("organization_id", orgId)
           .eq("user_id", user!.id)
+          .in("role", ["owner", "member"])
           .maybeSingle();
         isMember = !!orgMemberCheck;
       }

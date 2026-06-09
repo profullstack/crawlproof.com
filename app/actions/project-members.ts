@@ -120,6 +120,13 @@ export async function removeProjectMember(
   const ctx = await requireOwner(projectId);
   if (!ctx.ok) return { ok: false, error: ctx.error };
 
+  const { data: project } = await ctx.supabase
+    .from("projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const orgId = (project as { organization_id?: string | null } | null)?.organization_id ?? null;
+
   const { error } = await ctx.supabase
     .from("project_members")
     .delete()
@@ -127,6 +134,24 @@ export async function removeProjectMember(
     .eq("user_id", userId);
 
   if (error) return { ok: false, error: error.message };
+
+  if (orgId) {
+    const svc = serviceClient();
+    const { count } = await svc
+      .from("project_members")
+      .select("id, projects!inner(organization_id)", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("projects.organization_id", orgId);
+    if (!count) {
+      await svc
+        .from("organization_members")
+        .delete()
+        .eq("organization_id", orgId)
+        .eq("user_id", userId)
+        .eq("role", "project_member");
+    }
+  }
+
   revalidatePath(`/projects/${projectId}/members`);
   return { ok: true };
 }
