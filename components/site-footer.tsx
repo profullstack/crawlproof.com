@@ -23,6 +23,7 @@ export function SiteFooter() {
           <div className="font-semibold text-[var(--color-fg)]">Company</div>
           <ul className="mt-2 space-y-1">
             <li><Link href="/about">About</Link></li>
+            <li><Link href="/team">Team</Link></li>
             <li><Link href="/bot">Bot info</Link></li>
           </ul>
         </div>
