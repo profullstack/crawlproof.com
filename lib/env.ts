@@ -63,6 +63,10 @@ export const env = {
   moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
   perplexityApiKey: process.env.PERPLEXITY_API_KEY ?? "", // Sonar API
+  // Vu1nz — CI/CD, package supply-chain, and website scanner partner API.
+  // Optional; unauthenticated web scans still work, but a bearer token saves
+  // runs to the Vu1nz dashboard.
+  vu1nzApiToken: process.env.VU1NZ_API_TOKEN ?? "",
   // DataForSEO — keyword research for Autoblog. Basic-auth credentials.
   dataforseoLogin: process.env.DATAFORSEO_LOGIN ?? "",
   dataforseoPassword: process.env.DATAFORSEO_PASSWORD ?? "",

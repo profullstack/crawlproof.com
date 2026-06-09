@@ -56,12 +56,13 @@ export function perCreditCents(pack: CreditPack): number {
   return Math.round(pack.amountCents / pack.credits);
 }
 
-// ----- Engines (rule + spec + dns + 6 LLM providers) -----------------------
+// ----- Engines (free utilities + partner scanners + LLM providers) ----------
 export type Engine =
   | "rule"
   | "spec"
   | "dns"
   | "links"
+  | "vu1nz"
   | "claude"
   | "openai"
   | "qwen"
@@ -108,6 +109,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Recursively crawls your root domain (powered by linkinator) and reports every broken link — 404s, dead redirects, unreachable hosts — with the page each was found on. Free.",
+  },
+  vu1nz: {
+    label: "Vu1nz web scanner",
+    cost: 0,
+    available: true,
+    blurb:
+      "Partner website scanner from Vu1nz — runs the web check API for security and vulnerability signals. Free.",
   },
   claude: {
     label: "Claude Sonnet 4.6",
