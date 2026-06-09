@@ -210,7 +210,7 @@ function renderMarkdown(targetUrl: string, response: Vu1nzScanResponse, findings
 export async function vu1nzAudit(targetUrl: string): Promise<Vu1nzAuditResult> {
   const started = Date.now();
   const headers: Record<string, string> = {
-    "content-type": "application/json",
+    "Content-Type": "application/json",
     "user-agent": "CrawlProofBot/1.0 (+https://crawlproof.com/bot)",
   };
   const apiToken = await getVu1nzApiToken().catch((error) => {
@@ -221,7 +221,7 @@ export async function vu1nzAudit(targetUrl: string): Promise<Vu1nzAuditResult> {
     return null;
   });
   if (apiToken) {
-    headers.authorization = `Bearer ${apiToken}`;
+    headers.Authorization = `Bearer ${apiToken}`;
   }
 
   let response: Vu1nzScanResponse;
