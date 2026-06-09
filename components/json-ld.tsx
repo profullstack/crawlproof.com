@@ -103,3 +103,68 @@ export function BreadcrumbJsonLd({
     />
   );
 }
+
+// Customer testimonial / case-study review. We only emit Review schema for
+// real, attributable quotes — never invented copy — so the social-proof
+// trust signal AI engines look for is backed by verifiable people.
+export type Testimonial = {
+  quote: string;
+  author: string;
+  // Optional company / role for stronger attribution.
+  role?: string;
+  // Optional 1–5 star rating supplied by the reviewer.
+  rating?: number;
+};
+
+export function ReviewJsonLd({ testimonials }: { testimonials: Testimonial[] }) {
+  if (testimonials.length === 0) return null;
+
+  const ratings = testimonials
+    .map((t) => t.rating)
+    .filter((r): r is number => typeof r === "number");
+
+  const reviews = testimonials.map((t) => ({
+    "@type": "Review",
+    reviewBody: t.quote,
+    author: {
+      "@type": "Person",
+      name: t.author,
+      ...(t.role ? { jobTitle: t.role } : {}),
+    },
+    ...(typeof t.rating === "number"
+      ? {
+          reviewRating: {
+            "@type": "Rating",
+            ratingValue: t.rating,
+            bestRating: 5,
+            worstRating: 1,
+          },
+        }
+      : {}),
+  }));
+
+  return (
+    <Tag
+      data={{
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        name: "CrawlProof",
+        url: env.siteUrl,
+        review: reviews,
+        ...(ratings.length > 0
+          ? {
+              aggregateRating: {
+                "@type": "AggregateRating",
+                ratingValue: (
+                  ratings.reduce((sum, r) => sum + r, 0) / ratings.length
+                ).toFixed(1),
+                reviewCount: ratings.length,
+                bestRating: 5,
+                worstRating: 1,
+              },
+            }
+          : {}),
+      }}
+    />
+  );
+}
