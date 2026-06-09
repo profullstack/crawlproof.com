@@ -1,9 +1,9 @@
 // Vu1nz website scanner integration.
-// API: POST https://vu1nz.com/api/v1/scan with { target, checks: ["web"] }.
-// Auth is optional; when VU1NZ_API_TOKEN is set, Vu1nz saves runs to its
-// dashboard for the token owner.
+// API: POST https://vu1nz.com/api/v1/scan with { target }.
+// Auth is optional; when the admin Vu1nz integration is configured, Vu1nz saves
+// runs to its dashboard for the token owner.
 
-import { env } from "../env";
+import { getVu1nzApiToken } from "@/lib/platform-integrations";
 import { scoreFindings } from "./score";
 import type { AuditResult, CheckStatus, Finding } from "./types";
 
@@ -25,6 +25,7 @@ type Vu1nzScanResponse = {
 };
 
 const ENDPOINT = "https://vu1nz.com/api/v1/scan";
+const SECTION = "Vu1nz Security Assessment";
 
 function severityOf(input: unknown): string {
   if (!input || typeof input !== "object") return "info";
@@ -90,7 +91,7 @@ function findingKey(input: unknown, index: number): string {
 function toFinding(input: unknown, index: number): Finding {
   const severity = severityOf(input);
   return {
-    section: "Vu1nz Website Scanner",
+    section: SECTION,
     check_key: findingKey(input, index),
     status: statusForSeverity(severity),
     title: titleOf(input, index),
@@ -120,7 +121,7 @@ function responseFindings(response: Vu1nzScanResponse): Finding[] {
   if (typeof webError === "string" && webError.trim()) {
     return [
       {
-        section: "Vu1nz Website Scanner",
+        section: SECTION,
         check_key: "vu1nz.web.fetch_error",
         status: "warn",
         title: "Vu1nz could not fetch the website",
@@ -138,7 +139,7 @@ function responseFindings(response: Vu1nzScanResponse): Finding[] {
   if (total > 0) {
     return [
       {
-        section: "Vu1nz Website Scanner",
+        section: SECTION,
         check_key: "vu1nz.web.findings_summary",
         status: "warn",
         title: `Vu1nz reported ${total} website scanner finding${total === 1 ? "" : "s"}`,
@@ -165,9 +166,9 @@ function countLine(label: string, value: unknown): string {
 function renderMarkdown(targetUrl: string, response: Vu1nzScanResponse, findings: Finding[]) {
   const counts = response.counts ?? {};
   const lines = [
-    `# Vu1nz Website Scanner — ${targetUrl}`,
+    `# Vu1nz Security Assessment — ${targetUrl}`,
     "",
-    `[Vu1nz](https://vu1nz.com) scanned this URL with its website scanner API.`,
+    `[Vu1nz](https://vu1nz.com) scanned this URL with its security assessment API.`,
     "",
     `| Metric | Value |`,
     `| --- | ---: |`,
@@ -212,8 +213,15 @@ export async function vu1nzAudit(targetUrl: string): Promise<Vu1nzAuditResult> {
     "content-type": "application/json",
     "user-agent": "CrawlProofBot/1.0 (+https://crawlproof.com/bot)",
   };
-  if (env.vu1nzApiToken) {
-    headers.authorization = `Bearer ${env.vu1nzApiToken}`;
+  const apiToken = await getVu1nzApiToken().catch((error) => {
+    console.warn(
+      "[vu1nz] could not load admin integration token",
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  });
+  if (apiToken) {
+    headers.authorization = `Bearer ${apiToken}`;
   }
 
   let response: Vu1nzScanResponse;
@@ -221,7 +229,7 @@ export async function vu1nzAudit(targetUrl: string): Promise<Vu1nzAuditResult> {
     const res = await fetch(ENDPOINT, {
       method: "POST",
       headers,
-      body: JSON.stringify({ target: targetUrl, checks: ["web"] }),
+      body: JSON.stringify({ target: targetUrl }),
     });
     response = (await res.json().catch(() => ({}))) as Vu1nzScanResponse;
     if (!res.ok || response.ok === false) {
@@ -230,7 +238,7 @@ export async function vu1nzAudit(targetUrl: string): Promise<Vu1nzAuditResult> {
   } catch (err) {
     const findings: Finding[] = [
       {
-        section: "Vu1nz Website Scanner",
+        section: SECTION,
         check_key: "vu1nz.web.unavailable",
         status: "warn",
         title: "Vu1nz website scanner did not return results",
@@ -243,7 +251,7 @@ export async function vu1nzAudit(targetUrl: string): Promise<Vu1nzAuditResult> {
     return {
       score: scoreFindings(findings),
       findings,
-      markdown: `# Vu1nz Website Scanner — ${targetUrl}\n\nCould not complete the Vu1nz scan: ${
+      markdown: `# Vu1nz Security Assessment — ${targetUrl}\n\nCould not complete the Vu1nz scan: ${
         err instanceof Error ? err.message : String(err)
       }\n`,
       summary: {

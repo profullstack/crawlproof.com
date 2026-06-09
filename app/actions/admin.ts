@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
+import { clearVu1nzApiToken, saveVu1nzApiToken } from "@/lib/platform-integrations";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -104,4 +105,32 @@ export async function grantCredits(input: {
 
   revalidatePath("/admin");
   return { ok: true, recipientId: recipient.id, newBalance };
+}
+
+export async function saveVu1nzIntegration(input: {
+  apiToken?: string;
+  clear?: boolean;
+}): Promise<Ok | Err> {
+  const adminCheck = await assertAdmin();
+  if (!adminCheck.ok) return adminCheck;
+
+  try {
+    if (input.clear) {
+      await clearVu1nzApiToken(adminCheck.userId);
+    } else {
+      const apiToken = (input.apiToken ?? "").trim();
+      if (!apiToken) {
+        return { ok: false, error: "Paste the Vu1nz API token first." };
+      }
+      await saveVu1nzApiToken({ apiToken, userId: adminCheck.userId });
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not save Vu1nz integration.",
+    };
+  }
+
+  revalidatePath("/admin");
+  return { ok: true };
 }

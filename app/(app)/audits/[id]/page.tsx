@@ -122,7 +122,7 @@ export default async function AuditPage({
   }
   const findings = findingsByAuditId.get(audit.id) ?? [];
   const fixesByAuditId: Record<string, FixRun[]> = {};
-  if (audit.project_id && reportAuditIds.length > 0) {
+  if (user && audit.project_id && reportAuditIds.length > 0) {
     const { data: fixRunsData } = await supabase
       .from("project_pr_runs")
       .select("id, audit_id, finding_key, status, pr_url, pr_number, repo_owner, repo_name, branch_name, created_at, updated_at")
@@ -236,7 +236,7 @@ export default async function AuditPage({
         fixesByAuditId?: Record<string, FixRun[]>;
       }
     | undefined;
-  if ((audit as { project_id?: string }).project_id) {
+  if (user && (audit as { project_id?: string }).project_id) {
     fixContext = {
       projectId: (audit as { project_id: string }).project_id,
       auditId: audit.id,

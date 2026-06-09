@@ -2,9 +2,10 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import Link from "next/link";
-import { GrantCreditsForm } from "./form";
+import { GrantCreditsForm, Vu1nzIntegrationForm } from "./form";
 import { IntegrationsManager } from "./integrations-form";
 import { env } from "@/lib/env";
+import { getVu1nzIntegrationStatus } from "@/lib/platform-integrations";
 
 export const metadata = {
   title: "Admin · Crawlproof",
@@ -39,7 +40,7 @@ export default async function AdminPage() {
   // Recent grants — admins see everything; loaded via service client
   // so we get the granted_by email join cheaply.
   const svc = serviceClient();
-  const [{ data: recentRaw }, { data: integrationsRaw }] = await Promise.all([
+  const [{ data: recentRaw }, { data: integrationsRaw }, vu1nzIntegration] = await Promise.all([
     svc
       .from("admin_credit_grants")
       .select(
@@ -53,6 +54,7 @@ export default async function AdminPage() {
         "id, name, kind, access_token, created_at, last_used_at, request_count",
       )
       .order("created_at", { ascending: false }),
+    getVu1nzIntegrationStatus(),
   ]);
   const recent: GrantRow[] = (recentRaw ?? []).map((r: any) => ({
     id: r.id,
@@ -111,6 +113,15 @@ export default async function AdminPage() {
             Compose &amp; send →
           </Link>
         </div>
+      </section>
+
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Vu1nz scanner</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Platform API token for the Vu1nz website scanner engine. The token is
+          encrypted at rest and used by background scans.
+        </p>
+        <Vu1nzIntegrationForm {...vu1nzIntegration} />
       </section>
 
       <section className="card p-5">

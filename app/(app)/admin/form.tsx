@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { grantCredits } from "@/app/actions/admin";
+import { grantCredits, saveVu1nzIntegration } from "@/app/actions/admin";
 
 export function GrantCreditsForm() {
   const router = useRouter();
@@ -96,6 +96,112 @@ export function GrantCreditsForm() {
         <button type="submit" className="btn btn-primary" disabled={pending}>
           {pending ? "Granting…" : "Grant credits"}
         </button>
+      </div>
+    </form>
+  );
+}
+
+export function Vu1nzIntegrationForm({
+  configured,
+  status,
+  updatedAt,
+  endpoint,
+}: {
+  configured: boolean;
+  status: string;
+  updatedAt: string | null;
+  endpoint: string;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [apiToken, setApiToken] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    start(async () => {
+      const res = await saveVu1nzIntegration({ apiToken });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setApiToken("");
+      setNotice("Vu1nz API token saved.");
+      router.refresh();
+    });
+  }
+
+  function clear() {
+    setError(null);
+    setNotice(null);
+    start(async () => {
+      const res = await saveVu1nzIntegration({ clear: true });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setApiToken("");
+      setNotice("Vu1nz API token cleared.");
+      router.refresh();
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span
+          className={
+            configured
+              ? "rounded border border-[var(--color-pass)]/40 bg-[var(--color-pass)]/10 px-2 py-1 text-[var(--color-pass)]"
+              : "rounded border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-2 py-1 text-[var(--color-warn)]"
+          }
+        >
+          {configured ? "Configured" : "Not configured"}
+        </span>
+        <span className="text-[var(--color-muted)]">Status: {status}</span>
+        {updatedAt && (
+          <span className="text-[var(--color-muted)]">
+            Updated {new Date(updatedAt).toLocaleString()}
+          </span>
+        )}
+      </div>
+
+      <div>
+        <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          API endpoint
+        </label>
+        <input className="input mt-1 font-mono text-sm" value={endpoint} readOnly />
+      </div>
+
+      <div>
+        <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Vu1nz API token
+        </label>
+        <input
+          className="input mt-1 font-mono"
+          type="password"
+          placeholder={configured ? "Paste replacement token" : "vk_live_..."}
+          value={apiToken}
+          onChange={(e) => setApiToken(e.target.value)}
+          autoComplete="off"
+        />
+      </div>
+
+      {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
+      {notice && <p className="text-sm text-[var(--color-pass)]">{notice}</p>}
+
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" className="btn btn-primary" disabled={pending}>
+          {pending ? "Saving..." : "Save Vu1nz token"}
+        </button>
+        {configured && (
+          <button type="button" className="btn" disabled={pending} onClick={clear}>
+            Clear token
+          </button>
+        )}
       </div>
     </form>
   );
