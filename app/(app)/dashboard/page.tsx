@@ -90,11 +90,9 @@ export default async function DashboardPage({
     .eq("status", status)
     .order("created_at", { ascending: false });
 
-  const scopedProjectsQuery = projectsQuery.or(
-    selectedOrgId
-      ? `${accessFilter},organization_id.eq.${selectedOrgId}`
-      : accessFilter,
-  );
+  const scopedProjectsQuery = selectedOrgId
+    ? projectsQuery.eq("organization_id", selectedOrgId)
+    : projectsQuery.or(accessFilter);
 
   const [{ data: projectsRaw }, { data: audits }, counts, senderConfigs, orgTeam] = await Promise.all([
     scopedProjectsQuery,
@@ -474,7 +472,7 @@ async function countByStatus(
         .select("id", { count: "exact", head: true })
         .eq("status", f.id);
       q = organizationId
-        ? q.or(`${accessFilter ?? `owner_id.eq.${ownerId}`},organization_id.eq.${organizationId}`)
+        ? q.eq("organization_id", organizationId)
         : q.or(accessFilter ?? `owner_id.eq.${ownerId}`);
       const { count } = await q;
       return [f.id, count ?? 0] as const;
