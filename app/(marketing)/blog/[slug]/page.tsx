@@ -71,7 +71,7 @@ export default async function BlogPost({
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={post.image_url}
-          alt=""
+          alt={`${post.title} featured image`}
           className="mt-6 w-full rounded-lg border border-[var(--color-border)]"
         />
       )}
