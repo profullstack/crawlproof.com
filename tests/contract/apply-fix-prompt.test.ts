@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildApplyFixUserPrompt } from "@/lib/github/apply-fix";
+import { APPLY_FIX_MODEL, buildApplyFixUserPrompt } from "@/lib/github/apply-fix";
 
 const finding = {
   check_key: "schema.organization",
@@ -11,6 +11,10 @@ const finding = {
 };
 
 describe("apply-fix prompt", () => {
+  it("uses Opus 4.8 for PR fix generation", () => {
+    expect(APPLY_FIX_MODEL).toBe("claude-opus-4-8");
+  });
+
   it("includes optional user PR guidance when provided", () => {
     const prompt = buildApplyFixUserPrompt({
       finding,
