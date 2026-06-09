@@ -24,6 +24,7 @@ interface InstallationRow {
  */
 export async function getOrMintInstallationToken(
   installationId: number,
+  options: { minTtlMs?: number } = {},
 ): Promise<string> {
   const sb = serviceClient();
   const { data: row } = await sb
@@ -34,10 +35,11 @@ export async function getOrMintInstallationToken(
   const cached = row as InstallationRow | null;
 
   const now = Date.now();
+  const minTtlMs = options.minTtlMs ?? 60_000;
   const stillValid =
     cached?.access_token &&
     cached?.access_token_expires_at &&
-    new Date(cached.access_token_expires_at).getTime() - now > 60_000;
+    new Date(cached.access_token_expires_at).getTime() - now > minTtlMs;
 
   if (stillValid && cached.access_token) {
     return cached.access_token;

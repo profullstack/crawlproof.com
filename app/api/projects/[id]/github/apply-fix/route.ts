@@ -24,6 +24,8 @@ export const runtime = "nodejs";
 // case is ~2 minutes, but realistic fixes finish in 20-40s.
 export const maxDuration = 300;
 
+const APPLY_FIX_MIN_TOKEN_TTL_MS = 15 * 60_000;
+
 const bodySchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
@@ -253,7 +255,9 @@ async function runApplyFixJob(args: {
 
   try {
     await progress("Minting GitHub installation token…");
-    const token = await getOrMintInstallationToken(body.installation_id);
+    const token = await getOrMintInstallationToken(body.installation_id, {
+      minTtlMs: APPLY_FIX_MIN_TOKEN_TTL_MS,
+    });
     await progress("Starting Claude fix agent…");
     const result = await applyFix({
       token,
