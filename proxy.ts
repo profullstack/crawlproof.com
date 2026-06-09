@@ -50,7 +50,10 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirect", path);
-    return NextResponse.redirect(url);
+    // 302 (Found) — temporary redirect: the resource exists but the user must
+    // authenticate first. Using an explicit status avoids relying on the
+    // Next.js default and keeps caches from storing the redirect permanently.
+    return NextResponse.redirect(url, 302);
   }
 
   return trackReferralCode(request, response as any);
