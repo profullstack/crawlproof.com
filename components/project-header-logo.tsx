@@ -23,7 +23,7 @@ export function ProjectHeaderLogo({
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={url}
-      alt=""
+      alt={`${name} logo`}
       width={40}
       height={40}
       loading="lazy"
