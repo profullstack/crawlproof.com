@@ -9,19 +9,18 @@ export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = env.siteUrl.replace(/\/$/, "");
-  const now = new Date();
   const allPosts = await loadAllPosts();
   const staticEntries: MetadataRoute.Sitemap = [
-    { url: `${base}/`, lastModified: now, changeFrequency: "weekly", priority: 1.0 },
-    { url: `${base}/pricing`, lastModified: now, changeFrequency: "monthly", priority: 0.9 },
-    { url: `${base}/hire`, lastModified: now, changeFrequency: "monthly", priority: 0.9 },
-    { url: `${base}/get-guide`, lastModified: now, changeFrequency: "monthly", priority: 0.9 },
-    { url: `${base}/about`, lastModified: now, changeFrequency: "monthly", priority: 0.7 },
-    { url: `${base}/blog`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
-    { url: `${base}/recent`, lastModified: now, changeFrequency: "hourly", priority: 0.9 },
-    { url: `${base}/bot`, lastModified: now, changeFrequency: "monthly", priority: 0.5 },
-    { url: `${base}/privacy`, lastModified: now, changeFrequency: "yearly", priority: 0.3 },
-    { url: `${base}/terms`, lastModified: now, changeFrequency: "yearly", priority: 0.3 },
+    { url: `${base}/`, changeFrequency: "weekly", priority: 1.0 },
+    { url: `${base}/pricing`, changeFrequency: "monthly", priority: 0.9 },
+    { url: `${base}/hire`, changeFrequency: "monthly", priority: 0.9 },
+    { url: `${base}/get-guide`, changeFrequency: "monthly", priority: 0.9 },
+    { url: `${base}/about`, changeFrequency: "monthly", priority: 0.7 },
+    { url: `${base}/blog`, changeFrequency: "weekly", priority: 0.8 },
+    { url: `${base}/recent`, changeFrequency: "hourly", priority: 0.9 },
+    { url: `${base}/bot`, changeFrequency: "monthly", priority: 0.5 },
+    { url: `${base}/privacy`, changeFrequency: "yearly", priority: 0.3 },
+    { url: `${base}/terms`, changeFrequency: "yearly", priority: 0.3 },
     ...buildSitemapBlogEntries({
       posts: allPosts.map((p) => ({
         slug: p.slug,
@@ -33,7 +32,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Paginated /recent pages so crawlers can walk them.
     ...[2, 3, 4, 5].map((page) => ({
       url: `${base}/recent?page=${page}`,
-      lastModified: now,
       changeFrequency: "hourly" as const,
       priority: 0.7,
     })),
