@@ -34,9 +34,14 @@ interface ApplyFixInput {
   repo: string;
   finding: FindingInput;
   targetUrl: string;
+  projectId?: string;
+  auditId?: string;
+  auditEngine?: string | null;
   /** Optional subdirectory hint (e.g. "apps/web") to start exploration in. */
   rootPath?: string;
-  /** Optional user guidance for this PR, such as brand naming rules. */
+  /** Full user-editable prompt for the fix agent. */
+  prompt?: string;
+  /** Legacy optional user guidance for this PR, such as brand naming rules. */
   userPrompt?: string;
   onProgress?: (message: string) => void | Promise<void>;
 }
@@ -53,6 +58,8 @@ export interface ApplyFixResult {
 // Hard limits keep worst-case cost bounded.
 export const APPLY_FIX_MODEL = "claude-opus-4-8";
 export const APPLY_FIX_MODEL_LABEL = "Claude Opus 4.8";
+export const MAX_APPLY_FIX_PROMPT_LENGTH = 12_000;
+export const MAX_LEGACY_FIX_PROMPT_LENGTH = 2_000;
 const MAX_ITERATIONS = 20;
 const MAX_FILE_READ_BYTES = 50_000;
 const MAX_FILE_WRITE_BYTES = 100_000;
@@ -183,13 +190,58 @@ Hard limits:
 export function buildApplyFixUserPrompt(input: {
   finding: FindingInput;
   targetUrl: string;
-  defaultBranch: string;
+  defaultBranch?: string;
+  projectId?: string;
+  auditId?: string;
+  auditEngine?: string | null;
+  repoFullName?: string;
+  rootPath?: string;
+  /** Full edited prompt. When present, this is sent to Claude exactly after trimming. */
+  prompt?: string;
+  /** Legacy short guidance folded into the generated default prompt. */
+  userPrompt?: string;
+}): string {
+  const editedPrompt = input.prompt?.trim();
+  if (editedPrompt) return editedPrompt;
+
+  return buildDefaultApplyFixPrompt(input);
+}
+
+export function buildDefaultApplyFixPrompt(input: {
+  finding: FindingInput;
+  targetUrl: string;
+  defaultBranch?: string;
+  projectId?: string;
+  auditId?: string;
+  auditEngine?: string | null;
+  repoFullName?: string;
   rootPath?: string;
   userPrompt?: string;
 }): string {
-  return `Target site: ${input.targetUrl}
-Default branch: ${input.defaultBranch}${input.rootPath ? `\nUser hint: the site code lives under \`${input.rootPath}\` — start there.` : ""}
-${input.userPrompt ? `\nAdditional user guidance for this PR:\n${input.userPrompt.trim()}\n` : ""}
+  const evidence =
+    input.finding.evidence == null
+      ? "(none)"
+      : JSON.stringify(input.finding.evidence, null, 2);
+  const legacyGuidance = input.userPrompt?.trim();
+  const contextLines = [
+    `Target site: ${input.targetUrl}`,
+    input.projectId ? `Project ID: ${input.projectId}` : null,
+    input.auditId ? `Audit ID: ${input.auditId}` : null,
+    input.auditEngine ? `Audit engine: ${input.auditEngine}` : null,
+    input.repoFullName ? `Repository: ${input.repoFullName}` : null,
+    input.defaultBranch ? `Default branch: ${input.defaultBranch}` : null,
+    input.rootPath
+      ? `Repository root hint: the site code likely lives under \`${input.rootPath}\`; start exploration there.`
+      : null,
+  ].filter(Boolean);
+
+  return `You are ${APPLY_FIX_MODEL_LABEL}, working as CrawlProof's automated GitHub PR fixer for one approved AEO audit finding.
+
+Goal:
+Open one minimal, reviewable pull request that fixes the specific finding below for the target site. Make only the code changes required to address this finding. Preserve the application's existing framework conventions, formatting, naming, and architecture.
+
+Context:
+${contextLines.map((line) => `- ${line}`).join("\n")}
 
 Audit finding to fix:
 - Check key: ${input.finding.check_key}
@@ -197,9 +249,19 @@ Audit finding to fix:
 - Priority: ${input.finding.priority}
 - Title: ${input.finding.title}
 - Detail: ${input.finding.detail ?? "(none)"}
-- Evidence: ${JSON.stringify(input.finding.evidence)}
-
-Start exploring. When ready, stage changes with write_file and call done().`;
+- Evidence:
+\`\`\`json
+${evidence}
+\`\`\`
+${legacyGuidance ? `\nAdditional user guidance for this PR:\n${legacyGuidance}\n` : ""}
+Instructions:
+1. Explore the repository before editing. Identify the app framework, routing/layout files, metadata/schema helpers, config files, and any existing SEO/AEO patterns relevant to this finding.
+2. Fix the root cause when it is represented in code. Do not paper over the issue with unrelated copy, broad refactors, or cosmetic changes.
+3. Keep the patch surgical. Avoid touching generated files, vendored files, lockfiles, build outputs, unrelated tests, or unrelated formatting.
+4. Prefer established project utilities and patterns over adding new dependencies or one-off abstractions.
+5. If the finding requires content or metadata, use clear production-ready values inferred from the site and existing code. Do not invent unverifiable claims.
+6. If the finding cannot be fixed from this repository, explain exactly why and finish without staging changes.
+7. When the fix is ready, stage complete file contents with write_file and call done() with a concise PR summary.`;
 }
 
 interface RunState {
@@ -366,7 +428,12 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     finding: input.finding,
     targetUrl: input.targetUrl,
     defaultBranch: ref,
+    projectId: input.projectId,
+    auditId: input.auditId,
+    auditEngine: input.auditEngine,
     rootPath: input.rootPath,
+    repoFullName: `${input.owner}/${input.repo}`,
+    prompt: input.prompt,
     userPrompt: input.userPrompt,
   });
 
