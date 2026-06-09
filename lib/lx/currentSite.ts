@@ -45,29 +45,30 @@ async function memberProjectIds(
   return (data ?? []).map((r: { project_id: string }) => r.project_id);
 }
 
-// Returns org IDs the user belongs to. Org membership grants org-wide project
-// visibility; project_members grants access to specific projects.
-async function memberOrgIds(
+// Returns org IDs where the user is an org-wide member. A project-scoped org
+// row only makes the org visible; it does not grant blanket project access.
+async function orgWideMemberOrgIds(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
 ): Promise<string[]> {
   const { data, error } = await supabase
     .from("organization_members")
     .select("organization_id")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .in("role", ["owner", "member"]);
   if (error) return [];
   return (data ?? []).map((r: { organization_id: string }) => r.organization_id);
 }
 
 // Builds a filter string for "projects the user can access": owned projects,
 // explicit project memberships, and org-level project access.
-function accessFilter(userId: string, projectMemberIds: string[], orgMemberIds: string[]): string {
+function accessFilter(userId: string, projectMemberIds: string[], orgWideOrgIds: string[]): string {
   const clauses = [`owner_id.eq.${userId}`];
   if (projectMemberIds.length > 0) {
     clauses.push(`id.in.(${projectMemberIds.join(",")})`);
   }
-  if (orgMemberIds.length > 0) {
-    clauses.push(`organization_id.in.(${orgMemberIds.join(",")})`);
+  if (orgWideOrgIds.length > 0) {
+    clauses.push(`organization_id.in.(${orgWideOrgIds.join(",")})`);
   }
   return clauses.join(",");
 }
@@ -80,11 +81,11 @@ export async function listUserProjects(): Promise<ProjectSummary[]> {
   } = await supabase.auth.getUser();
   if (!user) return [];
 
-  const [projectMemberIds, orgMemberIds] = await Promise.all([
+  const [projectMemberIds, orgWideOrgIds] = await Promise.all([
     memberProjectIds(supabase, user.id),
-    memberOrgIds(supabase, user.id),
+    orgWideMemberOrgIds(supabase, user.id),
   ]);
-  const filter = accessFilter(user.id, projectMemberIds, orgMemberIds);
+  const filter = accessFilter(user.id, projectMemberIds, orgWideOrgIds);
 
   let query = supabase
     .from("projects")
@@ -196,6 +197,7 @@ export async function getProjectById(
         .select("id")
         .eq("organization_id", orgId)
         .eq("user_id", user.id)
+        .in("role", ["owner", "member"])
         .maybeSingle();
       if (!orgMembership) return null;
     }
@@ -220,12 +222,12 @@ export async function getCurrentProject(opts: {
   const siteColumns = opts.siteColumns ?? "*";
   const select = `${projectColumns}, lx_site(${siteColumns})`;
 
-  const [cookieStore, projectMemberIds, orgMemberIds] = await Promise.all([
+  const [cookieStore, projectMemberIds, orgWideOrgIds] = await Promise.all([
     cookies(),
     memberProjectIds(supabase, user.id),
-    memberOrgIds(supabase, user.id),
+    orgWideMemberOrgIds(supabase, user.id),
   ]);
-  const filter = accessFilter(user.id, projectMemberIds, orgMemberIds);
+  const filter = accessFilter(user.id, projectMemberIds, orgWideOrgIds);
   const cookieId = cookieStore.get(CURRENT_SITE_COOKIE)?.value;
 
   if (cookieId) {
@@ -315,6 +317,7 @@ export async function requireProjectAccess(projectId: string): Promise<
         .select("id")
         .eq("organization_id", orgId)
         .eq("user_id", user.id)
+        .in("role", ["owner", "member"])
         .maybeSingle();
       if (!orgMembership) return { ok: false, error: "Not found." };
     }

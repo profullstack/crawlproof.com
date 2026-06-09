@@ -100,7 +100,7 @@ export default async function OrgInvitePage({
   // Check if already a member
   const { data: existing } = await svc
     .from("organization_members")
-    .select("id")
+    .select("id, role")
     .eq("organization_id", inv.organization_id)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -111,6 +111,11 @@ export default async function OrgInvitePage({
       user_id: user.id,
       role: "member",
     });
+  } else if ((existing as { role?: string }).role === "project_member") {
+    await svc
+      .from("organization_members")
+      .update({ role: "member" })
+      .eq("id", (existing as { id: string }).id);
   }
 
   await svc

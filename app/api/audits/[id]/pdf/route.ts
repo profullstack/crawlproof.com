@@ -56,6 +56,7 @@ export async function GET(
         .select("id")
         .eq("organization_id", orgId)
         .eq("user_id", user.id)
+        .in("role", ["owner", "member"])
         .maybeSingle();
       if (!orgMembership) return NextResponse.json({ error: "Not found" }, { status: 404 });
     }

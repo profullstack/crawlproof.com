@@ -121,6 +121,28 @@ export default async function InvitePage({
     });
   }
 
+  const { data: project } = await svc
+    .from("projects")
+    .select("organization_id")
+    .eq("id", inv.project_id)
+    .maybeSingle();
+  const orgId = (project as { organization_id?: string | null } | null)?.organization_id;
+  if (orgId) {
+    const { data: orgMember } = await svc
+      .from("organization_members")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!orgMember) {
+      await svc.from("organization_members").insert({
+        organization_id: orgId,
+        user_id: user.id,
+        role: "project_member",
+      });
+    }
+  }
+
   await svc
     .from("project_invitations")
     .update({ accepted_at: new Date().toISOString() })

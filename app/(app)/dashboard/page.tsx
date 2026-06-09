@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
 import { backfillProjectLogo } from "@/app/actions/createProject";
-import { getOrCreateDefaultOrg, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
+import { getOrCreateDefaultOrg, isOrgWideRole, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
 import { listOrgTeam } from "@/app/actions/org-members";
 import {
   OrgDashboardControls,
@@ -54,10 +54,6 @@ export default async function DashboardPage({
     .select("project_id")
     .eq("user_id", user!.id);
   const memberIds = (memberRows ?? []).map((r: { project_id: string }) => r.project_id);
-  const accessFilter =
-    memberIds.length > 0
-      ? `owner_id.eq.${user!.id},id.in.(${memberIds.join(",")})`
-      : `owner_id.eq.${user!.id}`;
 
   let orgs = await listUserOrgs(supabase, user!.id);
   if (orgs.length === 0) {
@@ -78,6 +74,8 @@ export default async function DashboardPage({
     orgs[0] ??
     null;
   const selectedOrgId = selectedOrg?.id ?? null;
+  const orgWideIds = orgs.filter((org) => isOrgWideRole(org.role)).map((org) => org.id);
+  const accessFilter = buildProjectAccessFilter(user!.id, memberIds, orgWideIds);
   const orgSchemaReady = orgs.length > 0;
 
   const projectColumns = orgSchemaReady
@@ -91,7 +89,7 @@ export default async function DashboardPage({
     .order("created_at", { ascending: false });
 
   const scopedProjectsQuery = selectedOrgId
-    ? projectsQuery.eq("organization_id", selectedOrgId)
+    ? projectsQuery.eq("organization_id", selectedOrgId).or(accessFilter)
     : projectsQuery.or(accessFilter);
 
   const [{ data: projectsRaw }, { data: audits }, counts, senderConfigs, orgTeam] = await Promise.all([
@@ -103,8 +101,8 @@ export default async function DashboardPage({
       .order("created_at", { ascending: false })
       .limit(10),
     countByStatus(supabase, user!.id, accessFilter, selectedOrgId),
-    fetchSenderConfigs(supabase, selectedOrgId),
-    fetchOrgTeam(selectedOrgId),
+    fetchSenderConfigs(supabase, selectedOrg?.role === "owner" ? selectedOrgId : null),
+    fetchOrgTeam(selectedOrg && isOrgWideRole(selectedOrg.role) ? selectedOrgId : null),
   ]);
   const projects = ((projectsRaw ?? []) as unknown) as DashboardProject[];
 
@@ -472,13 +470,24 @@ async function countByStatus(
         .select("id", { count: "exact", head: true })
         .eq("status", f.id);
       q = organizationId
-        ? q.eq("organization_id", organizationId)
+        ? q.eq("organization_id", organizationId).or(accessFilter ?? `owner_id.eq.${ownerId}`)
         : q.or(accessFilter ?? `owner_id.eq.${ownerId}`);
       const { count } = await q;
       return [f.id, count ?? 0] as const;
     }),
   );
   return Object.fromEntries(rows) as Record<StatusFilter, number>;
+}
+
+function buildProjectAccessFilter(
+  userId: string,
+  projectMemberIds: string[],
+  orgWideIds: string[],
+) {
+  const clauses = [`owner_id.eq.${userId}`];
+  if (projectMemberIds.length > 0) clauses.push(`id.in.(${projectMemberIds.join(",")})`);
+  if (orgWideIds.length > 0) clauses.push(`organization_id.in.(${orgWideIds.join(",")})`);
+  return clauses.join(",");
 }
 
 async function fetchOrgTeam(

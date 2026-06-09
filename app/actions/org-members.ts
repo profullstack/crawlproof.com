@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { sendOrgInviteEmail } from "@/lib/email";
 import { env } from "@/lib/env";
+import type { OrgRole } from "@/lib/orgs";
 
 async function requireOrgOwner(orgId: string) {
   const supabase = await createClient();
@@ -64,11 +65,20 @@ export async function inviteOrgMember(
   if (existingProfile) {
     const { data: existingMember } = await svc
       .from("organization_members")
-      .select("id")
+      .select("id, role")
       .eq("organization_id", orgId)
       .eq("user_id", existingProfile.id)
       .maybeSingle();
     if (existingMember) {
+      if ((existingMember as { role: OrgRole }).role === "project_member") {
+        const { error } = await svc
+          .from("organization_members")
+          .update({ role: "member" })
+          .eq("id", (existingMember as { id: string }).id);
+        if (error) return { ok: false, error: error.message };
+        revalidatePath("/dashboard");
+        return { ok: true };
+      }
       return { ok: false, error: "That person is already a member." };
     }
   }
@@ -147,12 +157,25 @@ export async function removeOrgMember(
 
   // Never remove an owner row via this path — owners leave by deleting or
   // transferring the org, not by being kicked from the member list.
-  const { error } = await ctx.svc
-    .from("organization_members")
-    .delete()
-    .eq("organization_id", orgId)
+  const { count } = await ctx.svc
+    .from("project_members")
+    .select("id, projects!inner(organization_id)", { count: "exact", head: true })
     .eq("user_id", userId)
-    .eq("role", "member");
+    .eq("projects.organization_id", orgId);
+
+  const { error } = count && count > 0
+    ? await ctx.svc
+        .from("organization_members")
+        .update({ role: "project_member" })
+        .eq("organization_id", orgId)
+        .eq("user_id", userId)
+        .eq("role", "member")
+    : await ctx.svc
+        .from("organization_members")
+        .delete()
+        .eq("organization_id", orgId)
+        .eq("user_id", userId)
+        .eq("role", "member");
 
   if (error) return { ok: false, error: error.message };
 
@@ -171,7 +194,7 @@ export async function removeOrgMember(
 export type OrgTeamMember = {
   id: string;
   user_id: string;
-  role: "owner" | "member";
+  role: OrgRole;
   created_at: string;
   profile: { id: string; email: string; display_name: string } | null;
 };
@@ -224,7 +247,7 @@ export async function listOrgTeam(orgId: string): Promise<
       : { data: [] as Array<{ id: string; email: string; display_name: string }> };
 
   const members: OrgTeamMember[] = (membersRaw ?? []).map(
-    (m: { id: string; user_id: string; role: "owner" | "member"; created_at: string }) => ({
+    (m: { id: string; user_id: string; role: OrgRole; created_at: string }) => ({
       id: m.id,
       user_id: m.user_id,
       role: m.role,

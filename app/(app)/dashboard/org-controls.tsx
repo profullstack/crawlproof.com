@@ -23,7 +23,7 @@ import {
 export type DashboardOrg = {
   id: string;
   name: string;
-  role: "owner" | "member";
+  role: "owner" | "member" | "project_member";
 };
 
 export type DashboardOrgTeam = {
@@ -111,7 +111,7 @@ export function OrgDashboardControls({
             {orgs.length === 0 && <option value="">Default workspace</option>}
             {orgs.map((org) => (
               <option key={org.id} value={org.id}>
-                {org.name} ({org.role})
+                {org.name} ({formatOrgRole(org.role)})
               </option>
             ))}
           </select>
@@ -187,6 +187,11 @@ export function OrgDashboardControls({
       )}
     </section>
   );
+}
+
+function formatOrgRole(role: DashboardOrg["role"]) {
+  if (role === "project_member") return "project access";
+  return role;
 }
 
 function RenameOrgForm({
@@ -369,6 +374,9 @@ function OrgMemberRow({
           {label}
           {member.role === "owner" && (
             <span className="ml-2 badge badge-pass align-middle text-[11px]">owner</span>
+          )}
+          {member.role === "project_member" && (
+            <span className="ml-2 badge align-middle text-[11px]">project access</span>
           )}
         </p>
         {sub && <p className="truncate text-xs text-[var(--color-muted)]">{sub}</p>}
