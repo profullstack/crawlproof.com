@@ -38,12 +38,14 @@ export default async function BlogIndex() {
             >
               {/* Thumbnail. Falls back to a tinted "CP" placeholder so the
                * list column stays aligned even when an autoblog post lands
-               * without a featured image. */}
+               * without a featured image. Alt text describes the article the
+               * image illustrates so it is meaningful for screen readers and
+               * image search. */}
               {p.image_url ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
                   src={p.image_url}
-                  alt={`${p.title} featured image`}
+                  alt={`Illustration for the blog post “${p.title}”`}
                   loading="lazy"
                   width={120}
                   height={120}
