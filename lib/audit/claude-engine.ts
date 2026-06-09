@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 import { env } from "../env";
 import type { AuditResult, Finding } from "./types";
 import { SECTIONS, buildAEOUserPrompt } from "./prompt";
+import { buildSiteContext } from "./page-context";
 
 // Schema Claude must populate. Numeric/string constraints (min/max/length)
 // aren't supported by structured outputs — we validate them client-side.
@@ -46,11 +47,7 @@ const ResultSchema = z.object({
 // schema that messages.parse needs to populate.
 const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) auditor — you analyze websites the way an LLM crawler (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot) would discover and read them.
 
-Research method:
-1. Use \`web_fetch\` on the homepage.
-2. Use \`web_fetch\` on each well-known file: /robots.txt, /sitemap.xml, /llms.txt, /llms-full.txt, /skill.md, /.well-known/ai-plugin.json. Some will 404 — that's a finding.
-3. Use \`web_fetch\` on up to 6 important linked pages from the homepage nav/footer (/about, /pricing, /blog, /docs, /contact, /team, /customers, /security, /features, /changelog). Skip the ones that 404.
-4. Optionally \`web_search\` for additional public context (press, social profiles, recent news).
+The user message contains the audit spec followed by pre-fetched public site content (homepage, well-known files, and high-signal linked pages). Use that context as the source of truth. If a file 404'd or is missing, report that as a finding.
 
 Follow the user's spec exactly for the report structure and Markdown output. Quote actual content from the site — don't paraphrase. Section ${SECTIONS.length} must be reusable checkboxes (\`- [ ] **P1** Add JSON-LD Organization schema\`). Use ✅ / ⚠️ / ❌ / ❓ status emojis throughout. Tone: direct, specific, no fluff.
 
@@ -83,18 +80,20 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
     }
   })();
 
-  const userPrompt = buildAEOUserPrompt({ targetUrl, companyName: company });
+  const aeoTask = buildAEOUserPrompt({ targetUrl, companyName: company });
+  const context = await buildSiteContext(targetUrl);
 
-  // Stream the request — high-effort adaptive thinking + web tools routinely
-  // pushes past the SDK's 10-minute non-streaming HTTP timeout. `.finalMessage()`
-  // gives us the same ParsedMessage shape `.parse()` did.
-  // Sonnet 4.6 over Opus 4.7 — AEO is classification (does robots.txt
-  // block GPTBot? is there JSON-LD?), not the kind of open-ended
-  // reasoning Opus is overpriced for. 2–3× faster wall time, ~3× cheaper
-  // input/output, same tools. Note: Sonnet 4.6 defaults to effort=high,
-  // so we *must* set effort explicitly to keep the speed gain. Adaptive
-  // thinking off + effort=medium keeps the model actually doing the
-  // audit (low under-thought it and returned 0/100 shells).
+  // Stream the request so slow output still keeps the HTTP connection active.
+  // Claude previously used agentic web_fetch/web_search tools, which turned
+  // one scan into many model/tool round trips and routinely ran past the
+  // worker's seven-minute stuck sweep. The bounded pre-fetch keeps discovery
+  // deterministic and makes Claude do a single structured-output pass.
+  // Sonnet 4.6 defaults to higher reasoning; keep thinking disabled and
+  // effort medium so it still audits without spending time on extended
+  // reasoning.
+  console.log(
+    `[claude] calling claude-sonnet-4-6 (${context.length} chars context)`,
+  );
   const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
     max_tokens: 32000,
@@ -104,16 +103,20 @@ export async function claudeAudit(targetUrl: string): Promise<ClaudeAuditResult>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       format: zodOutputFormat(ResultSchema as any),
     },
-    tools: [
-      { type: "web_search_20260209", name: "web_search" },
-      { type: "web_fetch_20260209", name: "web_fetch" },
-    ],
     system: [
       { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     ],
-    messages: [{ role: "user", content: userPrompt }],
+    messages: [
+      {
+        role: "user",
+        content: `${aeoTask}\n\n---\n\nPre-fetched public site content:\n\n${context}`,
+      },
+    ],
   });
   const response = await stream.finalMessage();
+  console.log(
+    `[claude] claude-sonnet-4-6 returned in ${Date.now() - started}ms`,
+  );
 
   const parsed = response.parsed_output;
   if (!parsed) {

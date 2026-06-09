@@ -20,6 +20,7 @@ import { markdownToHtml, htmlDocument } from "../lib/markdown";
 import { auditReadyEmailHtml, scanRunSummaryEmailHtml, type SummaryEngineRow } from "../lib/email";
 import { ENGINES, type Engine } from "../lib/credits";
 import { buildScanRunMarkdown } from "../lib/audit/summary-markdown";
+import { auditStuckAfterMinutes, auditStuckAfterMs } from "../lib/audit/timeouts";
 import OpenAI from "openai";
 import { crawlSitemap } from "../lib/lx/sitemapCrawl";
 import { DataForSeoClient } from "../lib/lx/dataforseo";
@@ -1088,20 +1089,22 @@ async function sweep() {
   for (const row of data) await processJob({ auditId: row.id });
 }
 
-// Recover audits orphaned by a worker crash or by an upstream LLM that
-// opened a connection then never delivered. Worst case the new
-// 90s × 3-attempt budget caps a healthy in-flight call around 4.5
-// minutes; anything still in `running` past 7 minutes is stuck.
-// Flip to failed + refund so the user sees a result and can retry.
-const AUDIT_STUCK_AFTER_MS = 7 * 60 * 1000;
+// Recover audits orphaned by a worker crash or by an upstream engine that
+// opened a connection then never delivered. Keep the default short for local
+// and OpenAI-compatible engines, but give Claude room to finish legitimate
+// structured-output scans; web-tool Claude runs were being killed at 7m even
+// while the provider was still working.
 async function auditStuckSweep() {
-  const cutoff = new Date(Date.now() - AUDIT_STUCK_AFTER_MS).toISOString();
+  const candidateCutoff = new Date(Date.now() - Math.min(...Object.values({
+    default: auditStuckAfterMs(null),
+    claude: auditStuckAfterMs("claude"),
+  }))).toISOString();
   const { data: stuck, error: stuckErr } = await supabase
     .from("audits")
     .select("id, engine, owner_id")
     .eq("status", "running")
     .is("aborted_at", null)
-    .lt("created_at", cutoff);
+    .lt("created_at", candidateCutoff);
   if (stuckErr) {
     console.warn("[worker] audit stuck sweep", stuckErr.message);
     return;
@@ -1110,16 +1113,19 @@ async function auditStuckSweep() {
 
   const now = new Date().toISOString();
   for (const row of stuck) {
+    const timeoutMs = auditStuckAfterMs(row.engine as string | null);
+    const cutoff = new Date(Date.now() - timeoutMs).toISOString();
     const { data: flipped } = await supabase
       .from("audits")
       .update({
         status: "failed",
-        failed_reason: "Engine timed out (no response in 7 minutes)",
+        failed_reason: `Engine timed out (no response in ${auditStuckAfterMinutes(row.engine as string | null)} minutes)`,
         completed_at: now,
       })
       .eq("id", row.id)
       .eq("status", "running")
       .is("aborted_at", null)
+      .lt("created_at", cutoff)
       .select("id")
       .maybeSingle();
     if (!flipped) continue;
