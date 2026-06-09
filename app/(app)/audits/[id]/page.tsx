@@ -20,6 +20,7 @@ import { CopyLink } from "@/components/copy-link";
 import { PdfButton } from "@/components/pdf-button";
 import { ShareBanner } from "@/components/share-banner";
 import type { Finding } from "@/lib/audit/types";
+import type { FixRun } from "@/components/report/section";
 import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
 import { env } from "@/lib/env";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
@@ -120,6 +121,23 @@ export default async function AuditPage({
     findingsByAuditId.set(row.audit_id, list);
   }
   const findings = findingsByAuditId.get(audit.id) ?? [];
+  const fixesByAuditId: Record<string, FixRun[]> = {};
+  if (audit.project_id && reportAuditIds.length > 0) {
+    const { data: fixRunsData } = await supabase
+      .from("project_pr_runs")
+      .select("id, audit_id, finding_key, status, pr_url, pr_number, repo_owner, repo_name, branch_name, created_at, updated_at")
+      .eq("project_id", audit.project_id)
+      .eq("kind", "apply_fix")
+      .in("audit_id", reportAuditIds)
+      .in("status", ["opened", "running", "queued"])
+      .order("created_at", { ascending: false });
+
+    for (const run of (fixRunsData ?? []) as FixRun[]) {
+      if (!run.audit_id) continue;
+      fixesByAuditId[run.audit_id] ??= [];
+      fixesByAuditId[run.audit_id]!.push(run);
+    }
+  }
 
   // Premium tab summarises every non-rule audit in this scan_run — including
   // the one you're currently viewing. Filtering out audit.id would hide the
@@ -215,8 +233,18 @@ export default async function AuditPage({
         auditId: string;
         repos: Array<{ full_name: string; installation_id: number }>;
         boundRepos: Array<{ full_name: string; installation_id: number }>;
+        fixesByAuditId?: Record<string, FixRun[]>;
       }
     | undefined;
+  if ((audit as { project_id?: string }).project_id) {
+    fixContext = {
+      projectId: (audit as { project_id: string }).project_id,
+      auditId: audit.id,
+      repos: [],
+      boundRepos: [],
+      fixesByAuditId,
+    };
+  }
   const ghConfigured = !!(env.githubAppId && env.githubAppPrivateKey);
   if (
     ghConfigured &&
@@ -258,6 +286,7 @@ export default async function AuditPage({
       auditId: audit.id,
       repos,
       boundRepos,
+      fixesByAuditId,
     };
   }
 

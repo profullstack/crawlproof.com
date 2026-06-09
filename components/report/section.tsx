@@ -6,6 +6,21 @@ interface FixContext {
   auditId: string;
   repos: Array<{ full_name: string; installation_id: number }>;
   boundRepos: Array<{ full_name: string; installation_id: number }>;
+  fixesByAuditId?: Record<string, FixRun[]>;
+}
+
+export interface FixRun {
+  id: string;
+  audit_id: string | null;
+  finding_key: string | null;
+  status: "queued" | "running" | "opened" | "noop" | "failed";
+  pr_url: string | null;
+  pr_number: number | null;
+  repo_owner: string;
+  repo_name: string;
+  branch_name: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export function SectionFindings({
@@ -40,8 +55,11 @@ function FindingRow({
   f: Finding;
   fixContext?: FixContext;
 }) {
+  const fixRun = latestFixForFinding(fixContext, f.check_key);
+  const fixedViaPr = fixRun?.status === "opened";
+  const fixRunning = fixRun?.status === "running" || fixRun?.status === "queued";
   const cls =
-    f.status === "pass"
+    fixedViaPr || f.status === "pass"
       ? "badge-pass"
       : f.status === "warn"
         ? "badge-warn"
@@ -51,14 +69,42 @@ function FindingRow({
   const fixable =
     fixContext &&
     fixContext.repos.length > 0 &&
-    (f.status === "fail" || f.status === "warn");
+    (f.status === "fail" || f.status === "warn") &&
+    !fixedViaPr &&
+    !fixRunning;
   return (
     <li className="card p-4">
       <div className="flex items-start gap-3">
-        <span className={`badge ${cls} uppercase`}>{f.status}</span>
+        <span className={`badge ${cls} uppercase`}>
+          {fixedViaPr ? "fixed" : f.status}
+        </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-semibold">{f.title}</div>
+            {fixedViaPr && fixRun.pr_url && (
+              <a
+                href={fixRun.pr_url}
+                target="_blank"
+                rel="noreferrer"
+                className="badge badge-pass text-xs hover:underline"
+                title={`Submitted to ${fixRun.repo_owner}/${fixRun.repo_name}`}
+              >
+                Fixed via PR{fixRun.pr_number ? ` #${fixRun.pr_number}` : ""}
+              </a>
+            )}
+            {fixedViaPr && !fixRun.pr_url && (
+              <span
+                className="badge badge-pass text-xs"
+                title={`Submitted to ${fixRun.repo_owner}/${fixRun.repo_name}`}
+              >
+                Fixed via PR{fixRun.pr_number ? ` #${fixRun.pr_number}` : ""}
+              </span>
+            )}
+            {fixRunning && (
+              <span className="badge badge-warn text-xs">
+                Fix PR running
+              </span>
+            )}
             {fixable && (
               <ApplyFixButton
                 projectId={fixContext!.projectId}
@@ -89,5 +135,18 @@ function FindingRow({
         <span className="badge text-xs">P{f.priority}</span>
       </div>
     </li>
+  );
+}
+
+function latestFixForFinding(
+  fixContext: FixContext | undefined,
+  findingKey: string,
+): FixRun | undefined {
+  if (!fixContext?.fixesByAuditId) return undefined;
+  const runs = fixContext.fixesByAuditId[fixContext.auditId] ?? [];
+  return runs.find(
+    (run) =>
+      run.finding_key === findingKey &&
+      (run.status === "opened" || run.status === "running" || run.status === "queued"),
   );
 }
