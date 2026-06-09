@@ -1,5 +1,5 @@
 // POST /api/projects/[id]/github/apply-fix
-// Body: { owner, repo, installation_id, audit_id, finding_key, fix_prompt? }
+// Body: { owner, repo, installation_id, audit_id, finding_key, prompt?, fix_prompt? }
 // Consumes SCAN_CREDITS credits, asks Claude to patch the repo for one
 // specific audit finding, opens a PR. Refunds the credits on any failure.
 
@@ -9,7 +9,14 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
-import { applyFix } from "@/lib/github/apply-fix";
+import {
+  MAX_APPLY_FIX_PROMPT_LENGTH,
+  MAX_LEGACY_FIX_PROMPT_LENGTH,
+  APPLY_FIX_MODEL_LABEL,
+  applyFix,
+  buildDefaultApplyFixPrompt,
+} from "@/lib/github/apply-fix";
+import { getRepo } from "@/lib/github/repos";
 import { SCAN_CREDITS } from "@/lib/credits";
 
 export const runtime = "nodejs";
@@ -23,13 +30,20 @@ const bodySchema = z.object({
   installation_id: z.number().int().positive(),
   audit_id: z.string().uuid(),
   finding_key: z.string().min(1),
-  fix_prompt: z.string().max(2000).optional(),
+  prompt: z.string().max(MAX_APPLY_FIX_PROMPT_LENGTH).optional(),
+  fix_prompt: z.string().max(MAX_LEGACY_FIX_PROMPT_LENGTH).optional(),
   /** Optional starting hint for monorepos (e.g. "apps/web"). */
   root_path: z.string().max(500).optional(),
+  /** Return a server-sent event stream from POST so large edited prompts stay in the request body. */
+  stream: z.boolean().optional(),
 });
 
 const querySchema = bodySchema.extend({
   installation_id: z.coerce.number().int().positive(),
+  stream: z
+    .enum(["true", "false", "1", "0"])
+    .optional()
+    .transform((value) => value === "true" || value === "1"),
 });
 
 type ApplyFixBody = z.infer<typeof bodySchema>;
@@ -52,7 +66,7 @@ function cleanOptionalPrompt(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-async function runApplyFixJob(args: {
+async function loadApplyFixContext(args: {
   projectId: string;
   userId: string;
   supabase: Awaited<ReturnType<typeof createClient>>;
@@ -84,7 +98,7 @@ async function runApplyFixJob(args: {
   await progress("Loading audit and finding…");
   const { data: audit } = await supabase
     .from("audits")
-    .select("id, target_url, project_id, owner_id")
+    .select("id, target_url, project_id, owner_id, engine")
     .eq("id", body.audit_id)
     .maybeSingle();
   if (!audit || (audit as { project_id?: string }).project_id !== projectId) {
@@ -100,6 +114,81 @@ async function runApplyFixJob(args: {
   if (!finding) {
     throw new RouteError(404, "Finding not found");
   }
+
+  return {
+    audit: audit as {
+      id: string;
+      target_url: string;
+      project_id: string;
+      owner_id: string;
+      engine: string | null;
+    },
+    finding: finding as {
+      check_key: string;
+      title: string;
+      detail: string | null;
+      section: string;
+      priority: number;
+      evidence: unknown;
+    },
+  };
+}
+
+async function buildPromptPreview(args: {
+  projectId: string;
+  userId: string;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  body: ApplyFixBody;
+}) {
+  const { projectId, userId, supabase, body } = args;
+  const { audit, finding } = await loadApplyFixContext({
+    projectId,
+    userId,
+    supabase,
+    body,
+  });
+  const token = await getOrMintInstallationToken(body.installation_id);
+  const repoMeta = await getRepo({
+    token,
+    owner: body.owner,
+    repo: body.repo,
+  });
+  const prompt = buildDefaultApplyFixPrompt({
+    finding,
+    targetUrl: audit.target_url,
+    defaultBranch: repoMeta.default_branch,
+    projectId,
+    auditId: body.audit_id,
+    auditEngine: audit.engine,
+    repoFullName: `${body.owner}/${body.repo}`,
+    rootPath: body.root_path,
+    userPrompt: cleanOptionalPrompt(body.fix_prompt),
+  });
+  return {
+    prompt,
+    model: APPLY_FIX_MODEL_LABEL,
+    defaultBranch: repoMeta.default_branch,
+  };
+}
+
+async function runApplyFixJob(args: {
+  projectId: string;
+  userId: string;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  body: ApplyFixBody;
+  onProgress?: (message: string) => void | Promise<void>;
+}) {
+  const { projectId, userId, supabase, body, onProgress } = args;
+  const progress = async (message: string) => {
+    await onProgress?.(message);
+  };
+  const { audit, finding } = await loadApplyFixContext({
+    projectId,
+    userId,
+    supabase,
+    body,
+    onProgress,
+  });
 
   const svc = serviceClient();
 
@@ -170,16 +259,13 @@ async function runApplyFixJob(args: {
       token,
       owner: body.owner,
       repo: body.repo,
-      finding: {
-        check_key: (finding as { check_key: string }).check_key,
-        title: (finding as { title: string }).title,
-        detail: (finding as { detail: string | null }).detail,
-        section: (finding as { section: string }).section,
-        priority: (finding as { priority: number }).priority,
-        evidence: (finding as { evidence: unknown }).evidence,
-      },
-      targetUrl: (audit as { target_url: string }).target_url,
+      finding,
+      targetUrl: audit.target_url,
+      projectId,
+      auditId: body.audit_id,
+      auditEngine: audit.engine,
       rootPath: body.root_path,
+      prompt: cleanOptionalPrompt(body.prompt),
       userPrompt: cleanOptionalPrompt(body.fix_prompt),
       onProgress,
     });
@@ -211,6 +297,64 @@ async function runApplyFixJob(args: {
   }
 }
 
+function createApplyFixStream(args: {
+  projectId: string;
+  userId: string;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  body: ApplyFixBody;
+}) {
+  const { projectId, userId, supabase, body } = args;
+  const encoder = new TextEncoder();
+  const stream = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = stream.writable.getWriter();
+
+  const send = (event: string, data: unknown) => {
+    try {
+      void writer.write(
+        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+      );
+    } catch {
+      // Client disconnected.
+    }
+  };
+
+  (async () => {
+    try {
+      send("status", {
+        message: `Starting fix for ${body.owner}/${body.repo}…`,
+      });
+      const result = await runApplyFixJob({
+        projectId,
+        userId,
+        supabase,
+        body,
+        onProgress: (message) => send("status", { message }),
+      });
+      send("done", result);
+    } catch (err) {
+      send("failed", {
+        message: routeErrorMessage(err),
+        status: err instanceof RouteError ? err.status : 500,
+      });
+    } finally {
+      try {
+        await writer.close();
+      } catch {
+        // Already closed.
+      }
+    }
+  })();
+
+  return new Response(stream.readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
 export async function POST(
   request: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -232,6 +376,14 @@ export async function POST(
   }
 
   try {
+    if (body.stream) {
+      return createApplyFixStream({
+        projectId,
+        userId: user.id,
+        supabase,
+        body,
+      });
+    }
     const result = await runApplyFixJob({
       projectId,
       userId: user.id,
@@ -259,60 +411,34 @@ export async function GET(
   }
 
   let body: ApplyFixBody;
+  let previewPrompt = false;
   try {
     const url = new URL(request.url);
     body = querySchema.parse(Object.fromEntries(url.searchParams.entries()));
+    previewPrompt = url.searchParams.get("preview_prompt") === "1";
   } catch {
     return new Response("Bad request", { status: 400 });
   }
 
-  const encoder = new TextEncoder();
-  const stream = new TransformStream<Uint8Array, Uint8Array>();
-  const writer = stream.writable.getWriter();
-
-  const send = (event: string, data: unknown) => {
+  if (previewPrompt) {
     try {
-      void writer.write(
-        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-      );
-    } catch {
-      // Client disconnected.
-    }
-  };
-
-  (async () => {
-    try {
-      send("status", {
-        message: `Starting fix for ${body.owner}/${body.repo}…`,
-      });
-      const result = await runApplyFixJob({
+      const data = await buildPromptPreview({
         projectId,
         userId: user.id,
         supabase,
         body,
-        onProgress: (message) => send("status", { message }),
       });
-      send("done", result);
+      return NextResponse.json({ data });
     } catch (err) {
-      send("failed", {
-        message: routeErrorMessage(err),
-        status: err instanceof RouteError ? err.status : 500,
-      });
-    } finally {
-      try {
-        await writer.close();
-      } catch {
-        // Already closed.
-      }
+      const status = err instanceof RouteError ? err.status : 500;
+      return NextResponse.json({ error: routeErrorMessage(err) }, { status });
     }
-  })();
+  }
 
-  return new Response(stream.readable, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
+  return createApplyFixStream({
+    projectId,
+    userId: user.id,
+    supabase,
+    body,
   });
 }
