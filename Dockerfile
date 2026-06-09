@@ -38,8 +38,10 @@ FROM mcr.microsoft.com/playwright:v1.48.0-jammy AS runtime
 WORKDIR /app
 
 # pandoc for canonical Markdown -> HTML conversion in the worker.
+# dnsutils (dig/delv) + openssl power the Security Posture engine's
+# DNS/DNSSEC/DANE and TLS/certificate inspection.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends pandoc tini \
+  && apt-get install -y --no-install-recommends pandoc tini dnsutils openssl \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production

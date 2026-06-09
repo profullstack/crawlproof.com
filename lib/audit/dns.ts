@@ -31,6 +31,31 @@ const DKIM_SELECTORS = [
   "dkim",
 ];
 
+// Common SRV service labels worth probing. SRV records can't be enumerated, so
+// we check the well-known ones (mail, chat, calendaring, VoIP, game servers).
+const SRV_SERVICES = [
+  "_sip._tls",
+  "_sip._tcp",
+  "_sips._tcp",
+  "_xmpp-server._tcp",
+  "_xmpp-client._tcp",
+  "_autodiscover._tcp",
+  "_caldav._tcp",
+  "_caldavs._tcp",
+  "_carddav._tcp",
+  "_carddavs._tcp",
+  "_submission._tcp",
+  "_imap._tcp",
+  "_imaps._tcp",
+  "_pop3._tcp",
+  "_pop3s._tcp",
+  "_ldap._tcp",
+  "_matrix._tcp",
+  "_minecraft._tcp",
+];
+
+export type SrvRecord = { priority: number; weight: number; port: number; name: string };
+
 export type DnsRecords = {
   domain: string;
   a: string[];
@@ -48,8 +73,31 @@ export type DnsRecords = {
   mtaSts: string[];
   tlsRpt: string[];
   bimi: string[];
+  cname: Array<{ name: string; target: string }>;
+  srv: Array<{ service: string; records: SrvRecord[] }>;
+  dnssec: { ds: string[]; dnskey: string[]; signed: boolean };
+  https: string[];
+  svcb: string[];
   errors: string[];
 };
+
+// DNS-over-HTTPS (Cloudflare JSON) for record types the built-in node:dns
+// resolver can't query: DS (43), DNSKEY (48), SVCB (64), HTTPS (65). Built on
+// the global fetch — still no external deps and no shell. Best-effort: any
+// failure resolves to an empty list so it never aborts the collection.
+async function dohData(name: string, type: string, wantType: number): Promise<string[]> {
+  try {
+    const res = await fetch(
+      `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`,
+      { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) return [];
+    const json = (await res.json()) as { Answer?: Array<{ type: number; data: string }> };
+    return (json.Answer ?? []).filter((a) => a.type === wantType).map((a) => a.data);
+  } catch {
+    return [];
+  }
+}
 
 /** Extract a bare, validated registrable hostname from a URL or hostname. */
 export function domainFromTarget(input: string): string | null {
@@ -139,6 +187,40 @@ export async function collectDnsRecords(targetOrDomain: string): Promise<DnsReco
     }),
   );
 
+  // CNAME — apex is almost always absent (a CNAME at the zone apex is illegal),
+  // but www is frequently a CNAME to the host/CDN. Probe both.
+  const cnameAt = async (name: string): Promise<Array<{ name: string; target: string }>> => {
+    try {
+      return (await r.resolveCname(name)).map((target) => ({ name, target }));
+    } catch {
+      return [];
+    }
+  };
+
+  // SRV — probe the well-known service labels in parallel.
+  const srvResults = await Promise.all(
+    SRV_SERVICES.map(async (service) => {
+      try {
+        const records = (await r.resolveSrv(`${service}.${domain}`)) as SrvRecord[];
+        return records.length ? { service, records } : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  // DNSSEC (DS/DNSKEY) and service-binding records (HTTPS/SVCB) — node:dns can't
+  // query these rrtypes, so they go over DoH.
+  const [cnameApex, cnameWww, ds, dnskey, httpsApex, httpsWww, svcb] = await Promise.all([
+    cnameAt(domain),
+    cnameAt(`www.${domain}`),
+    dohData(domain, "DS", 43),
+    dohData(domain, "DNSKEY", 48),
+    dohData(domain, "HTTPS", 65),
+    dohData(`www.${domain}`, "HTTPS", 65),
+    dohData(domain, "SVCB", 64),
+  ]);
+
   return {
     domain,
     a,
@@ -158,6 +240,11 @@ export async function collectDnsRecords(targetOrDomain: string): Promise<DnsReco
     mtaSts,
     tlsRpt,
     bimi,
+    cname: [...cnameApex, ...cnameWww],
+    srv: srvResults.filter((x): x is { service: string; records: SrvRecord[] } => x !== null),
+    dnssec: { ds, dnskey, signed: ds.length > 0 || dnskey.length > 0 },
+    https: [...httpsApex, ...httpsWww],
+    svcb,
     errors,
   };
 }
@@ -181,8 +268,13 @@ export function dnsBaselineFindings(rec: DnsRecords): Finding[] {
     title: `Resolved DNS footprint for ${rec.domain}`,
     detail: [
       `A: ${rec.a.join(", ") || "—"}`,
+      `AAAA: ${rec.aaaa.join(", ") || "—"}`,
+      `CNAME: ${rec.cname.map((c) => `${c.name} → ${c.target}`).join(", ") || "—"}`,
       `MX: ${rec.mx.map((m) => `${m.priority} ${m.exchange}`).join(", ") || "—"}`,
       `NS: ${rec.ns.join(", ") || "—"}`,
+      `SRV: ${rec.srv.map((s) => s.service).join(", ") || "—"}`,
+      `DNSSEC: ${rec.dnssec.signed ? `signed (${rec.dnssec.dnskey.length} DNSKEY, ${rec.dnssec.ds.length} DS)` : "unsigned"}`,
+      `HTTPS/SVCB: ${[...rec.https, ...rec.svcb].join(" | ") || "—"}`,
       `DKIM selectors found: ${rec.dkim.map((d) => d.selector).join(", ") || "none"}`,
     ].join("\n"),
     evidence: { ...rec },

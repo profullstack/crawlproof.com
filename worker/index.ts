@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { runAudit } from "../lib/audit/engine";
 import { specAudit } from "../lib/audit/spec-engine";
 import { dnsAudit } from "../lib/audit/dns-engine";
+import { postureAudit } from "../lib/audit/posture/engine";
 import { linksAudit } from "../lib/audit/links-engine";
 import { vu1nzAudit } from "../lib/audit/vu1nz-engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
@@ -338,6 +339,7 @@ async function processJob(job: Job) {
         | "rule"
         | "spec"
         | "dns"
+        | "posture"
         | "links"
         | "vu1nz"
         | "claude"
@@ -366,6 +368,7 @@ async function processJob(job: Job) {
     // shape as the LLM engines, so it rides the same dispatch branch.
     const llmEngines = {
       dns: dnsAudit,
+      posture: postureAudit,
       claude: claudeAudit,
       openai: openaiAudit,
       gemini: geminiAudit,

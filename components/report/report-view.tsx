@@ -294,7 +294,8 @@ export function reportSections(findings: Finding[], engine?: string | null): str
   const findingSections = Array.from(
     new Set(findings.map((f) => f.section).filter(Boolean)),
   );
-  const compactEngine = engine === "dns" || engine === "links" || engine === "spec";
+  const compactEngine =
+    engine === "dns" || engine === "posture" || engine === "links" || engine === "spec";
   if (compactEngine) {
     return findingSections.length > 0 ? findingSections : [...SECTIONS];
   }

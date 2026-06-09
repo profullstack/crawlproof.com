@@ -37,7 +37,7 @@ Analyze the domain's DNS footprint with a focus on email deliverability and anti
 - Mail authentication: SPF (presence, include count vs. the RFC 7208 10-lookup limit, terminal -all/~all/+all), DKIM (which selectors resolved), DMARC (policy p=, presence of rua reporting, alignment).
 - Mail routing: MX records and any provider-specific Return-Path / bounce subdomain (e.g. a "send." subdomain for Resend with its own SPF + feedback MX).
 - Transport hardening: MTA-STS, TLS-RPT, BIMI.
-- General: A/AAAA, NS, SOA, and CAA (cert-issuance restriction).
+- General: A/AAAA, NS, SOA, CAA (cert-issuance restriction), CNAME (www/apex aliasing), SRV service records, DNSSEC (DS/DNSKEY — is the zone signed?), and HTTPS/SVCB service-binding records (ALPN, ECH, ipv4hint/ipv6hint).
 
 For every issue produce a finding. Classify harm honestly:
 - fail = harmful or a real spoofing/deliverability risk (e.g. no SPF, no DMARC, p reject without alignment, +all).
@@ -78,12 +78,17 @@ function baselineMarkdown(rec: DnsRecords, findings: Finding[]): string {
     "",
     "## Footprint",
     "```",
-    `A:    ${rec.a.join(", ") || "—"}`,
-    `MX:   ${rec.mx.map((m) => `${m.priority} ${m.exchange}`).join(", ") || "—"}`,
-    `NS:   ${rec.ns.join(", ") || "—"}`,
-    `SPF:  ${rec.spf ?? "—"}`,
-    `DMARC:${rec.dmarc ?? "—"}`,
-    `DKIM: ${rec.dkim.map((d) => d.selector).join(", ") || "none found"}`,
+    `A:     ${rec.a.join(", ") || "—"}`,
+    `AAAA:  ${rec.aaaa.join(", ") || "—"}`,
+    `CNAME: ${rec.cname.map((c) => `${c.name} → ${c.target}`).join(", ") || "—"}`,
+    `MX:    ${rec.mx.map((m) => `${m.priority} ${m.exchange}`).join(", ") || "—"}`,
+    `NS:    ${rec.ns.join(", ") || "—"}`,
+    `SRV:   ${rec.srv.map((s) => s.service).join(", ") || "—"}`,
+    `DNSSEC:${rec.dnssec.signed ? " signed" : " unsigned"}`,
+    `HTTPS: ${[...rec.https, ...rec.svcb].join(" | ") || "—"}`,
+    `SPF:   ${rec.spf ?? "—"}`,
+    `DMARC: ${rec.dmarc ?? "—"}`,
+    `DKIM:  ${rec.dkim.map((d) => d.selector).join(", ") || "none found"}`,
     "```",
   ];
   return lines.join("\n");

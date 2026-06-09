@@ -24,6 +24,7 @@ const ENGINE_COLORS: Record<Engine, string> = {
   rule: "#9aa3b2",
   spec: "#64748b",
   dns: "#84cc16",
+  posture: "#0ea5e9",
   links: "#14b8a6",
   vu1nz: "#f97316",
   claude: "#d97706",

@@ -47,7 +47,7 @@ async function notifyWorker(auditId: string, pdfEmail?: string) {
   }
 }
 
-const ALL_ENGINES: Engine[] = ["rule", "spec", "dns", "links", "vu1nz", "claude", "openai", "gemini", "qwen", "kimi", "deepseek", "perplexity"];
+const ALL_ENGINES: Engine[] = ["rule", "spec", "dns", "posture", "links", "vu1nz", "claude", "openai", "gemini", "qwen", "kimi", "deepseek", "perplexity"];
 
 function normalizeEngines(input: unknown, signedIn: boolean): Engine[] {
   if (!signedIn) return ["rule"];

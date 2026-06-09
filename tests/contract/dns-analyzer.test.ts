@@ -22,6 +22,11 @@ function records(overrides: Partial<DnsRecords> = {}): DnsRecords {
     mtaSts: [],
     tlsRpt: [],
     bimi: [],
+    cname: [],
+    srv: [],
+    dnssec: { ds: [], dnskey: [], signed: false },
+    https: [],
+    svcb: [],
     errors: [],
     ...overrides,
   };

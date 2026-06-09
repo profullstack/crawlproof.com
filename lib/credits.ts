@@ -61,6 +61,7 @@ export type Engine =
   | "rule"
   | "spec"
   | "dns"
+  | "posture"
   | "links"
   | "vu1nz"
   | "claude"
@@ -101,7 +102,14 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     cost: 0,
     available: true,
     blurb:
-      "Resolves your domain's full DNS footprint — A/AAAA, MX, NS, SOA, CAA plus email auth (SPF, DKIM, DMARC, MTA-STS, BIMI) — then has AI flag missing, weak, or harmful records and hand you paste-ready fixes. Free.",
+      "Resolves your domain's full DNS footprint — A/AAAA, CNAME, MX, NS, SOA, CAA, SRV, DNSSEC, HTTPS/SVCB plus email auth (SPF, DKIM, DMARC, MTA-STS, BIMI) — then has AI flag missing, weak, or harmful records and hand you paste-ready fixes. Free.",
+  },
+  posture: {
+    label: "Security Posture",
+    cost: 0,
+    available: true,
+    blurb:
+      "Hardenize-style domain security report — inspects DNS, DNSSEC, email auth (SPF/DKIM/DMARC/MTA-STS/DANE), TLS protocols & cipher, and the certificate using server tools (dig/openssl), then grades each category A–F. Free.",
   },
   links: {
     label: "Link checker",
