@@ -36,6 +36,8 @@ interface ApplyFixInput {
   targetUrl: string;
   /** Optional subdirectory hint (e.g. "apps/web") to start exploration in. */
   rootPath?: string;
+  /** Optional user guidance for this PR, such as brand naming rules. */
+  userPrompt?: string;
   onProgress?: (message: string) => void | Promise<void>;
 }
 
@@ -176,14 +178,16 @@ Hard limits:
 - Each write must be under ${MAX_FILE_WRITE_BYTES} bytes; total writes across the run under ${MAX_TOTAL_WRITE_BYTES} bytes.`;
 }
 
-function buildUserPrompt(input: {
+export function buildApplyFixUserPrompt(input: {
   finding: FindingInput;
   targetUrl: string;
   defaultBranch: string;
   rootPath?: string;
+  userPrompt?: string;
 }): string {
   return `Target site: ${input.targetUrl}
 Default branch: ${input.defaultBranch}${input.rootPath ? `\nUser hint: the site code lives under \`${input.rootPath}\` — start there.` : ""}
+${input.userPrompt ? `\nAdditional user guidance for this PR:\n${input.userPrompt.trim()}\n` : ""}
 
 Audit finding to fix:
 - Check key: ${input.finding.check_key}
@@ -356,11 +360,12 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
   };
 
   const system = buildSystemPrompt(input.owner, input.repo);
-  const userPrompt = buildUserPrompt({
+  const userPrompt = buildApplyFixUserPrompt({
     finding: input.finding,
     targetUrl: input.targetUrl,
     defaultBranch: ref,
     rootPath: input.rootPath,
+    userPrompt: input.userPrompt,
   });
 
   const messages: Anthropic.MessageParam[] = [
@@ -482,7 +487,7 @@ export async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     head: branch,
     base: ref,
     title: `CrawlProof fix: ${input.finding.title}`,
-    body: prBody(input.finding, state.explanation, changed, iteration),
+    body: prBody(input.finding, state.explanation, changed, iteration, input.userPrompt),
   });
 
   return {
@@ -500,6 +505,7 @@ function prBody(
   explanation: string,
   changed: string[],
   iterations: number,
+  userPrompt?: string,
 ): string {
   return `**CrawlProof automated fix** for the following audit finding:
 
@@ -513,6 +519,7 @@ ${changed.map((p) => `- \`${p}\``).join("\n")}
 
 **Why:**
 ${explanation || "(no summary provided)"}
+${userPrompt?.trim() ? `\n**User guidance:**\n${userPrompt.trim()}\n` : ""}
 
 ---
 

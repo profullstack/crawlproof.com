@@ -1,5 +1,5 @@
 // POST /api/projects/[id]/github/apply-fix
-// Body: { owner, repo, installation_id, audit_id, finding_key }
+// Body: { owner, repo, installation_id, audit_id, finding_key, fix_prompt? }
 // Consumes SCAN_CREDITS credits, asks Claude to patch the repo for one
 // specific audit finding, opens a PR. Refunds the credits on any failure.
 
@@ -23,6 +23,7 @@ const bodySchema = z.object({
   installation_id: z.number().int().positive(),
   audit_id: z.string().uuid(),
   finding_key: z.string().min(1),
+  fix_prompt: z.string().max(2000).optional(),
   /** Optional starting hint for monorepos (e.g. "apps/web"). */
   root_path: z.string().max(500).optional(),
 });
@@ -44,6 +45,11 @@ class RouteError extends Error {
 
 function routeErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function cleanOptionalPrompt(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 async function runApplyFixJob(args: {
@@ -174,6 +180,7 @@ async function runApplyFixJob(args: {
       },
       targetUrl: (audit as { target_url: string }).target_url,
       rootPath: body.root_path,
+      userPrompt: cleanOptionalPrompt(body.fix_prompt),
       onProgress,
     });
 
