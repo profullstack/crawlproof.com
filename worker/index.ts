@@ -5,6 +5,7 @@ import { runAudit } from "../lib/audit/engine";
 import { specAudit } from "../lib/audit/spec-engine";
 import { dnsAudit } from "../lib/audit/dns-engine";
 import { linksAudit } from "../lib/audit/links-engine";
+import { vu1nzAudit } from "../lib/audit/vu1nz-engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
 import { openaiAudit } from "../lib/audit/openai-engine";
 import { geminiAudit } from "../lib/audit/gemini-engine";
@@ -298,6 +299,7 @@ async function processJob(job: Job) {
         | "spec"
         | "dns"
         | "links"
+        | "vu1nz"
         | "claude"
         | "openai"
         | "gemini"
@@ -341,6 +343,12 @@ async function processJob(job: Job) {
       markdown = r.markdown;
     } else if (engine === "links") {
       const r = await linksAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = r.markdown;
+    } else if (engine === "vu1nz") {
+      const r = await vu1nzAudit(audit.target_url);
       score = r.score;
       summary = r.summary;
       findings = r.findings;
