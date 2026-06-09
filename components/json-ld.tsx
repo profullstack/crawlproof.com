@@ -10,6 +10,14 @@ function Tag({ data }: { data: unknown }) {
   );
 }
 
+// Authoritative external profiles for knowledge graph anchoring.
+// Keep in sync with the SAME_AS constant in app/layout.tsx.
+const SAME_AS = [
+  "https://github.com/profullstack/crawlproof.com",
+  "https://www.linkedin.com/company/crawlproof",
+  "https://www.crunchbase.com/organization/crawlproof",
+];
+
 export function OrganizationJsonLd() {
   return (
     <Tag
@@ -19,7 +27,7 @@ export function OrganizationJsonLd() {
         name: "CrawlProof",
         url: env.siteUrl,
         logo: `${env.siteUrl}/icon.png`,
-        sameAs: [],
+        sameAs: SAME_AS,
       }}
     />
   );
