@@ -14,7 +14,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string; runId: string }> },
 ) {
   const { id: projectId, runId } = await params;
-  const access = await requireProjectAccess(projectId);
+  const access = await requireProjectAccess(projectId, { allowViewer: true });
   if (!access.ok) {
     return new Response(access.error, { status: access.error === "Not authenticated." ? 401 : 404 });
   }

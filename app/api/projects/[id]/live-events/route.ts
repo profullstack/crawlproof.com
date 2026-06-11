@@ -35,7 +35,7 @@ export async function GET(
 ) {
   const { id: projectId } = await params;
 
-  const access = await requireProjectAccess(projectId);
+  const access = await requireProjectAccess(projectId, { allowViewer: true });
   if (!access.ok) {
     const status = access.error === "Not authenticated." ? 401 : 404;
     return NextResponse.json({ error: access.error }, { status });

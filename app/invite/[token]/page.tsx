@@ -15,7 +15,7 @@ export default async function InvitePage({
 
   const { data: inv } = await svc
     .from("project_invitations")
-    .select("id, project_id, email, expires_at, accepted_at")
+    .select("id, project_id, email, expires_at, accepted_at, role")
     .eq("token", token)
     .maybeSingle();
 
@@ -118,6 +118,7 @@ export default async function InvitePage({
       project_id: inv.project_id,
       user_id: user.id,
       invited_by: invitationFull?.invited_by ?? user.id,
+      role: inv.role === "viewer" ? "viewer" : "member",
     });
   }
 
