@@ -5,9 +5,27 @@ import {
   inviteProjectMember,
   revokeProjectInvitation,
   removeProjectMember,
+  setProjectMemberRole,
   type TeamMember,
   type PendingInvitation,
+  type ProjectMemberRole,
 } from "@/app/actions/project-members";
+
+function RoleBadge({ role }: { role: ProjectMemberRole }) {
+  const isViewer = role === "viewer";
+  return (
+    <span
+      className={`badge ${isViewer ? "" : "badge-pass"} text-xs`}
+      title={
+        isViewer
+          ? "Read-only — can view stats and project data but cannot make changes"
+          : "Full team member — can view and edit project data"
+      }
+    >
+      {isViewer ? "Read-only" : "Member"}
+    </span>
+  );
+}
 
 export function MembersClient({
   projectId,
@@ -64,6 +82,7 @@ export function MembersClient({
 
 function InviteForm({ projectId }: { projectId: string }) {
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState<ProjectMemberRole>("member");
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
 
@@ -71,7 +90,7 @@ function InviteForm({ projectId }: { projectId: string }) {
     e.preventDefault();
     setMessage(null);
     start(async () => {
-      const res = await inviteProjectMember(projectId, email);
+      const res = await inviteProjectMember(projectId, email, role);
       if (res.ok) {
         setEmail("");
         setMessage({ ok: true, text: "Invitation sent." });
@@ -85,7 +104,8 @@ function InviteForm({ projectId }: { projectId: string }) {
     <section className="card p-4">
       <h2 className="text-lg font-semibold">Invite a team member</h2>
       <p className="mt-1 text-sm text-[var(--color-muted)]">
-        They'll get an email with a link to join this project.
+        They'll get an email with a link to join this project. Invitees sign up
+        for free — no payment required.
       </p>
       <form onSubmit={onSubmit} className="mt-3 flex flex-wrap gap-2">
         <input
@@ -97,10 +117,23 @@ function InviteForm({ projectId }: { projectId: string }) {
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="off"
         />
+        <select
+          className="input w-auto"
+          value={role}
+          onChange={(e) => setRole(e.target.value as ProjectMemberRole)}
+          aria-label="Access level"
+        >
+          <option value="member">Member (can edit)</option>
+          <option value="viewer">Read-only (view stats)</option>
+        </select>
         <button type="submit" className="btn" disabled={pending}>
           {pending ? "Sending…" : "Send invite"}
         </button>
       </form>
+      <p className="mt-2 text-xs text-[var(--color-muted)]">
+        Read-only members can view stats and project data but can't change any
+        settings.
+      </p>
       {message && (
         <p
           className={`mt-2 text-sm ${
@@ -129,6 +162,7 @@ function MemberRow({
   const sub = member.profile?.display_name
     ? member.profile.email
     : new Date(member.created_at).toLocaleDateString();
+  const isViewer = member.role === "viewer";
 
   function onRemove() {
     start(async () => {
@@ -136,23 +170,50 @@ function MemberRow({
     });
   }
 
+  function onToggleRole() {
+    start(async () => {
+      await setProjectMemberRole(
+        projectId,
+        member.user_id,
+        isViewer ? "member" : "viewer",
+      );
+    });
+  }
+
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 p-3">
       <div>
-        <p className="text-sm font-medium">{label}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium">{label}</p>
+          <RoleBadge role={member.role} />
+        </div>
         {sub && (
           <p className="text-xs text-[var(--color-muted)]">{sub}</p>
         )}
       </div>
       {isOwner && (
-        <button
-          type="button"
-          className="btn-ghost text-xs text-[var(--color-fail)]"
-          disabled={pending}
-          onClick={onRemove}
-        >
-          {pending ? "Removing…" : "Remove"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            disabled={pending}
+            onClick={onToggleRole}
+          >
+            {pending
+              ? "Saving…"
+              : isViewer
+                ? "Make editor"
+                : "Make read-only"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost text-xs text-[var(--color-fail)]"
+            disabled={pending}
+            onClick={onRemove}
+          >
+            {pending ? "Removing…" : "Remove"}
+          </button>
+        </div>
       )}
     </li>
   );
@@ -177,7 +238,10 @@ function InvitationRow({
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 p-3">
       <div>
-        <p className="text-sm font-medium">{invitation.email}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium">{invitation.email}</p>
+          <RoleBadge role={invitation.role} />
+        </div>
         <p className="text-xs text-[var(--color-muted)]">
           {expired
             ? "Expired"
