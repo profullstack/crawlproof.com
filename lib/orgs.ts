@@ -8,10 +8,12 @@ export type OrgSummary = {
   role: OrgRole;
 };
 
-export type OrgRole = "owner" | "member" | "project_member";
+export type OrgRole = "owner" | "member" | "viewer" | "project_member";
 
-export function isOrgWideRole(role: OrgRole | null | undefined): role is "owner" | "member" {
-  return role === "owner" || role === "member";
+export function isOrgWideRole(
+  role: OrgRole | null | undefined,
+): role is "owner" | "member" | "viewer" {
+  return role === "owner" || role === "member" || role === "viewer";
 }
 
 export function missingOrgSchema(error: unknown) {

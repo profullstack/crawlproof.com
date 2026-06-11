@@ -5,6 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import { encryptSecret } from "@/lib/sp/vault";
+import { syncDataSource, syncAllForOrg } from "@/lib/audience/sync";
+import { sendOrgAudienceBlast } from "@/lib/audience/blast";
+import { assertReadOnlySelect } from "@/lib/audience/connectors";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -299,6 +302,197 @@ export async function deleteOrganizationOutreachConfig(input: {
 
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+// --- Org audience: connected project databases + mass email ----------------
+
+async function requireOrgOwner(
+  organizationId: string,
+): Promise<{ ok: true; userId: string } | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  const svc = serviceClient();
+  const { data: member } = await svc
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("user_id", user.id)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (!member) return { ok: false, error: "You must own this org." };
+  return { ok: true, userId: user.id };
+}
+
+export async function saveOrganizationDataSource(input: {
+  organizationId: string;
+  label: string;
+  kind: "supabase" | "turso";
+  // Supabase
+  supabaseUrl?: string;
+  serviceRoleKey?: string;
+  sourceMode?: "auth_users" | "table";
+  tableName?: string;
+  emailColumn?: string;
+  // Turso
+  tursoUrl?: string;
+  authToken?: string;
+  emailQuery?: string;
+}): Promise<Ok<{ id: string }> | Err> {
+  const owner = await requireOrgOwner(input.organizationId);
+  if (!owner.ok) return owner;
+
+  const label = input.label.trim().replace(/\s+/g, " ").slice(0, 80);
+  if (!label) return { ok: false, error: "Label is required." };
+
+  const patch: Record<string, unknown> = {
+    organization_id: input.organizationId,
+    created_by: owner.userId,
+    label,
+    kind: input.kind,
+    enabled: true,
+    supabase_url: null,
+    enc_service_role_key: null,
+    source_mode: null,
+    table_name: null,
+    email_column: null,
+    turso_url: null,
+    enc_auth_token: null,
+    email_query: null,
+  };
+
+  try {
+    if (input.kind === "supabase") {
+      const url = clean(input.supabaseUrl);
+      if (!url) return { ok: false, error: "Supabase URL is required." };
+      const mode = input.sourceMode === "table" ? "table" : "auth_users";
+      patch.supabase_url = url;
+      patch.source_mode = mode;
+      if (mode === "table") {
+        const table = clean(input.tableName);
+        const column = clean(input.emailColumn);
+        if (!table || !column) {
+          return { ok: false, error: "Table name and email column are required for table mode." };
+        }
+        patch.table_name = table;
+        patch.email_column = column;
+      }
+      const key = clean(input.serviceRoleKey);
+      if (key) patch.enc_service_role_key = encryptSecret(key);
+      else return { ok: false, error: "Service role key is required." };
+    } else {
+      const url = clean(input.tursoUrl);
+      const query = clean(input.emailQuery);
+      if (!url) return { ok: false, error: "Turso URL is required." };
+      if (!query) return { ok: false, error: "Email query is required." };
+      const guard = assertReadOnlySelect(query);
+      if (guard) return { ok: false, error: guard };
+      patch.turso_url = url;
+      patch.email_query = query;
+      const token = clean(input.authToken);
+      if (token) patch.enc_auth_token = encryptSecret(token);
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not encrypt source credentials.",
+    };
+  }
+
+  const svc = serviceClient();
+  const { data, error } = await svc
+    .from("organization_data_sources")
+    .insert(patch)
+    .select("id")
+    .single();
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true, id: data.id as string };
+}
+
+export async function deleteOrganizationDataSource(input: {
+  organizationId: string;
+  sourceId: string;
+}): Promise<Ok | Err> {
+  const owner = await requireOrgOwner(input.organizationId);
+  if (!owner.ok) return owner;
+
+  const svc = serviceClient();
+  const { error } = await svc
+    .from("organization_data_sources")
+    .delete()
+    .eq("id", input.sourceId)
+    .eq("organization_id", input.organizationId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function syncOrganizationDataSource(input: {
+  organizationId: string;
+  sourceId: string;
+}): Promise<Ok<{ imported: number; added: number }> | Err> {
+  const owner = await requireOrgOwner(input.organizationId);
+  if (!owner.ok) return owner;
+
+  const result = await syncDataSource(input.organizationId, input.sourceId);
+  if (!result.ok) return { ok: false, error: result.error ?? "Sync failed." };
+
+  revalidatePath("/dashboard");
+  return { ok: true, imported: result.imported, added: result.added };
+}
+
+export async function syncAllOrganizationAudience(input: {
+  organizationId: string;
+}): Promise<Ok<{ imported: number; added: number; failed: number }> | Err> {
+  const owner = await requireOrgOwner(input.organizationId);
+  if (!owner.ok) return owner;
+
+  const results = await syncAllForOrg(input.organizationId);
+  const imported = results.reduce((n, r) => n + r.imported, 0);
+  const added = results.reduce((n, r) => n + r.added, 0);
+  const failed = results.filter((r) => !r.ok).length;
+
+  revalidatePath("/dashboard");
+  return { ok: true, imported, added, failed };
+}
+
+export async function sendOrganizationAudienceBlast(input: {
+  organizationId: string;
+  subject: string;
+  html: string;
+  previewTo?: string;
+}): Promise<Ok<{ total: number; sent: number; failed: number; skipped: number }> | Err> {
+  const owner = await requireOrgOwner(input.organizationId);
+  if (!owner.ok) return owner;
+
+  const subject = input.subject.trim();
+  const html = input.html.trim();
+  if (!subject) return { ok: false, error: "Subject is required." };
+  if (!html) return { ok: false, error: "Message body is required." };
+
+  const preview = clean(input.previewTo);
+  const result = await sendOrgAudienceBlast({
+    organizationId: input.organizationId,
+    subject,
+    html,
+    createdBy: owner.userId,
+    previewTo: preview ?? undefined,
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Send failed." };
+
+  revalidatePath("/dashboard");
+  return {
+    ok: true,
+    total: result.total,
+    sent: result.sent,
+    failed: result.failed,
+    skipped: result.skipped,
+  };
 }
 
 export async function deleteOrganization(input: {

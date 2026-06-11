@@ -22,6 +22,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
     "@ip-location-db/geolite2-city-mmdb": "^2.3.2026052019",
+    "@libsql/client": "^0.17.3",
     "@profullstack/autoblog": "github:profullstack/autoblog#75e54af",
     "@profullstack/emailer": "^1.0.1",
     "@profullstack/referrals": "^0.1.0",

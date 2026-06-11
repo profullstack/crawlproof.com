@@ -38,6 +38,12 @@ export async function sendOutreachEmail(input: {
   to: string;
   subject: string;
   body: string;
+  // Optional pre-rendered HTML. When omitted, HTML is derived from `body`.
+  // Used by audience campaigns to send real HTML + unsubscribe footer.
+  html?: string;
+  // Extra mail headers (e.g. List-Unsubscribe). Passed to both SMTP and
+  // Resend so native unsubscribe buttons render.
+  headers?: Record<string, string>;
   replyTo?: string | null;
   config?: OutreachConfig | null;
 }): Promise<DeliveryResult> {
@@ -59,10 +65,15 @@ export async function sendOutreachEmail(input: {
     };
   }
 
+  // Honor an explicit per-org provider choice: a "resend" config must never
+  // be hijacked by a global SMTP_HOST env. With no config we keep the legacy
+  // default of falling back to the global SMTP host.
   const smtpHost =
-    input.config?.provider === "smtp" && input.config.smtp_host
-      ? input.config.smtp_host
-      : env.smtpHost;
+    input.config?.provider === "resend"
+      ? ""
+      : input.config?.provider === "smtp"
+        ? input.config.smtp_host ?? env.smtpHost
+        : env.smtpHost;
   if (smtpHost) {
     try {
       const transporter = nodemailer.createTransport({
@@ -88,7 +99,8 @@ export async function sendOutreachEmail(input: {
         replyTo: input.config?.reply_to ?? input.replyTo ?? undefined,
         subject: input.subject,
         text: input.body,
-        html: paragraphHtml(input.body),
+        html: input.html ?? paragraphHtml(input.body),
+        headers: input.headers,
       });
       return {
         sent: true,
@@ -116,7 +128,8 @@ export async function sendOutreachEmail(input: {
     replyTo: input.config?.reply_to ?? input.replyTo ?? undefined,
     subject: input.subject,
     text: input.body,
-    html: paragraphHtml(input.body),
+    html: input.html ?? paragraphHtml(input.body),
+    headers: input.headers,
   });
   if (result.error) {
     return { sent: false, provider: "resend", error: String(result.error) };

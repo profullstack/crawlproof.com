@@ -103,3 +103,20 @@ export async function unsubscribeByToken(
   if (error || !data) return { ok: false };
   return { ok: true, email: data.email as string };
 }
+
+// Unsubscribe an imported org-audience contact (mass-email recipient). Marks
+// the per-org row suppressed; the contact won't receive future org blasts.
+export async function unsubscribeOrgAudienceByToken(
+  token: string,
+): Promise<{ ok: boolean; email?: string }> {
+  if (!token || token.length < 8) return { ok: false };
+  const svc = serviceClient();
+  const { data, error } = await svc
+    .from("organization_audience_contacts")
+    .update({ unsubscribed_at: new Date().toISOString() })
+    .eq("unsubscribe_token", token)
+    .select("email")
+    .maybeSingle();
+  if (error || !data) return { ok: false };
+  return { ok: true, email: data.email as string };
+}
