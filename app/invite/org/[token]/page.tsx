@@ -15,7 +15,7 @@ export default async function OrgInvitePage({
 
   const { data: inv } = await svc
     .from("organization_invitations")
-    .select("id, organization_id, email, expires_at, accepted_at")
+    .select("id, organization_id, email, role, expires_at, accepted_at")
     .eq("token", token)
     .maybeSingle();
 
@@ -105,16 +105,19 @@ export default async function OrgInvitePage({
     .eq("user_id", user.id)
     .maybeSingle();
 
+  const invitedRole =
+    (inv as { role?: string }).role === "viewer" ? "viewer" : "member";
+
   if (!existing) {
     await svc.from("organization_members").insert({
       organization_id: inv.organization_id,
       user_id: user.id,
-      role: "member",
+      role: invitedRole,
     });
   } else if ((existing as { role?: string }).role === "project_member") {
     await svc
       .from("organization_members")
-      .update({ role: "member" })
+      .update({ role: invitedRole })
       .eq("id", (existing as { id: string }).id);
   }
 

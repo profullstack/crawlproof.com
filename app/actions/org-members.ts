@@ -34,13 +34,19 @@ async function requireOrgOwner(orgId: string) {
   return { ok: true as const, user, org, supabase, svc };
 }
 
+export type OrgInviteRole = "member" | "viewer";
+
 export async function inviteOrgMember(
   orgId: string,
   email: string,
+  role: OrgInviteRole = "member",
 ): Promise<{ ok: boolean; error?: string }> {
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) {
     return { ok: false, error: "Invalid email address." };
+  }
+  if (role !== "member" && role !== "viewer") {
+    return { ok: false, error: "Invalid role." };
   }
 
   const ctx = await requireOrgOwner(orgId);
@@ -73,7 +79,7 @@ export async function inviteOrgMember(
       if ((existingMember as { role: OrgRole }).role === "project_member") {
         const { error } = await svc
           .from("organization_members")
-          .update({ role: "member" })
+          .update({ role })
           .eq("id", (existingMember as { id: string }).id);
         if (error) return { ok: false, error: error.message };
         revalidatePath("/dashboard");
@@ -92,7 +98,7 @@ export async function inviteOrgMember(
 
   const { data: invitation, error: insertErr } = await svc
     .from("organization_invitations")
-    .insert({ organization_id: orgId, email: normalized, invited_by: user.id })
+    .insert({ organization_id: orgId, email: normalized, invited_by: user.id, role })
     .select("token")
     .single();
 
@@ -169,13 +175,13 @@ export async function removeOrgMember(
         .update({ role: "project_member" })
         .eq("organization_id", orgId)
         .eq("user_id", userId)
-        .eq("role", "member")
+        .in("role", ["member", "viewer"])
     : await ctx.svc
         .from("organization_members")
         .delete()
         .eq("organization_id", orgId)
         .eq("user_id", userId)
-        .eq("role", "member");
+        .in("role", ["member", "viewer"]);
 
   if (error) return { ok: false, error: error.message };
 
@@ -186,6 +192,31 @@ export async function removeOrgMember(
     .update({ default_org_id: null })
     .eq("id", userId)
     .eq("default_org_id", orgId);
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+// Change an existing org member between full member and read-only viewer.
+// Owner-only. Never touches 'owner' or 'project_member' rows.
+export async function setOrgMemberRole(
+  orgId: string,
+  userId: string,
+  role: OrgInviteRole,
+): Promise<{ ok: boolean; error?: string }> {
+  if (role !== "member" && role !== "viewer") {
+    return { ok: false, error: "Invalid role." };
+  }
+  const ctx = await requireOrgOwner(orgId);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const { error } = await ctx.svc
+    .from("organization_members")
+    .update({ role })
+    .eq("organization_id", orgId)
+    .eq("user_id", userId)
+    .in("role", ["member", "viewer"]);
+  if (error) return { ok: false, error: error.message };
 
   revalidatePath("/dashboard");
   return { ok: true };
@@ -202,6 +233,7 @@ export type OrgTeamMember = {
 export type OrgPendingInvitation = {
   id: string;
   email: string;
+  role: OrgInviteRole;
   expires_at: string;
   created_at: string;
 };
@@ -264,7 +296,7 @@ export async function listOrgTeam(orgId: string): Promise<
   const { data: invitationsRaw } = isOwner
     ? await svc
         .from("organization_invitations")
-        .select("id, email, expires_at, created_at")
+        .select("id, email, role, expires_at, created_at")
         .eq("organization_id", orgId)
         .is("accepted_at", null)
         .order("created_at", { ascending: false })
