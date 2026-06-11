@@ -24,14 +24,18 @@ async function requireOwner(projectId: string) {
   return { ok: true as const, user, project, supabase };
 }
 
+export type ProjectMemberRole = "member" | "viewer";
+
 export async function inviteProjectMember(
   projectId: string,
   email: string,
+  role: ProjectMemberRole = "member",
 ): Promise<{ ok: boolean; error?: string }> {
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) {
     return { ok: false, error: "Invalid email address." };
   }
+  const memberRole: ProjectMemberRole = role === "viewer" ? "viewer" : "member";
 
   const ctx = await requireOwner(projectId);
   if (!ctx.ok) return { ok: false, error: ctx.error };
@@ -57,7 +61,7 @@ export async function inviteProjectMember(
 
   const { data: invitation, error: insertErr } = await svc
     .from("project_invitations")
-    .insert({ project_id: projectId, email: normalized, invited_by: user.id })
+    .insert({ project_id: projectId, email: normalized, invited_by: user.id, role: memberRole })
     .select("token")
     .single();
 
@@ -156,10 +160,31 @@ export async function removeProjectMember(
   return { ok: true };
 }
 
+export async function setProjectMemberRole(
+  projectId: string,
+  userId: string,
+  role: ProjectMemberRole,
+): Promise<{ ok: boolean; error?: string }> {
+  const memberRole: ProjectMemberRole = role === "viewer" ? "viewer" : "member";
+  const ctx = await requireOwner(projectId);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const { error } = await ctx.supabase
+    .from("project_members")
+    .update({ role: memberRole })
+    .eq("project_id", projectId)
+    .eq("user_id", userId);
+
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/projects/${projectId}/members`);
+  return { ok: true };
+}
+
 export type TeamMember = {
   id: string;
   user_id: string;
   created_at: string;
+  role: ProjectMemberRole;
   profile: { id: string; email: string; display_name: string } | null;
 };
 
@@ -168,6 +193,7 @@ export type PendingInvitation = {
   email: string;
   expires_at: string;
   created_at: string;
+  role: ProjectMemberRole;
 };
 
 export async function listProjectTeam(projectId: string): Promise<
@@ -196,7 +222,7 @@ export async function listProjectTeam(projectId: string): Promise<
 
   const { data: membersRaw } = await svc
     .from("project_members")
-    .select("id, user_id, created_at")
+    .select("id, user_id, created_at, role")
     .eq("project_id", projectId)
     .order("created_at", { ascending: true });
 
@@ -213,13 +239,14 @@ export async function listProjectTeam(projectId: string): Promise<
     id: m.id,
     user_id: m.user_id,
     created_at: m.created_at,
+    role: m.role === "viewer" ? "viewer" : "member",
     profile:
       (profilesRaw ?? []).find((p: any) => p.id === m.user_id) ?? null,
   }));
 
   const { data: invitationsRaw } = await svc
     .from("project_invitations")
-    .select("id, email, expires_at, created_at")
+    .select("id, email, expires_at, created_at, role")
     .eq("project_id", projectId)
     .is("accepted_at", null)
     .order("created_at", { ascending: false });
@@ -228,6 +255,9 @@ export async function listProjectTeam(projectId: string): Promise<
     ok: true,
     isOwner: project.owner_id === user.id,
     members,
-    invitations: invitationsRaw ?? [],
+    invitations: (invitationsRaw ?? []).map((i: any) => ({
+      ...i,
+      role: i.role === "viewer" ? "viewer" : "member",
+    })),
   };
 }
