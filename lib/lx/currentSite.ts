@@ -278,13 +278,25 @@ function normalizeProject(
 // Server-action / route-handler helper that verifies the signed-in user owns
 // or is a member of the given project. Returns the user id, an isOwner flag,
 // and the authenticated supabase client so callers can make further queries.
-export async function requireProjectAccess(projectId: string): Promise<
+// Gate a server action / route handler on project access.
+//
+// By DEFAULT this requires WRITE access — read-only ("viewer") project
+// members are rejected. This is deliberate: most callers mutate project
+// data, and many do so through the service-role client (which bypasses
+// RLS), so the only thing standing between a viewer and a mutation is
+// this gate. Read-only endpoints that viewers legitimately need (live
+// visitors, run status/markdown) must opt in with `{ allowViewer: true }`.
+export async function requireProjectAccess(
+  projectId: string,
+  opts: { allowViewer?: boolean } = {},
+): Promise<
   | { ok: false; error: string }
   | {
       ok: true;
       userId: string;
       userEmail: string | null;
       isOwner: boolean;
+      isViewer: boolean;
       supabase: Awaited<ReturnType<typeof createClient>>;
     }
 > {
@@ -302,14 +314,17 @@ export async function requireProjectAccess(projectId: string): Promise<
   if (!project) return { ok: false, error: "Not found." };
 
   const isOwner = (project as { owner_id: string }).owner_id === user.id;
+  let isViewer = false;
   if (!isOwner) {
     const { data: projectMembership } = await supabase
       .from("project_members")
-      .select("id")
+      .select("id, role")
       .eq("project_id", projectId)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (!projectMembership) {
+    if (projectMembership) {
+      isViewer = (projectMembership as { role?: string }).role === "viewer";
+    } else {
       const orgId = (project as { organization_id?: string | null }).organization_id;
       if (!orgId) return { ok: false, error: "Not found." };
       const { data: orgMembership } = await supabase
@@ -323,7 +338,19 @@ export async function requireProjectAccess(projectId: string): Promise<
     }
   }
 
-  return { ok: true, userId: user.id, userEmail: user.email ?? null, isOwner, supabase };
+  // Read-only members may only reach endpoints that explicitly allow it.
+  if (isViewer && !opts.allowViewer) {
+    return { ok: false, error: "Read-only access — you can't make changes to this project." };
+  }
+
+  return {
+    ok: true,
+    userId: user.id,
+    userEmail: user.email ?? null,
+    isOwner,
+    isViewer,
+    supabase,
+  };
 }
 
 // Server-action / route-handler helper that writes the cookie. The
