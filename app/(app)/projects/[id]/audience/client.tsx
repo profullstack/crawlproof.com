@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   createProjectApiKey,
+  revealProjectApiKey,
   revokeProjectApiKey,
 } from "@/app/actions/audience";
 
@@ -15,6 +16,7 @@ type KeyRow = {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  can_reveal: boolean;
 };
 
 type RepoRow = {
@@ -33,6 +35,29 @@ function fmt(iso: string | null): string {
   }
 }
 
+function KeyValue({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-2 flex items-start gap-2">
+      <code className="block min-w-0 flex-1 break-all rounded bg-[var(--color-bg)] p-2 text-xs">
+        {value}
+      </code>
+      <button
+        type="button"
+        className="btn btn-sm shrink-0"
+        onClick={() => {
+          void navigator.clipboard.writeText(value).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+      >
+        {copied ? "Copied ✓" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 export function AudienceKeysClient({
   projectId,
   keys,
@@ -44,6 +69,7 @@ export function AudienceKeysClient({
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [justMinted, setJustMinted] = useState<{ name: string; key: string } | null>(null);
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   function submit(e: React.FormEvent) {
@@ -67,6 +93,26 @@ export function AudienceKeysClient({
       const r = await revokeProjectApiKey({ projectId, keyId });
       if (!r.ok) setError(r.error);
       router.refresh();
+    });
+  }
+
+  function reveal(keyId: string) {
+    setError(null);
+    start(async () => {
+      const r = await revealProjectApiKey({ projectId, keyId });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setRevealed((prev) => ({ ...prev, [keyId]: r.key }));
+    });
+  }
+
+  function hide(keyId: string) {
+    setRevealed((prev) => {
+      const next = { ...prev };
+      delete next[keyId];
+      return next;
     });
   }
 
@@ -97,13 +143,12 @@ export function AudienceKeysClient({
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
 
       {justMinted && (
-        <div className="rounded border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 p-3">
+        <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)]/40 p-3">
           <p className="text-sm font-semibold">
-            Copy “{justMinted.name}” now — it won&apos;t be shown again.
+            “{justMinted.name}” is ready — you can reveal it again from this
+            list anytime.
           </p>
-          <code className="mt-2 block break-all rounded bg-[var(--color-bg)] p-2 text-xs">
-            {justMinted.key}
-          </code>
+          <KeyValue value={justMinted.key} />
         </div>
       )}
 
@@ -114,28 +159,54 @@ export function AudienceKeysClient({
           {keys.map((key) => (
             <li
               key={key.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--color-border)] px-3 py-2"
+              className="rounded border border-[var(--color-border)] px-3 py-2"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{key.name}</span>
-                <code className="text-xs text-[var(--color-muted)]">{key.key_prefix}…</code>
-                {key.revoked_at ? (
-                  <span className="badge badge-fail">revoked</span>
-                ) : (
-                  <span className="text-xs text-[var(--color-muted)]">
-                    last used {fmt(key.last_used_at)}
-                  </span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{key.name}</span>
+                  <code className="text-xs text-[var(--color-muted)]">{key.key_prefix}…</code>
+                  {key.revoked_at ? (
+                    <span className="badge badge-fail">revoked</span>
+                  ) : (
+                    <span className="text-xs text-[var(--color-muted)]">
+                      last used {fmt(key.last_used_at)}
+                    </span>
+                  )}
+                </div>
+                {!key.revoked_at && (
+                  <div className="flex items-center gap-2">
+                    {key.can_reveal &&
+                      (revealed[key.id] ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => hide(key.id)}
+                        >
+                          Hide
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={pending}
+                          onClick={() => reveal(key.id)}
+                        >
+                          Reveal
+                        </button>
+                      ))}
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={pending}
+                      onClick={() => revoke(key.id)}
+                    >
+                      Revoke
+                    </button>
+                  </div>
                 )}
               </div>
-              {!key.revoked_at && (
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={pending}
-                  onClick={() => revoke(key.id)}
-                >
-                  Revoke
-                </button>
+              {revealed[key.id] && !key.revoked_at && (
+                <KeyValue value={revealed[key.id]} />
               )}
             </li>
           ))}

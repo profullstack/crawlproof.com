@@ -168,4 +168,12 @@ describe("project ingest keys", () => {
     expect(isProjectKeyShape("crp_not_a_project_key_aaaaaaaaaaaaaaaa")).toBe(false);
     expect(isProjectKeyShape("cpk_short")).toBe(false);
   });
+
+  it("stores a ciphertext that decrypts back to the plaintext", async () => {
+    const { mintProjectKey } = await import("@/lib/audience/projectKeys");
+    const { decryptSecret } = await import("@/lib/sp/vault");
+    const minted = mintProjectKey();
+    expect(minted.ciphertext).not.toContain(minted.plaintext);
+    expect(decryptSecret(minted.ciphertext)).toBe(minted.plaintext);
+  });
 });
