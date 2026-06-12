@@ -17,3 +17,5 @@ process.env.POSTHOG_INBOUND_WEBHOOK_SECRET ??= "stub_posthog_webhook_secret";
 process.env.ANTHROPIC_API_KEY ??= "stub_anthropic";
 process.env.RESEND_FROM ??= "Test <test@example.com>";
 process.env.SP_TOKEN_PEPPER ??= "stub_pepper";
+// AES-256-GCM vault key (lib/sp/vault.ts) — must decode to 32 bytes.
+process.env.SOCIAL_VAULT_KEY ??= Buffer.alloc(32, 7).toString("base64");

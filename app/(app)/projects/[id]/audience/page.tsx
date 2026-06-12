@@ -18,6 +18,10 @@ type KeyRow = {
   created_at: string;
 };
 
+// Raw select row; the ciphertext itself never leaves the server — the
+// client component only gets a can_reveal flag.
+type KeySelectRow = KeyRow & { key_ciphertext: string | null };
+
 type RepoRow = {
   installation_id: number;
   repo_owner: string;
@@ -64,7 +68,7 @@ export default async function ProjectAudiencePage({
     await Promise.all([
       supabase
         .from("project_api_keys")
-        .select("id, name, key_prefix, last_used_at, revoked_at, created_at")
+        .select("id, name, key_prefix, last_used_at, revoked_at, created_at, key_ciphertext")
         .eq("project_id", projectId)
         .order("created_at", { ascending: false }),
       supabase
@@ -98,7 +102,9 @@ export default async function ProjectAudiencePage({
         .eq("project_id", projectId),
     ]);
 
-  const keys = (keysRes.data ?? []) as KeyRow[];
+  const keys = ((keysRes.data ?? []) as KeySelectRow[]).map(
+    ({ key_ciphertext, ...rest }) => ({ ...rest, can_reveal: !!key_ciphertext }),
+  );
   const repos = (reposRes.data ?? []) as RepoRow[];
   const runs = (runsRes.data ?? []) as RunRow[];
   const lastBrowser = (lastBrowserRes.data?.[0]?.occurred_at as string | undefined) ?? null;
@@ -216,8 +222,8 @@ export default async function ProjectAudiencePage({
         <h3 className="text-lg font-semibold">Server API keys</h3>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Authenticate <code>POST {siteUrl}/api/events</code> with{" "}
-          <code>Authorization: Bearer cpk_…</code>. Keys are hashed at rest and
-          shown once at mint time.
+          <code>Authorization: Bearer cpk_…</code>. Keys are encrypted at rest
+          — reveal one again anytime from the list below.
         </p>
         <div className="mt-4">
           <AudienceKeysClient projectId={projectId} keys={keys} />
