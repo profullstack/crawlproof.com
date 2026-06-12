@@ -35,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Link>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
+            <Link href="/audience">Audience</Link>
             <Link href="/recent">Recent</Link>
             <Link href="/projects/new">New</Link>
             <Link href="/settings/integrations/github">GitHub</Link>
