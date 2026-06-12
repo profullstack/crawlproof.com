@@ -1,22 +1,26 @@
 // Per-project server ingest keys for POST /api/events.
 //
 // Token shape: `cpk_` prefix + 43 base64url chars from 32 bytes of
-// crypto-random. Mirrors lib/sp/apiToken.ts: we never persist the
-// plaintext — only the display prefix and sha256(plaintext + pepper).
-// SHA-256 is fine because the plaintext carries 256 bits of entropy;
-// the shared SP_TOKEN_PEPPER means a DB leak alone is useless.
+// crypto-random. Verification mirrors lib/sp/apiToken.ts: lookup is by
+// sha256(plaintext + pepper), which is fine because the plaintext
+// carries 256 bits of entropy; the shared SP_TOKEN_PEPPER means a DB
+// leak alone is useless. We additionally persist the plaintext
+// AES-256-GCM-encrypted under SOCIAL_VAULT_KEY (lib/sp/vault.ts) so
+// owners can re-reveal a key from the dashboard instead of show-once.
 
 import crypto from "node:crypto";
 import { env } from "@/lib/env";
+import { encryptSecret } from "@/lib/sp/vault";
 import { serviceClient } from "@/lib/supabase/service";
 
 const PREFIX = "cpk_";
 const PREFIX_DISPLAY_LEN = 8;
 
 export type MintedProjectKey = {
-  plaintext: string; // shown to the user ONCE; never re-derivable.
+  plaintext: string;
   prefix: string;
-  hash: string;
+  hash: string; // verification lookup
+  ciphertext: string; // at-rest encrypted copy for later reveal
 };
 
 export function mintProjectKey(): MintedProjectKey {
@@ -31,6 +35,7 @@ export function mintProjectKey(): MintedProjectKey {
     plaintext,
     prefix: plaintext.slice(0, PREFIX_DISPLAY_LEN),
     hash: hashProjectKey(plaintext),
+    ciphertext: encryptSecret(plaintext),
   };
 }
 
