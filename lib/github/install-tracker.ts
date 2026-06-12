@@ -152,6 +152,17 @@ function injectBeforeBodyClose(
   return updated;
 }
 
+/**
+ * Loose duplicate guard: does this file reference our stats.js at all?
+ * The line-based regex below only matches single-line tags, so a
+ * prettier-formatted multi-line <Script ... /> slips past it and we'd
+ * inject a second copy. Any reference to the tracker origin's /stats.js
+ * means "already installed" for injection purposes.
+ */
+export function hasTrackerReference(content: string): boolean {
+  return content.includes(`${TRACKER_ORIGIN}/stats.js`);
+}
+
 function trackerTagLineRe() {
   const origin = escapeRegExp(TRACKER_ORIGIN);
   return new RegExp(
@@ -395,6 +406,11 @@ export async function previewInstallAtPath(input: {
   if (normalized) {
     return { status: "already_installed", path: file.path };
   }
+  // Multi-line or unusually formatted tags won't match the line regex but
+  // are still an install — never inject a duplicate next to one.
+  if (hasTrackerReference(file.content)) {
+    return { status: "already_installed", path: file.path };
+  }
   if (!/<\/body>/i.test(file.content)) {
     return {
       status: "not_a_template",
@@ -591,6 +607,11 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
       };
     }
     if (normalized) {
+      return { kind: "already", path: file.path };
+    }
+    // Same guard as previewInstallAtPath: a multi-line tag the line regex
+    // can't parse still counts as installed.
+    if (hasTrackerReference(file.content)) {
       return { kind: "already", path: file.path };
     }
     if (/<\/body>/i.test(file.content)) {

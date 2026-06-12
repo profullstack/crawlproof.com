@@ -19,7 +19,11 @@ import {
   openPullRequest,
   putFile,
 } from "./repos";
-import { findInstallCandidates, previewInstallAtPath } from "./install-tracker";
+import {
+  findInstallCandidates,
+  hasTrackerReference,
+  previewInstallAtPath,
+} from "./install-tracker";
 
 const SITE_ORIGIN = env.siteUrl.replace(/\/$/, "");
 const BRANCH_PREFIX = "crawlproof/audience-hub";
@@ -284,30 +288,48 @@ export async function installAudienceHub(
       repo: input.repo,
       rootPath: input.rootPath,
     });
+
+    // Pass 1: if ANY candidate file already references stats.js, the
+    // tracker is installed — even when it lives in a lower-ranked file or
+    // is formatted across multiple lines. Never add a duplicate tag.
+    const contents = new Map<string, { sha: string; content: string }>();
     for (const candidate of candidates) {
-      const preview = await previewInstallAtPath({
+      const file = await getFileContent({
         token: input.token,
         owner: input.owner,
         repo: input.repo,
         path: candidate.path,
-        projectId: input.projectId,
+        ref: base,
       });
-      if (preview.status === "already_installed") {
-        trackerAlready = preview.path;
+      if (!file) continue;
+      contents.set(file.path, { sha: file.sha, content: file.content });
+      if (hasTrackerReference(file.content)) {
+        trackerAlready = file.path;
         break;
       }
-      if (preview.status === "ready") {
-        const file = await getFileContent({
+    }
+
+    // Pass 2: only when no candidate has it do we inject into the best one.
+    if (!trackerAlready) {
+      for (const candidate of candidates) {
+        const preview = await previewInstallAtPath({
           token: input.token,
           owner: input.owner,
           repo: input.repo,
-          path: preview.path,
-          ref: base,
+          path: candidate.path,
+          projectId: input.projectId,
         });
-        if (file) {
-          trackerEdit = { path: file.path, sha: file.sha, after: preview.after };
+        if (preview.status === "already_installed") {
+          trackerAlready = preview.path;
+          break;
         }
-        break;
+        if (preview.status === "ready") {
+          const file = contents.get(preview.path);
+          if (file) {
+            trackerEdit = { path: preview.path, sha: file.sha, after: preview.after };
+          }
+          break;
+        }
       }
     }
   }
