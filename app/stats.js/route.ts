@@ -112,8 +112,104 @@ const snippet = `(function(){
         }).catch(function(){});
       } catch (_) {}
     }
-    window.crawlproof = window.crawlproof || {};
-    window.crawlproof.track = function(name, target) { send(name || 'custom', target || ''); };
+    // ── Audience Hub: identity, lead capture, consent (richer payloads). ──
+    function utmParams() {
+      var out = {};
+      try {
+        var sp = new URLSearchParams(location.search);
+        var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+        for (var i = 0; i < keys.length; i++) {
+          var v = sp.get(keys[i]);
+          if (v) out[keys[i]] = v.slice(0, 255);
+        }
+      } catch (_) {}
+      return out;
+    }
+    function sendAudience(eventName, data) {
+      try {
+        data = data || {};
+        var utm = utmParams();
+        var body = {
+          websiteId: siteId,
+          site: siteId,
+          domain: location.hostname,
+          href: pageUrl(),
+          referrer: document.referrer || null,
+          visitorId: visitorId,
+          sessionId: getSessionId(),
+          type: eventName || 'custom',
+          target: '',
+          email: data.email || undefined,
+          name: data.name || undefined,
+          userId: data.user_id != null ? String(data.user_id) : (data.userId != null ? String(data.userId) : undefined),
+          previousId: data.previous_id != null ? String(data.previous_id) : undefined,
+          marketingConsent: typeof data.marketing_consent === 'boolean' ? data.marketing_consent
+            : (typeof data.consent === 'boolean' ? data.consent : undefined),
+          consentType: data.consent_type || undefined,
+          plan: data.plan || undefined,
+          role: data.role || undefined,
+          tags: Array.isArray(data.tags) ? data.tags.slice(0, 20) : undefined,
+          utmSource: utm.utm_source,
+          utmMedium: utm.utm_medium,
+          utmCampaign: utm.utm_campaign,
+          utmContent: utm.utm_content,
+          utmTerm: utm.utm_term,
+          payload: data
+        };
+        fetch(endpoint, {
+          method: 'POST',
+          keepalive: true,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          credentials: 'omit',
+          mode: 'cors',
+          cache: 'no-store'
+        }).catch(function(){});
+      } catch (_) {}
+    }
+    function cpTrack(name, arg) {
+      // Back-compat: a string second arg is the old behavioral "target";
+      // an object carries an Audience Hub payload (email, consent, ...).
+      if (arg && typeof arg === 'object') sendAudience(name || 'custom', arg);
+      else send(name || 'custom', arg || '');
+    }
+    function cpIdentify(p) { sendAudience('identify', p || {}); }
+    function cpConsent(p) {
+      p = p || {};
+      if (typeof p.marketing_consent !== 'boolean' && typeof p.consent === 'boolean') p.marketing_consent = p.consent;
+      sendAudience('consent', p);
+    }
+    function cpAlias(prevId, extra) {
+      var d = (extra && typeof extra === 'object') ? extra : {};
+      d.previous_id = prevId;
+      sendAudience('alias', d);
+    }
+    // Callable API so the async stub pattern works:
+    //   window.crawlproof('identify', { email: ... })
+    // plus method form: window.crawlproof.identify({ email: ... }).
+    var prev = window.crawlproof;
+    function api(method) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      try {
+        if (method === 'identify') return cpIdentify(args[0]);
+        if (method === 'consent') return cpConsent(args[0]);
+        if (method === 'alias') return cpAlias(args[0], args[1]);
+        if (method === 'track') return cpTrack(args[0], args[1]);
+        return cpTrack(method, args[0]);
+      } catch (_) {}
+    }
+    api.track = cpTrack;
+    api.identify = cpIdentify;
+    api.consent = cpConsent;
+    api.alias = cpAlias;
+    window.crawlproof = api;
+    // Drain calls queued before the script loaded.
+    try {
+      var queued = prev && prev.q;
+      if (queued && queued.length) {
+        for (var qi = 0; qi < queued.length; qi++) api.apply(null, queued[qi]);
+      }
+    } catch (_) {}
 
     if (document.readyState === 'complete') send('pageview');
     else window.addEventListener('load', function(){ send('pageview'); }, { once: true });

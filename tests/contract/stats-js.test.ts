@@ -32,10 +32,28 @@ describe("/stats.js", () => {
     const response = await GET();
     const script = await response.text();
 
-    expect(script).toContain("window.crawlproof.track");
+    // window.crawlproof is callable (stub-queue compatible) with track/
+    // identify/consent/alias methods attached.
+    expect(script).toContain("window.crawlproof = api");
+    expect(script).toContain("api.track = cpTrack");
     expect(script).toContain("history.pushState");
     expect(script).toContain("history.replaceState");
     expect(script).toContain("popstate");
     expect(script).toContain("data-cp-track");
+  });
+
+  it("exposes the Audience Hub API and drains the pre-load queue", async () => {
+    const response = await GET();
+    const script = await response.text();
+
+    expect(script).toContain("api.identify = cpIdentify");
+    expect(script).toContain("api.consent = cpConsent");
+    expect(script).toContain("api.alias = cpAlias");
+    // UTM attribution is captured from the page URL.
+    expect(script).toContain("utm_source");
+    expect(script).toContain("utm_campaign");
+    // Calls queued by the async stub before load are replayed.
+    expect(script).toContain("prev && prev.q");
+    expect(script).toContain("marketingConsent");
   });
 });
