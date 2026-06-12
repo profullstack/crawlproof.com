@@ -7,6 +7,7 @@ import {
   generatedClientHelper,
   serverHelperPath,
 } from "@/lib/github/install-audience";
+import { hasTrackerReference } from "@/lib/github/install-tracker";
 
 describe("statusForEvent", () => {
   it("maps lifecycle events to lifecycle statuses", () => {
@@ -120,6 +121,36 @@ describe("generated files", () => {
     expect(code).toContain("window.crawlproof");
     expect(code).toContain("identify");
     expect(code).toContain("consent");
+  });
+});
+
+describe("hasTrackerReference (duplicate-install guard)", () => {
+  // env.siteUrl is stubbed to http://localhost:3000 in tests/setup.ts.
+  const origin = "http://localhost:3000";
+
+  it("detects a single-line script tag", () => {
+    expect(
+      hasTrackerReference(
+        `<body><script data-site="abc" src="${origin}/stats.js" async></script></body>`,
+      ),
+    ).toBe(true);
+  });
+
+  it("detects a prettier-formatted multi-line <Script /> tag", () => {
+    const layout = `        <Script
+          data-site="11111111-2222-3333-4444-555555555555"
+          src="${origin}/stats.js"
+          strategy="afterInteractive"
+        />
+      </body>`;
+    expect(hasTrackerReference(layout)).toBe(true);
+  });
+
+  it("ignores files without the tracker", () => {
+    expect(hasTrackerReference("<body><h1>hi</h1></body>")).toBe(false);
+    expect(
+      hasTrackerReference('<script src="https://other-analytics.example/stats.js">'),
+    ).toBe(false);
   });
 });
 
