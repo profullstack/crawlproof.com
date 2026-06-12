@@ -16,3 +16,4 @@ process.env.POSTHOG_PROJECT_API_KEY ??= "stub_posthog_project_api_key";
 process.env.POSTHOG_INBOUND_WEBHOOK_SECRET ??= "stub_posthog_webhook_secret";
 process.env.ANTHROPIC_API_KEY ??= "stub_anthropic";
 process.env.RESEND_FROM ??= "Test <test@example.com>";
+process.env.SP_TOKEN_PEPPER ??= "stub_pepper";
