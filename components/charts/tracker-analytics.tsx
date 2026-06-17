@@ -48,6 +48,9 @@ export function TrackerAnalytics({
   actions,
   countries,
   cities,
+  devices,
+  browsers,
+  operatingSystems,
 }: {
   daily: TrackerDailyPoint[];
   events: TrackerListItem[];
@@ -57,6 +60,9 @@ export function TrackerAnalytics({
   actions: TrackerListItem[];
   countries: TrackerListItem[];
   cities: TrackerListItem[];
+  devices: TrackerListItem[];
+  browsers: TrackerListItem[];
+  operatingSystems: TrackerListItem[];
 }) {
   const total = daily.reduce((sum, point) => sum + point.events, 0);
 
@@ -175,6 +181,20 @@ export function TrackerAnalytics({
           title="Cities"
           data={cities}
           empty="No city data yet."
+        />
+        <Breakdown title="Devices" data={devices} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RankedList
+          title="Browsers"
+          data={browsers}
+          empty="No browser data yet."
+        />
+        <RankedList
+          title="Operating systems"
+          data={operatingSystems}
+          empty="No OS data yet."
         />
       </div>
     </div>
