@@ -44,6 +44,12 @@ type GeoRow = {
   timezone: string;
   count: number;
 };
+type DeviceRow = {
+  device_type: string;
+  browser: string;
+  os: string;
+  count: number;
+};
 
 const WINDOW_DAYS = 30;
 
@@ -90,6 +96,14 @@ export default async function ProjectStatsPage({
 
   const geoRows = (geoStats ?? []) as GeoRow[];
 
+  const { data: deviceStats } = await supabase
+    .from("tracker_device_daily_stats")
+    .select("device_type, browser, os, count")
+    .eq("project_id", id)
+    .gte("day", since);
+
+  const deviceRows = (deviceStats ?? []) as DeviceRow[];
+
   // Roll up by bucket for the table view; sort by total desc.
   const byBucket = new Map<string, number>();
   let totalAi = 0;
@@ -135,6 +149,12 @@ export default async function ProjectStatsPage({
     const country = row.countryCode || row.countryName;
     return [row.city, region, country].filter(Boolean).join(", ");
   });
+
+  const topDevices = topDeviceItems(deviceRows, (row) =>
+    deviceTypeLabel(row.device_type),
+  );
+  const topBrowsers = topDeviceItems(deviceRows, (row) => row.browser);
+  const topOperatingSystems = topDeviceItems(deviceRows, (row) => row.os);
 
   const trackerEnabled = !!(project as { tracker_enabled?: boolean })
     .tracker_enabled;
@@ -283,6 +303,9 @@ export default async function ProjectStatsPage({
             actions={topActions}
             countries={topCountries}
             cities={topCities}
+            devices={topDevices}
+            browsers={topBrowsers}
+            operatingSystems={topOperatingSystems}
           />
         )}
       </div>
@@ -429,6 +452,37 @@ function topGeoItems(
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
+}
+
+function topDeviceItems(
+  rows: DeviceRow[],
+  labelFor: (row: DeviceRow) => string,
+): TrackerListItem[] {
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const label = labelFor(row);
+    if (!label) continue;
+    map.set(label, (map.get(label) ?? 0) + row.count);
+  }
+  return Array.from(map.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+}
+
+function deviceTypeLabel(deviceType: string) {
+  switch (deviceType) {
+    case "mobile":
+      return "Mobile";
+    case "tablet":
+      return "Tablet";
+    case "desktop":
+      return "Desktop";
+    case "bot":
+      return "Bot";
+    default:
+      return "";
+  }
 }
 
 function eventLabel(event: string) {

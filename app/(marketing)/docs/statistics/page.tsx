@@ -195,7 +195,9 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
         </ul>
         <p className="text-sm leading-relaxed">
           CrawlProof stores daily aggregate rollups by source, event, page,
-          referrer host, target label, and location. The network request is
+          referrer host, target label, location, and device (device type,
+          browser, and OS, derived server-side from the User-Agent — raw
+          User-Agent strings are never stored). The network request is
           best-effort and never blocks the host page.
         </p>
       </section>
