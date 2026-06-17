@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
+import { parseDevice } from "@/lib/tracker/device";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { enqueuePostHogEvent } from "@/lib/posthog/events";
 import { AUDIENCE_BROWSER_EVENTS, ingestAudienceEvent } from "@/lib/audience/hub";
@@ -328,6 +329,44 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       event_target: eventTarget,
       count: 1,
     });
+  }
+
+  // Device / browser / OS rollup, derived from the request User-Agent. Like
+  // the geo rollup we store only aggregate counts, never the raw UA string.
+  const device = parseDevice(userAgent);
+  if (device.deviceType || device.browser || device.os) {
+    const { data: deviceExisting } = await sb
+      .from("tracker_device_daily_stats")
+      .select("count")
+      .eq("project_id", site)
+      .eq("day", today)
+      .eq("device_type", device.deviceType)
+      .eq("browser", device.browser)
+      .eq("os", device.os)
+      .maybeSingle();
+
+    if (deviceExisting) {
+      await sb
+        .from("tracker_device_daily_stats")
+        .update({
+          count: (deviceExisting.count ?? 0) + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("project_id", site)
+        .eq("day", today)
+        .eq("device_type", device.deviceType)
+        .eq("browser", device.browser)
+        .eq("os", device.os);
+    } else {
+      await sb.from("tracker_device_daily_stats").insert({
+        project_id: site,
+        day: today,
+        device_type: device.deviceType,
+        browser: device.browser,
+        os: device.os,
+        count: 1,
+      });
+    }
   }
 
   const geo = await lookupGeo(clientIpFromHeaders(request.headers));
