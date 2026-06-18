@@ -2,7 +2,6 @@
 // JSON payload, categorizes the event, and bumps the matching counter row
 // in tracker_daily_stats. Idempotent under load via ON CONFLICT.
 
-import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
@@ -10,7 +9,6 @@ import { categorize } from "@/lib/tracker/categorize";
 import { parseDevice } from "@/lib/tracker/device";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { enqueuePostHogEvent } from "@/lib/posthog/events";
-import { AUDIENCE_BROWSER_EVENTS, ingestAudienceEvent } from "@/lib/audience/hub";
 
 export const runtime = "nodejs";
 
@@ -38,27 +36,6 @@ const bodySchema = z.object({
     .optional(),
   screenWidth: z.number().int().nonnegative().optional(),
   screenHeight: z.number().int().nonnegative().optional(),
-  // Audience Hub fields (identify / consent / lead capture from stats.js).
-  email: z.string().max(320).optional(),
-  name: z.string().max(255).optional(),
-  userId: z.string().max(255).optional(),
-  previousId: z.string().max(128).optional(),
-  marketingConsent: z.boolean().optional(),
-  consentType: z.string().max(64).optional(),
-  plan: z.string().max(80).optional(),
-  role: z.string().max(80).optional(),
-  tags: z.array(z.string().max(80)).max(20).optional(),
-  utmSource: z.string().max(255).optional(),
-  utmMedium: z.string().max(255).optional(),
-  utmCampaign: z.string().max(255).optional(),
-  utmContent: z.string().max(255).optional(),
-  utmTerm: z.string().max(255).optional(),
-  payload: z
-    .record(z.unknown())
-    .optional()
-    .refine((v) => v === undefined || JSON.stringify(v).length <= 8_192, {
-      message: "payload too large",
-    }),
 });
 
 function corsHeaders(request: Request) {
@@ -128,41 +105,6 @@ function hostFromUrl(value: string | null | undefined) {
   }
 }
 
-function sha256Short(value: string) {
-  return crypto
-    .createHash("sha256")
-    .update(`crawlproof:${value}`)
-    .digest("hex")
-    .slice(0, 32);
-}
-
-// Keys already promoted to first-class contact fields; keeping them out of
-// event metadata avoids duplicating PII in the jsonb blob.
-const PROMOTED_PAYLOAD_KEYS = new Set([
-  "email",
-  "name",
-  "user_id",
-  "userId",
-  "previous_id",
-  "marketing_consent",
-  "consent",
-  "consent_type",
-  "plan",
-  "role",
-  "tags",
-]);
-
-function sanitizeAudiencePayload(
-  payload: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  if (!payload) return undefined;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(payload)) {
-    if (!PROMOTED_PAYLOAD_KEYS.has(key)) out[key] = value;
-  }
-  return out;
-}
-
 function payloadFromUrl(request: Request) {
   const url = new URL(request.url);
   return bodySchema.safeParse({
@@ -223,46 +165,6 @@ async function ingest(request: NextRequest, parseBody: boolean) {
     .eq("id", site)
     .maybeSingle();
   if (!project || !project.tracker_enabled) return ok(request);
-
-  // Audience Hub: forward identity / consent / lead events into the contact
-  // pipeline. Fire-and-forget — the beacon response never waits on it, and
-  // plain pageviews stay out of the audience tables.
-  if (parsed.data.email || AUDIENCE_BROWSER_EVENTS.has(event)) {
-    const d = parsed.data;
-    const ip = clientIpFromHeaders(request.headers);
-    void ingestAudienceEvent({
-      project: {
-        id: project.id,
-        owner_id: project.owner_id,
-        organization_id: project.organization_id ?? null,
-      },
-      event,
-      source: "browser",
-      email: d.email,
-      name: d.name,
-      externalUserId: d.userId,
-      anonymousId: d.visitorId,
-      previousAnonymousId: d.previousId,
-      sessionId: d.sessionId,
-      url: pageUrl,
-      referrer,
-      utmSource: d.utmSource,
-      utmMedium: d.utmMedium,
-      utmCampaign: d.utmCampaign,
-      utmContent: d.utmContent,
-      utmTerm: d.utmTerm,
-      marketingConsent: d.marketingConsent,
-      consentType: d.consentType,
-      plan: d.plan,
-      role: d.role,
-      tags: d.tags,
-      metadata: sanitizeAudiencePayload(d.payload),
-      ipHash: ip ? sha256Short(ip) : null,
-      userAgentHash: userAgent ? sha256Short(userAgent) : null,
-    }).catch(() => {
-      // Audience writes must never break the beacon response.
-    });
-  }
 
   const { bucket, isAi } = categorize({ referrer, userAgent });
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC

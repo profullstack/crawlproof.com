@@ -9,8 +9,6 @@ import {
   OrgDashboardControls,
   ProjectOrgMoveControl,
   type DashboardSenderConfig,
-  type DashboardDataSource,
-  type DashboardAudienceStats,
   type DashboardOrg,
   type DashboardOrgTeam,
 } from "./org-controls";
@@ -100,8 +98,6 @@ export default async function DashboardPage({
     { data: audits },
     counts,
     senderConfigs,
-    dataSources,
-    audienceStats,
     orgTeam,
   ] = await Promise.all([
     scopedProjectsQuery,
@@ -113,8 +109,6 @@ export default async function DashboardPage({
       .limit(10),
     countByStatus(supabase, user!.id, accessFilter, selectedOrgId),
     fetchSenderConfigs(supabase, ownerOrgId),
-    fetchDataSources(supabase, ownerOrgId),
-    fetchAudienceStats(supabase, ownerOrgId),
     fetchOrgTeam(selectedOrg && isOrgWideRole(selectedOrg.role) ? selectedOrgId : null),
   ]);
   const projects = ((projectsRaw ?? []) as unknown) as DashboardProject[];
@@ -154,8 +148,6 @@ export default async function DashboardPage({
           orgs={orgs as DashboardOrg[]}
           selectedOrgId={selectedOrgId}
           senderConfigs={senderConfigs}
-          dataSources={dataSources}
-          audienceStats={audienceStats}
           orgTeam={orgTeam}
         />
       )}
@@ -535,42 +527,3 @@ async function fetchSenderConfigs(
   return ((data ?? []) as unknown) as DashboardSenderConfig[];
 }
 
-async function fetchDataSources(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  organizationId: string | null,
-): Promise<DashboardDataSource[]> {
-  if (!organizationId) return [];
-  const { data, error } = await supabase
-    .from("organization_data_sources")
-    .select("id,label,kind,enabled,last_synced_at,last_sync_count,last_sync_error")
-    .eq("organization_id", organizationId)
-    .order("created_at", { ascending: false });
-  if (error) {
-    if (missingOrgSchema(error)) return [];
-    throw error;
-  }
-  return ((data ?? []) as unknown) as DashboardDataSource[];
-}
-
-async function fetchAudienceStats(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  organizationId: string | null,
-): Promise<DashboardAudienceStats> {
-  if (!organizationId) return { total: 0, unsubscribed: 0 };
-  const [{ count: total, error: totalErr }, { count: unsub, error: unsubErr }] =
-    await Promise.all([
-      supabase
-        .from("organization_audience_contacts")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", organizationId),
-      supabase
-        .from("organization_audience_contacts")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", organizationId)
-        .not("unsubscribed_at", "is", null),
-    ]);
-  if (totalErr || unsubErr) {
-    if (missingOrgSchema(totalErr ?? unsubErr)) return { total: 0, unsubscribed: 0 };
-  }
-  return { total: total ?? 0, unsubscribed: unsub ?? 0 };
-}

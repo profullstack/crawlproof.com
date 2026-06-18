@@ -39,7 +39,6 @@ export async function sendOutreachEmail(input: {
   subject: string;
   body: string;
   // Optional pre-rendered HTML. When omitted, HTML is derived from `body`.
-  // Used by audience campaigns to send real HTML + unsubscribe footer.
   html?: string;
   // Extra mail headers (e.g. List-Unsubscribe). Passed to both SMTP and
   // Resend so native unsubscribe buttons render.
