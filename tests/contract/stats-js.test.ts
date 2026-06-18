@@ -32,28 +32,27 @@ describe("/stats.js", () => {
     const response = await GET();
     const script = await response.text();
 
-    // window.crawlproof is callable (stub-queue compatible) with track/
-    // identify/consent/alias methods attached.
+    // window.crawlproof is callable (stub-queue compatible) with a track
+    // method attached for custom behavioral events.
     expect(script).toContain("window.crawlproof = api");
     expect(script).toContain("api.track = cpTrack");
     expect(script).toContain("history.pushState");
     expect(script).toContain("history.replaceState");
     expect(script).toContain("popstate");
     expect(script).toContain("data-cp-track");
+    // Calls queued by the async stub before load are replayed.
+    expect(script).toContain("prev && prev.q");
   });
 
-  it("exposes the Audience Hub API and drains the pre-load queue", async () => {
+  it("does not collect identity, consent, or lead-capture PII", async () => {
     const response = await GET();
     const script = await response.text();
 
-    expect(script).toContain("api.identify = cpIdentify");
-    expect(script).toContain("api.consent = cpConsent");
-    expect(script).toContain("api.alias = cpAlias");
-    // UTM attribution is captured from the page URL.
-    expect(script).toContain("utm_source");
-    expect(script).toContain("utm_campaign");
-    // Calls queued by the async stub before load are replayed.
-    expect(script).toContain("prev && prev.q");
-    expect(script).toContain("marketingConsent");
+    // The Audience Hub identity/consent pipeline was removed; the tracker
+    // must not ship any PII-collecting API surface.
+    expect(script).not.toContain("identify");
+    expect(script).not.toContain("consent");
+    expect(script).not.toContain("marketingConsent");
+    expect(script).not.toContain("sendAudience");
   });
 });

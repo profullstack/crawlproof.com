@@ -1,21 +1,16 @@
 "use client";
 
-import { FormEvent, useRef, useState, useTransition } from "react";
+import { FormEvent, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   createOrganization,
   deleteOrganization,
-  deleteOrganizationDataSource,
   deleteOrganizationOutreachConfig,
   mergeOrganization,
   moveProjectToOrganization,
   renameOrganization,
-  saveOrganizationDataSource,
   saveOrganizationOutreachConfig,
-  sendOrganizationAudienceBlast,
   setDefaultOrganization,
-  syncAllOrganizationAudience,
-  syncOrganizationDataSource,
 } from "@/app/actions/orgs";
 import {
   inviteOrgMember,
@@ -51,34 +46,15 @@ export type DashboardSenderConfig = {
   created_at: string;
 };
 
-export type DashboardDataSource = {
-  id: string;
-  label: string;
-  kind: "supabase" | "turso";
-  enabled: boolean;
-  last_synced_at: string | null;
-  last_sync_count: number | null;
-  last_sync_error: string | null;
-};
-
-export type DashboardAudienceStats = {
-  total: number;
-  unsubscribed: number;
-};
-
 export function OrgDashboardControls({
   orgs,
   selectedOrgId,
   senderConfigs,
-  dataSources,
-  audienceStats,
   orgTeam,
 }: {
   orgs: DashboardOrg[];
   selectedOrgId: string | null;
   senderConfigs: DashboardSenderConfig[];
-  dataSources: DashboardDataSource[];
-  audienceStats: DashboardAudienceStats;
   orgTeam: DashboardOrgTeam | null;
 }) {
   const router = useRouter();
@@ -202,16 +178,6 @@ export function OrgDashboardControls({
           <SenderConfigPanel
             organizationId={selectedOrgId}
             senderConfigs={senderConfigs}
-          />
-          <DataSourcesPanel
-            key={`ds-${selectedOrgId}`}
-            organizationId={selectedOrgId}
-            dataSources={dataSources}
-          />
-          <AudiencePanel
-            key={`aud-${selectedOrgId}`}
-            organizationId={selectedOrgId}
-            audienceStats={audienceStats}
           />
           <DangerZonePanel
             orgId={selectedOrgId}
@@ -782,375 +748,6 @@ function Field({
         className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
       />
     </label>
-  );
-}
-
-function DataSourcesPanel({
-  organizationId,
-  dataSources,
-}: {
-  organizationId: string;
-  dataSources: DashboardDataSource[];
-}) {
-  const router = useRouter();
-  const [message, setMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  function syncAll() {
-    setMessage(null);
-    startTransition(async () => {
-      const result = await syncAllOrganizationAudience({ organizationId });
-      if (!result.ok) {
-        setMessage(result.error);
-        return;
-      }
-      setMessage(
-        `Synced ${result.imported} emails (${result.added} new)` +
-          (result.failed ? `, ${result.failed} source(s) failed` : ""),
-      );
-      router.refresh();
-    });
-  }
-
-  return (
-    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-      <summary className="cursor-pointer text-sm font-medium">
-        User data sources
-      </summary>
-      <div className="mt-3 space-y-3">
-        <p className="text-xs text-[var(--color-muted)]">
-          Connect each project&apos;s database (Supabase or Turso). Syncing pulls
-          every user email into this org&apos;s deduplicated audience.
-        </p>
-        {dataSources.length === 0 ? (
-          <p className="text-xs text-[var(--color-muted)]">No data sources yet.</p>
-        ) : (
-          <ul className="grid gap-2 md:grid-cols-2">
-            {dataSources.map((source) => (
-              <li
-                key={source.id}
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{source.label}</div>
-                    <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-[var(--color-muted)]">
-                      <span className="badge">{source.kind}</span>
-                      {!source.enabled && <span className="badge badge-unknown">off</span>}
-                    </div>
-                    <div className="mt-2 text-xs text-[var(--color-muted)]">
-                      {source.last_sync_error ? (
-                        <span className="text-red-600">{source.last_sync_error}</span>
-                      ) : source.last_synced_at ? (
-                        <>
-                          {source.last_sync_count ?? 0} emails ·{" "}
-                          {new Date(source.last_synced_at).toLocaleString()}
-                        </>
-                      ) : (
-                        "Never synced"
-                      )}
-                    </div>
-                  </div>
-                  <DataSourceActions organizationId={organizationId} sourceId={source.id} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={syncAll}
-            disabled={pending || dataSources.length === 0}
-            className="btn btn-secondary text-sm"
-          >
-            {pending ? "Syncing..." : "Sync all"}
-          </button>
-          {message && (
-            <span className="text-xs text-[var(--color-muted)]">{message}</span>
-          )}
-        </div>
-        <DataSourceForm organizationId={organizationId} />
-      </div>
-    </details>
-  );
-}
-
-function DataSourceActions({
-  organizationId,
-  sourceId,
-}: {
-  organizationId: string;
-  sourceId: string;
-}) {
-  const router = useRouter();
-  const [message, setMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  function sync() {
-    setMessage(null);
-    startTransition(async () => {
-      const result = await syncOrganizationDataSource({ organizationId, sourceId });
-      setMessage(result.ok ? `+${result.added} new` : result.error);
-      if (result.ok) router.refresh();
-    });
-  }
-
-  function remove() {
-    setMessage(null);
-    startTransition(async () => {
-      const result = await deleteOrganizationDataSource({ organizationId, sourceId });
-      if (!result.ok) {
-        setMessage(result.error);
-        return;
-      }
-      router.refresh();
-    });
-  }
-
-  return (
-    <div className="shrink-0 space-y-1 text-right">
-      <button
-        type="button"
-        onClick={sync}
-        disabled={pending}
-        className="block w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:text-[var(--color-fg)]"
-      >
-        {pending ? "..." : "Sync now"}
-      </button>
-      <button
-        type="button"
-        onClick={remove}
-        disabled={pending}
-        className="block w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)]"
-      >
-        Delete
-      </button>
-      {message && <p className="max-w-32 text-xs text-[var(--color-muted)]">{message}</p>}
-    </div>
-  );
-}
-
-type DataSourceKind = "supabase" | "turso";
-
-function DataSourceForm({ organizationId }: { organizationId: string }) {
-  const router = useRouter();
-  const [kind, setKind] = useState<DataSourceKind>("supabase");
-  const [mode, setMode] = useState<"auth_users" | "table">("auth_users");
-  const [message, setMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formEl = event.currentTarget;
-    const form = new FormData(formEl);
-    setMessage(null);
-    startTransition(async () => {
-      const result = await saveOrganizationDataSource({
-        organizationId,
-        label: String(form.get("label") ?? ""),
-        kind,
-        supabaseUrl: String(form.get("supabaseUrl") ?? ""),
-        serviceRoleKey: String(form.get("serviceRoleKey") ?? ""),
-        sourceMode: mode,
-        tableName: String(form.get("tableName") ?? ""),
-        emailColumn: String(form.get("emailColumn") ?? ""),
-        tursoUrl: String(form.get("tursoUrl") ?? ""),
-        authToken: String(form.get("authToken") ?? ""),
-        emailQuery: String(form.get("emailQuery") ?? ""),
-      });
-      setMessage(result.ok ? "Source saved." : result.error);
-      if (result.ok) {
-        formEl.reset();
-        router.refresh();
-      }
-    });
-  }
-
-  return (
-    <form
-      onSubmit={submit}
-      className="grid gap-3 border-t border-[var(--color-border)] pt-3 text-sm md:grid-cols-2"
-    >
-      <label>
-        <span className="text-xs font-medium">Database</span>
-        <select
-          value={kind}
-          onChange={(event) => setKind(event.target.value as DataSourceKind)}
-          className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
-        >
-          <option value="supabase">Supabase</option>
-          <option value="turso">Turso (libSQL)</option>
-        </select>
-      </label>
-      <Field name="label" label="Label" placeholder="Project name" required />
-      {kind === "supabase" ? (
-        <>
-          <Field
-            name="supabaseUrl"
-            label="Supabase URL"
-            placeholder="https://xxxx.supabase.co"
-          />
-          <Field name="serviceRoleKey" label="Service role key" type="password" />
-          <label>
-            <span className="text-xs font-medium">Source</span>
-            <select
-              value={mode}
-              onChange={(event) => setMode(event.target.value as "auth_users" | "table")}
-              className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5"
-            >
-              <option value="auth_users">Auth users (auth.users)</option>
-              <option value="table">Custom table</option>
-            </select>
-          </label>
-          {mode === "table" && (
-            <>
-              <Field name="tableName" label="Table name" placeholder="profiles" />
-              <Field name="emailColumn" label="Email column" placeholder="email" />
-            </>
-          )}
-        </>
-      ) : (
-        <>
-          <Field
-            name="tursoUrl"
-            label="Turso URL"
-            placeholder="libsql://db-name.turso.io"
-          />
-          <Field name="authToken" label="Auth token" type="password" />
-          <label className="md:col-span-2">
-            <span className="text-xs font-medium">Email query (read-only SELECT)</span>
-            <input
-              name="emailQuery"
-              defaultValue="select email from users"
-              className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 font-mono text-xs"
-            />
-          </label>
-        </>
-      )}
-      <div className="flex items-center gap-3 md:col-span-2">
-        <button type="submit" className="btn btn-secondary text-sm" disabled={pending}>
-          {pending ? "Saving..." : "Add source"}
-        </button>
-        {message && (
-          <p className={`text-sm ${message === "Source saved." ? "text-green-700" : "text-red-600"}`}>
-            {message}
-          </p>
-        )}
-      </div>
-    </form>
-  );
-}
-
-function AudiencePanel({
-  organizationId,
-  audienceStats,
-}: {
-  organizationId: string;
-  audienceStats: DashboardAudienceStats;
-}) {
-  const [message, setMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-  const active = audienceStats.total - audienceStats.unsubscribed;
-
-  function send(previewTo?: string) {
-    return (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      const subject = String(form.get("subject") ?? "");
-      const html = String(form.get("html") ?? "");
-      setMessage(null);
-      startTransition(async () => {
-        const result = await sendOrganizationAudienceBlast({
-          organizationId,
-          subject,
-          html,
-          previewTo,
-        });
-        if (!result.ok) {
-          setMessage(result.error);
-          return;
-        }
-        setMessage(
-          previewTo
-            ? `Preview sent (${result.sent} sent, ${result.skipped} skipped).`
-            : `Done — ${result.sent} sent, ${result.failed} failed, ${result.skipped} skipped of ${result.total}.`,
-        );
-      });
-    };
-  }
-
-  return (
-    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-      <summary className="cursor-pointer text-sm font-medium">
-        Mass email ({active} contacts)
-      </summary>
-      <div className="mt-3 space-y-3">
-        <p className="text-xs text-[var(--color-muted)]">
-          Sends to {active} active contacts via this org&apos;s default email sender.
-          {audienceStats.unsubscribed > 0 &&
-            ` ${audienceStats.unsubscribed} unsubscribed are excluded.`}{" "}
-          Every message includes a one-click unsubscribe link.
-        </p>
-        <CampaignForm onSubmitSend={send} pending={pending} />
-        {message && <p className="text-sm text-[var(--color-muted)]">{message}</p>}
-      </div>
-    </details>
-  );
-}
-
-function CampaignForm({
-  onSubmitSend,
-  pending,
-}: {
-  onSubmitSend: (previewTo?: string) => (event: FormEvent<HTMLFormElement>) => void;
-  pending: boolean;
-}) {
-  const [previewTo, setPreviewTo] = useState("");
-  const formRef = useRef<HTMLFormElement>(null);
-
-  return (
-    <form ref={formRef} onSubmit={onSubmitSend()} className="grid gap-3 text-sm">
-      <Field name="subject" label="Subject" placeholder="Product update" required />
-      <label>
-        <span className="text-xs font-medium">Message (HTML)</span>
-        <textarea
-          name="html"
-          required
-          rows={6}
-          placeholder="<p>Hello!</p>"
-          className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 font-mono text-xs"
-        />
-      </label>
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          value={previewTo}
-          onChange={(event) => setPreviewTo(event.target.value)}
-          placeholder="you@example.com"
-          className="min-w-48 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-sm"
-        />
-        <button
-          type="button"
-          disabled={pending || !previewTo.trim()}
-          onClick={() => {
-            const form = formRef.current;
-            if (!form) return;
-            onSubmitSend(previewTo.trim())({
-              preventDefault: () => {},
-              currentTarget: form,
-            } as unknown as FormEvent<HTMLFormElement>);
-          }}
-          className="rounded border border-[var(--color-border)] px-3 py-1.5 text-sm hover:text-[var(--color-fg)]"
-        >
-          Send preview
-        </button>
-      </div>
-      <div>
-        <button type="submit" className="btn btn-primary text-sm" disabled={pending}>
-          {pending ? "Sending..." : "Send to all contacts"}
-        </button>
-      </div>
-    </form>
   );
 }
 
