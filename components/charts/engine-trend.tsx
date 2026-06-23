@@ -33,6 +33,7 @@ const ENGINE_COLORS: Record<Engine, string> = {
   kimi: "#ec4899",
   deepseek: "#ef4444",
   perplexity: "#06b6d4",
+  fugu: "#eab308",
 };
 
 export function EngineTrend({

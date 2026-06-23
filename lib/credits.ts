@@ -69,7 +69,8 @@ export type Engine =
   | "kimi"
   | "gemini"
   | "deepseek"
-  | "perplexity";
+  | "perplexity"
+  | "fugu";
 
 export const DEFAULT_PROJECT_ENGINES: Engine[] = ["rule", "dns"];
 
@@ -165,6 +166,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Web-grounded with live citations. Frames your site the way Perplexity's answer engine would surface it to users.",
+  },
+  fugu: {
+    label: "Sakana Fugu",
+    cost: SCAN_CREDITS,
+    available: true,
+    blurb:
+      "Sakana AI's orchestration model — routes each request across a swappable pool of frontier LLMs for a frontier-level, vendor-neutral second opinion.",
   },
 };
 
