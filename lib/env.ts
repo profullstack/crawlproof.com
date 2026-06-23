@@ -63,6 +63,12 @@ export const env = {
   moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
   perplexityApiKey: process.env.PERPLEXITY_API_KEY ?? "", // Sonar API
+  // Sakana Fugu — orchestration model, OpenAI-compatible Chat Completions.
+  // Base URL + model are env-overridable; defaults match Sakana's console
+  // (https://api.sakana.ai/v1, model "fugu"; "fugu-ultra" is the higher tier).
+  fuguApiKey: process.env.FUGU_API_KEY ?? "",
+  fuguBaseUrl: process.env.FUGU_BASE_URL ?? "https://api.sakana.ai/v1",
+  fuguModel: process.env.FUGU_MODEL ?? "fugu",
   // DataForSEO — keyword research for Autoblog. Basic-auth credentials.
   dataforseoLogin: process.env.DATAFORSEO_LOGIN ?? "",
   dataforseoPassword: process.env.DATAFORSEO_PASSWORD ?? "",
