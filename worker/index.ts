@@ -13,6 +13,7 @@ import { qwenAudit } from "../lib/audit/qwen-engine";
 import { kimiAudit } from "../lib/audit/kimi-engine";
 import { deepseekAudit } from "../lib/audit/deepseek-engine";
 import { perplexityAudit } from "../lib/audit/perplexity-engine";
+import { fuguAudit } from "../lib/audit/fugu-engine";
 import { toMarkdown } from "../lib/audit/markdown";
 import { Resend } from "resend";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
@@ -346,7 +347,8 @@ async function processJob(job: Job) {
         | "qwen"
         | "kimi"
         | "deepseek"
-        | "perplexity") ?? "rule";
+        | "perplexity"
+        | "fugu") ?? "rule";
     console.log(`[worker] audit ${auditId} engine=${engine}`);
 
     let score: number;
@@ -373,6 +375,7 @@ async function processJob(job: Job) {
       kimi: kimiAudit,
       deepseek: deepseekAudit,
       perplexity: perplexityAudit,
+      fugu: fuguAudit,
     } as const;
 
     if (engine === "spec") {
