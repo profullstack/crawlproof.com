@@ -150,6 +150,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           strategy="afterInteractive"
         />
         </ReferralProvider>
+      <script async src="https://feedback.profullstack.com/embed/profullstack-feedback.js" data-property="crawlproof.com"></script>
       </body>
     </html>
   );
