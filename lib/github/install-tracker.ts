@@ -71,6 +71,12 @@ const COMMON_MONOREPO_CANDIDATES: string[] = [
   "apps/web/app/layout.jsx",
   "apps/web/src/app/layout.tsx",
   "apps/web/src/app/layout.jsx",
+  // Static-HTML sites under apps/web (no framework — e.g. a hand-written
+  // public/index.html served by a static host). The code-search fallback
+  // is flaky for freshly-pushed repos, so probe these explicitly.
+  "apps/web/index.html",
+  "apps/web/public/index.html",
+  "apps/web/src/index.html",
 ];
 
 const BRANCH_PREFIX = "crawlproof/install-stats-tracker";
