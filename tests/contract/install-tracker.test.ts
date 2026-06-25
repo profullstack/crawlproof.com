@@ -73,6 +73,23 @@ describe("install tracker candidate discovery", () => {
     expect(github.searchRepoCode).toHaveBeenCalledOnce();
   });
 
+  it("finds a static apps/web/public/index.html without code search", async () => {
+    github.files.set(
+      "apps/web/public/index.html",
+      "<!doctype html>\n<html><head></head><body>\n<h1>Hi</h1>\n</body></html>\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates.map((c) => c.path)).toContain(
+      "apps/web/public/index.html",
+    );
+  });
+
   it("does not double-prefix common monorepo candidates when rootPath is set", async () => {
     github.files.set(
       "apps/web/src/app/layout.tsx",
