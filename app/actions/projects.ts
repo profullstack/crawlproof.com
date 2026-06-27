@@ -2,7 +2,54 @@
 
 import { revalidatePath } from "next/cache";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
+import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { dedupeEngines, engineAvailable, ENGINES, type Engine } from "@/lib/credits";
+
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+// Fix a project's site URL (e.g. a domain typo at create time). Owner/write
+// only. Re-runs the same SSRF/scheme validation as project creation, then
+// keeps the linked autoblog config (lx_site) pointed at the corrected domain.
+export async function updateProjectUrl(input: {
+  projectId: string;
+  url: string;
+  name?: string;
+}): Promise<{ ok: true; url: string; domain: string } | { ok: false; error: string }> {
+  const check = isAllowedTargetUrl(input.url);
+  if (!check.ok) return { ok: false, error: check.reason };
+
+  const access = await requireProjectAccess(input.projectId);
+  if (!access.ok) return { ok: false, error: access.error };
+
+  const domain = hostFromUrl(check.url);
+  const patch: Record<string, unknown> = { url: check.url };
+  const trimmedName = input.name?.trim();
+  if (trimmedName) patch.name = trimmedName;
+
+  const { error } = await access.supabase
+    .from("projects")
+    .update(patch)
+    .eq("id", input.projectId);
+  if (error) return { ok: false, error: error.message };
+
+  // Keep the optional autoblog config (1:1 lx_site) in sync so its worker
+  // and sitemap fetches target the corrected host. Best-effort: a project
+  // with no autoblog setup simply has no row to update.
+  await access.supabase
+    .from("lx_site")
+    .update({ url: check.url, domain })
+    .eq("project_id", input.projectId);
+
+  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, url: check.url, domain };
+}
 
 // Persist the default engine list on a project. Used by manual scans (as the
 // preselected checkboxes) AND by the cron daemon — which reads the value at
