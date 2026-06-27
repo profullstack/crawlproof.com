@@ -72,6 +72,12 @@ const TABS: ProjectTab[] = [
     href: (id) => `/projects/${id}/members`,
     matches: (p, id) => p.startsWith(`/projects/${id}/members`),
   },
+  {
+    id: "settings",
+    label: "Settings",
+    href: (id) => `/projects/${id}/settings`,
+    matches: (p, id) => p.startsWith(`/projects/${id}/settings`),
+  },
 ];
 
 export function ProjectTabsNav({ projectId }: { projectId: string }) {
