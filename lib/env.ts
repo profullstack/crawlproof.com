@@ -63,6 +63,10 @@ export const env = {
   moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
   zaiApiKey: process.env.ZAI_API_KEY ?? "",               // Z.AI / Zhipu GLM
+  // GLM Coding Plan endpoint (monthly subscription). The standard
+  // pay-as-you-go endpoint (.../api/paas/v4) returns 429 "insufficient
+  // balance" unless the API wallet is topped up separately.
+  zaiBaseUrl: process.env.ZAI_BASE_URL ?? "https://api.z.ai/api/coding/paas/v4",
   perplexityApiKey: process.env.PERPLEXITY_API_KEY ?? "", // Sonar API
   // Sakana Fugu — orchestration model, OpenAI-compatible Chat Completions.
   // Base URL + model are env-overridable; defaults match Sakana's console
