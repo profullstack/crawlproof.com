@@ -162,11 +162,11 @@ export const ENGINES: Record<Engine, EngineMeta> = {
       "Cost-efficient open-weight model. Strong reasoning, OpenAI-compatible API — quick, lightweight second opinion.",
   },
   zai: {
-    label: "Z.AI GLM-4.6",
+    label: "Z.AI GLM-5.2",
     cost: SCAN_CREDITS,
     available: true,
     blurb:
-      "Zhipu AI's flagship GLM-4.6 via Z.AI's OpenAI-compatible API. Strong bilingual reasoning — a frontier second opinion on your site.",
+      "Zhipu AI's flagship GLM-5.2 via Z.AI's OpenAI-compatible API. Strong bilingual reasoning — a frontier second opinion on your site.",
   },
   perplexity: {
     label: "Perplexity Sonar Pro",
