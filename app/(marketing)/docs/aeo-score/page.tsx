@@ -28,8 +28,8 @@ export default function AeoScoreDocsPage() {
         <h2 className="text-2xl font-bold">How it&apos;s computed</h2>
         <p className="text-sm leading-relaxed">
           Each scan run produces one audit per engine you have enabled
-          (Claude, OpenAI, Gemini, Perplexity, Qwen, Kimi, DeepSeek, plus
-          the local rule engine). Every audit gets its own 0–100 score
+          (Claude, OpenAI, Gemini, Perplexity, Qwen, Kimi, DeepSeek, Z.AI,
+          plus the local rule engine). Every audit gets its own 0–100 score
           based on what each engine could find and understand. Once the
           whole scan run is done, we average the scores of all{" "}
           <em>completed</em> engines and store one{" "}

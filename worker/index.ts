@@ -12,6 +12,7 @@ import { geminiAudit } from "../lib/audit/gemini-engine";
 import { qwenAudit } from "../lib/audit/qwen-engine";
 import { kimiAudit } from "../lib/audit/kimi-engine";
 import { deepseekAudit } from "../lib/audit/deepseek-engine";
+import { zaiAudit } from "../lib/audit/zai-engine";
 import { perplexityAudit } from "../lib/audit/perplexity-engine";
 import { fuguAudit } from "../lib/audit/fugu-engine";
 import { toMarkdown } from "../lib/audit/markdown";
@@ -347,6 +348,7 @@ async function processJob(job: Job) {
         | "qwen"
         | "kimi"
         | "deepseek"
+        | "zai"
         | "perplexity"
         | "fugu") ?? "rule";
     console.log(`[worker] audit ${auditId} engine=${engine}`);
@@ -374,6 +376,7 @@ async function processJob(job: Job) {
       qwen: qwenAudit,
       kimi: kimiAudit,
       deepseek: deepseekAudit,
+      zai: zaiAudit,
       perplexity: perplexityAudit,
       fugu: fuguAudit,
     } as const;

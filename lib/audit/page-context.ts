@@ -2,7 +2,7 @@ import { fetchPage, probeText } from "./fetch";
 
 // Shared pre-fetched-context builder. Used by every LLM engine that
 // doesn't have its own agentic web fetch loop (now: Claude, Qwen, Kimi,
-// Gemini, DeepSeek, Perplexity). One round of parallel fetches,
+// Gemini, DeepSeek, Z.AI, Perplexity). One round of parallel fetches,
 // passed to the model as a single bundle — collapses what used to be
 // 10+ agentic round trips into one API call.
 

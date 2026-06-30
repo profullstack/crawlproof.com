@@ -21,6 +21,7 @@ const ALL_ENGINES: Engine[] = [
   "kimi",
   "gemini",
   "deepseek",
+  "zai",
   "perplexity",
 ];
 
