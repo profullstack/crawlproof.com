@@ -62,6 +62,7 @@ export const env = {
   dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? "",   // Qwen
   moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
+  zaiApiKey: process.env.ZAI_API_KEY ?? "",               // Z.AI / Zhipu GLM
   perplexityApiKey: process.env.PERPLEXITY_API_KEY ?? "", // Sonar API
   // Sakana Fugu — orchestration model, OpenAI-compatible Chat Completions.
   // Base URL + model are env-overridable; defaults match Sakana's console

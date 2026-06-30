@@ -69,6 +69,7 @@ export type Engine =
   | "kimi"
   | "gemini"
   | "deepseek"
+  | "zai"
   | "perplexity"
   | "fugu";
 
@@ -159,6 +160,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Cost-efficient open-weight model. Strong reasoning, OpenAI-compatible API — quick, lightweight second opinion.",
+  },
+  zai: {
+    label: "Z.AI GLM-4.6",
+    cost: SCAN_CREDITS,
+    available: true,
+    blurb:
+      "Zhipu AI's flagship GLM-4.6 via Z.AI's OpenAI-compatible API. Strong bilingual reasoning — a frontier second opinion on your site.",
   },
   perplexity: {
     label: "Perplexity Sonar Pro",
