@@ -177,6 +177,7 @@ describe("Autopilot entitlement helpers", () => {
       supabase,
       "project-1",
       "owner-1",
+      now,
     );
 
     expect(capacity.ok).toBe(true);
@@ -195,6 +196,7 @@ describe("Autopilot entitlement helpers", () => {
       supabase,
       "project-1",
       "owner-1",
+      now,
     );
 
     expect(capacity.ok).toBe(true);

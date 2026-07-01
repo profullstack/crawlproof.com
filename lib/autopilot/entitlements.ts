@@ -108,6 +108,7 @@ export async function getArticleGenerationCapacity(
   supabase: SupabaseClient<any>,
   projectId: string,
   ownerId: string,
+  nowIso = new Date().toISOString(),
 ): Promise<{
   ok: boolean;
   source: ArticleChargeSource;
@@ -118,6 +119,7 @@ export async function getArticleGenerationCapacity(
     supabase,
     projectId,
     ownerId,
+    nowIso,
   );
   if (entitlement && entitlement.articlesRemaining > 0) {
     return {
