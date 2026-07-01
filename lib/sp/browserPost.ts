@@ -29,6 +29,7 @@ import {
   type ImageStyle,
   type ImageStylePref,
 } from "@/lib/sp/imageGen";
+import { reconcileOutreach } from "@/lib/sp/outreachReconcile";
 
 export async function processBrowserPost(args: {
   postId: string;
@@ -160,6 +161,7 @@ export async function processBrowserPost(args: {
       http_status: 200,
       auth_mode: "cookie",
     });
+    await reconcileOutreach(supabase, postId, "sent", null);
     console.log(`[browser-post] ${postId} published to ${account.platform} → ${result.webUrl}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -196,4 +198,5 @@ async function fail(
     error_message: message,
     auth_mode: "cookie",
   });
+  await reconcileOutreach(supabase, postId, "failed", message);
 }
