@@ -9,7 +9,7 @@ export type OutreachHistoryItem = {
   id: string;
   channel: string;
   provider: string;
-  status: "sent" | "failed" | "queued";
+  status: "sent" | "failed" | "queued" | "timed_out";
   subject: string | null;
   error: string | null;
   createdAt: string;
@@ -111,7 +111,7 @@ export function RecentOutreachForm({
           <div className="font-medium text-[var(--color-muted)]">History</div>
           {history.map((h) => (
             <div key={h.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className={statusClass(h.status)}>{h.status}</span>
+              <span className={statusClass(h.status)}>{statusLabel(h.status)}</span>
               <span className="text-[var(--color-muted)]">
                 {new Date(h.createdAt).toLocaleString()} · {h.channel} · {h.provider}
               </span>
@@ -125,7 +125,7 @@ export function RecentOutreachForm({
                   view post ↗
                 </a>
               )}
-              {h.status === "failed" && h.error && (
+              {(h.status === "failed" || h.status === "timed_out") && h.error && (
                 <span className="w-full truncate text-red-600" title={h.error}>
                   {h.error}
                 </span>
@@ -283,9 +283,14 @@ function defaultBody(host: string) {
   return `I saw your CrawlProof audit for ${host}. There are a few concrete fixes that would improve how AI engines understand the site.`;
 }
 
-function statusClass(status: "sent" | "failed" | "queued") {
+function statusLabel(status: OutreachHistoryItem["status"]) {
+  return status === "timed_out" ? "timed out" : status;
+}
+
+function statusClass(status: OutreachHistoryItem["status"]) {
   const base = "rounded px-1.5 py-0.5 font-medium";
   if (status === "sent") return `${base} bg-green-100 text-green-800`;
   if (status === "failed") return `${base} bg-red-100 text-red-700`;
+  if (status === "timed_out") return `${base} bg-amber-100 text-amber-800`;
   return `${base} bg-[var(--color-border)] text-[var(--color-muted)]`;
 }
