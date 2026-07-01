@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { listUserOrgs } from "@/lib/orgs";
 import { RecentOutreachForm, type OutreachHistoryItem } from "./outreach-form";
+import { deriveOutreachStatus, type OutreachSocialPost } from "@/lib/sp/outreachStatus";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 60;
@@ -336,8 +337,8 @@ async function fetchOutreachHistory(
     error: string | null;
     created_at: string;
     social_post:
-      | SocialPostRow
-      | SocialPostRow[]
+      | OutreachSocialPost
+      | OutreachSocialPost[]
       | null;
   }>) {
     const post = Array.isArray(row.social_post)
@@ -359,46 +360,4 @@ async function fetchOutreachHistory(
     byAudit.set(row.audit_id, list);
   }
   return byAudit;
-}
-
-type SocialPostRow = {
-  status: string | null;
-  platform_post_url: string | null;
-  last_error: string | null;
-};
-
-// A browser-automated post (auth_mode='cookie') is stuck in the worker
-// queue longer than this before we surface it as timed out. Playwright
-// posts normally finish in well under a minute.
-const OUTREACH_STALE_MS = 20 * 60 * 1000;
-
-// The outreach row's own status is only accurate for the synchronous
-// (OAuth) path. Cookie-auth posts are handed to the Playwright worker and
-// recorded as "queued"; the worker updates the linked sp_post but never
-// the outreach row. Derive the real status from that sp_post at read time
-// so the history reflects what actually happened — and expire jobs that
-// never came back.
-function deriveOutreachStatus(
-  rowStatus: "sent" | "failed" | "queued",
-  rowError: string | null,
-  createdAt: string,
-  post: SocialPostRow | null,
-): { status: OutreachHistoryItem["status"]; error: string | null } {
-  // Terminal statuses from the synchronous path are authoritative.
-  if (rowStatus !== "queued") return { status: rowStatus, error: rowError };
-  // Manual "queued for hand-delivery" rows have no linked post.
-  if (!post) return { status: "queued", error: rowError };
-
-  if (post.status === "published") return { status: "sent", error: null };
-  if (post.status === "failed" || post.status === "cancelled") {
-    return { status: "failed", error: post.last_error ?? rowError };
-  }
-  // Still queued_browser / publishing — flip to timed out once stale.
-  if (Date.now() - new Date(createdAt).getTime() > OUTREACH_STALE_MS) {
-    return {
-      status: "timed_out",
-      error: "The worker never reported back — the post may not have been published.",
-    };
-  }
-  return { status: "queued", error: rowError };
 }
