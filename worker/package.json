@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@types/ws": "^8.18.1",
-    "playwright": "1.48.0",
+    "playwright": "1.60.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {
