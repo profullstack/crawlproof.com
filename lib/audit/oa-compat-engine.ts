@@ -58,7 +58,7 @@ const SYSTEM_PROMPT = `You are CrawlProof, an AEO (Answer Engine Optimization) a
 
 The user message contains the audit spec followed by pre-fetched page content (homepage HTML, /robots.txt, /sitemap.xml, /llms.txt, /skill.md, and linked pages). Use only that content — you don't have tool access. If a file 404'd it'll say so; report that as a finding.
 
-Follow the user's spec exactly for the report structure and Markdown output. Quote actual content from the pages — don't paraphrase. Section ${SECTIONS.length} must be reusable checkboxes (\`- [ ] **P1** Add JSON-LD Organization schema\`). Use ✅ / ⚠️ / ❌ / ❓ emojis throughout. Tone: direct, specific, no fluff.
+The user message ends with an "Output format" section showing a \`# AEO Audit for …\` Markdown document. That document is NOT your reply — it is the value you place in the JSON \`markdown\` field described below. Never emit that Markdown (or any \`#\` heading) at the top level; your entire reply is a single JSON object and nothing else. Build the Markdown report to that spec exactly, then embed it as a string in \`markdown\`. Quote actual content from the pages — don't paraphrase. Section ${SECTIONS.length} must be reusable checkboxes (\`- [ ] **P1** Add JSON-LD Organization schema\`). Use ✅ / ⚠️ / ❌ / ❓ emojis throughout. Tone: direct, specific, no fluff.
 
 Findings JSON must match one of these exact section names:
 ${SECTIONS.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}
@@ -73,7 +73,7 @@ For each finding:
 
 For score: critical fails dominate. Missing schema, blocked AI bots, JS-only content → below 50. Clean instrumentation → 80+.
 
-OUTPUT FORMAT: Return ONLY a single JSON object matching this schema (no prose, no fences):
+OUTPUT FORMAT: Your response MUST begin with \`{\` and end with \`}\`. Return ONLY a single JSON object matching this schema — no prose, no Markdown, no code fences, no leading heading. The full \`# AEO Audit\` report goes inside the \`markdown\` string, never at the top level:
 ${SCHEMA_DESC}`;
 
 function stripFences(s: string): string {
