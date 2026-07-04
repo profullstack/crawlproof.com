@@ -236,6 +236,70 @@ export async function sendRecentAuditOutreach(input: {
   return { ok: true, provider: result.provider };
 }
 
+// Re-attempt a previously failed (or timed-out) outreach message. We don't
+// mutate the old row — we reconstruct the original request from it and run it
+// back through sendRecentAuditOutreach, which re-charges credits, re-records a
+// fresh history entry, and refunds on failure exactly like a first attempt.
+// Retrying one row at a time also avoids the parallel browser-launch storm that
+// makes bulk "post to all" runs fail on the Chromium-based platforms.
+export async function retryRecentOutreach(input: {
+  messageId: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const svc = serviceClient();
+  const { data: msg } = await svc
+    .from("recent_outreach_messages")
+    .select(
+      "id, organization_id, audit_id, channel, provider, subject, body, status, visibility",
+    )
+    .eq("id", input.messageId)
+    .maybeSingle();
+  if (!msg) return { ok: false, error: "Outreach message not found." };
+
+  const access = await orgOwner(svc, msg.organization_id, user.id);
+  if (!access.ok) return { ok: false, error: access.error };
+
+  if (msg.status !== "failed" && msg.status !== "timed_out") {
+    return { ok: false, error: "Only failed outreach can be retried." };
+  }
+
+  const channel = msg.channel as OutreachChannel;
+
+  // Social rows only record the platform (provider), not the specific account,
+  // so resolve the user's active account(s) on that platform to retry against.
+  let socialAccountIds: string[] = [];
+  if (channel === "social") {
+    const { data: accts } = await svc
+      .from("sp_account")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .eq("platform", msg.provider);
+    socialAccountIds = ((accts ?? []) as Array<{ id: string }>).map((a) => a.id);
+    if (socialAccountIds.length === 0) {
+      return {
+        ok: false,
+        error: `No active ${msg.provider} account to retry with — reconnect it first.`,
+      };
+    }
+  }
+
+  return sendRecentAuditOutreach({
+    auditId: msg.audit_id,
+    organizationId: msg.organization_id,
+    channel,
+    visibility: (msg.visibility as OutreachVisibility) ?? "private",
+    socialAccountIds,
+    subject: msg.subject ?? undefined,
+    body: msg.body,
+  });
+}
+
 async function loadOutreachConfig(
   svc: ReturnType<typeof serviceClient>,
   organizationId: string,
