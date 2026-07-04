@@ -1,8 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState, useTransition } from "react";
-import { sendRecentAuditOutreach } from "@/app/actions/recent-outreach";
+import {
+  retryRecentOutreach,
+  sendRecentAuditOutreach,
+} from "@/app/actions/recent-outreach";
 import { OUTREACH_CREDITS } from "@/lib/credits";
 
 export type OutreachHistoryItem = {
@@ -124,6 +128,9 @@ export function RecentOutreachForm({
                 >
                   view post ↗
                 </a>
+              )}
+              {(h.status === "failed" || h.status === "timed_out") && (
+                <RetryOutreachButton messageId={h.id} />
               )}
               {(h.status === "failed" || h.status === "timed_out") && h.error && (
                 <span className="w-full truncate text-red-600" title={h.error}>
@@ -276,6 +283,40 @@ export function RecentOutreachForm({
         </div>
       </form>
     </details>
+  );
+}
+
+function RetryOutreachButton({ messageId }: { messageId: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          setErr(null);
+          start(async () => {
+            const r = await retryRecentOutreach({ messageId });
+            if (!r.ok) {
+              setErr(r.error);
+              return;
+            }
+            router.refresh();
+          });
+        }}
+        className="rounded border border-[var(--color-border)] px-1.5 py-0.5 font-medium hover:bg-[var(--color-card)] disabled:opacity-50"
+      >
+        {pending ? "Retrying…" : "Retry"}
+      </button>
+      {err && (
+        <span className="w-full truncate text-red-600" title={err}>
+          {err}
+        </span>
+      )}
+    </span>
   );
 }
 
