@@ -12,6 +12,17 @@ import { AppPasswordReveal } from "./app-password-reveal";
 
 export const metadata = { title: "Social · Connect accounts" };
 
+// Where to send the user to log in when a cookie session has expired, so they
+// can re-export fresh cookies. Mastodon is instance-specific, so omitted.
+const PLATFORM_LOGIN_URLS: Record<string, string | undefined> = {
+  reddit: "https://www.reddit.com/login",
+  facebook_page: "https://www.facebook.com/login",
+  threads: "https://www.threads.net/login",
+  instagram: "https://www.instagram.com/accounts/login/",
+  x: "https://x.com/login",
+  linkedin: "https://www.linkedin.com/login",
+};
+
 type SetupSearchParams = Promise<{
   connected?: string;
   error?: string;
@@ -129,6 +140,25 @@ export default async function SocialSetupPage({
                   {a.last_post_at && (
                     <p className="mt-1 text-xs text-[var(--color-muted)]">
                       Last post {new Date(a.last_post_at).toLocaleString()}
+                    </p>
+                  )}
+                  {a.status !== "active" && a.platform !== "bluesky" && (
+                    <p className="mt-1 text-xs text-[var(--color-warn)]">
+                      ⚠ Session expired.{" "}
+                      {PLATFORM_LOGIN_URLS[a.platform] && (
+                        <>
+                          <a
+                            href={PLATFORM_LOGIN_URLS[a.platform]!}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline"
+                          >
+                            Log in to {a.platform} ↗
+                          </a>
+                          , then re-export cookies with Cookie-Editor and paste
+                          them in the {a.platform} section below to reconnect.
+                        </>
+                      )}
                     </p>
                   )}
                   {a.platform === "bluesky" && a.enc_app_password && (
