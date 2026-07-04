@@ -125,6 +125,27 @@ function normalizeSameSite(value: unknown): BrowserCookie["sameSite"] {
   }
 }
 
+// Error carrying the page it failed on, so browserPost can persist the real
+// authenticated DOM (sp_post.debug_html/url) for selector debugging.
+export class BrowserPostError extends Error {
+  pageUrl?: string;
+  pageHtml?: string;
+}
+
+async function captureDom(page: Page, err: unknown): Promise<BrowserPostError> {
+  const e = new BrowserPostError(err instanceof Error ? err.message : String(err));
+  if (err instanceof Error && err.stack) e.stack = err.stack;
+  try {
+    e.pageUrl = page.url();
+    // Trim — some platform pages are megabytes of inline JSON. This is plenty
+    // to find the compose/form selectors.
+    e.pageHtml = (await page.content()).slice(0, 600_000);
+  } catch {
+    // Page may already be gone; keep the original message.
+  }
+  return e;
+}
+
 export function parseCookies(raw: string): BrowserCookie[] {
   const parsed = JSON.parse(raw);
   const arr: unknown[] = Array.isArray(parsed) ? parsed : parsed.cookies ?? parsed;
@@ -157,8 +178,8 @@ export async function redditBrowserPost(args: {
   const { cookies, subreddit, title, text, waitForCode } = args;
   const sr = subreddit.replace(/^\/?r\//, "");
   const { browser, ctx } = await launchContext(cookies);
+  const page = await ctx.newPage();
   try {
-    const page = await ctx.newPage();
     await page.goto(`https://www.reddit.com/r/${sr}/submit`, {
       waitUntil: "domcontentloaded",
     });
@@ -192,6 +213,8 @@ export async function redditBrowserPost(args: {
     const match = postUrl.match(/\/comments\/([a-z0-9]+)\//);
     const postId = match ? `t3_${match[1]}` : postUrl;
     return { platformPostId: postId, webUrl: postUrl };
+  } catch (err) {
+    throw await captureDom(page, err);
   } finally {
     await browser.close();
   }
@@ -208,8 +231,8 @@ export async function facebookBrowserPost(args: {
 }): Promise<BrowserPostResult> {
   const { cookies, pageId, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
+  const page = await ctx.newPage();
   try {
-    const page = await ctx.newPage();
     await page.goto(`https://www.facebook.com/${pageId}`, {
       waitUntil: "domcontentloaded",
     });
@@ -259,6 +282,8 @@ export async function facebookBrowserPost(args: {
       ? `https://www.facebook.com${href.startsWith("/") ? href : "/" + href}`
       : `https://www.facebook.com/${pageId}`;
     return { platformPostId: pageId, webUrl: postUrl };
+  } catch (err) {
+    throw await captureDom(page, err);
   } finally {
     await browser.close();
   }
@@ -274,8 +299,8 @@ export async function threadsBrowserPost(args: {
 }): Promise<BrowserPostResult> {
   const { cookies, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
+  const page = await ctx.newPage();
   try {
-    const page = await ctx.newPage();
     await page.goto("https://www.threads.net", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Threads"));
     await assertLoggedIn(page, "Threads");
@@ -322,6 +347,8 @@ export async function threadsBrowserPost(args: {
       ? `https://www.threads.net${href.startsWith("/") ? href : "/" + href}`
       : "https://www.threads.net";
     return { platformPostId: href ?? "threads", webUrl: postUrl };
+  } catch (err) {
+    throw await captureDom(page, err);
   } finally {
     await browser.close();
   }
@@ -337,8 +364,8 @@ export async function instagramBrowserPost(args: {
 }): Promise<BrowserPostResult> {
   const { cookies, caption, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
+  const page = await ctx.newPage();
   try {
-    const page = await ctx.newPage();
     await page.goto("https://www.instagram.com", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Instagram"));
     await assertLoggedIn(page, "Instagram");
@@ -392,6 +419,8 @@ export async function instagramBrowserPost(args: {
     } finally {
       await fs.unlink(tmpPath).catch(() => {});
     }
+  } catch (err) {
+    throw await captureDom(page, err);
   } finally {
     await browser.close();
   }
@@ -407,8 +436,8 @@ export async function xBrowserPost(args: {
 }): Promise<BrowserPostResult> {
   const { cookies, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
+  const page = await ctx.newPage();
   try {
-    const page = await ctx.newPage();
     await page.goto("https://x.com/home", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("X"));
     await assertLoggedIn(page, "X");
@@ -451,6 +480,8 @@ export async function xBrowserPost(args: {
       ? `https://x.com${href.startsWith("/") ? href : "/" + href}`
       : "https://x.com";
     return { platformPostId: href ?? "x", webUrl: postUrl };
+  } catch (err) {
+    throw await captureDom(page, err);
   } finally {
     await browser.close();
   }
@@ -466,8 +497,8 @@ export async function linkedinBrowserPost(args: {
 }): Promise<BrowserPostResult> {
   const { cookies, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
+  const page = await ctx.newPage();
   try {
-    const page = await ctx.newPage();
     await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("LinkedIn"));
     await assertLoggedIn(page, "LinkedIn");
@@ -519,6 +550,8 @@ export async function linkedinBrowserPost(args: {
       ? `https://www.linkedin.com${href.startsWith("/") ? href : "/" + href}`
       : "https://www.linkedin.com/feed/";
     return { platformPostId: href ?? "linkedin", webUrl: postUrl };
+  } catch (err) {
+    throw await captureDom(page, err);
   } finally {
     await browser.close();
   }
@@ -536,8 +569,8 @@ export async function mastodonBrowserPost(args: {
   const { cookies, instanceUrl, text, imageUrl, waitForCode } = args;
   const base = instanceUrl.startsWith("http") ? instanceUrl : `https://${instanceUrl}`;
   const { browser, ctx } = await launchContext(cookies);
+  const page = await ctx.newPage();
   try {
-    const page = await ctx.newPage();
     await page.goto(base, { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Mastodon"));
     await assertLoggedIn(page, "Mastodon");
@@ -583,6 +616,8 @@ export async function mastodonBrowserPost(args: {
     const href = await postLink.getAttribute("href").catch(() => null);
     const postUrl = href ?? base;
     return { platformPostId: href ?? "mastodon", webUrl: postUrl };
+  } catch (err) {
+    throw await captureDom(page, err);
   } finally {
     await browser.close();
   }
