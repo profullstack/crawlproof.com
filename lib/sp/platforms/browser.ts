@@ -41,7 +41,9 @@ export const LOGIN_WALL_PREFIX = "SESSION_EXPIRED";
 async function assertLoggedIn(page: Page, platform: string): Promise<void> {
   const url = page.url().toLowerCase();
   const onLogin =
-    /\/login|\/signin|\/sign_in|\/uas\/login|accounts\/login|\/auth\/login/.test(url);
+    /\/login|\/signin|\/sign_in|\/uas\/login|accounts\/login|accounts\/emailsignup|\/signup|\/auth\/login/.test(
+      url,
+    );
   const passwordVisible = await page
     .locator('input[type="password"]')
     .first()
@@ -192,20 +194,38 @@ export async function redditBrowserPost(args: {
       await textTab.click();
     }
 
-    // Title
-    await page.getByPlaceholder(/title/i).fill(title);
-
-    // Body — Reddit uses a contenteditable div in the new UI
-    const bodyEditor = page.locator('[data-testid="post-content"] [contenteditable="true"]')
-      .or(page.locator('.public-DraftEditor-content'))
-      .or(page.locator('textarea[name="text"]'))
+    // Title — new Reddit renders a <post-composer-title name="title"> web
+    // component (confirmed from the live DOM); older layouts used a titled
+    // input. Click and type so the component's internal field registers it.
+    const titleField = page
+      .locator("post-composer-title, faceplate-textarea[name='title']")
+      .or(page.getByPlaceholder(/title/i))
+      .or(page.locator('textarea[name="title"], input[name="title"]'))
       .first();
-    await bodyEditor.waitFor({ timeout: 8_000 });
-    await bodyEditor.click();
-    await bodyEditor.fill(text);
+    await titleField.waitFor({ timeout: 12_000 });
+    await titleField.click();
+    await page.keyboard.type(title);
 
-    // Submit
-    await page.getByRole("button", { name: /^post$/i }).click();
+    // Body — a Lexical contenteditable inside <shreddit-composer name="body">
+    // (confirmed: <div data-lexical-editor="true" contenteditable="true">).
+    // Lexical ignores programmatic value setting, so type via the keyboard.
+    const bodyEditor = page
+      .locator('div[data-lexical-editor="true"][contenteditable="true"]')
+      .or(page.locator('shreddit-composer [contenteditable="true"]'))
+      .or(page.locator('[slot="editor"][contenteditable="true"]'))
+      .or(page.locator('[data-testid="post-content"] [contenteditable="true"]'))
+      .first();
+    await bodyEditor.waitFor({ timeout: 12_000 });
+    await bodyEditor.click();
+    await page.keyboard.type(text);
+
+    // Submit — the Post button lives in a shreddit web component; getByRole
+    // pierces its open shadow root at runtime.
+    await page
+      .getByRole("button", { name: /^post$/i })
+      .or(page.locator("#submit-post-button, button[type='submit']"))
+      .first()
+      .click();
 
     // Wait for redirect to the new post
     await page.waitForURL(/\/r\/[^/]+\/comments\//, { timeout: 15_000 });
@@ -301,7 +321,9 @@ export async function threadsBrowserPost(args: {
   const { browser, ctx } = await launchContext(cookies);
   const page = await ctx.newPage();
   try {
-    await page.goto("https://www.threads.net", { waitUntil: "domcontentloaded" });
+    // Threads moved from threads.net to threads.com; the old domain redirects
+    // (and threads.net cookies don't authenticate on .com).
+    await page.goto("https://www.threads.com", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Threads"));
     await assertLoggedIn(page, "Threads");
 
@@ -344,8 +366,8 @@ export async function threadsBrowserPost(args: {
     const postLink = page.locator('a[href*="/post/"]').first();
     const href = await postLink.getAttribute("href").catch(() => null);
     const postUrl = href
-      ? `https://www.threads.net${href.startsWith("/") ? href : "/" + href}`
-      : "https://www.threads.net";
+      ? `https://www.threads.com${href.startsWith("/") ? href : "/" + href}`
+      : "https://www.threads.com";
     return { platformPostId: href ?? "threads", webUrl: postUrl };
   } catch (err) {
     throw await captureDom(page, err);
