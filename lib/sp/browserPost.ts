@@ -13,6 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type OpenAI from "openai";
 import { decryptSecret } from "@/lib/sp/vault";
 import {
+  LOGIN_WALL_PREFIX,
   parseCookies,
   redditBrowserPost,
   facebookBrowserPost,
@@ -198,9 +199,16 @@ async function fail(
       .select("consecutive_failures")
       .eq("id", accountId)
       .maybeSingle();
+    // A login-wall failure means the stored cookies are dead — flag the account
+    // token_expired so the UI prompts a reconnect (re-export cookies) and stops
+    // posting to it until then.
+    const sessionExpired = message.startsWith(LOGIN_WALL_PREFIX);
     await supabase
       .from("sp_account")
-      .update({ consecutive_failures: ((acct?.consecutive_failures ?? 0) as number) + 1 })
+      .update({
+        consecutive_failures: ((acct?.consecutive_failures ?? 0) as number) + 1,
+        ...(sessionExpired ? { status: "token_expired" } : {}),
+      })
       .eq("id", accountId);
   }
   await supabase.from("sp_publish_attempt").insert({

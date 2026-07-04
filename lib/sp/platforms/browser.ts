@@ -14,7 +14,12 @@
 // scraping flows. Add playwright-extra + stealth plugin if detection becomes
 // a problem.
 
-import { chromium, type Browser, type BrowserContext } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright";
 import { browserSemaphore } from "@/lib/sp/browserSemaphore";
 import { handleCodeChallenge, type CodeWaiter } from "@/lib/sp/verificationChallenge";
 
@@ -22,6 +27,31 @@ import { handleCodeChallenge, type CodeWaiter } from "@/lib/sp/verificationChall
 // session asking for a verification code.
 function codePrompt(platform: string): string {
   return `${platform} is asking for a verification code. Enter the code it just sent (email / SMS / authenticator) to finish posting.`;
+}
+
+// Prefix on errors thrown when the cookie session is dead and the platform is
+// showing a login wall. browserPost.ts recognizes it and flags the account as
+// token_expired so the user is prompted to reconnect (re-export cookies).
+export const LOGIN_WALL_PREFIX = "SESSION_EXPIRED";
+
+// After navigating with cookies (and clearing any code challenge), bail out
+// with a clear, recognizable error if we landed on a login page instead of the
+// app — otherwise the composer selectors just time out opaquely. Detects a
+// login URL or a visible password field.
+async function assertLoggedIn(page: Page, platform: string): Promise<void> {
+  const url = page.url().toLowerCase();
+  const onLogin =
+    /\/login|\/signin|\/sign_in|\/uas\/login|accounts\/login|\/auth\/login/.test(url);
+  const passwordVisible = await page
+    .locator('input[type="password"]')
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+  if (onLogin || passwordVisible) {
+    throw new Error(
+      `${LOGIN_WALL_PREFIX}: ${platform} session expired — reconnect the account with fresh cookies.`,
+    );
+  }
 }
 
 export type BrowserCookie = {
@@ -133,6 +163,7 @@ export async function redditBrowserPost(args: {
       waitUntil: "domcontentloaded",
     });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Reddit"));
+    await assertLoggedIn(page, "Reddit");
 
     // Select "Text" tab
     const textTab = page.getByRole("tab", { name: /text/i });
@@ -183,6 +214,7 @@ export async function facebookBrowserPost(args: {
       waitUntil: "domcontentloaded",
     });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Facebook"));
+    await assertLoggedIn(page, "Facebook");
 
     // Click the "Write something..." composer
     const composer = page.getByPlaceholder(/write something/i)
@@ -246,6 +278,7 @@ export async function threadsBrowserPost(args: {
     const page = await ctx.newPage();
     await page.goto("https://www.threads.net", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Threads"));
+    await assertLoggedIn(page, "Threads");
 
     // New Thread button
     const newThreadBtn = page
@@ -308,6 +341,7 @@ export async function instagramBrowserPost(args: {
     const page = await ctx.newPage();
     await page.goto("https://www.instagram.com", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Instagram"));
+    await assertLoggedIn(page, "Instagram");
 
     // Download image to temp file
     const imgRes = await fetch(imageUrl);
@@ -377,6 +411,7 @@ export async function xBrowserPost(args: {
     const page = await ctx.newPage();
     await page.goto("https://x.com/home", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("X"));
+    await assertLoggedIn(page, "X");
 
     // Click the compose box
     const compose = page
@@ -435,6 +470,7 @@ export async function linkedinBrowserPost(args: {
     const page = await ctx.newPage();
     await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("LinkedIn"));
+    await assertLoggedIn(page, "LinkedIn");
 
     // Start a post
     const startPost = page
@@ -504,6 +540,7 @@ export async function mastodonBrowserPost(args: {
     const page = await ctx.newPage();
     await page.goto(base, { waitUntil: "domcontentloaded" });
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Mastodon"));
+    await assertLoggedIn(page, "Mastodon");
 
     // Mastodon web app — compose textarea. Match the compose box specifically:
     // a bare getByRole("textbox") also matched the "Search or paste URL" input
@@ -532,9 +569,12 @@ export async function mastodonBrowserPost(args: {
       }
     }
 
-    // Toot / Publish button
+    // Toot / Publish button. Mastodon labels it "Publish!" / "Toot!"; also
+    // accept the compose form's submit button as a fallback.
     await page
       .getByRole("button", { name: /publish|toot/i })
+      .or(page.locator("button.compose-form__submit"))
+      .or(page.locator(".compose-form button[type='submit']"))
       .last()
       .click();
 
