@@ -15,6 +15,7 @@
 // a problem.
 
 import { chromium, type Browser, type BrowserContext } from "playwright";
+import { browserSemaphore } from "@/lib/sp/browserSemaphore";
 
 export type BrowserCookie = {
   name: string;
@@ -39,15 +40,35 @@ async function launchContext(cookies: BrowserCookie[]): Promise<{
   browser: Browser;
   ctx: BrowserContext;
 }> {
-  const browser = await chromium.launch({ headless: true });
-  const ctx = await browser.newContext({
-    userAgent: UA,
-    viewport: { width: 1280, height: 800 },
-    locale: "en-US",
-    timezoneId: "America/New_York",
-  });
-  await ctx.addCookies(cookies);
-  return { browser, ctx };
+  // Hold a concurrency slot for the whole browser lifetime so we never run more
+  // than SP_BROWSER_CONCURRENCY headless Chromiums at once (see
+  // browserSemaphore). The slot is released when the browser disconnects, which
+  // fires from every platform function's `finally { browser.close() }`.
+  await browserSemaphore.acquire();
+  let released = false;
+  const release = () => {
+    if (!released) {
+      released = true;
+      browserSemaphore.release();
+    }
+  };
+  try {
+    const browser = await chromium.launch({ headless: true });
+    browser.once("disconnected", release);
+    const ctx = await browser.newContext({
+      userAgent: UA,
+      viewport: { width: 1280, height: 800 },
+      locale: "en-US",
+      timezoneId: "America/New_York",
+    });
+    await ctx.addCookies(cookies);
+    return { browser, ctx };
+  } catch (err) {
+    // Launch or context setup failed before we could attach the disconnect
+    // handler — free the slot so a failure can't leak capacity.
+    release();
+    throw err;
+  }
 }
 
 export function parseCookies(raw: string): BrowserCookie[] {

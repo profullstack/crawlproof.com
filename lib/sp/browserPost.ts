@@ -30,6 +30,7 @@ import {
   type ImageStylePref,
 } from "@/lib/sp/imageGen";
 import { reconcileOutreach } from "@/lib/sp/outreachReconcile";
+import { pickDefaultSubreddit } from "@/lib/sp/redditSubreddit";
 
 export async function processBrowserPost(args: {
   postId: string;
@@ -111,9 +112,12 @@ export async function processBrowserPost(args: {
     let result: { platformPostId: string; webUrl: string };
 
     if (account.platform === "reddit") {
-      const subreddit = (claimed.subreddit as string | null) ?? "";
       const title = (claimed.title as string | null) ?? text.slice(0, 300);
-      if (!subreddit) throw new Error("Subreddit is required for Reddit posts.");
+      // Fall back to a related, relatively open subreddit when none was stored
+      // (e.g. outreach/autopost rows) instead of failing the post.
+      const subreddit =
+        ((claimed.subreddit as string | null) ?? "").trim() ||
+        pickDefaultSubreddit(title || text);
       result = await redditBrowserPost({ cookies, subreddit, title, text });
     } else if (account.platform === "facebook_page") {
       result = await facebookBrowserPost({
