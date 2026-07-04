@@ -35,6 +35,7 @@ import { processDueSocialFeeds } from "../lib/sp/feedAutopost";
 import { processBrowserPost } from "../lib/sp/browserPost";
 import { getOrMintInstallationToken } from "../lib/github/installations";
 import { listInstallationRepos } from "../lib/github/app";
+import { processUserAlerts } from "../lib/alerts/worker";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1047,6 +1048,41 @@ const server = http.createServer(async (req, res) => {
       processBrowserPost({ postId: payload.postId, supabase, openai }).catch((e) =>
         console.error("[worker] browser post unhandled", e),
       );
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/alerts/check-user") {
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      let payload: { ownerId?: string; alertIds?: string[] };
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+        return;
+      }
+      if (!payload.ownerId || !Array.isArray(payload.alertIds) || payload.alertIds.length === 0) {
+        res.writeHead(400);
+        res.end("ownerId and alertIds required");
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
+      const { ownerId, alertIds } = payload;
+      processUserAlerts(supabase, resend, { ownerId, alertIds })
+        .then((r) =>
+          console.log(
+            `[worker] alerts owner=${ownerId} checked=${r.checked} skippedBudget=${r.skippedBudget} emailed=${r.emailed}`,
+          ),
+        )
+        .catch((e) => console.error("[worker] alerts unhandled", e));
     });
     return;
   }

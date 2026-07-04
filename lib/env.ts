@@ -77,6 +77,14 @@ export const env = {
   // DataForSEO — keyword research for Autoblog. Basic-auth credentials.
   dataforseoLogin: process.env.DATAFORSEO_LOGIN ?? "",
   dataforseoPassword: process.env.DATAFORSEO_PASSWORD ?? "",
+  // ValueSERP — powers CrawlProof Alerts (Google SERP polling). One API key;
+  // billed per search. VALUESERP_LOCATION lets us pin a default geo.
+  valueSerpApiKey: process.env.VALUESERP_API_KEY ?? "",
+  valueSerpLocation: process.env.VALUESERP_LOCATION ?? "United States",
+  // Alerts email sender. Kept separate from the transactional `resendFrom`
+  // (audit reports/receipts): alert volume at scale can damage sender
+  // reputation, so it rides its own warmed subdomain.
+  alertsFrom: process.env.ALERTS_FROM ?? "CrawlProof Alerts <alerts@alerts.crawlproof.com>",
   // Social Posting — static AES-GCM key for at-rest token encryption.
   // 32 bytes base64-encoded. Generate via `openssl rand -base64 32`.
   // Phase 1 only; envelope encryption (Vault KEK + per-user DEKs)
