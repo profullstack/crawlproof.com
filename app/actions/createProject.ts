@@ -101,6 +101,40 @@ export async function backfillProjectLogo(
   }
 }
 
+// Re-run logo discovery for a project whose stored logo is broken (the
+// dashboard's <img> onError triggers this). Unlike backfillProjectLogo it
+// overwrites an existing logo_url, and clears it when nothing valid is found so
+// the tile falls back to a letter avatar instead of a broken image.
+export async function refetchProjectLogo(
+  projectId: string,
+): Promise<{ ok: boolean }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false };
+
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id, url")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project?.url) return { ok: false };
+
+  try {
+    const logoUrl = await discoverLogoUrl(project.url);
+    await serviceClient()
+      .from("projects")
+      .update({ logo_url: logoUrl })
+      .eq("id", projectId);
+    revalidatePath("/dashboard");
+    return { ok: true };
+  } catch (err) {
+    console.warn("[discoverLogo] refetch failed for", projectId, err);
+    return { ok: false };
+  }
+}
+
 export async function updateSchedule(input: {
   projectId: string;
   schedule: "off" | "daily" | "weekly" | "monthly";

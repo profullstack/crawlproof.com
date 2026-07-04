@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
+import { ProjectLogo } from "@/components/project-logo";
 import { backfillProjectLogo } from "@/app/actions/createProject";
 import { getOrCreateDefaultOrg, isOrgWideRole, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
 import { listOrgTeam } from "@/app/actions/org-members";
@@ -196,6 +197,7 @@ export default async function DashboardPage({
                       <ProjectLogo
                         url={(p as { logo_url: string | null }).logo_url}
                         name={p.name}
+                        projectId={p.id}
                       />
                       <div className="min-w-0">
                         <div className="truncate font-semibold">{p.name}</div>
@@ -312,39 +314,6 @@ export default async function DashboardPage({
         )}
       </section>
     </div>
-  );
-}
-
-function ProjectLogo({
-  url,
-  name,
-}: {
-  url: string | null;
-  name: string;
-}) {
-  const letter = (name || "?").trim().charAt(0).toUpperCase();
-  // 40px square; rounded corners; one-letter fallback when the site
-  // either has no detectable logo or backfill hasn't run yet.
-  if (!url) {
-    return (
-      <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--color-card)] text-sm font-semibold text-[var(--color-muted)]"
-        aria-hidden
-      >
-        {letter}
-      </div>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt=""
-      width={40}
-      height={40}
-      loading="lazy"
-      className="h-10 w-10 shrink-0 rounded-md border border-[var(--color-border)] bg-white object-contain p-1"
-    />
   );
 }
 
