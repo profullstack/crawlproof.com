@@ -44,6 +44,7 @@ export function TrackerAnalytics({
   events,
   sources,
   pages,
+  exitPages,
   referrers,
   actions,
   countries,
@@ -56,6 +57,7 @@ export function TrackerAnalytics({
   events: TrackerListItem[];
   sources: TrackerListItem[];
   pages: TrackerListItem[];
+  exitPages: TrackerListItem[];
   referrers: TrackerListItem[];
   actions: TrackerListItem[];
   countries: TrackerListItem[];
@@ -157,40 +159,48 @@ export function TrackerAnalytics({
       <div className="grid gap-4 lg:grid-cols-2">
         <RankedList title="Top pages" data={pages} empty="No page paths yet." />
         <RankedList
-          title="Top interactions"
-          data={actions}
-          empty="No click or form interactions yet."
+          title="Exit pages"
+          data={exitPages}
+          empty="No exit pages yet."
         />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <RankedList
+          title="Top interactions"
+          data={actions}
+          empty="No click or form interactions yet."
+        />
         <RankedList
           title="Referrer hosts"
           data={referrers}
           empty="No external referrers yet."
         />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
         <RankedList
           title="Countries"
           data={countries}
           empty="No location data yet."
         />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
         <RankedList
           title="Cities"
           data={cities}
           empty="No city data yet."
         />
-        <Breakdown title="Devices" data={devices} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <Breakdown title="Devices" data={devices} />
         <RankedList
           title="Browsers"
           data={browsers}
           empty="No browser data yet."
         />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
         <RankedList
           title="Operating systems"
           data={operatingSystems}
