@@ -13,6 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type OpenAI from "openai";
 import { decryptSecret } from "@/lib/sp/vault";
 import {
+  BrowserPostError,
   LOGIN_WALL_PREFIX,
   parseCookies,
   redditBrowserPost,
@@ -178,7 +179,11 @@ export async function processBrowserPost(args: {
     console.log(`[browser-post] ${postId} published to ${account.platform} → ${result.webUrl}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await fail(supabase, postId, account.id, message);
+    const debug =
+      err instanceof BrowserPostError
+        ? { url: err.pageUrl ?? null, html: err.pageHtml ?? null }
+        : undefined;
+    await fail(supabase, postId, account.id, message, debug);
   }
 }
 
@@ -187,11 +192,17 @@ async function fail(
   postId: string,
   accountId: string | undefined,
   message: string,
+  debug?: { url: string | null; html: string | null },
 ): Promise<void> {
   console.error(`[browser-post] ${postId} failed: ${message}`);
   await supabase
     .from("sp_post")
-    .update({ status: "failed", last_error: message })
+    .update({
+      status: "failed",
+      last_error: message,
+      debug_url: debug?.url ?? null,
+      debug_html: debug?.html ?? null,
+    })
     .eq("id", postId);
   if (accountId) {
     const { data: acct } = await supabase
