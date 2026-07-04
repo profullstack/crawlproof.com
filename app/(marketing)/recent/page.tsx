@@ -363,5 +363,20 @@ async function fetchOutreachHistory(
     list.push(item);
     byAudit.set(row.audit_id, list);
   }
+
+  // Collapse to one row per channel+provider (the latest attempt), so repeated
+  // sends/retries update in place instead of piling up. Rows are already
+  // ordered newest-first, so the first occurrence per key is the current one.
+  for (const [auditId, list] of byAudit) {
+    const seen = new Set<string>();
+    const deduped: OutreachHistoryItem[] = [];
+    for (const item of list) {
+      const key = `${item.channel}:${item.provider}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(item);
+    }
+    byAudit.set(auditId, deduped);
+  }
   return byAudit;
 }
