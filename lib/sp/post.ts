@@ -9,6 +9,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
 import { enqueueBrowserPost } from "@/lib/lx/workerClient";
+import { resolveSubreddit } from "@/lib/sp/redditSubreddit";
 import {
   createBlueskyPost,
   createBlueskySession,
@@ -108,6 +109,13 @@ export async function postViaAccount(args: {
 
   // Cookie-auth accounts post via Playwright in the worker.
   if (account.auth_mode === "cookie") {
+    // Reddit needs a subreddit, but outreach/autopost flows often don't supply
+    // one. Rather than fail, route to a related, relatively open subreddit
+    // (see resolveSubreddit) and persist the choice on the row.
+    const subreddit =
+      account.platform === "reddit"
+        ? resolveSubreddit(input.subreddit, input.title ?? text)
+        : input.subreddit ?? null;
     const { data: row, error: insErr } = await supabase
       .from("sp_post")
       .insert({
@@ -117,7 +125,7 @@ export async function postViaAccount(args: {
         source,
         rendered_text: text,
         rendered_media_url: input.mediaUrl ?? [],
-        subreddit: input.subreddit ?? null,
+        subreddit,
         title: input.title ?? null,
         scheduled_for: new Date().toISOString(),
         status: "queued_browser",
