@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState, useTransition } from "react";
+import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import {
   retryRecentOutreach,
   sendRecentAuditOutreach,
@@ -42,6 +42,7 @@ export function RecentOutreachForm({
   creditsBalance: number;
   history: OutreachHistoryItem[];
 }) {
+  const router = useRouter();
   const initialChannel = hasEmail ? "email" : hasPhone ? "sms" : "social";
   const [channel, setChannel] = useState<"email" | "sms" | "social">(initialChannel);
   const [visibility, setVisibility] = useState<"private" | "public">("private");
@@ -66,6 +67,19 @@ export function RecentOutreachForm({
     [channel, socialAccountIds],
   );
   const insufficient = cost > 0 && creditsBalance < cost;
+
+  // Progress across this audit's outreach history. Cookie/browser posts move
+  // asynchronously (queued → awaiting_code/publishing → sent/failed) as the
+  // worker churns through them, so summarize where they stand.
+  const progress = useMemo(() => summarizeHistory(history), [history]);
+
+  // Poll while anything is still in flight so rows update in real time without
+  // a manual reload; stop once everything is terminal to avoid idle load.
+  useEffect(() => {
+    if (!progress.inFlight) return;
+    const id = setInterval(() => router.refresh(), OUTREACH_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [progress.inFlight, router]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,7 +129,18 @@ export function RecentOutreachForm({
 
       {history.length > 0 && (
         <div className="mt-3 space-y-1.5 border-b border-[var(--color-border)] pb-3 text-xs">
-          <div className="font-medium text-[var(--color-muted)]">History</div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-[var(--color-muted)]">History</span>
+            {progress.inFlight ? (
+              <span className="inline-flex items-center gap-1.5 text-[var(--color-muted)]">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+                Live · updating…
+              </span>
+            ) : (
+              <span className="text-[var(--color-muted)]">Idle</span>
+            )}
+          </div>
+          <OutreachProgressBar progress={progress} />
           {history.map((h) => (
             <div key={h.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <span className={statusClass(h.status)}>{statusLabel(h.status)}</span>
@@ -328,6 +353,51 @@ function RetryOutreachButton({ messageId }: { messageId: string }) {
         </span>
       )}
     </span>
+  );
+}
+
+const OUTREACH_REFRESH_MS = 8000;
+
+type OutreachProgress = {
+  total: number;
+  sent: number;
+  failed: number;
+  pending: number;
+  inFlight: boolean;
+};
+
+// A post is "pending" (still moving) while queued or awaiting a code; "failed"
+// covers failed + timed out. inFlight drives the live-refresh loop.
+function summarizeHistory(history: OutreachHistoryItem[]): OutreachProgress {
+  let sent = 0;
+  let failed = 0;
+  let pending = 0;
+  for (const h of history) {
+    if (h.status === "sent") sent++;
+    else if (h.status === "failed" || h.status === "timed_out") failed++;
+    else pending++; // queued | awaiting_code
+  }
+  return { total: history.length, sent, failed, pending, inFlight: pending > 0 };
+}
+
+function OutreachProgressBar({ progress }: { progress: OutreachProgress }) {
+  const { total, sent, failed, pending } = progress;
+  if (total === 0) return null;
+  const pct = (n: number) => `${(n / total) * 100}%`;
+  return (
+    <div>
+      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
+        <div className="bg-green-500" style={{ width: pct(sent) }} />
+        <div className="bg-red-500" style={{ width: pct(failed) }} />
+        <div className="animate-pulse bg-blue-500" style={{ width: pct(pending) }} />
+      </div>
+      <div className="mt-1 text-[var(--color-muted)]">
+        {sent} sent · {failed} failed · {pending} pending
+        <span className="ml-1">
+          ({sent + failed}/{total} done)
+        </span>
+      </div>
+    </div>
   );
 }
 
