@@ -8,12 +8,19 @@
 // never came back.
 
 export type OutreachRowStatus = "sent" | "failed" | "queued";
-export type OutreachDisplayStatus = "sent" | "failed" | "queued" | "timed_out";
+export type OutreachDisplayStatus =
+  | "sent"
+  | "failed"
+  | "queued"
+  | "timed_out"
+  | "awaiting_code";
 
 export type OutreachSocialPost = {
+  id?: string | null;
   status: string | null;
   platform_post_url: string | null;
   last_error: string | null;
+  verification_prompt?: string | null;
 };
 
 // How long a browser-automated post (auth_mode='cookie') may sit in the
@@ -36,6 +43,14 @@ export function deriveOutreachStatus(
   if (post.status === "published") return { status: "sent", error: null };
   if (post.status === "failed" || post.status === "cancelled") {
     return { status: "failed", error: post.last_error ?? rowError };
+  }
+  // Paused on an identity challenge — the user needs to enter a code. Surface
+  // it before the stale check so it isn't mistaken for a hung job.
+  if (post.status === "awaiting_code") {
+    return {
+      status: "awaiting_code",
+      error: post.verification_prompt ?? "Waiting for a verification code.",
+    };
   }
   // Still queued_browser / publishing — flip to timed out once stale.
   if (now - new Date(createdAt).getTime() > OUTREACH_STALE_MS) {

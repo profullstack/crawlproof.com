@@ -918,3 +918,50 @@ export async function retryFeedItem(input: {
   if (projectId) revalidatePath(`/projects/${projectId}/social`);
   return { ok: true };
 }
+
+// ------------------------------------------------------------
+// submitVerificationCode — hand a verification code to a browser post that is
+// paused on an identity challenge (status 'awaiting_code'). The worker is
+// holding the live Chromium session open and polling sp_post.verification_code;
+// writing it here lets it type the code and finish posting.
+// ------------------------------------------------------------
+export async function submitVerificationCode(input: {
+  postId: string;
+  code: string;
+}): Promise<Ok | Err> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  // Accept the common 4–8 digit codes; strip spaces/dashes the user may paste.
+  const code = input.code.replace(/[\s-]/g, "");
+  if (!/^\d{4,8}$/.test(code)) {
+    return { ok: false, error: "Enter the numeric code (4–8 digits)." };
+  }
+
+  const { data: post } = await supabase
+    .from("sp_post")
+    .select("id, status, project_id")
+    .eq("id", input.postId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!post) return { ok: false, error: "Post not found." };
+  if ((post as { status?: string }).status !== "awaiting_code") {
+    return { ok: false, error: "This post isn't waiting for a code right now." };
+  }
+
+  const { error } = await supabase
+    .from("sp_post")
+    .update({ verification_code: code })
+    .eq("id", input.postId)
+    .eq("user_id", user.id)
+    .eq("status", "awaiting_code");
+  if (error) return { ok: false, error: error.message };
+
+  const projectId = (post as { project_id?: string | null }).project_id;
+  if (projectId) revalidatePath(`/projects/${projectId}/social`);
+  revalidatePath("/recent");
+  return { ok: true };
+}
