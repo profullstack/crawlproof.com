@@ -31,6 +31,7 @@ import {
 } from "@/lib/sp/imageGen";
 import { reconcileOutreach } from "@/lib/sp/outreachReconcile";
 import { pickDefaultSubreddit } from "@/lib/sp/redditSubreddit";
+import { makeCodeWaiter } from "@/lib/sp/verificationChallenge";
 
 export async function processBrowserPost(args: {
   postId: string;
@@ -108,6 +109,11 @@ export async function processBrowserPost(args: {
     return;
   }
 
+  // When a platform interrupts the session for a verification code, the
+  // platform flow calls this to pause, surface a prompt, and wait for the code
+  // the user submits (see makeCodeWaiter / submitVerificationCode).
+  const waitForCode = makeCodeWaiter(supabase, postId);
+
   try {
     let result: { platformPostId: string; webUrl: string };
 
@@ -118,29 +124,31 @@ export async function processBrowserPost(args: {
       const subreddit =
         ((claimed.subreddit as string | null) ?? "").trim() ||
         pickDefaultSubreddit(title || text);
-      result = await redditBrowserPost({ cookies, subreddit, title, text });
+      result = await redditBrowserPost({ cookies, subreddit, title, text, waitForCode });
     } else if (account.platform === "facebook_page") {
       result = await facebookBrowserPost({
         cookies,
         pageId: account.external_id,
         text,
         imageUrl,
+        waitForCode,
       });
     } else if (account.platform === "threads") {
-      result = await threadsBrowserPost({ cookies, text, imageUrl });
+      result = await threadsBrowserPost({ cookies, text, imageUrl, waitForCode });
     } else if (account.platform === "instagram") {
       result = await instagramBrowserPost({
         cookies,
         caption: text,
         imageUrl: imageUrl!,
+        waitForCode,
       });
     } else if (account.platform === "x") {
-      result = await xBrowserPost({ cookies, text, imageUrl });
+      result = await xBrowserPost({ cookies, text, imageUrl, waitForCode });
     } else if (account.platform === "linkedin") {
-      result = await linkedinBrowserPost({ cookies, text, imageUrl });
+      result = await linkedinBrowserPost({ cookies, text, imageUrl, waitForCode });
     } else if (account.platform === "mastodon") {
       const instanceUrl = account.instance_url ?? "mastodon.social";
-      result = await mastodonBrowserPost({ cookies, instanceUrl, text, imageUrl });
+      result = await mastodonBrowserPost({ cookies, instanceUrl, text, imageUrl, waitForCode });
     } else {
       throw new Error(`Browser posting not implemented for platform: ${account.platform}`);
     }

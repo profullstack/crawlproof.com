@@ -16,6 +16,13 @@
 
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { browserSemaphore } from "@/lib/sp/browserSemaphore";
+import { handleCodeChallenge, type CodeWaiter } from "@/lib/sp/verificationChallenge";
+
+// Standard challenge prompt shown to the user when a platform interrupts the
+// session asking for a verification code.
+function codePrompt(platform: string): string {
+  return `${platform} is asking for a verification code. Enter the code it just sent (email / SMS / authenticator) to finish posting.`;
+}
 
 export type BrowserCookie = {
   name: string;
@@ -115,8 +122,9 @@ export async function redditBrowserPost(args: {
   subreddit: string;
   title: string;
   text: string;
+  waitForCode?: CodeWaiter;
 }): Promise<BrowserPostResult> {
-  const { cookies, subreddit, title, text } = args;
+  const { cookies, subreddit, title, text, waitForCode } = args;
   const sr = subreddit.replace(/^\/?r\//, "");
   const { browser, ctx } = await launchContext(cookies);
   try {
@@ -124,6 +132,7 @@ export async function redditBrowserPost(args: {
     await page.goto(`https://www.reddit.com/r/${sr}/submit`, {
       waitUntil: "domcontentloaded",
     });
+    if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Reddit"));
 
     // Select "Text" tab
     const textTab = page.getByRole("tab", { name: /text/i });
@@ -164,14 +173,16 @@ export async function facebookBrowserPost(args: {
   pageId: string;
   text: string;
   imageUrl?: string;
+  waitForCode?: CodeWaiter;
 }): Promise<BrowserPostResult> {
-  const { cookies, pageId, text, imageUrl } = args;
+  const { cookies, pageId, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
   try {
     const page = await ctx.newPage();
     await page.goto(`https://www.facebook.com/${pageId}`, {
       waitUntil: "domcontentloaded",
     });
+    if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Facebook"));
 
     // Click the "Write something..." composer
     const composer = page.getByPlaceholder(/write something/i)
@@ -227,12 +238,14 @@ export async function threadsBrowserPost(args: {
   cookies: BrowserCookie[];
   text: string;
   imageUrl?: string;
+  waitForCode?: CodeWaiter;
 }): Promise<BrowserPostResult> {
-  const { cookies, text, imageUrl } = args;
+  const { cookies, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
   try {
     const page = await ctx.newPage();
     await page.goto("https://www.threads.net", { waitUntil: "domcontentloaded" });
+    if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Threads"));
 
     // New Thread button
     const newThreadBtn = page
@@ -287,12 +300,14 @@ export async function instagramBrowserPost(args: {
   cookies: BrowserCookie[];
   caption: string;
   imageUrl: string; // required — Instagram does not support text-only posts
+  waitForCode?: CodeWaiter;
 }): Promise<BrowserPostResult> {
-  const { cookies, caption, imageUrl } = args;
+  const { cookies, caption, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
   try {
     const page = await ctx.newPage();
     await page.goto("https://www.instagram.com", { waitUntil: "domcontentloaded" });
+    if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Instagram"));
 
     // Download image to temp file
     const imgRes = await fetch(imageUrl);
@@ -354,12 +369,14 @@ export async function xBrowserPost(args: {
   cookies: BrowserCookie[];
   text: string;
   imageUrl?: string;
+  waitForCode?: CodeWaiter;
 }): Promise<BrowserPostResult> {
-  const { cookies, text, imageUrl } = args;
+  const { cookies, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
   try {
     const page = await ctx.newPage();
     await page.goto("https://x.com/home", { waitUntil: "domcontentloaded" });
+    if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("X"));
 
     // Click the compose box
     const compose = page
@@ -410,12 +427,14 @@ export async function linkedinBrowserPost(args: {
   cookies: BrowserCookie[];
   text: string;
   imageUrl?: string;
+  waitForCode?: CodeWaiter;
 }): Promise<BrowserPostResult> {
-  const { cookies, text, imageUrl } = args;
+  const { cookies, text, imageUrl, waitForCode } = args;
   const { browser, ctx } = await launchContext(cookies);
   try {
     const page = await ctx.newPage();
     await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" });
+    if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("LinkedIn"));
 
     // Start a post
     const startPost = page
@@ -476,19 +495,24 @@ export async function mastodonBrowserPost(args: {
   instanceUrl: string;
   text: string;
   imageUrl?: string;
+  waitForCode?: CodeWaiter;
 }): Promise<BrowserPostResult> {
-  const { cookies, instanceUrl, text, imageUrl } = args;
+  const { cookies, instanceUrl, text, imageUrl, waitForCode } = args;
   const base = instanceUrl.startsWith("http") ? instanceUrl : `https://${instanceUrl}`;
   const { browser, ctx } = await launchContext(cookies);
   try {
     const page = await ctx.newPage();
     await page.goto(base, { waitUntil: "domcontentloaded" });
+    if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Mastodon"));
 
-    // Mastodon web app — compose textarea
+    // Mastodon web app — compose textarea. Match the compose box specifically:
+    // a bare getByRole("textbox") also matched the "Search or paste URL" input
+    // and tripped strict-mode. The compose box's aria-label is "What's on your
+    // mind?" and it carries the autosuggest-textarea__textarea class.
     const compose = page
-      .locator('textarea.autosuggest-textarea__textarea')
-      .or(page.locator('[placeholder*="what" i]').first())
-      .or(page.getByRole("textbox").first());
+      .locator("textarea.autosuggest-textarea__textarea")
+      .or(page.getByRole("textbox", { name: /what.?s on your mind/i }))
+      .first();
     await compose.waitFor({ timeout: 10_000 });
     await compose.fill(text);
 

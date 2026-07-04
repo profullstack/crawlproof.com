@@ -321,7 +321,7 @@ async function fetchOutreachHistory(
   const { data } = await supabase
     .from("recent_outreach_messages")
     .select(
-      "id, audit_id, channel, provider, status, subject, error, created_at, social_post:sp_post(status, platform_post_url, last_error)",
+      "id, audit_id, channel, provider, status, subject, error, created_at, social_post:sp_post(id, status, platform_post_url, last_error, verification_prompt)",
     )
     .eq("organization_id", organizationId)
     .in("audit_id", auditIds)
@@ -354,6 +354,10 @@ async function fetchOutreachHistory(
       error: derived.error,
       createdAt: row.created_at,
       url: post?.platform_post_url ?? null,
+      verificationPostId:
+        derived.status === "awaiting_code" ? post?.id ?? null : null,
+      verificationPrompt:
+        derived.status === "awaiting_code" ? post?.verification_prompt ?? null : null,
     };
     const list = byAudit.get(row.audit_id) ?? [];
     list.push(item);
