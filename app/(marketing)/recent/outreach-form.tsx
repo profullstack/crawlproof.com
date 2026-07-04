@@ -8,16 +8,19 @@ import {
   sendRecentAuditOutreach,
 } from "@/app/actions/recent-outreach";
 import { OUTREACH_CREDITS } from "@/lib/credits";
+import { VerificationCodeInput } from "@/components/verification-code-input";
 
 export type OutreachHistoryItem = {
   id: string;
   channel: string;
   provider: string;
-  status: "sent" | "failed" | "queued" | "timed_out";
+  status: "sent" | "failed" | "queued" | "timed_out" | "awaiting_code";
   subject: string | null;
   error: string | null;
   createdAt: string;
   url: string | null;
+  verificationPostId?: string | null;
+  verificationPrompt?: string | null;
 };
 
 export function RecentOutreachForm({
@@ -131,6 +134,14 @@ export function RecentOutreachForm({
               )}
               {(h.status === "failed" || h.status === "timed_out") && (
                 <RetryOutreachButton messageId={h.id} />
+              )}
+              {h.status === "awaiting_code" && h.verificationPostId && (
+                <span className="w-full">
+                  <VerificationCodeInput
+                    postId={h.verificationPostId}
+                    prompt={h.verificationPrompt}
+                  />
+                </span>
               )}
               {(h.status === "failed" || h.status === "timed_out") && h.error && (
                 <span className="w-full truncate text-red-600" title={h.error}>
@@ -325,7 +336,9 @@ function defaultBody(host: string) {
 }
 
 function statusLabel(status: OutreachHistoryItem["status"]) {
-  return status === "timed_out" ? "timed out" : status;
+  if (status === "timed_out") return "timed out";
+  if (status === "awaiting_code") return "needs code";
+  return status;
 }
 
 function statusClass(status: OutreachHistoryItem["status"]) {
@@ -333,5 +346,6 @@ function statusClass(status: OutreachHistoryItem["status"]) {
   if (status === "sent") return `${base} bg-green-100 text-green-800`;
   if (status === "failed") return `${base} bg-red-100 text-red-700`;
   if (status === "timed_out") return `${base} bg-amber-100 text-amber-800`;
+  if (status === "awaiting_code") return `${base} bg-blue-100 text-blue-800`;
   return `${base} bg-[var(--color-border)] text-[var(--color-muted)]`;
 }

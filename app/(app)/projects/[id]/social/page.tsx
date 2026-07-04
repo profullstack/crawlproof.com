@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PostNowForm } from "./post-now";
 import { RetryPostButton } from "./retry-post-button";
 import { RetryFeedItemButton } from "./retry-feed-item-button";
+import { VerificationCodeInput } from "@/components/verification-code-input";
 import { FeedSettingsForm } from "./feed-settings";
 import { SocialAutoRefresh } from "./auto-refresh";
 import { SocialProfileForm, type SocialProfile } from "./social-profile";
@@ -79,7 +80,7 @@ export default async function SocialDashboardPage({
     supabase
       .from("sp_post")
       .select(
-        "id, account_id, rendered_text, source, status, published_at, platform_post_url, last_error, created_at",
+        "id, account_id, rendered_text, source, status, published_at, platform_post_url, last_error, created_at, verification_prompt",
       )
       .eq("user_id", user.id)
       .eq("project_id", projectId)
@@ -141,7 +142,10 @@ export default async function SocialDashboardPage({
   // Only auto-refresh while something is actively moving. Idle tabs
   // shouldn't be hitting the DB every 15s.
   const inFlightPosts = (posts ?? []).filter(
-    (p: any) => p.status === "queued" || p.status === "publishing",
+    (p: any) =>
+      p.status === "queued" ||
+      p.status === "publishing" ||
+      p.status === "awaiting_code",
   );
   const hasInFlightPost = inFlightPosts.length > 0;
   const feedChecking =
@@ -484,7 +488,7 @@ export default async function SocialDashboardPage({
                             : "badge-warn")
                       }
                     >
-                      {p.status}
+                      {p.status === "awaiting_code" ? "needs code" : p.status}
                     </span>
                   </div>
                   {url && title && (
@@ -531,6 +535,14 @@ export default async function SocialDashboardPage({
                       </>
                     )}
                   </div>
+                  {p.status === "awaiting_code" && (
+                    <div className="mt-1 text-xs">
+                      <VerificationCodeInput
+                        postId={p.id}
+                        prompt={p.verification_prompt}
+                      />
+                    </div>
+                  )}
                   {p.status === "failed" && (
                     <div className="mt-1">
                       {p.last_error && (
