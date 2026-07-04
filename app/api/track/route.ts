@@ -9,6 +9,7 @@ import { categorize } from "@/lib/tracker/categorize";
 import { parseDevice } from "@/lib/tracker/device";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { enqueuePostHogEvent } from "@/lib/posthog/events";
+import { pruneExitSessions, updateExitRollup } from "@/lib/tracker/exit";
 
 export const runtime = "nodejs";
 
@@ -231,6 +232,17 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       event_target: eventTarget,
       count: 1,
     });
+  }
+
+  // Exit-page rollup: move this session's exit marker to the current pageview.
+  // Best-effort — analytics writes must never break the beacon response.
+  if (event === "pageview" && parsed.data.sessionId) {
+    try {
+      await updateExitRollup(sb, site, parsed.data.sessionId, pagePath, today);
+      await pruneExitSessions(sb, site);
+    } catch {
+      // Silent — never affect the 204.
+    }
   }
 
   // Device / browser / OS rollup, derived from the request User-Agent. Like
