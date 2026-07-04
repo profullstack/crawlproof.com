@@ -131,14 +131,21 @@ export function RecentOutreachForm({
         <div className="mt-3 space-y-1.5 border-b border-[var(--color-border)] pb-3 text-xs">
           <div className="flex items-center justify-between gap-2">
             <span className="font-medium text-[var(--color-muted)]">History</span>
-            {progress.inFlight ? (
-              <span className="inline-flex items-center gap-1.5 text-[var(--color-muted)]">
-                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
-                Live · updating…
-              </span>
-            ) : (
-              <span className="text-[var(--color-muted)]">Idle</span>
-            )}
+            <span className="inline-flex items-center gap-2">
+              <RetryAllFailedButton
+                messageIds={history
+                  .filter((h) => h.status === "failed" || h.status === "timed_out")
+                  .map((h) => h.id)}
+              />
+              {progress.inFlight ? (
+                <span className="inline-flex items-center gap-1.5 text-[var(--color-muted)]">
+                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+                  Live · updating…
+                </span>
+              ) : (
+                <span className="text-[var(--color-muted)]">Idle</span>
+              )}
+            </span>
           </div>
           <OutreachProgressBar progress={progress} />
           {history.map((h) => (
@@ -319,6 +326,43 @@ export function RecentOutreachForm({
         </div>
       </form>
     </details>
+  );
+}
+
+function RetryAllFailedButton({ messageIds }: { messageIds: string[] }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  if (messageIds.length === 0) return null;
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          start(async () => {
+            let done = 0;
+            setProgress({ done, total: messageIds.length });
+            // Sequential on purpose: retries fan out to the worker, and the
+            // browser-concurrency cap already limits it — no need to stampede.
+            for (const id of messageIds) {
+              await retryRecentOutreach({ messageId: id });
+              done += 1;
+              setProgress({ done, total: messageIds.length });
+            }
+            setProgress(null);
+            router.refresh();
+          });
+        }}
+        className="rounded border border-[var(--color-border)] px-2 py-0.5 font-medium hover:bg-[var(--color-card)] disabled:opacity-50"
+      >
+        {pending && progress
+          ? `Retrying ${progress.done}/${progress.total}…`
+          : `Retry all failed (${messageIds.length})`}
+      </button>
+    </span>
   );
 }
 
