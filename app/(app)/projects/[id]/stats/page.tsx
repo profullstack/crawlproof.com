@@ -50,6 +50,10 @@ type DeviceRow = {
   os: string;
   count: number;
 };
+type ExitRow = {
+  page_path: string;
+  count: number;
+};
 
 const WINDOW_DAYS = 30;
 
@@ -87,6 +91,15 @@ export default async function ProjectStatsPage({
     .order("day", { ascending: false });
 
   const eventRows = (eventStats ?? []) as EventRow[];
+
+  const { data: exitStats } = await supabase
+    .from("tracker_exit_daily_stats")
+    .select("page_path, count")
+    .eq("project_id", id)
+    .gte("day", since)
+    .gt("count", 0);
+
+  const exitRows = (exitStats ?? []) as ExitRow[];
 
   const { data: geoStats } = await supabase
     .from("tracker_geo_daily_stats")
@@ -130,6 +143,7 @@ export default async function ProjectStatsPage({
     eventRows.filter((row) => row.event === "pageview"),
     (row) => row.page_path || "/",
   );
+  const exitPages = topExitItems(exitRows, (row) => row.page_path || "/");
   const topReferrers = topItems(
     eventRows.filter((row) => row.referrer_host),
     (row) => row.referrer_host,
@@ -299,6 +313,7 @@ export default async function ProjectStatsPage({
             events={eventMix}
             sources={topSources}
             pages={topPages}
+            exitPages={exitPages}
             referrers={topReferrers}
             actions={topActions}
             countries={topCountries}
@@ -445,6 +460,22 @@ function topGeoItems(
       count: row.count,
     };
     const label = labelFor(normalized);
+    if (!label) continue;
+    map.set(label, (map.get(label) ?? 0) + row.count);
+  }
+  return Array.from(map.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+}
+
+function topExitItems(
+  rows: ExitRow[],
+  labelFor: (row: ExitRow) => string,
+): TrackerListItem[] {
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const label = labelFor(row);
     if (!label) continue;
     map.set(label, (map.get(label) ?? 0) + row.count);
   }
