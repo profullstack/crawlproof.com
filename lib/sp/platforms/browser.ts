@@ -71,20 +71,41 @@ async function launchContext(cookies: BrowserCookie[]): Promise<{
   }
 }
 
+// Playwright's addCookies only accepts sameSite "Strict" | "Lax" | "None".
+// Cookie-Editor / Chrome exports use other spellings ("no_restriction",
+// "unspecified", lowercase "lax"/"strict") or null, which fail the enum check
+// with: cookies[N].sameSite: expected one of (Strict|Lax|None). Map them.
+function normalizeSameSite(value: unknown): BrowserCookie["sameSite"] {
+  switch (String(value ?? "").toLowerCase()) {
+    case "strict":
+      return "Strict";
+    case "none":
+    case "no_restriction":
+      return "None";
+    default:
+      // "lax", "unspecified", "", null, or anything unexpected.
+      return "Lax";
+  }
+}
+
 export function parseCookies(raw: string): BrowserCookie[] {
   const parsed = JSON.parse(raw);
   const arr: unknown[] = Array.isArray(parsed) ? parsed : parsed.cookies ?? parsed;
   if (!Array.isArray(arr)) throw new Error("Cookie JSON must be an array.");
-  return arr.map((c: any) => ({
-    name: c.name,
-    value: c.value,
-    domain: c.domain ?? c.host ?? "",
-    path: c.path ?? "/",
-    expires: c.expirationDate ?? c.expires ?? -1,
-    httpOnly: c.httpOnly ?? false,
-    secure: c.secure ?? false,
-    sameSite: (c.sameSite as BrowserCookie["sameSite"]) ?? "Lax",
-  }));
+  return arr.map((c: any) => {
+    const sameSite = normalizeSameSite(c.sameSite);
+    return {
+      name: c.name,
+      value: c.value,
+      domain: c.domain ?? c.host ?? "",
+      path: c.path ?? "/",
+      expires: c.expirationDate ?? c.expires ?? -1,
+      httpOnly: c.httpOnly ?? false,
+      // Chromium rejects SameSite=None cookies that aren't Secure.
+      secure: (c.secure ?? false) || sameSite === "None",
+      sameSite,
+    };
+  });
 }
 
 // ---------- Reddit ----------
