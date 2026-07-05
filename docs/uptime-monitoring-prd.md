@@ -57,7 +57,7 @@ On-call escalation is explicitly a later phase.
 ## 2. Objectives
 
 ### 2.1 Primary Goals
-- Detect downtime for HTTP(S), TCP, PING, keyword, and SSL-expiry checks.
+- Detect downtime for HTTP(S), TCP, keyword, and SSL-expiry checks (ICMP PING is Phase 2 — see §12).
 - Alert within one confirmed check cycle across multiple channels; alert on recovery.
 - Free tier of **20 monitors** at 60s interval, no credit card.
 - Public status page per project (uptime %, response times, incidents).
@@ -84,8 +84,8 @@ On-call escalation is explicitly a later phase.
 | **HTTP(S)** | Status code, response time, redirect handling | URL, expected status, timeout, follow-redirects |
 | **Keyword** | HTTP body contains / omits a string | URL, keyword, match mode |
 | **SSL expiry** | Cert days-to-expiry warning | Host, warn-days (default 14) |
-| **TCP** | Port open | Host, port |
-| **PING (ICMP)** | Host reachability | Host / IP |
+| **TCP** | Port open (outbound `connect()`, works from Railway) | Host, port |
+| **PING (ICMP)** *(Phase 2)* | Host reachability — needs raw sockets, so runs on the §12 prober droplet, not Railway | Host / IP |
 
 Each monitor: name, type, target, interval (60s free / 30s paid), timeout,
 expected-result config, channel(s), enabled flag, and optional link to the
@@ -212,8 +212,8 @@ All RLS-scoped to org/project, consistent with existing tables.
 | **M1 — Core loop** | HTTP + keyword + SSL monitors, due-time sweep in worker, state machine, email + webhook alerts, monitor CRUD UI |
 | **M2 — Channels + status page** | Slack, Discord, public status page, incident history, uptime % |
 | **M3 — Plans + limits** | Fold into existing plan tiers, 20-free enforcement, SMS (Twilio) + caps, custom domains |
-| **M4 — Polish** | TCP/PING checks, maintenance windows, schedule gates, weekly summary email |
-| **Phase 2** | On-call escalation policies, multi-region probing, PagerDuty/Teams/Jira, Playwright journeys |
+| **M4 — Polish** | TCP checks, maintenance windows, schedule gates, weekly summary email |
+| **Phase 2** | On-call escalation policies, multi-region probing, PagerDuty/Teams/Jira, Playwright journeys, **ICMP PING checks (via §12 prober droplet)**, **exposed-services / port-drift check (§12)** |
 
 ---
 
@@ -224,5 +224,92 @@ All RLS-scoped to org/project, consistent with existing tables.
    optional `project_id`, counts against org limit.)
 3. Fold into existing CrawlProof plans, or introduce an uptime add-on SKU?
 4. Status page: reuse existing public-report subdomain scheme, or new namespace?
-5. Do TCP/PING (ICMP) checks work from the Railway runtime, or do they need an
-   external prober? (May push PING to Phase 2.)
+5. **Resolved:** TCP works from Railway (outbound `connect()`); **ICMP PING does
+   not** (needs raw sockets), so PING moves to **Phase 2** and runs on the §12
+   prober droplet alongside the port-drift scans. nmap is also Phase 2 (§12).
+
+---
+
+## 12. Phase 2 — Exposed-Services / Port-Drift Check
+
+A lightweight attack-surface monitor: on a verified-owned host, detect ports that
+are open to the public internet but *shouldn't* be — e.g. a Redis (6379) or
+Postgres (5432) accidentally exposed. Framed as **security drift detection**, not
+a scanner.
+
+> **Value framing:** "You told us to watch 80/443. We now also see **6379 (Redis)**
+> reachable from the public internet on your verified host — likely a
+> misconfiguration." Alerts fire when the open-port set *changes* from an accepted
+> baseline, not merely because a port is open.
+
+### 12.1 Hard constraints (why this is Phase 2, not V1)
+- **Owned targets only.** Reuse CrawlProof's existing **domain-ownership
+  verification** as the gate. No arbitrary hostnames — this must never become
+  port-scanning-as-a-service against third parties.
+- **Not from the Railway app IP.** Scans run on a **self-hosted prober (a
+  DigitalOcean droplet)**, never from the Railway service, so an egress-abuse flag
+  can't take down production. GCP and Railway AUPs prohibit network scanning;
+  scanning from the app IP risks the service's IP. The droplet has its own IP
+  reputation and raw-socket access. See §12.3 for the job-transport design.
+- **Bounded + TCP-connect only.** Curated **top-~100 common service ports**, never
+  full 65535; TCP `connect()` only (containers lack `CAP_NET_RAW` for SYN scans
+  anyway); ICMP discovery skipped (`-Pn`-equivalent).
+- **Rate-limited + infrequent.** Daily cadence, not per-minute; per-org caps.
+
+### 12.2 Behavior
+- Establish a **baseline** open-port set per host on first scan (user confirms
+  "these are expected").
+- On each subsequent scan, diff against baseline. **New open port → alert**
+  (down-alert-style, same channels). Closed expected port → optional info alert.
+- Record findings as incidents/events so they show in history and (optionally) a
+  private security view — **not** the public status page by default.
+
+### 12.3 Prober architecture — BullMQ over Redis, prober stays in the monorepo
+
+Job transport is a **BullMQ queue backed by Redis**, not synchronous RPC (scans
+take seconds-to-minutes and must survive restarts). BullMQ gives us retries +
+backoff, concurrency control, and **repeatable jobs** for the daily cadence — so
+no hand-rolled leasing/reaper is needed.
+
+```
+Railway (producer)            Redis (broker)         DO droplet (prober)
+──────────────────            ──────────────         ───────────────────
+API / worker enqueues  ──▶   "prober" queue   ◀──   BullMQ Worker dials OUT
+port-scan jobs                (rediss:// TLS)         over rediss://, runs
+(repeatable = daily)                                  nmap -sT -Pn --top-ports
+                                                      100, returns result
+Railway QueueEvents    ◀───   job "completed"  ◀──   (result = job return value)
+handler persists to
+Supabase, diffs
+baseline, fires alerts
+```
+
+- **Redis is new infra.** CrawlProof has no Redis today (the worker uses
+  in-container loopback HTTP). Add one (Railway Redis plugin or Upstash) exposed
+  over `rediss://` with auth. The droplet connects **outbound only** to Redis —
+  no inbound port on the prober box (firewall to egress 443/6380 only).
+- **Prober lives in the monorepo** as a new workspace (mirrors the existing
+  `worker/`), e.g. `prober/` — its own `package.json` and entrypoint, sharing the
+  **job-payload types from `lib/`** so producer and prober can't drift.
+- **Deploy is self-bootstrapping.** The `deploy-prober` GitHub Action fires on
+  merges to `master` (droplet `ubuntu@scan.crawlproof.com`): rsync `prober/`+`lib/`
+  to the box, then run `prober/deploy/provision.sh` — an **idempotent** script
+  that installs nmap/Node/build tools, writes the Redis env file, installs the
+  `crawlproof-prober` systemd unit, builds, and restarts. First run provisions a
+  bare droplet; later runs update. **No manual SSH/setup on the droplet, ever.**
+- **Results flow back via the job return value** — the droplet writes no DB. A
+  Railway-side `QueueEvents` (or a second in-process Worker) handles `completed`
+  /`failed`, then persists results, diffs the baseline, and dispatches alerts.
+  This keeps Supabase credentials off the droplet.
+- **Credential blast radius:** the droplet holds only the `rediss://` URL. Scope
+  it with a **dedicated Redis instance (or ACL user)** limited to the `prober`
+  queue keys, so a compromised droplet can't read other queues.
+- **Repeatable jobs** drive the daily per-monitor scan schedule; per-org caps and
+  `attempts`/backoff are BullMQ config, not custom code.
+
+### 12.4 Open items
+- Which port list ships as the default "watch" set.
+- Whether findings feed CrawlProof's existing audit/finding surface or a new one.
+- Redis host choice (Railway plugin vs. Upstash) and TLS/ACL setup.
+- One droplet = single vantage point + SPOF (fine for daily scans); the BullMQ
+  Worker model scales to N droplets with zero config change if redundancy is wanted.

@@ -1,0 +1,65 @@
+name: deploy-prober
+
+# Deploys the port-drift prober (docs/uptime-monitoring-prd.md §12) to the
+# DigitalOcean droplet ubuntu@scan.crawlproof.com on merges to master.
+#
+# FULLY SELF-BOOTSTRAPPING + IDEMPOTENT: the workflow installs every system
+# dependency (nmap, Node 20, build tools), writes the Redis env file, installs
+# the systemd unit, builds, and (re)starts the service on EVERY run. First run
+# provisions a bare droplet; later runs just update. You never SSH in to set up.
+#
+# The prober connects OUTBOUND to Redis — nothing here opens an inbound port on
+# the droplet (only sshd, which already exists).
+#
+# Required repo secrets:
+#   DROPLET_SSH_KEY   - private SSH key for ubuntu@scan.crawlproof.com
+#   PROBER_REDIS_URL  - rediss://... broker URL (scoped to the "prober" queue)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "prober/**"
+      - "lib/**"                       # prober shares job-payload types from lib/
+      - ".github/workflows/deploy-prober.yml"
+  workflow_dispatch:                    # allow manual redeploys
+
+# Never let two deploys race on the droplet.
+concurrency:
+  group: deploy-prober
+  cancel-in-progress: false
+
+env:
+  DEPLOY_HOST: scan.crawlproof.com
+  DEPLOY_USER: ubuntu
+  DEPLOY_PATH: /home/ubuntu/crawlproof.com
+
+jobs:
+  deploy:
+    name: provision + deploy prober
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Ship prober + lib to droplet
+        run: |
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          # --delete keeps the droplet in sync; node_modules/dist are excluded so
+          # they are neither shipped nor deleted (rebuilt on the box).
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/id_deploy" \
+            --exclude node_modules --exclude dist \
+            prober lib \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Provision + restart (idempotent)
+        run: |
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "REDIS_URL='${{ secrets.PROBER_REDIS_URL }}' DEPLOY_PATH='$DEPLOY_PATH' bash '$DEPLOY_PATH/prober/deploy/provision.sh'"
