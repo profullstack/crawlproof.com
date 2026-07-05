@@ -8,11 +8,15 @@ import {
   SERP_CALLS_PER_MONTH,
   planFromProfile,
 } from "@/lib/alerts/limits";
-import { getCategory } from "@/lib/alerts/categories";
+import { getCategory, type Recency } from "@/lib/alerts/categories";
 import { CreateAlert } from "./create-alert";
 import { AlertActions } from "./alert-actions";
 
-export const metadata = { title: "Alerts" };
+export const metadata = {
+  title: "Free web alerts — CrawlProof Alerts",
+  description:
+    "Free, near-realtime email alerts for anything Google can see: brand mentions, new backlinks, buying-intent searches, and more. Build one now — sign in to save it.",
+};
 
 type AlertRow = {
   id: string;
@@ -35,25 +39,59 @@ function fmt(ts: string | null): string {
   });
 }
 
+const RECENCIES = new Set<Recency>(["day", "week", "month", "any"]);
+
 export default async function AlertsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ new?: string; term?: string }>;
+  searchParams: Promise<{ new?: string; term?: string; recency?: string; frequency?: string }>;
 }) {
-  const { new: newCat, term } = await searchParams;
+  const { new: newCat, term, recency, frequency } = await searchParams;
 
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/login?next=/alerts");
 
-  // Post-signup magic-link redirect: create the pending alert, then clean the URL.
+  // ---------- Public (not signed in): build the alert, sign in to save ----------
+  if (!user) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-14 sm:px-6">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold sm:text-4xl">Know the moment the web mentions you</h1>
+          <p className="mx-auto mt-3 max-w-xl text-[var(--color-muted)]">
+            Free email alerts for brand mentions, new backlinks, competitor moves, and buying-intent
+            searches — powered by Google, verified by CrawlProof&apos;s crawler. Build one below; sign in
+            to save it.
+          </p>
+        </div>
+        <div className="mt-8">
+          <CreateAlert authed={false} remainingSlots={MAX_ACTIVE_ALERTS.free} />
+        </div>
+        <p className="mt-4 text-center text-sm text-[var(--color-muted)]">
+          Already have an account?{" "}
+          <Link href="/login?redirect=/alerts" className="text-[var(--color-accent)]">
+            Log in
+          </Link>
+          .
+        </p>
+      </main>
+    );
+  }
+
+  // Post-signin: create the alert carried through login, then clean the URL.
   if (newCat && getCategory(newCat)) {
-    await createAlert({ category: newCat, term: term ?? "", customQuery: term ?? "" });
+    await createAlert({
+      category: newCat,
+      term: term ?? "",
+      customQuery: term ?? "",
+      recency: recency && RECENCIES.has(recency as Recency) ? (recency as Recency) : undefined,
+      frequency: frequency === "hourly" || frequency === "daily" ? frequency : undefined,
+    });
     redirect("/alerts");
   }
 
+  // ---------- Signed in: full management dashboard ----------
   const svc = serviceClient();
   const { data: profile } = await svc
     .from("profiles")
@@ -76,7 +114,7 @@ export default async function AlertsPage({
   const used = (profile?.alert_serp_calls_used as number) ?? 0;
 
   return (
-    <div className="space-y-8">
+    <main className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Alerts</h1>
@@ -90,7 +128,7 @@ export default async function AlertsPage({
         </div>
       </div>
 
-      <CreateAlert remainingSlots={remaining} />
+      <CreateAlert authed remainingSlots={remaining} />
 
       <div className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--color-muted)]">
@@ -117,6 +155,6 @@ export default async function AlertsPage({
           </div>
         ))}
       </div>
-    </div>
+    </main>
   );
 }
