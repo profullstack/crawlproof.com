@@ -1,11 +1,8 @@
-# Reference systemd unit for the port-drift prober (docs/uptime-monitoring-prd.md §12).
-# Install on the DigitalOcean droplet:
-#   sudo cp prober/deploy/crawlproof-prober.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now crawlproof-prober
-#
-# The deploy-prober GitHub Action runs `systemctl restart crawlproof-prober`
-# after pulling + building. REDIS_URL (rediss://) is the only credential the
-# droplet holds; scope it to a dedicated instance/ACL for the "prober" queue.
+# systemd unit for the CrawlProof port-drift prober (docs/uptime-monitoring-prd.md §12).
+# Installed and (re)started automatically by prober/deploy/provision.sh — you do
+# NOT install this by hand. Layout matches the deploy-prober GitHub Action:
+#   repo checkout : /home/ubuntu/crawlproof.com
+#   Redis env     : /home/ubuntu/crawlproof-prober.env  (0600, holds REDIS_URL)
 
 [Unit]
 Description=CrawlProof port-drift prober (BullMQ worker)
@@ -14,19 +11,17 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=deploy
-WorkingDirectory=/opt/crawlproof.com/prober
-# Provide REDIS_URL (and any prober config) via this env file, root-owned 0600.
-EnvironmentFile=/etc/crawlproof-prober.env
+User=ubuntu
+WorkingDirectory=/home/ubuntu/crawlproof.com/prober
+EnvironmentFile=/home/ubuntu/crawlproof-prober.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=5
 # Hardening — the prober needs only outbound network + nmap.
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/crawlproof.com/prober
+ReadWritePaths=/home/ubuntu/crawlproof.com/prober
 
 [Install]
 WantedBy=multi-user.target
