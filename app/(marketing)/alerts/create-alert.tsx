@@ -17,7 +17,19 @@ const RECENCIES: { value: Recency; label: string }[] = [
   { value: "any", label: "Any time" },
 ];
 
-export function CreateAlert({ remainingSlots }: { remainingSlots: number }) {
+/**
+ * The alert builder. Anyone can build an alert; `authed` decides "Save":
+ *  - authed: create it immediately (and offer an instant test run).
+ *  - anonymous: bounce to /login carrying the built alert, so it's created
+ *    right after sign-in. Saving always requires an account.
+ */
+export function CreateAlert({
+  remainingSlots,
+  authed,
+}: {
+  remainingSlots: number;
+  authed: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [categoryKey, setCategoryKey] = useState(PICKABLE[0].key);
@@ -29,7 +41,7 @@ export function CreateAlert({ remainingSlots }: { remainingSlots: number }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const category = useMemo(() => PICKABLE.find((c) => c.key === categoryKey)!, [categoryKey]);
-  const atCap = remainingSlots <= 0;
+  const atCap = authed && remainingSlots <= 0;
 
   function pickCategory(key: string) {
     const cat = PICKABLE.find((c) => c.key === key)!;
@@ -58,6 +70,16 @@ export function CreateAlert({ remainingSlots }: { remainingSlots: number }) {
     setError(null);
     setNotice(null);
     if (!term.trim()) return setError(`${category.inputLabel} is required.`);
+
+    if (!authed) {
+      // Require login to save: carry the built alert through the login round-trip.
+      const target = `/alerts?new=${encodeURIComponent(categoryKey)}&term=${encodeURIComponent(
+        term,
+      )}&recency=${recency}&frequency=${frequency}`;
+      router.push(`/login?redirect=${encodeURIComponent(target)}`);
+      return;
+    }
+
     startTransition(async () => {
       const res = await createAlert({ category: categoryKey, term, customQuery: term, recency, frequency });
       if (!res.ok) return setError(res.error);
@@ -119,11 +141,13 @@ export function CreateAlert({ remainingSlots }: { remainingSlots: number }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn" onClick={runTest} disabled={pending}>
-          {pending ? "Checking…" : "See current results"}
-        </button>
+        {authed && (
+          <button type="button" className="btn" onClick={runTest} disabled={pending}>
+            {pending ? "Checking…" : "See current results"}
+          </button>
+        )}
         <button type="submit" className="btn btn-primary" disabled={pending || atCap}>
-          Create alert
+          {authed ? "Create alert" : "Create alert — sign in to save"}
         </button>
         {atCap && (
           <span className="text-xs text-[var(--color-warn)]">
