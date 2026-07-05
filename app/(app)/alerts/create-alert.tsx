@@ -7,7 +7,7 @@ import { createAlert, testRunAlert } from "@/app/actions/alerts";
 import type { SerpResult } from "@/lib/alerts/valueserp";
 
 // People-tracking templates (name / reputation / impersonation / legal) are
-// withheld from the v1 launch picker pending a trust-and-safety policy.
+// withheld from the v1 picker pending a trust-and-safety policy.
 const PICKABLE = ALERT_CATEGORIES.filter((c) => !c.gated);
 
 const RECENCIES: { value: Recency; label: string }[] = [
@@ -17,13 +17,7 @@ const RECENCIES: { value: Recency; label: string }[] = [
   { value: "any", label: "Any time" },
 ];
 
-export function CreateAlert({
-  remainingSlots,
-  allowHourly,
-}: {
-  remainingSlots: number;
-  allowHourly: boolean;
-}) {
+export function CreateAlert({ remainingSlots }: { remainingSlots: number }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [categoryKey, setCategoryKey] = useState(PICKABLE[0].key);
@@ -49,18 +43,13 @@ export function CreateAlert({
   function runTest() {
     setError(null);
     setNotice(null);
-    if (!term.trim()) {
-      setError(`${category.inputLabel} is required.`);
-      return;
-    }
+    if (!term.trim()) return setError(`${category.inputLabel} is required.`);
     startTransition(async () => {
       const res = await testRunAlert({ category: categoryKey, term, customQuery: term });
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
+      if (!res.ok) return setError(res.error);
       setPreview(res.results);
-      if (res.results.length === 0) setNotice("No current results — you'll be emailed when something new appears.");
+      if (res.results.length === 0)
+        setNotice("No current results — you'll be emailed when something new appears.");
     });
   }
 
@@ -68,22 +57,10 @@ export function CreateAlert({
     e.preventDefault();
     setError(null);
     setNotice(null);
-    if (!term.trim()) {
-      setError(`${category.inputLabel} is required.`);
-      return;
-    }
+    if (!term.trim()) return setError(`${category.inputLabel} is required.`);
     startTransition(async () => {
-      const res = await createAlert({
-        category: categoryKey,
-        term,
-        customQuery: term,
-        recency,
-        frequency,
-      });
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
+      const res = await createAlert({ category: categoryKey, term, customQuery: term, recency, frequency });
+      if (!res.ok) return setError(res.error);
       setTerm("");
       setPreview(null);
       setNotice("Alert created. First check runs shortly.");
@@ -135,11 +112,9 @@ export function CreateAlert({
           value={frequency}
           onChange={(e) => setFrequency(e.target.value as "daily" | "hourly")}
           aria-label="Check frequency"
-          disabled={!allowHourly}
-          title={allowHourly ? "" : "Hourly checks are a paid feature"}
         >
           <option value="daily">Daily</option>
-          <option value="hourly">Hourly{allowHourly ? "" : " (paid)"}</option>
+          <option value="hourly">Hourly</option>
         </select>
       </div>
 
@@ -166,13 +141,7 @@ export function CreateAlert({
             Current results preview (you'll only be emailed NEW ones)
           </p>
           {preview.map((r) => (
-            <a
-              key={r.url}
-              href={r.url}
-              target="_blank"
-              rel="noreferrer"
-              className="block text-sm"
-            >
+            <a key={r.url} href={r.url} target="_blank" rel="noreferrer" className="block text-sm">
               <span className="font-medium text-[var(--color-accent)]">{r.title || r.url}</span>
               <span className="block truncate text-xs text-[var(--color-muted)]">{r.url}</span>
             </a>

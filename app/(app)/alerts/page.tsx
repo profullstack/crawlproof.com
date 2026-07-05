@@ -27,8 +27,12 @@ type AlertRow = {
 
 function fmt(ts: string | null): string {
   if (!ts) return "not yet";
-  const d = new Date(ts);
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default async function AlertsPage({
@@ -42,10 +46,9 @@ export default async function AlertsPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  if (!user) redirect("/login?next=/alerts");
 
-  // Post-signup: create the alert carried in the magic-link redirect, then
-  // strip the params so a refresh can't double-create.
+  // Post-signup magic-link redirect: create the pending alert, then clean the URL.
   if (newCat && getCategory(newCat)) {
     await createAlert({ category: newCat, term: term ?? "", customQuery: term ?? "" });
     redirect("/alerts");
@@ -84,15 +87,10 @@ export default async function AlertsPage({
         <div className="flex gap-2 text-xs">
           <span className="badge">{activeCount}/{cap} active</span>
           <span className="badge">{Math.max(0, budget - used)} checks left this month</span>
-          {plan === "free" && (
-            <Link href="/settings/billing" className="badge badge-pass">
-              Upgrade
-            </Link>
-          )}
         </div>
       </div>
 
-      <CreateAlert remainingSlots={remaining} allowHourly={plan !== "free"} />
+      <CreateAlert remainingSlots={remaining} />
 
       <div className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--color-muted)]">
