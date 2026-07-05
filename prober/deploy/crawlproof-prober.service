@@ -1,0 +1,27 @@
+# systemd unit for the CrawlProof port-drift prober (docs/uptime-monitoring-prd.md §12).
+# Installed and (re)started automatically by prober/deploy/provision.sh — you do
+# NOT install this by hand. Layout matches the deploy-prober GitHub Action:
+#   repo checkout : /home/ubuntu/crawlproof.com
+#   Redis env     : /home/ubuntu/crawlproof-prober.env  (0600, holds REDIS_URL)
+
+[Unit]
+Description=CrawlProof port-drift prober (BullMQ worker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/crawlproof.com/prober
+EnvironmentFile=/home/ubuntu/crawlproof-prober.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+# Hardening — the prober needs only outbound network + nmap.
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/home/ubuntu/crawlproof.com/prober
+
+[Install]
+WantedBy=multi-user.target
