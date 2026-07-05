@@ -38,7 +38,9 @@ chmod 600 "${ENV_FILE}"
 
 echo "[provision] build prober"
 cd "${DEPLOY_PATH}/prober"
-npm ci --no-audit --no-fund
+# Prefer a reproducible install, but never hard-fail the deploy if the lockfile
+# is missing or out of sync with package.json — fall back to a plain install.
+npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 npm run build
 
 echo "[provision] install + (re)start systemd service"
