@@ -42,10 +42,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure SSH
+        env:
+          DROPLET_SSH_KEY: ${{ secrets.DROPLET_SSH_KEY }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/id_deploy
+          # Write the deploy key robustly: tolerate CRLF (a common cause of
+          # "error in libcrypto"), and accept either a raw OpenSSH/PEM key or a
+          # base64-encoded one.
+          if printf '%s' "$DROPLET_SSH_KEY" | grep -q 'BEGIN'; then
+            printf '%s\n' "$DROPLET_SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          else
+            printf '%s' "$DROPLET_SSH_KEY" | tr -d '\r' | base64 -d > ~/.ssh/id_deploy
+          fi
           chmod 600 ~/.ssh/id_deploy
+          # Fail fast with a clear message if the key is malformed, instead of a
+          # confusing "Permission denied (publickey)" later.
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1; then
+            echo "::error::DROPLET_SSH_KEY is not a valid private key. Re-add it preserving newlines, e.g. 'gh secret set DROPLET_SSH_KEY --repo profullstack/crawlproof.com < id_deploy' (or store it base64-encoded)."
+            exit 1
+          fi
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Ship prober + lib to droplet
