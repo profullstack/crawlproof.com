@@ -307,9 +307,48 @@ baseline, fires alerts
 - **Repeatable jobs** drive the daily per-monitor scan schedule; per-org caps and
   `attempts`/backoff are BullMQ config, not custom code.
 
-### 12.4 Open items
+### 12.4 Web UI — the scans surface
+
+Port-drift is a **private security surface**, never shown on the public status
+page. It lives under a project (or org) as a "Security / Exposed Services" tab,
+visible only to members with the required role. Because scanning is gated on
+**domain-ownership verification**, the UI's first job is to enforce that gate.
+
+**1. Enable / setup (empty state)**
+- If the host's domain is **not verified-owned**, the tab shows a locked state:
+  "Verify ownership of `example.com` to scan its exposed ports" → links to the
+  existing verification flow. No scan can be enabled otherwise.
+- Once verified: a toggle to enable port-drift for the host, with the daily
+  cadence and the default watched-port set shown read-only (plan-gated).
+
+**2. Baseline confirmation (first scan)**
+- After the first scan completes, present the discovered open ports for review:
+  > "We found these ports open on `example.com`. Confirm which are expected."
+  Each row: port, detected service guess (e.g. `6379 → Redis`), and
+  **Expected / Not expected** toggle. Confirming writes the baseline.
+- Until confirmed, findings sit in a **"pending baseline"** state and do not alert
+  (avoids a noisy first-run wall of alerts).
+
+**3. Findings / drift view (ongoing)**
+- A timeline of scans and an "open findings" list. A **new open port not in the
+  baseline** appears as an **open finding** (severity-tagged, e.g. exposed DB port
+  = high) with: port, service guess, first-seen, and the scan snapshot.
+- Actions per finding: **Acknowledge**, **Add to baseline** (accept as expected),
+  or **Mute**. Resolving/adding-to-baseline closes it.
+- A closed expected port surfaces as a low-severity info notice (optional).
+
+**4. Channels + history**
+- Reuses the same notification-channel picker as uptime monitors (§5) — a
+  port-drift alert is just another event type on those channels.
+- Full scan history + findings retention follow the plan's retention tier (§6).
+
+**Surfacing decision (resolves a §12.5 open item):** findings render in a
+**dedicated Security tab**, but each finding also emits into CrawlProof's existing
+audit/finding feed so it shows up wherever users already look for issues.
+
+### 12.5 Open items
 - Which port list ships as the default "watch" set.
-- Whether findings feed CrawlProof's existing audit/finding surface or a new one.
+- Which member role gates the Security tab (reuse an existing role or add one).
 - Redis host choice (Railway plugin vs. Upstash) and TLS/ACL setup.
 - One droplet = single vantage point + SPOF (fine for daily scans); the BullMQ
   Worker model scales to N droplets with zero config change if redundancy is wanted.
