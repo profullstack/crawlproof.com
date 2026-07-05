@@ -25,9 +25,11 @@ export const SERP_CALLS_PER_MONTH: Record<Plan, number> = {
   team: 1_000_000,
 };
 
-// Only paid plans may run hourly; free is daily.
-export function allowedFrequencies(plan: Plan): Array<"daily" | "hourly"> {
-  return plan === "free" ? ["daily"] : ["daily", "hourly"];
+// Hourly is currently free for everyone (no paywall on frequency yet — the
+// per-account monthly SERP-call budget is what bounds cost). Revisit if/when
+// hourly becomes a paid lever.
+export function allowedFrequencies(_plan: Plan): Array<"daily" | "hourly"> {
+  return ["daily", "hourly"];
 }
 
 // Results requested per poll and surfaced per email. Capping at 10 keeps SERP
