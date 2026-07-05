@@ -1,19 +1,19 @@
 name: deploy-prober
 
-# Deploys the port-drift prober (see docs/uptime-monitoring-prd.md §12) to the
-# self-hosted DigitalOcean droplet on merges to master. The droplet runs a
-# BullMQ Worker as a systemd service; this workflow updates the checkout on the
-# box and restarts that service. The prober connects OUTBOUND to Redis — nothing
-# here opens an inbound port on the droplet.
+# Deploys the port-drift prober (docs/uptime-monitoring-prd.md §12) to the
+# DigitalOcean droplet ubuntu@scan.crawlproof.com on merges to master.
+#
+# FULLY SELF-BOOTSTRAPPING + IDEMPOTENT: the workflow installs every system
+# dependency (nmap, Node 20, build tools), writes the Redis env file, installs
+# the systemd unit, builds, and (re)starts the service on EVERY run. First run
+# provisions a bare droplet; later runs just update. You never SSH in to set up.
+#
+# The prober connects OUTBOUND to Redis — nothing here opens an inbound port on
+# the droplet (only sshd, which already exists).
 #
 # Required repo secrets:
-#   DROPLET_HOST     - droplet IP or hostname
-#   DROPLET_USER     - deploy user (e.g. "deploy"); needs sudo for systemctl restart
-#   DROPLET_SSH_KEY  - private SSH key whose public half is in the user's authorized_keys
-# Optional:
-#   DROPLET_SSH_PORT - SSH port (defaults to 22)
-# Optional repo variable:
-#   PROBER_DEPLOY_PATH - repo checkout path on the droplet (defaults to /opt/crawlproof.com)
+#   DROPLET_SSH_KEY   - private SSH key for ubuntu@scan.crawlproof.com
+#   PROBER_REDIS_URL  - rediss://... broker URL (scoped to the "prober" queue)
 
 on:
   push:
@@ -29,32 +29,37 @@ concurrency:
   group: deploy-prober
   cancel-in-progress: false
 
+env:
+  DEPLOY_HOST: scan.crawlproof.com
+  DEPLOY_USER: ubuntu
+  DEPLOY_PATH: /home/ubuntu/crawlproof.com
+
 jobs:
   deploy:
-    name: deploy prober to droplet
+    name: provision + deploy prober
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DROPLET_HOST }}
-          username: ${{ secrets.DROPLET_USER }}
-          key: ${{ secrets.DROPLET_SSH_KEY }}
-          port: ${{ secrets.DROPLET_SSH_PORT || 22 }}
-          script_stop: true            # abort on first failed command
-          envs: DEPLOY_PATH
-          script: |
-            set -euo pipefail
-            DEPLOY_PATH="${{ vars.PROBER_DEPLOY_PATH || '/opt/crawlproof.com' }}"
-            echo "[deploy] updating checkout at ${DEPLOY_PATH}"
-            cd "${DEPLOY_PATH}"
-            git fetch --prune origin
-            git reset --hard origin/master
-            echo "[deploy] installing + building prober workspace"
-            cd prober
-            npm ci --no-audit --no-fund
-            npm run build
-            echo "[deploy] restarting service"
-            sudo systemctl restart crawlproof-prober
-            sudo systemctl --no-pager --lines=0 status crawlproof-prober
-            echo "[deploy] done"
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Ship prober + lib to droplet
+        run: |
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          # --delete keeps the droplet in sync; node_modules/dist are excluded so
+          # they are neither shipped nor deleted (rebuilt on the box).
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/id_deploy" \
+            --exclude node_modules --exclude dist \
+            prober lib \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Provision + restart (idempotent)
+        run: |
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "REDIS_URL='${{ secrets.PROBER_REDIS_URL }}' DEPLOY_PATH='$DEPLOY_PATH' bash '$DEPLOY_PATH/prober/deploy/provision.sh'"

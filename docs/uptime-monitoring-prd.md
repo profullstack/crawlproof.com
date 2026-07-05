@@ -289,9 +289,13 @@ baseline, fires alerts
   no inbound port on the prober box (firewall to egress 443/6380 only).
 - **Prober lives in the monorepo** as a new workspace (mirrors the existing
   `worker/`), e.g. `prober/` — its own `package.json` and entrypoint, sharing the
-  **job-payload types from `lib/`** so producer and prober can't drift. Deployed
-  to the droplet by pulling the repo and running it as a `systemd` service
-  (build the one workspace; no Railway/Docker change).
+  **job-payload types from `lib/`** so producer and prober can't drift.
+- **Deploy is self-bootstrapping.** The `deploy-prober` GitHub Action fires on
+  merges to `master` (droplet `ubuntu@scan.crawlproof.com`): rsync `prober/`+`lib/`
+  to the box, then run `prober/deploy/provision.sh` — an **idempotent** script
+  that installs nmap/Node/build tools, writes the Redis env file, installs the
+  `crawlproof-prober` systemd unit, builds, and restarts. First run provisions a
+  bare droplet; later runs update. **No manual SSH/setup on the droplet, ever.**
 - **Results flow back via the job return value** — the droplet writes no DB. A
   Railway-side `QueueEvents` (or a second in-process Worker) handles `completed`
   /`failed`, then persists results, diffs the baseline, and dispatches alerts.
