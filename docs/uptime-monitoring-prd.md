@@ -57,7 +57,7 @@ On-call escalation is explicitly a later phase.
 ## 2. Objectives
 
 ### 2.1 Primary Goals
-- Detect downtime for HTTP(S), TCP, PING, keyword, and SSL-expiry checks.
+- Detect downtime for HTTP(S), TCP, keyword, and SSL-expiry checks (ICMP PING is Phase 2 — see §12).
 - Alert within one confirmed check cycle across multiple channels; alert on recovery.
 - Free tier of **20 monitors** at 60s interval, no credit card.
 - Public status page per project (uptime %, response times, incidents).
@@ -84,8 +84,8 @@ On-call escalation is explicitly a later phase.
 | **HTTP(S)** | Status code, response time, redirect handling | URL, expected status, timeout, follow-redirects |
 | **Keyword** | HTTP body contains / omits a string | URL, keyword, match mode |
 | **SSL expiry** | Cert days-to-expiry warning | Host, warn-days (default 14) |
-| **TCP** | Port open | Host, port |
-| **PING (ICMP)** | Host reachability | Host / IP |
+| **TCP** | Port open (outbound `connect()`, works from Railway) | Host, port |
+| **PING (ICMP)** *(Phase 2)* | Host reachability — needs raw sockets, so runs on the §12 prober droplet, not Railway | Host / IP |
 
 Each monitor: name, type, target, interval (60s free / 30s paid), timeout,
 expected-result config, channel(s), enabled flag, and optional link to the
@@ -212,8 +212,8 @@ All RLS-scoped to org/project, consistent with existing tables.
 | **M1 — Core loop** | HTTP + keyword + SSL monitors, due-time sweep in worker, state machine, email + webhook alerts, monitor CRUD UI |
 | **M2 — Channels + status page** | Slack, Discord, public status page, incident history, uptime % |
 | **M3 — Plans + limits** | Fold into existing plan tiers, 20-free enforcement, SMS (Twilio) + caps, custom domains |
-| **M4 — Polish** | TCP/PING checks, maintenance windows, schedule gates, weekly summary email |
-| **Phase 2** | On-call escalation policies, multi-region probing, PagerDuty/Teams/Jira, Playwright journeys, **exposed-services / port-drift check (§12)** |
+| **M4 — Polish** | TCP checks, maintenance windows, schedule gates, weekly summary email |
+| **Phase 2** | On-call escalation policies, multi-region probing, PagerDuty/Teams/Jira, Playwright journeys, **ICMP PING checks (via §12 prober droplet)**, **exposed-services / port-drift check (§12)** |
 
 ---
 
@@ -224,8 +224,9 @@ All RLS-scoped to org/project, consistent with existing tables.
    optional `project_id`, counts against org limit.)
 3. Fold into existing CrawlProof plans, or introduce an uptime add-on SKU?
 4. Status page: reuse existing public-report subdomain scheme, or new namespace?
-5. Do TCP/PING (ICMP) checks work from the Railway runtime, or do they need an
-   external prober? (May push PING to Phase 2.)
+5. **Resolved:** TCP works from Railway (outbound `connect()`); **ICMP PING does
+   not** (needs raw sockets), so PING moves to **Phase 2** and runs on the §12
+   prober droplet alongside the port-drift scans. nmap is also Phase 2 (§12).
 
 ---
 
