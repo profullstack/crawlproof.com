@@ -245,9 +245,11 @@ a scanner.
 - **Owned targets only.** Reuse CrawlProof's existing **domain-ownership
   verification** as the gate. No arbitrary hostnames — this must never become
   port-scanning-as-a-service against third parties.
-- **Not from the Railway app IP.** Run scans from an **external prober / port-check
-  API**, so an egress-abuse flag can't take down production. GCP and Railway AUPs
-  prohibit network scanning; scanning from the app IP risks the service's IP.
+- **Not from the Railway app IP.** Scans run on a **self-hosted prober (a
+  DigitalOcean droplet)**, never from the Railway service, so an egress-abuse flag
+  can't take down production. GCP and Railway AUPs prohibit network scanning;
+  scanning from the app IP risks the service's IP. The droplet has its own IP
+  reputation and raw-socket access. See §12.3 for the job-transport design.
 - **Bounded + TCP-connect only.** Curated **top-~100 common service ports**, never
   full 65535; TCP `connect()` only (containers lack `CAP_NET_RAW` for SYN scans
   anyway); ICMP discovery skipped (`-Pn`-equivalent).
@@ -261,8 +263,48 @@ a scanner.
 - Record findings as incidents/events so they show in history and (optionally) a
   private security view — **not** the public status page by default.
 
-### 12.3 Open items
-- Build vs. buy the prober: a dedicated small non-Railway box vs. an external
-  port-scan API. Leaning external API to sidestep AUP + IP-reputation risk.
+### 12.3 Prober architecture — BullMQ over Redis, prober stays in the monorepo
+
+Job transport is a **BullMQ queue backed by Redis**, not synchronous RPC (scans
+take seconds-to-minutes and must survive restarts). BullMQ gives us retries +
+backoff, concurrency control, and **repeatable jobs** for the daily cadence — so
+no hand-rolled leasing/reaper is needed.
+
+```
+Railway (producer)            Redis (broker)         DO droplet (prober)
+──────────────────            ──────────────         ───────────────────
+API / worker enqueues  ──▶   "prober" queue   ◀──   BullMQ Worker dials OUT
+port-scan jobs                (rediss:// TLS)         over rediss://, runs
+(repeatable = daily)                                  nmap -sT -Pn --top-ports
+                                                      100, returns result
+Railway QueueEvents    ◀───   job "completed"  ◀──   (result = job return value)
+handler persists to
+Supabase, diffs
+baseline, fires alerts
+```
+
+- **Redis is new infra.** CrawlProof has no Redis today (the worker uses
+  in-container loopback HTTP). Add one (Railway Redis plugin or Upstash) exposed
+  over `rediss://` with auth. The droplet connects **outbound only** to Redis —
+  no inbound port on the prober box (firewall to egress 443/6380 only).
+- **Prober lives in the monorepo** as a new workspace (mirrors the existing
+  `worker/`), e.g. `prober/` — its own `package.json` and entrypoint, sharing the
+  **job-payload types from `lib/`** so producer and prober can't drift. Deployed
+  to the droplet by pulling the repo and running it as a `systemd` service
+  (build the one workspace; no Railway/Docker change).
+- **Results flow back via the job return value** — the droplet writes no DB. A
+  Railway-side `QueueEvents` (or a second in-process Worker) handles `completed`
+  /`failed`, then persists results, diffs the baseline, and dispatches alerts.
+  This keeps Supabase credentials off the droplet.
+- **Credential blast radius:** the droplet holds only the `rediss://` URL. Scope
+  it with a **dedicated Redis instance (or ACL user)** limited to the `prober`
+  queue keys, so a compromised droplet can't read other queues.
+- **Repeatable jobs** drive the daily per-monitor scan schedule; per-org caps and
+  `attempts`/backoff are BullMQ config, not custom code.
+
+### 12.4 Open items
 - Which port list ships as the default "watch" set.
 - Whether findings feed CrawlProof's existing audit/finding surface or a new one.
+- Redis host choice (Railway plugin vs. Upstash) and TLS/ACL setup.
+- One droplet = single vantage point + SPOF (fine for daily scans); the BullMQ
+  Worker model scales to N droplets with zero config change if redundancy is wanted.
