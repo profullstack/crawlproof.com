@@ -213,7 +213,7 @@ All RLS-scoped to org/project, consistent with existing tables.
 | **M2 — Channels + status page** | Slack, Discord, public status page, incident history, uptime % |
 | **M3 — Plans + limits** | Fold into existing plan tiers, 20-free enforcement, SMS (Twilio) + caps, custom domains |
 | **M4 — Polish** | TCP/PING checks, maintenance windows, schedule gates, weekly summary email |
-| **Phase 2** | On-call escalation policies, multi-region probing, PagerDuty/Teams/Jira, Playwright journeys |
+| **Phase 2** | On-call escalation policies, multi-region probing, PagerDuty/Teams/Jira, Playwright journeys, **exposed-services / port-drift check (§12)** |
 
 ---
 
@@ -226,3 +226,43 @@ All RLS-scoped to org/project, consistent with existing tables.
 4. Status page: reuse existing public-report subdomain scheme, or new namespace?
 5. Do TCP/PING (ICMP) checks work from the Railway runtime, or do they need an
    external prober? (May push PING to Phase 2.)
+
+---
+
+## 12. Phase 2 — Exposed-Services / Port-Drift Check
+
+A lightweight attack-surface monitor: on a verified-owned host, detect ports that
+are open to the public internet but *shouldn't* be — e.g. a Redis (6379) or
+Postgres (5432) accidentally exposed. Framed as **security drift detection**, not
+a scanner.
+
+> **Value framing:** "You told us to watch 80/443. We now also see **6379 (Redis)**
+> reachable from the public internet on your verified host — likely a
+> misconfiguration." Alerts fire when the open-port set *changes* from an accepted
+> baseline, not merely because a port is open.
+
+### 12.1 Hard constraints (why this is Phase 2, not V1)
+- **Owned targets only.** Reuse CrawlProof's existing **domain-ownership
+  verification** as the gate. No arbitrary hostnames — this must never become
+  port-scanning-as-a-service against third parties.
+- **Not from the Railway app IP.** Run scans from an **external prober / port-check
+  API**, so an egress-abuse flag can't take down production. GCP and Railway AUPs
+  prohibit network scanning; scanning from the app IP risks the service's IP.
+- **Bounded + TCP-connect only.** Curated **top-~100 common service ports**, never
+  full 65535; TCP `connect()` only (containers lack `CAP_NET_RAW` for SYN scans
+  anyway); ICMP discovery skipped (`-Pn`-equivalent).
+- **Rate-limited + infrequent.** Daily cadence, not per-minute; per-org caps.
+
+### 12.2 Behavior
+- Establish a **baseline** open-port set per host on first scan (user confirms
+  "these are expected").
+- On each subsequent scan, diff against baseline. **New open port → alert**
+  (down-alert-style, same channels). Closed expected port → optional info alert.
+- Record findings as incidents/events so they show in history and (optionally) a
+  private security view — **not** the public status page by default.
+
+### 12.3 Open items
+- Build vs. buy the prober: a dedicated small non-Railway box vs. an external
+  port-scan API. Leaning external API to sidestep AUP + IP-reputation risk.
+- Which port list ships as the default "watch" set.
+- Whether findings feed CrawlProof's existing audit/finding surface or a new one.
