@@ -1,0 +1,60 @@
+name: deploy-prober
+
+# Deploys the port-drift prober (see docs/uptime-monitoring-prd.md §12) to the
+# self-hosted DigitalOcean droplet on merges to master. The droplet runs a
+# BullMQ Worker as a systemd service; this workflow updates the checkout on the
+# box and restarts that service. The prober connects OUTBOUND to Redis — nothing
+# here opens an inbound port on the droplet.
+#
+# Required repo secrets:
+#   DROPLET_HOST     - droplet IP or hostname
+#   DROPLET_USER     - deploy user (e.g. "deploy"); needs sudo for systemctl restart
+#   DROPLET_SSH_KEY  - private SSH key whose public half is in the user's authorized_keys
+# Optional:
+#   DROPLET_SSH_PORT - SSH port (defaults to 22)
+# Optional repo variable:
+#   PROBER_DEPLOY_PATH - repo checkout path on the droplet (defaults to /opt/crawlproof.com)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "prober/**"
+      - "lib/**"                       # prober shares job-payload types from lib/
+      - ".github/workflows/deploy-prober.yml"
+  workflow_dispatch:                    # allow manual redeploys
+
+# Never let two deploys race on the droplet.
+concurrency:
+  group: deploy-prober
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy prober to droplet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          port: ${{ secrets.DROPLET_SSH_PORT || 22 }}
+          script_stop: true            # abort on first failed command
+          envs: DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="${{ vars.PROBER_DEPLOY_PATH || '/opt/crawlproof.com' }}"
+            echo "[deploy] updating checkout at ${DEPLOY_PATH}"
+            cd "${DEPLOY_PATH}"
+            git fetch --prune origin
+            git reset --hard origin/master
+            echo "[deploy] installing + building prober workspace"
+            cd prober
+            npm ci --no-audit --no-fund
+            npm run build
+            echo "[deploy] restarting service"
+            sudo systemctl restart crawlproof-prober
+            sudo systemctl --no-pager --lines=0 status crawlproof-prober
+            echo "[deploy] done"
