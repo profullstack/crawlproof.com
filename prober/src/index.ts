@@ -2,7 +2,7 @@
 //
 // A BullMQ Worker running on a self-hosted DigitalOcean droplet. It dials OUT
 // to Redis (rediss://) — no inbound port — pulls port-scan jobs off the
-// "prober" queue, runs a bounded `nmap -sT -Pn --top-ports 100` TCP-connect
+// "prober" queue, runs a full `nmap -sT -Pn -p- -T4` (all 65535) TCP-connect
 // scan, and returns the open-port set as the job's return value. It writes no
 // database; the Railway side handles results (baseline diff + alerts).
 import { Worker, type Job, type ConnectionOptions } from "bullmq";
@@ -60,12 +60,14 @@ function assertScannableHost(host: string): void {
 
 async function scan(job: PortScanJob): Promise<PortScanResult> {
   assertScannableHost(job.host);
-  // -sT connect scan (no CAP_NET_RAW needed), -Pn skip host discovery,
-  // --top-ports 100 bounded set, -oG - greppable output on stdout.
+  // Full TCP port scan (all 65535): -sT connect scan (no CAP_NET_RAW needed),
+  // -Pn skip host discovery, -p- every port, -T4 faster timing, and a 25-min
+  // nmap-side host timeout so a heavily-filtered host returns what it found
+  // instead of hanging. -oG - greppable output on stdout.
   const { stdout } = await pexecFile(
     "nmap",
-    ["-sT", "-Pn", "--top-ports", "100", "-oG", "-", job.host],
-    { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 },
+    ["-sT", "-Pn", "-p-", "-T4", "--host-timeout", "1500s", "-oG", "-", job.host],
+    { timeout: 30 * 60_000, maxBuffer: 16 * 1024 * 1024 },
   );
 
   const openPorts: OpenPort[] = [];

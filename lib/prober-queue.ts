@@ -17,8 +17,9 @@ const HIGH_RISK_PORTS = new Set([
 ]);
 const LOW_RISK_PORTS = new Set([80, 443]);
 
-// A running scan older than this is treated as timed out.
-const RUNNING_TIMEOUT_MS = 15 * 60 * 1000;
+// A running scan older than this is treated as timed out. Generous because a
+// full 65535-port scan (nmap -p-) can take many minutes on a filtered host.
+const RUNNING_TIMEOUT_MS = 40 * 60 * 1000;
 
 let queue: Queue | null = null;
 
