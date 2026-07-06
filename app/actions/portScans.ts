@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 // only record the request — RLS ensures the caller owns the project.
 export async function requestPortScan(
   projectId: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; scanId?: string }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -29,17 +29,21 @@ export async function requestPortScan(
     return { ok: false, error: "Project URL is not a valid host." };
   }
 
-  const { error } = await supabase.from("port_scans").insert({
-    project_id: projectId,
-    host,
-    status: "queued",
-    requested_by: user.id,
-  });
+  const { data: inserted, error } = await supabase
+    .from("port_scans")
+    .insert({
+      project_id: projectId,
+      host,
+      status: "queued",
+      requested_by: user.id,
+    })
+    .select("id")
+    .single();
   if (error) {
     // Most likely the migration hasn't been applied yet in this environment.
     return { ok: false, error: `Could not queue scan: ${error.message}` };
   }
 
   revalidatePath(`/projects/${projectId}/security`);
-  return { ok: true };
+  return { ok: true, scanId: inserted.id };
 }
