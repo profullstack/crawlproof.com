@@ -77,6 +77,12 @@ export default async function ProjectSecurityPage({
     .order("created_at", { ascending: false })
     .limit(10);
   const scans = (scansData ?? []) as ScanRow[];
+  // If the most recent scan is still in flight, hand its id to the client so
+  // the SSE stream resumes on load.
+  const activeScanId =
+    scans[0] && (scans[0].status === "queued" || scans[0].status === "running")
+      ? scans[0].id
+      : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -90,7 +96,7 @@ export default async function ProjectSecurityPage({
             Scans run only against your own verified host.
           </p>
         </div>
-        <RequestScanButton projectId={id} />
+        <RequestScanButton projectId={id} activeScanId={activeScanId} />
       </div>
 
       {/* Open findings */}
