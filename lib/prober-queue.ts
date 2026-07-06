@@ -151,10 +151,10 @@ export async function processDuePortScans(
 
   for (const scan of (runningRows ?? []) as ScanRow[]) {
     const job = (await q.getJob(scan.id)) as Job | undefined;
-    const age = Date.now() - new Date(scan.created_at).getTime();
 
     if (!job) {
-      if (age > RUNNING_TIMEOUT_MS) {
+      // No job and an old row => the job was lost (not just slow to enqueue).
+      if (Date.now() - new Date(scan.created_at).getTime() > RUNNING_TIMEOUT_MS) {
         await markFailed(supabase, scan.id, "prober job missing");
         failed++;
       }
@@ -168,7 +168,10 @@ export async function processDuePortScans(
     } else if (state === "failed") {
       await markFailed(supabase, scan.id, job.failedReason ?? "prober job failed");
       failed++;
-    } else if (age > RUNNING_TIMEOUT_MS) {
+    } else if (Date.now() - job.timestamp > RUNNING_TIMEOUT_MS) {
+      // Measure the timeout from when the job was ENQUEUED, not when the scan
+      // row was created — a row can sit `queued` for a long time before a job
+      // exists, and timing out from created_at would kill fresh jobs instantly.
       await markFailed(supabase, scan.id, "scan timed out");
       failed++;
     }
