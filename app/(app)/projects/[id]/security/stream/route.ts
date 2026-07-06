@@ -8,8 +8,13 @@ import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-const POLL_MS = 1500;
-const MAX_MS = 5 * 60 * 1000;
+const POLL_MS = 2000;
+// A full 65535-port scan can run many minutes; keep the stream open long
+// enough to see it finish.
+const MAX_MS = 45 * 60 * 1000;
+// Emit an SSE comment periodically so idle proxies don't drop the connection
+// while a long scan sits in `running` with no status change.
+const HEARTBEAT_MS = 15_000;
 
 export async function GET(
   req: NextRequest,
@@ -48,8 +53,13 @@ export async function GET(
 
       const deadline = Date.now() + MAX_MS;
       let lastStatus = "";
+      let lastBeat = Date.now();
       try {
         while (!closed && Date.now() < deadline) {
+          if (Date.now() - lastBeat >= HEARTBEAT_MS) {
+            if (!closed) controller.enqueue(encoder.encode(`: keep-alive\n\n`));
+            lastBeat = Date.now();
+          }
           const base = supabase
             .from("port_scans")
             .select("id, status, open_ports, completed_at")

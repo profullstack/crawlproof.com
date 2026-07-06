@@ -251,9 +251,12 @@ a scanner.
   can't take down production. GCP and Railway AUPs prohibit network scanning;
   scanning from the app IP risks the service's IP. The droplet has its own IP
   reputation and raw-socket access. See §12.3 for the job-transport design.
-- **Bounded + TCP-connect only.** Curated **top-~100 common service ports**, never
-  full 65535; TCP `connect()` only (containers lack `CAP_NET_RAW` for SYN scans
-  anyway); ICMP discovery skipped (`-Pn`-equivalent).
+- **Full port range, TCP-connect only.** Scans **all 65535 TCP ports** (`nmap
+  -sT -Pn -p- -T4`) so nothing exposed is missed — the point of the feature. Only
+  safe because targets are owner-verified and the scan runs on a dedicated
+  off-Railway droplet. TCP `connect()` only (containers lack `CAP_NET_RAW` for SYN
+  scans anyway); ICMP discovery skipped (`-Pn`); a 25-min nmap `--host-timeout`
+  bounds heavily-filtered hosts.
 - **Rate-limited + infrequent.** Daily cadence, not per-minute; per-org caps.
 
 ### 12.2 Behavior
@@ -276,8 +279,8 @@ Railway (producer)            Redis (broker)         DO droplet (prober)
 ──────────────────            ──────────────         ───────────────────
 API / worker enqueues  ──▶   "prober" queue   ◀──   BullMQ Worker dials OUT
 port-scan jobs                (rediss:// TLS)         over rediss://, runs
-(repeatable = daily)                                  nmap -sT -Pn --top-ports
-                                                      100, returns result
+(repeatable = daily)                                  nmap -sT -Pn -p- -T4
+                                                      (all ports), returns result
 Railway QueueEvents    ◀───   job "completed"  ◀──   (result = job return value)
 handler persists to
 Supabase, diffs
