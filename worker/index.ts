@@ -36,6 +36,7 @@ import { processBrowserPost } from "../lib/sp/browserPost";
 import { getOrMintInstallationToken } from "../lib/github/installations";
 import { listInstallationRepos } from "../lib/github/app";
 import { processUserAlerts } from "../lib/alerts/worker";
+import { processDuePortScans } from "../lib/prober-queue";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1256,6 +1257,19 @@ setInterval(
 setInterval(
   () => auditStuckSweep().catch((e) => console.error("[worker] audit stuck sweep", e)),
   60_000,
+);
+// Port-drift scans: bridge queued rows to the "prober" BullMQ queue and
+// reconcile results (uptime-monitoring-prd.md §12). Short interval so the
+// Security tab's SSE stream gets snappy queued→running→done feedback.
+async function portScanSweep() {
+  const r = await processDuePortScans(supabase);
+  if (r.enqueued || r.completed || r.failed) {
+    console.log("[worker] port scan sweep", r);
+  }
+}
+setInterval(
+  () => portScanSweep().catch((e) => console.error("[worker] port scan sweep", e)),
+  5_000,
 );
 
 // Bind to loopback by default so the worker isn't reachable from the public
