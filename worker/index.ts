@@ -37,6 +37,7 @@ import { getOrMintInstallationToken } from "../lib/github/installations";
 import { listInstallationRepos } from "../lib/github/app";
 import { processUserAlerts } from "../lib/alerts/worker";
 import { processDuePortScans } from "../lib/prober-queue";
+import { processDueMonitors } from "../lib/uptime";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1270,6 +1271,16 @@ async function portScanSweep() {
 setInterval(
   () => portScanSweep().catch((e) => console.error("[worker] port scan sweep", e)),
   5_000,
+);
+// Uptime monitors: run due HTTP/keyword/SSL/TCP checks, advance the up/down
+// state machine, and send down/recovery alerts (uptime-monitoring-prd.md §4).
+async function uptimeSweep() {
+  const r = await processDueMonitors(supabase, resend);
+  if (r.down || r.up) console.log("[worker] uptime sweep", r);
+}
+setInterval(
+  () => uptimeSweep().catch((e) => console.error("[worker] uptime sweep", e)),
+  15_000,
 );
 
 // Bind to loopback by default so the worker isn't reachable from the public
