@@ -8,6 +8,7 @@ import {
   type AdCreative,
   type AdFormatId,
 } from "./creative";
+import { houseFill } from "./house";
 import { CPC_CENTS, CPC_CREDITS, PLATFORM_RATE } from "./pricing";
 
 // Server-side ad selection + metering. Runs under the service-role client so
@@ -101,7 +102,8 @@ export async function serveAd(
     .eq("ad_campaigns.status", "active")
     .limit(100);
 
-  if (!creatives || creatives.length === 0) return null;
+  // No paid creative for this format → default CrawlProof house ad.
+  if (!creatives || creatives.length === 0) return houseFill(format);
 
   type CampaignJoin = {
     id: string;
@@ -125,7 +127,8 @@ export async function serveAd(
       return spentToday + CPC_CENTS <= c.daily_budget_cents;
     },
   );
-  if (eligible.length === 0) return null;
+  // Every candidate is out of budget → fall back to the house ad.
+  if (eligible.length === 0) return houseFill(format);
 
   const pick = eligible[Math.floor(Math.random() * eligible.length)];
   const campaign = oneCampaign(pick.ad_campaigns);
