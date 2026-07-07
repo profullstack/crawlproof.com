@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { CampaignActions } from "@/components/ads/campaign-actions";
 
 export const metadata = { title: "Ad campaigns" };
 
@@ -36,9 +37,14 @@ export default async function AdsPage() {
     <div className="mx-auto max-w-4xl">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Ad campaigns</h1>
-        <Link href="/ads/new" className="btn btn-primary">
-          Create an ad
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/ads/slots" className="btn">
+            Monetize a site
+          </Link>
+          <Link href="/ads/new" className="btn btn-primary">
+            Create an ad
+          </Link>
+        </div>
       </div>
       <p className="mt-2 text-[var(--color-muted)]">
         Promote your site across the CrawlProof network. Give a URL, we design the ads,
@@ -64,7 +70,10 @@ export default async function AdsPage() {
                   <span className="font-mono">{c.ref_slug}</span>
                 </div>
               </div>
-              <span className="badge whitespace-nowrap">{c.status}</span>
+              <div className="flex items-center gap-3">
+                <span className="badge whitespace-nowrap">{c.status}</span>
+                <CampaignActions id={c.id} status={c.status} />
+              </div>
             </li>
           ))}
         </ul>

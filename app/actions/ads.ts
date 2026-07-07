@@ -160,6 +160,117 @@ export async function saveCampaign(input: {
   return { ok: true, id: campaign.data.id, refSlug: campaign.data.ref_slug };
 }
 
+// --- Campaign activation (advertiser) ---
+
+const CAMPAIGN_STATUSES = new Set(["active", "paused", "draft"]);
+
+export async function setCampaignStatus(input: {
+  id: string;
+  status: "active" | "paused" | "draft";
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!CAMPAIGN_STATUSES.has(input.status)) return { ok: false, error: "Bad status." };
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  // Require at least one ready creative before going live.
+  if (input.status === "active") {
+    const { count } = await supabase
+      .from("ad_creatives")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", input.id)
+      .eq("status", "ready");
+    if (!count) return { ok: false, error: "Add a creative before activating." };
+  }
+
+  const { error } = await supabase
+    .from("ad_campaigns")
+    .update({ status: input.status })
+    .eq("id", input.id)
+    .eq("owner_id", user.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/ads");
+  return { ok: true };
+}
+
+// --- Publisher slots ---
+
+export async function createSlot(input: {
+  projectId: string;
+}): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  // Confirm the project belongs to the user (RLS also enforces this).
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id, organization_id")
+    .eq("id", input.projectId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found." };
+
+  const payload: Record<string, unknown> = {
+    project_id: project.id,
+    owner_id: user.id,
+    status: "inactive",
+  };
+  if (project.organization_id) payload.organization_id = project.organization_id;
+
+  const { data, error } = await supabase
+    .from("ad_slots")
+    .insert(payload)
+    .select("id")
+    .single();
+  if (error || !data) return { ok: false, error: error?.message ?? "Failed to create slot." };
+  revalidatePath("/ads/slots");
+  return { ok: true, id: data.id };
+}
+
+export async function setSlotStatus(input: {
+  id: string;
+  status: "active" | "paused" | "inactive";
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  const { error } = await supabase
+    .from("ad_slots")
+    .update({ status: input.status })
+    .eq("id", input.id)
+    .eq("owner_id", user.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/ads/slots");
+  return { ok: true };
+}
+
+export async function saveSlotPayout(input: {
+  id: string;
+  payoutAddress: string;
+  payoutCurrency: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  const addr = input.payoutAddress.trim().slice(0, 200);
+  const { error } = await supabase
+    .from("ad_slots")
+    .update({ payout_address: addr || null, payout_currency: input.payoutCurrency.trim().toLowerCase() || null })
+    .eq("id", input.id)
+    .eq("owner_id", user.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/ads/slots");
+  return { ok: true };
+}
+
 // Upload an advertiser's own image (logo or hero) to the public ad-assets
 // bucket; returns the public URL to store on a creative.
 export async function uploadAdAsset(
