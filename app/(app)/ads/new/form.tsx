@@ -15,6 +15,7 @@ export function NewAdForm() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [budget, setBudget] = useState(5); // dollars/day
+  const [bid, setBid] = useState(0.2); // dollars/click (max bid)
   const [name, setName] = useState("");
   const [brand, setBrand] = useState<SiteBrand | null>(null);
   const [creatives, setCreatives] = useState<AdCreative[]>([]);
@@ -78,6 +79,8 @@ export function NewAdForm() {
         name,
         url,
         dailyBudgetCents: Math.round(budget * 100),
+        // $ per click → credits (5¢/credit). Higher bids win more auctions.
+        bidCredits: Math.max(1, Math.round((bid * 100) / 5)),
         brand,
         creatives,
       });
@@ -128,6 +131,23 @@ export function NewAdForm() {
                 onChange={(e) => setBudget(Math.max(0, Number(e.target.value)))}
               />
               <span className="text-sm text-[var(--color-muted)]">/day</span>
+            </div>
+          </div>
+          <div className="w-40">
+            <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              Max bid / click
+            </label>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="text-[var(--color-muted)]">$</span>
+              <input
+                className="input"
+                type="number"
+                min={0.05}
+                step={0.05}
+                value={bid}
+                onChange={(e) => setBid(Math.max(0.05, Number(e.target.value)))}
+              />
+              <span className="text-sm text-[var(--color-muted)]">/click</span>
             </div>
           </div>
           <button type="submit" className="btn btn-primary" disabled={generating}>

@@ -65,6 +65,17 @@ export async function completePurchase(input: {
     throw new Error(error.message);
   }
 
+  // Deposit-match promo: first deposit gets bonus ad credits (idempotent RPC).
+  try {
+    const { data: bonus } = await svc.rpc("ad_apply_deposit_bonus", {
+      p_payment_id: paymentId,
+    });
+    if (bonus) console.info(`[ads] deposit bonus granted: ${bonus} credits for ${paymentId}`);
+  } catch (err) {
+    // Bonus is best-effort; never fail the purchase over it.
+    console.error("[ads] deposit bonus failed", err);
+  }
+
   try {
     await mailReceipt(svc, paymentId, txHash ?? null);
   } catch (err) {

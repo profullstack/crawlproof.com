@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { serviceClient } from "@/lib/supabase/service";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import {
@@ -11,7 +12,7 @@ import {
   type AdFormatId,
 } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
-import { MIN_PAYOUT_CENTS } from "@/lib/ads/pricing";
+import { MIN_PAYOUT_CENTS, DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
 import { createCryptoPayout } from "@/lib/coinpay";
 
 const ASSET_BUCKET = "ad-assets";
@@ -85,6 +86,7 @@ export async function saveCampaign(input: {
   name: string;
   url: string;
   dailyBudgetCents: number;
+  bidCredits?: number;
   brand?: SiteBrand | null;
   creatives: Partial<AdCreative>[];
 }): Promise<{ ok: true; id: string; refSlug: string } | { ok: false; error: string }> {
@@ -105,6 +107,10 @@ export async function saveCampaign(input: {
   const budget = Number.isFinite(input.dailyBudgetCents)
     ? Math.max(0, Math.round(input.dailyBudgetCents))
     : 500;
+  // Bid in credits; clamp to a sane range. Defaults to the standard CPC.
+  const bid = Number.isFinite(input.bidCredits)
+    ? Math.min(200, Math.max(1, Math.round(input.bidCredits!)))
+    : DEFAULT_BID_CREDITS;
 
   const org = await getOrCreateDefaultOrg({ userId: user.id, email: user.email });
 
@@ -114,6 +120,7 @@ export async function saveCampaign(input: {
     destination_url: check.url,
     destination_domain: domainOf(check.url),
     daily_budget_cents: budget,
+    bid_credits: bid,
     status: "draft",
     brand: input.brand ?? {},
   };
@@ -305,6 +312,25 @@ export async function requestPayout(input: {
 
   if (available < MIN_PAYOUT_CENTS) {
     return { ok: false, error: `Minimum withdrawal is ${(MIN_PAYOUT_CENTS / 100).toFixed(2)}. You have ${(available / 100).toFixed(2)}.` };
+  }
+
+  // Solvency backstop: cumulative publisher payouts can never exceed cumulative
+  // real advertiser cash in. The floor-rate math already guarantees this per
+  // click; this is belt-and-braces against pricing/promo misconfiguration.
+  const svc = serviceClient();
+  const [{ data: deposits }, { data: allPayouts }] = await Promise.all([
+    svc.from("credit_purchases").select("amount_cents").eq("status", "complete"),
+    svc.from("ad_payouts").select("amount_cents, status"),
+  ]);
+  const cashIn = (deposits ?? []).reduce((s, r) => s + (r.amount_cents ?? 0), 0);
+  const paidOut = (allPayouts ?? [])
+    .filter((p) => p.status !== "failed")
+    .reduce((s, r) => s + (r.amount_cents ?? 0), 0);
+  if (paidOut + available > cashIn) {
+    return {
+      ok: false,
+      error: "Withdrawals are briefly paused for reconciliation. Please try again later.",
+    };
   }
 
   const currency = slot.payout_currency || "usdc_pol";

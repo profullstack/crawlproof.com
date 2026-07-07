@@ -9,8 +9,9 @@ import {
   type AdFormatId,
 } from "./creative";
 import { houseFill } from "./house";
-import { CPC_CENTS, CPC_CREDITS, PLATFORM_RATE } from "./pricing";
+import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import { assessClickValidity, isBotDevice } from "./fraud";
+import { runAuction } from "./auction";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
@@ -100,7 +101,7 @@ export async function serveAd(
   const { data: creatives } = await sb
     .from("ad_creatives")
     .select(
-      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date)",
+      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
     )
     .eq("format", format)
     .eq("status", "ready")
@@ -117,25 +118,34 @@ export async function serveAd(
     daily_budget_cents: number;
     spend_today_cents: number;
     spend_date: string | null;
+    bid_credits: number;
   };
+  type Row = CreativeRow & { ad_campaigns: CampaignJoin | CampaignJoin[] };
   const oneCampaign = (c: CampaignJoin | CampaignJoin[]): CampaignJoin =>
     Array.isArray(c) ? c[0] : c;
   const today = new Date().toISOString().slice(0, 10); // UTC yyyy-mm-dd
 
-  // Budget pacing: keep only campaigns with room for at least one more click
-  // today. spend_today resets implicitly when spend_date is an earlier day.
-  const eligible = (creatives as unknown as (CreativeRow & { ad_campaigns: CampaignJoin | CampaignJoin[] })[]).filter(
-    (row) => {
-      const c = oneCampaign(row.ad_campaigns);
-      if (!c) return false;
-      const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
-      return spentToday + CPC_CENTS <= c.daily_budget_cents;
-    },
-  );
+  // Budget pacing: keep only campaigns with room for at least one more click at
+  // their bid today. spend_today resets implicitly when spend_date is earlier.
+  const eligible = (creatives as unknown as Row[]).filter((row) => {
+    const c = oneCampaign(row.ad_campaigns);
+    if (!c) return false;
+    const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
+    const bid = c.bid_credits ?? DEFAULT_BID_CREDITS;
+    return spentToday + bid * CREDIT_CENTS <= c.daily_budget_cents;
+  });
   // Every candidate is out of budget → fall back to the house ad.
   if (eligible.length === 0) return houseFill(format);
 
-  const pick = eligible[Math.floor(Math.random() * eligible.length)];
+  // First-price auction: highest bid wins (random tie-break). Live today.
+  const auction = runAuction(
+    eligible.map((row) => ({
+      bidCredits: oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
+      item: row,
+    })),
+  );
+  const pick = auction?.winner;
+  if (!pick) return houseFill(format);
   const campaign = oneCampaign(pick.ad_campaigns);
   if (!campaign) return null;
 
@@ -187,7 +197,7 @@ export async function resolveClick(input: {
 
   const { data: campaign } = await sb
     .from("ad_campaigns")
-    .select("id, destination_url, ref_slug, status")
+    .select("id, destination_url, ref_slug, status, bid_credits")
     .eq("id", input.campaignId)
     .maybeSingle();
   if (!campaign) return null;
@@ -216,7 +226,8 @@ export async function resolveClick(input: {
         p_ip_hash: ipHash,
         p_country: input.ctx?.country ?? null,
         p_device: input.ctx?.device ?? null,
-        p_cpc_credits: CPC_CREDITS,
+        // Charge the winning bid (first-price). Falls back to the default CPC.
+        p_cpc_credits: campaign.bid_credits ?? DEFAULT_BID_CREDITS,
         p_platform_rate: PLATFORM_RATE,
       });
     } else {
