@@ -234,6 +234,88 @@ export async function getPaymentStatus(
   };
 }
 
+export type CreatePayoutInput = {
+  recipientEmail: string;
+  recipientWallet: string;
+  amountUsd: number;
+  currency: string; // upstream expects an upper-case symbol, e.g. "USDC_POL"
+};
+
+export type CreatePayoutResult =
+  | { ok: true; payoutId: string; status: string; txHash: string | null }
+  | { ok: false; error: string; retryable: boolean };
+
+// Send a crypto payout from our CoinPay business wallet to a recipient.
+// Hits POST {base}/api/payouts/create (API-key auth = our business). The
+// upstream sends on-chain synchronously and returns a payout record.
+//
+// retryable=true means the request never reached a decision (config/network) so
+// the caller can leave the payout queued and try again; retryable=false means
+// CoinPay explicitly rejected it (bad address, insufficient funds, …).
+export async function createCryptoPayout(
+  input: CreatePayoutInput,
+): Promise<CreatePayoutResult> {
+  if (!env.coinpayApiKey || !env.coinpayApiUrl) {
+    return { ok: false, error: "CoinPay is not configured.", retryable: true };
+  }
+  const base = env.coinpayApiUrl.replace(/\/$/, "");
+  const apiUrl = `${base}/api/payouts/create`;
+
+  let res: Response;
+  try {
+    res = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${env.coinpayApiKey}`,
+      },
+      body: JSON.stringify({
+        recipient_email: input.recipientEmail,
+        recipient_wallet: input.recipientWallet,
+        amount_usd: input.amountUsd,
+        cryptocurrency: input.currency.toUpperCase(),
+        metadata: { source: "crawlproof-ads" },
+      }),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      error: `CoinPay payout request failed: ${err instanceof Error ? err.message : String(err)}`,
+      retryable: true,
+    };
+  }
+
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return {
+      ok: false,
+      error: `CoinPay returned non-JSON (${res.status}). Check COINPAY_API_URL.`,
+      retryable: true,
+    };
+  }
+  const json = (await res.json()) as {
+    success?: boolean;
+    error?: string;
+    payout?: { id?: string; status?: string; tx_hash?: string | null };
+  };
+
+  if (!res.ok || !json.success || !json.payout?.id) {
+    return {
+      ok: false,
+      error: json.error ?? `CoinPay payout failed (${res.status}).`,
+      // 5xx / 401 can be retried; explicit 4xx business rejections cannot.
+      retryable: res.status >= 500 || res.status === 401,
+    };
+  }
+
+  return {
+    ok: true,
+    payoutId: json.payout.id,
+    status: json.payout.status ?? "processing",
+    txHash: json.payout.tx_hash ?? null,
+  };
+}
+
 // Parse the Stripe-style `t=...,v1=...` header into its parts.
 function parseSignatureHeader(header: string): { t: string; v1: string[] } | null {
   const t: string[] = [];
