@@ -2,6 +2,8 @@ import Link from "next/link";
 import { HeroAuditForm } from "@/components/hero-audit-form";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
 import { PerformancePreview } from "@/components/report/performance-preview";
+import { UptimePreview } from "@/components/report/uptime-preview";
+import { SecurityPreview } from "@/components/report/security-preview";
 import { env } from "@/lib/env";
 
 const faqs = [
@@ -16,6 +18,14 @@ const faqs = [
   {
     q: "Do you respect robots.txt?",
     a: "Yes. CrawlProofBot identifies itself and honors robots.txt directives that block it. We never log in, never submit forms, never POST.",
+  },
+  {
+    q: "What can CrawlProof monitor for uptime?",
+    a: "HTTP(S) status and response time, a keyword that must appear (or not) in the page body, SSL-certificate expiry, and raw TCP ports. We confirm failures across multiple checks before alerting (no flapping), then email you on both downtime and recovery — with the exact outage duration.",
+  },
+  {
+    q: "How does the exposed-services security scan work?",
+    a: "For hosts you've verified you own, CrawlProof runs a full 65,535-port TCP scan from a dedicated scanner, baselines the ports you expect to be open, and alerts you when a new one appears — e.g. a database or admin port suddenly reachable from the public internet. It's attack-surface drift detection, only ever against your own verified hosts.",
   },
   {
     q: "Is the free tier really free?",
@@ -43,20 +53,21 @@ export default function HomePage() {
 
       <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-12 pt-12 sm:pb-16 sm:pt-20 text-center">
         <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
-          SEO · AEO · GEO — ChatGPT · Claude · Perplexity · Google AI Overviews
+          Audits · Uptime · Security · Content — one platform for your site
         </p>
         <h1 className="text-balance text-4xl font-extrabold leading-tight sm:text-5xl md:text-6xl">
-          See your site the way AI crawlers do.
+          Get found by AI. Stay online. Stay secure.
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-lg text-[var(--color-muted)]">
+          CrawlProof started by showing you your site the way{" "}
           <strong className="font-semibold text-[var(--color-text)]">
-            AEO + GEO — Answer Engine &amp; Generative Engine Optimization
+            AI crawlers
           </strong>{" "}
-          — making sure ChatGPT, Claude, Perplexity, and Google AI Overviews can
-          actually read, cite, and recommend your site. CrawlProof audits any
-          URL and shows you exactly what they find: content, schema, robots
-          rules, AI-bot access, llms.txt quality, knowledge graph anchoring, and
-          positioning.
+          do — SEO, AEO &amp; GEO audits for ChatGPT, Claude, Perplexity, and
+          Google AI Overviews. Now it&apos;s a full platform: <strong className="font-semibold text-[var(--color-text)]">uptime
+          monitoring</strong> with downtime alerts, <strong className="font-semibold text-[var(--color-text)]">exposed-services
+          security scans</strong>, automated content, backlinks, and analytics —
+          all from one dashboard. Start with a free audit:
         </p>
         <div className="mx-auto mt-8 max-w-xl">
           <HeroAuditForm />
@@ -77,6 +88,24 @@ export default function HomePage() {
               See a sample report →
             </a>
           )}
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
+        <h2 className="mb-2 text-center text-2xl font-bold">One platform, every angle</h2>
+        <p className="mx-auto mb-8 max-w-2xl text-center text-sm text-[var(--color-muted)]">
+          Everything you need to get discovered, stay online, and stay secure — no
+          separate subscriptions for monitoring, security, and content.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <ModuleCard emoji="🔍" title="SEO · AEO · GEO Audits" body="See your site the way ChatGPT, Claude, Perplexity, and Google AI crawlers do — with a priority to-do list." />
+          <ModuleCard emoji="📈" title="Uptime Monitoring" body="HTTP, keyword, SSL &amp; TCP checks with instant down/recovery alerts to email, Slack, and Discord." />
+          <ModuleCard emoji="🛡️" title="Exposed Services" body="Full-port security scans of your verified hosts — get alerted the moment a database or admin port is exposed." />
+          <ModuleCard emoji="✍️" title="Autoblog" body="Research, draft, illustrate, and publish long-form SEO posts to your CMS on a schedule — ~$1 each." />
+          <ModuleCard emoji="🔗" title="Link Exchange" body="Verified backlink matching with a real ledger — quality links without four-figure marketplace prices." />
+          <ModuleCard emoji="📊" title="Analytics Tracker" body="A drop-in tracker for AI referrals, bot crawls, human traffic, pages, and geo — see who (and what) visits." />
+          <ModuleCard emoji="📣" title="Social Posting" body="Draft and schedule social posts and feed autoposts alongside your content pipeline." />
+          <ModuleCard emoji="🐙" title="GitHub Fixes" body="Bind a repo and turn audit findings into ready-to-merge pull requests." />
         </div>
       </section>
 
@@ -130,6 +159,66 @@ export default function HomePage() {
           you&apos;ll see on any paid report.
         </p>
         <PerformancePreview variant="home" />
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
+        <div className="grid items-center gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+          <div>
+            <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
+              Uptime Monitoring
+            </p>
+            <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
+              Know before your customers do.
+            </h2>
+            <p className="mt-4 text-[var(--color-muted)]">
+              Add a monitor in one click — we prefill your domain and URL. CrawlProof
+              checks it on your interval and emails you the instant it goes down,
+              then again when it recovers, with the exact downtime. HTTP status,
+              body keywords, SSL-cert expiry, and raw TCP ports.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <LaunchStat label="Checks" value="HTTP · SSL · TCP" />
+              <LaunchStat label="Alerts" value="Email · Slack" />
+              <LaunchStat label="Confirm" value="No flapping" />
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/signup" className="btn btn-primary">
+                Start monitoring free
+              </Link>
+            </div>
+          </div>
+          <UptimePreview />
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
+        <div className="grid items-center gap-8 lg:grid-cols-[0.95fr_1.05fr]">
+          <SecurityPreview />
+          <div>
+            <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
+              Exposed Services — Security
+            </p>
+            <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
+              Catch the port you forgot to close.
+            </h2>
+            <p className="mt-4 text-[var(--color-muted)]">
+              CrawlProof runs a full 65,535-port scan of your owner-verified hosts,
+              baselines what&apos;s expected, and alerts you the moment something{" "}
+              <em>new</em> gets exposed — a Redis, a Postgres, an admin panel facing
+              the public internet. Attack-surface monitoring, not a one-off scan.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <LaunchStat label="Coverage" value="All 65,535" />
+              <LaunchStat label="Scope" value="Owned hosts" />
+              <LaunchStat label="Alerts on" value="Port drift" />
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/signup" className="btn btn-primary">
+                Scan my services
+              </Link>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
@@ -272,6 +361,18 @@ function FeatureCard({ title, body }: { title: string; body: string }) {
     <div className="card p-5">
       <h3 className="font-semibold">{title}</h3>
       <p className="mt-2 text-sm text-[var(--color-muted)]">{body}</p>
+    </div>
+  );
+}
+
+function ModuleCard({ emoji, title, body }: { emoji: string; title: string; body: string }) {
+  return (
+    <div className="card flex flex-col p-5">
+      <div className="text-2xl" aria-hidden>
+        {emoji}
+      </div>
+      <h3 className="mt-2 font-semibold">{title}</h3>
+      <p className="mt-1 text-sm text-[var(--color-muted)]">{body}</p>
     </div>
   );
 }
