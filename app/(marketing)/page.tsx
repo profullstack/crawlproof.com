@@ -8,6 +8,10 @@ import { env } from "@/lib/env";
 
 const faqs = [
   {
+    q: "How does the ad network work?",
+    a: "It's two-sided and crypto-settled. Advertisers give a landing-page URL and CrawlProof auto-designs on-brand display ads (edit the copy/colours or upload your own), then run them across the network for a daily budget paid from credits. Publishers opt a verified project in as an ad slot, drop one tag (or open an install PR), and earn a share of every click — paid on-chain to their wallet via CoinPay. Bot and duplicate clicks are filtered so they never bill.",
+  },
+  {
     q: "What does CrawlProof actually check?",
     a: "We audit three pillars: SEO (crawlability, performance, meta), AEO (AI-bot access, structured data, content snippet-readiness), and GEO (llms.txt quality, knowledge graph sameAs links, AI agent integration, brand entity clarity). You get a single prioritized to-do list covering all three.",
   },
@@ -106,6 +110,7 @@ export default function HomePage() {
           <ModuleCard emoji="📊" title="Analytics Tracker" body="A drop-in tracker for AI referrals, bot crawls, human traffic, pages, and geo — see who (and what) visits." />
           <ModuleCard emoji="📣" title="Social Posting" body="Draft and schedule social posts and feed autoposts alongside your content pipeline." />
           <ModuleCard emoji="🐙" title="GitHub Fixes" body="Bind a repo and turn audit findings into ready-to-merge pull requests." />
+          <ModuleCard emoji="🪧" title="Ad Network" body="Promote your site across the network for a daily budget, or show ads and earn crypto — auto-designed, on-brand creatives from just a URL." />
         </div>
       </section>
 
@@ -251,6 +256,58 @@ export default function HomePage() {
           </div>
 
           <AutoblogLaunchGraphic />
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
+        <div className="mx-auto max-w-3xl text-center">
+          <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
+            Newly Launched Feature
+          </p>
+          <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
+            A crypto-settled ad network for indie sites.
+          </h2>
+          <p className="mt-4 text-[var(--color-muted)]">
+            Two sides, one dashboard. Advertisers drop in a landing-page URL and CrawlProof
+            auto-designs on-brand display ads — edit the copy and colours, or upload your own —
+            then set a daily budget. Publishers flip a switch, drop one tag, and earn crypto for
+            every click, paid straight to their wallet via CoinPay. No fiat, no middlemen.
+          </p>
+        </div>
+        <div className="mt-8 grid gap-4 md:grid-cols-2">
+          <div className="card p-6">
+            <div className="text-2xl">📣</div>
+            <h3 className="mt-2 text-xl font-bold">Advertise your site</h3>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              Paste your URL, get instant on-brand banners, fund a daily budget from credits.
+              Every click is attributed with your own <code>?ref=</code> tag and metered fairly —
+              bots and duplicate clicks never bill.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Link href="/ads/new" className="btn btn-primary">
+                Create an ad
+              </Link>
+            </div>
+          </div>
+          <div className="card p-6">
+            <div className="text-2xl">🪧</div>
+            <h3 className="mt-2 text-xl font-bold">Monetize your site</h3>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              Opt a verified project in as an ad slot, paste one snippet (or open a PR to install
+              it), and pick your payout coin. Earnings accrue per click and withdraw on-chain to
+              your wallet — one-click connect on tronbrowser.dev.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Link href="/ads/slots" className="btn btn-primary">
+                Monetize a site
+              </Link>
+            </div>
+          </div>
+        </div>
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <LaunchStat label="Creatives" value="Auto · on-brand" />
+          <LaunchStat label="Settlement" value="Crypto · CoinPay" />
+          <LaunchStat label="Billing" value="Bot/dupe-filtered" />
         </div>
       </section>
 
