@@ -59,10 +59,21 @@ export default async function ProjectUptimePage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id")
+    .select("id, url")
     .eq("id", id)
     .maybeSingle();
   if (!project) notFound();
+
+  // Prefill the add-monitor form with what we already know about the project.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  let domain = project.url as string;
+  try {
+    domain = new URL(project.url).host;
+  } catch {
+    /* keep raw url as the label */
+  }
 
   const { data: monitorsData } = await supabase
     .from("monitors")
@@ -92,7 +103,12 @@ export default async function ProjectUptimePage({
             down — and again when it recovers. HTTP, keyword, SSL-expiry, and TCP.
           </p>
         </div>
-        <AddMonitorForm projectId={id} />
+        <AddMonitorForm
+          projectId={id}
+          defaultName={domain}
+          defaultTarget={project.url}
+          defaultEmail={user?.email ?? ""}
+        />
       </div>
 
       {/* Monitors */}
