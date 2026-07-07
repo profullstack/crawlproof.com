@@ -18,11 +18,13 @@ export function SlotManager({
   slot,
   origin,
   availableCents = 0,
+  coins,
 }: {
   project: Project;
   slot: Slot | null;
   origin: string;
   availableCents?: number;
+  coins: { code: string; label: string }[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -195,16 +197,25 @@ export function SlotManager({
                 onChange={(e) => setAddr(e.target.value)}
               />
             </label>
-            <label className="block w-40">
+            <label className="block w-52">
               <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-                Currency
+                Payout coin
               </span>
-              <input
-                className="input mt-1 font-mono text-sm"
-                placeholder="usdc_pol"
+              <select
+                className="input mt-1 text-sm"
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value)}
-              />
+              >
+                {/* keep an existing/legacy value selectable even if not in the list */}
+                {currency && !coins.some((c) => c.code === currency) && (
+                  <option value={currency}>{currency}</option>
+                )}
+                {coins.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <button className="btn text-sm" onClick={savePayout} disabled={pending}>
               Save wallet

@@ -1,7 +1,19 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+import { fetchSupportedTokens } from "@/lib/coinpay-tokens";
 import { SlotManager } from "@/components/ads/slot-manager";
+
+// Fallback coins when CoinPay's supported-coins endpoint is unavailable, so the
+// payout dropdown is never empty. Codes match what /payments+/payouts expect.
+const FALLBACK_COINS = [
+  { code: "usdc_pol", symbol: "USDC", name: "USD Coin (Polygon)", chain: "Polygon" },
+  { code: "usdc_eth", symbol: "USDC", name: "USD Coin (Ethereum)", chain: "Ethereum" },
+  { code: "usdt_pol", symbol: "USDT", name: "Tether (Polygon)", chain: "Polygon" },
+  { code: "btc", symbol: "BTC", name: "Bitcoin", chain: "Bitcoin" },
+  { code: "eth", symbol: "ETH", name: "Ethereum", chain: "Ethereum" },
+  { code: "sol", symbol: "SOL", name: "Solana", chain: "Solana" },
+];
 
 export const metadata = { title: "Monetize your site" };
 
@@ -42,6 +54,12 @@ export default async function SlotsPage() {
     }
   }
 
+  const tokens = await fetchSupportedTokens().catch(() => []);
+  const coins = (tokens.length > 0 ? tokens : FALLBACK_COINS).map((t) => ({
+    code: t.code,
+    label: `${t.symbol}${t.chain ? ` · ${t.chain}` : ""}`,
+  }));
+
   const slotByProject = new Map(slots.map((s) => [s.project_id, s]));
 
   return (
@@ -76,6 +94,7 @@ export default async function SlotsPage() {
                 slot={slot}
                 origin={env.siteUrl}
                 availableCents={earned - withdrawn}
+                coins={coins}
               />
             );
           })}
