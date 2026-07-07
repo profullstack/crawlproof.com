@@ -12,6 +12,7 @@ import {
 } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
 import { MIN_PAYOUT_CENTS } from "@/lib/ads/pricing";
+import { createCryptoPayout } from "@/lib/coinpay";
 
 const ASSET_BUCKET = "ad-assets";
 const MAX_ASSET_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -306,15 +307,63 @@ export async function requestPayout(input: {
     return { ok: false, error: `Minimum withdrawal is ${(MIN_PAYOUT_CENTS / 100).toFixed(2)}. You have ${(available / 100).toFixed(2)}.` };
   }
 
-  const { error } = await supabase.from("ad_payouts").insert({
-    owner_id: user.id,
-    slot_id: input.slotId,
-    amount_cents: available,
-    currency: slot.payout_currency || "usdc_pol",
-    address: slot.payout_address,
-    status: "requested",
+  const currency = slot.payout_currency || "usdc_pol";
+  const { data: payout, error } = await supabase
+    .from("ad_payouts")
+    .insert({
+      owner_id: user.id,
+      slot_id: input.slotId,
+      amount_cents: available,
+      currency,
+      address: slot.payout_address,
+      status: "requested",
+    })
+    .select("id")
+    .single();
+  if (error || !payout) return { ok: false, error: error?.message ?? "Failed to record payout." };
+
+  // Execute the on-chain transfer via CoinPay's payout API. On an explicit
+  // rejection we mark the payout failed (which frees the balance to retry). On
+  // a transient/config error we leave it 'requested' so it can be processed
+  // later without double-paying.
+  const result = await createCryptoPayout({
+    recipientEmail: user.email ?? `${user.id}@users.crawlproof.com`,
+    recipientWallet: slot.payout_address,
+    amountUsd: available / 100,
+    currency,
   });
-  if (error) return { ok: false, error: error.message };
+
+  if (result.ok) {
+    const settled = result.status === "completed";
+    await supabase
+      .from("ad_payouts")
+      .update({
+        status: settled ? "confirmed" : "sent",
+        coinpay_payout_id: result.payoutId,
+        tx_hash: result.txHash,
+        settled_at: settled ? new Date().toISOString() : null,
+      })
+      .eq("id", payout.id);
+    await supabase.from("ad_ledger").insert({
+      kind: "publisher_payout",
+      owner_id: user.id,
+      slot_id: input.slotId,
+      amount_cents: -available,
+      currency,
+      coinpay_payment_id: result.payoutId,
+      tx_hash: result.txHash,
+    });
+    revalidatePath("/ads/slots");
+    return { ok: true, amountCents: available };
+  }
+
+  if (!result.retryable) {
+    await supabase.from("ad_payouts").update({ status: "failed" }).eq("id", payout.id);
+    revalidatePath("/ads/slots");
+    return { ok: false, error: result.error };
+  }
+
+  // Transient: keep the request queued (counts against the balance) and report.
   revalidatePath("/ads/slots");
   return { ok: true, amountCents: available };
 }
