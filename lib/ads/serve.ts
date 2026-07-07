@@ -8,6 +8,7 @@ import {
   type AdCreative,
   type AdFormatId,
 } from "./creative";
+import { CPC_CENTS, CPC_CREDITS, PLATFORM_RATE } from "./pricing";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
@@ -93,23 +94,41 @@ export async function serveAd(
   const { data: creatives } = await sb
     .from("ad_creatives")
     .select(
-      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, status, ref_slug, destination_url)",
+      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date)",
     )
     .eq("format", format)
     .eq("status", "ready")
     .eq("ad_campaigns.status", "active")
-    .limit(50);
+    .limit(100);
 
   if (!creatives || creatives.length === 0) return null;
 
-  const pick = creatives[Math.floor(Math.random() * creatives.length)] as unknown as CreativeRow & {
-    ad_campaigns:
-      | { id: string; ref_slug: string; destination_url: string }
-      | { id: string; ref_slug: string; destination_url: string }[];
+  type CampaignJoin = {
+    id: string;
+    ref_slug: string;
+    destination_url: string;
+    daily_budget_cents: number;
+    spend_today_cents: number;
+    spend_date: string | null;
   };
-  // Supabase embeds a to-one relation as an array under the permissive `any`
-  // client; normalize to the single row.
-  const campaign = Array.isArray(pick.ad_campaigns) ? pick.ad_campaigns[0] : pick.ad_campaigns;
+  const oneCampaign = (c: CampaignJoin | CampaignJoin[]): CampaignJoin =>
+    Array.isArray(c) ? c[0] : c;
+  const today = new Date().toISOString().slice(0, 10); // UTC yyyy-mm-dd
+
+  // Budget pacing: keep only campaigns with room for at least one more click
+  // today. spend_today resets implicitly when spend_date is an earlier day.
+  const eligible = (creatives as unknown as (CreativeRow & { ad_campaigns: CampaignJoin | CampaignJoin[] })[]).filter(
+    (row) => {
+      const c = oneCampaign(row.ad_campaigns);
+      if (!c) return false;
+      const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
+      return spentToday + CPC_CENTS <= c.daily_budget_cents;
+    },
+  );
+  if (eligible.length === 0) return null;
+
+  const pick = eligible[Math.floor(Math.random() * eligible.length)];
+  const campaign = oneCampaign(pick.ad_campaigns);
   if (!campaign) return null;
 
   // Record the impression first so we have an id to bind the click to.
@@ -165,17 +184,24 @@ export async function resolveClick(input: {
     .maybeSingle();
   if (!campaign) return null;
 
-  await sb.from("ad_clicks").insert({
-    impression_id: input.impressionId ?? null,
-    slot_id: input.slotId ?? null,
-    campaign_id: campaign.id,
-    creative_id: input.creativeId ?? null,
-    visitor_id: input.ctx?.visitorId ?? null,
-    ip_hash: hashIp(input.ctx?.ip ?? null),
-    geo_country: input.ctx?.country ?? null,
-    device: input.ctx?.device ?? null,
-    valid: true,
-  });
+  // Atomic charge: debit advertiser credits, meter the click, accrue the
+  // publisher share + platform fee. Records an unbilled click if the campaign
+  // is out of budget/funds. slot_id must be present (ad_clicks.slot_id NOT NULL).
+  if (input.slotId) {
+    await sb.rpc("ad_charge_click", {
+      p_campaign: campaign.id,
+      p_slot: input.slotId,
+      p_creative: input.creativeId ?? null,
+      p_impression: input.impressionId ?? null,
+      p_visitor: input.ctx?.visitorId ?? null,
+      p_ip_hash: hashIp(input.ctx?.ip ?? null),
+      p_country: input.ctx?.country ?? null,
+      p_device: input.ctx?.device ?? null,
+      p_cpc_credits: CPC_CREDITS,
+      p_platform_rate: PLATFORM_RATE,
+    });
+  }
 
+  // Always resolve the redirect, even if the click was unbilled.
   return appendRef(campaign.destination_url, campaign.ref_slug);
 }

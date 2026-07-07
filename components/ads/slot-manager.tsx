@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createSlot, setSlotStatus, saveSlotPayout } from "@/app/actions/ads";
+import { createSlot, setSlotStatus, saveSlotPayout, requestPayout } from "@/app/actions/ads";
 
 type Project = { id: string; name: string; url: string };
 type Slot = {
@@ -17,10 +17,12 @@ export function SlotManager({
   project,
   slot,
   origin,
+  availableCents = 0,
 }: {
   project: Project;
   slot: Slot | null;
   origin: string;
+  availableCents?: number;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -57,6 +59,15 @@ export function SlotManager({
     start(async () => {
       const res = await saveSlotPayout({ id: slot.id, payoutAddress: addr, payoutCurrency: currency });
       if (!res.ok) return alert(res.error);
+      router.refresh();
+    });
+  }
+  function withdraw() {
+    if (!slot) return;
+    start(async () => {
+      const res = await requestPayout({ slotId: slot.id });
+      if (!res.ok) return alert(res.error);
+      alert(`Withdrawal requested: $${(res.amountCents / 100).toFixed(2)}. It will settle to your wallet via CoinPay.`);
       router.refresh();
     });
   }
@@ -197,6 +208,15 @@ export function SlotManager({
             </label>
             <button className="btn text-sm" onClick={savePayout} disabled={pending}>
               Save wallet
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
+            <div className="text-sm">
+              <span className="text-[var(--color-muted)]">Available to withdraw: </span>
+              <span className="font-mono font-semibold">${(availableCents / 100).toFixed(2)}</span>
+            </div>
+            <button className="btn text-sm" onClick={withdraw} disabled={pending || availableCents <= 0}>
+              Withdraw
             </button>
           </div>
           <p className="text-xs text-[var(--color-muted)]">

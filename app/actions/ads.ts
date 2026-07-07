@@ -11,6 +11,7 @@ import {
   type AdFormatId,
 } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
+import { MIN_PAYOUT_CENTS } from "@/lib/ads/pricing";
 
 const ASSET_BUCKET = "ad-assets";
 const MAX_ASSET_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -269,6 +270,53 @@ export async function saveSlotPayout(input: {
   if (error) return { ok: false, error: error.message };
   revalidatePath("/ads/slots");
   return { ok: true };
+}
+
+// Request a crypto withdrawal of a slot's accrued earnings. Records an
+// ad_payouts row; outbound CoinPay execution is processed separately.
+export async function requestPayout(input: {
+  slotId: string;
+}): Promise<{ ok: true; amountCents: number } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: slot } = await supabase
+    .from("ad_slots")
+    .select("id, payout_address, payout_currency")
+    .eq("id", input.slotId)
+    .maybeSingle();
+  if (!slot) return { ok: false, error: "Slot not found." };
+  if (!slot.payout_address) return { ok: false, error: "Add a payout wallet address first." };
+
+  // Available = accrued earnings − already-requested/sent/confirmed payouts.
+  const [{ data: accruals }, { data: payouts }] = await Promise.all([
+    supabase.from("ad_ledger").select("amount_cents").eq("slot_id", input.slotId).eq("kind", "publisher_accrual"),
+    supabase.from("ad_payouts").select("amount_cents, status").eq("slot_id", input.slotId),
+  ]);
+  const earned = (accruals ?? []).reduce((s, r) => s + (r.amount_cents ?? 0), 0);
+  const withdrawn = (payouts ?? [])
+    .filter((p) => p.status !== "failed")
+    .reduce((s, r) => s + (r.amount_cents ?? 0), 0);
+  const available = earned - withdrawn;
+
+  if (available < MIN_PAYOUT_CENTS) {
+    return { ok: false, error: `Minimum withdrawal is ${(MIN_PAYOUT_CENTS / 100).toFixed(2)}. You have ${(available / 100).toFixed(2)}.` };
+  }
+
+  const { error } = await supabase.from("ad_payouts").insert({
+    owner_id: user.id,
+    slot_id: input.slotId,
+    amount_cents: available,
+    currency: slot.payout_currency || "usdc_pol",
+    address: slot.payout_address,
+    status: "requested",
+  });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/ads/slots");
+  return { ok: true, amountCents: available };
 }
 
 // Upload an advertiser's own image (logo or hero) to the public ad-assets
