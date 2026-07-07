@@ -215,13 +215,15 @@ export async function createSlot(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  // Confirm the project belongs to the user (RLS also enforces this).
+  // Monetization is owner-only — the broad projects RLS also allows org/member
+  // reads, so scope explicitly to owner_id (payouts go to the slot owner).
   const { data: project } = await supabase
     .from("projects")
     .select("id, organization_id")
     .eq("id", input.projectId)
+    .eq("owner_id", user.id)
     .maybeSingle();
-  if (!project) return { ok: false, error: "Project not found." };
+  if (!project) return { ok: false, error: "You can only monetize a site you own." };
 
   const payload: Record<string, unknown> = {
     project_id: project.id,
