@@ -72,6 +72,9 @@ export default async function AdsPage() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="badge whitespace-nowrap">{c.status}</span>
+                <Link href={`/ads/${c.id}`} className="btn text-sm">
+                  Edit
+                </Link>
                 <CampaignActions id={c.id} status={c.status} />
               </div>
             </li>

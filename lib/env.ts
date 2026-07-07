@@ -40,6 +40,9 @@ export const env = {
     process.env.TELYNX_API_KEY ??
     "",
   telnyxFrom: process.env.TELNYX_FROM ?? process.env.TELYNX_FROM ?? "",
+  // Tor SOCKS5 proxy for reaching .onion targets, e.g. socks5h://127.0.0.1:9050.
+  // Empty = .onion audits/ads are unreachable (fail with a clear message).
+  torSocksUrl: process.env.TOR_SOCKS_URL ?? "",
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",

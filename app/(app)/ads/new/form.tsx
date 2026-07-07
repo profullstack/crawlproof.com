@@ -3,7 +3,7 @@
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { previewAds, saveCampaign, uploadAdAsset } from "@/app/actions/ads";
-import { AD_FORMATS, type AdCreative, type AdFormatId } from "@/lib/ads/creative";
+import { AD_FORMATS, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import type { SiteBrand } from "@/lib/ads/brand";
 import { AdPreview } from "@/components/ads/ad-preview";
 

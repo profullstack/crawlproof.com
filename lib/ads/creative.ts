@@ -5,37 +5,23 @@ import { z } from "zod/v4";
 import { env } from "@/lib/env";
 import { generateStructuredOutput } from "@/lib/lx/backendAi";
 import { extractSiteBrand, type SiteBrand } from "./brand";
+import {
+  AD_FORMATS,
+  AD_FORMAT_IDS,
+  formatSpec,
+  type AdCreative,
+  type AdFormatId,
+} from "./formats";
+
+// Re-export the client-safe format primitives so existing server importers of
+// this module keep working; client components should import from ./formats.
+export { AD_FORMATS, AD_FORMAT_IDS, formatSpec };
+export type { AdCreative, AdFormatId };
 
 // Copy is generated once per URL by a frontier-ish model; sizes are rendered
 // from the same copy set. Cheap, fast, and editable — no image-gen required.
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const OPENAI_MODEL = "gpt-5-mini";
-
-export const AD_FORMATS = [
-  { id: "banner_300x250", label: "Medium Rectangle", w: 300, h: 250 },
-  { id: "banner_728x90", label: "Leaderboard", w: 728, h: 90 },
-  { id: "banner_320x50", label: "Mobile Banner", w: 320, h: 50 },
-] as const;
-
-export type AdFormatId = (typeof AD_FORMATS)[number]["id"];
-export const AD_FORMAT_IDS = AD_FORMATS.map((f) => f.id) as AdFormatId[];
-
-export function formatSpec(id: AdFormatId) {
-  return AD_FORMATS.find((f) => f.id === id) ?? AD_FORMATS[0];
-}
-
-export type AdCreative = {
-  format: AdFormatId;
-  headline: string;
-  body: string;
-  ctaText: string;
-  bgColor: string;
-  fgColor: string;
-  accentColor: string;
-  fontFamily: string;
-  logoUrl: string | null;
-  imageUrl: string | null;
-};
 
 const HEX = /^#([0-9a-fA-F]{6})$/;
 function safeHex(v: string | undefined, fallback: string): string {
