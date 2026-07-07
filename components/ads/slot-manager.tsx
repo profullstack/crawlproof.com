@@ -27,6 +27,11 @@ export function SlotManager({
   const [addr, setAddr] = useState(slot?.payout_address ?? "");
   const [currency, setCurrency] = useState(slot?.payout_currency ?? "usdc_pol");
   const [copied, setCopied] = useState(false);
+  const [prBusy, setPrBusy] = useState(false);
+  const [prMsg, setPrMsg] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+  const [repoChoices, setRepoChoices] = useState<
+    { owner: string; repo: string; installation_id: number }[] | null
+  >(null);
 
   const embed =
     slot &&
@@ -61,6 +66,35 @@ export function SlotManager({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
+  }
+
+  async function submitPr(pick?: { owner: string; repo: string; installation_id: number }) {
+    if (!slot) return;
+    setPrBusy(true);
+    setPrMsg(null);
+    try {
+      const res = await fetch(`/api/ads/slots/${slot.id}/install-embed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pick ?? {}),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setPrMsg({ ok: false, text: json.error ?? "Could not open PR." });
+        return;
+      }
+      if (json.data?.needsRepo) {
+        setRepoChoices(json.data.repos);
+        return;
+      }
+      setRepoChoices(null);
+      const r = json.data;
+      setPrMsg({ ok: true, text: r.detail, url: r.prUrl });
+    } catch (e) {
+      setPrMsg({ ok: false, text: e instanceof Error ? e.message : "Network error." });
+    } finally {
+      setPrBusy(false);
+    }
   }
 
   return (
@@ -99,9 +133,43 @@ export function SlotManager({
             <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-black/30 p-3 text-xs">
               {embed}
             </pre>
-            <button className="btn mt-2 text-xs" onClick={copy}>
-              {copied ? "Copied!" : "Copy embed"}
-            </button>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button className="btn text-xs" onClick={copy}>
+                {copied ? "Copied!" : "Copy embed"}
+              </button>
+              <button className="btn text-xs" onClick={() => submitPr()} disabled={prBusy}>
+                {prBusy ? "Opening PR…" : "Submit PR to install"}
+              </button>
+            </div>
+
+            {repoChoices && (
+              <div className="mt-2 rounded border border-[var(--color-border)] p-2 text-xs">
+                <div className="mb-1 text-[var(--color-muted)]">Choose a repo:</div>
+                <div className="flex flex-wrap gap-2">
+                  {repoChoices.map((r) => (
+                    <button
+                      key={`${r.owner}/${r.repo}`}
+                      className="btn text-xs"
+                      disabled={prBusy}
+                      onClick={() => submitPr(r)}
+                    >
+                      {r.owner}/{r.repo}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {prMsg && (
+              <p className={`mt-2 text-xs ${prMsg.ok ? "text-[var(--color-accent)]" : "text-red-400"}`}>
+                {prMsg.text}{" "}
+                {prMsg.url && (
+                  <a href={prMsg.url} target="_blank" rel="noreferrer" className="underline">
+                    View PR ↗
+                  </a>
+                )}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap items-end gap-3">
