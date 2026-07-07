@@ -48,7 +48,13 @@ export default async function SlotsPage() {
   const payoutsBySlot = new Map<string, Payout[]>();
   if (user) {
     const [{ data: p }, { data: s }, { data: ledger }, { data: payouts }] = await Promise.all([
-      supabase.from("projects").select("id, name, url").order("created_at", { ascending: false }),
+      // Monetization is owner-only: you earn from a slot, so only list projects
+      // you OWN — not org/member-shared ones the broad RLS would also return.
+      supabase
+        .from("projects")
+        .select("id, name, url")
+        .eq("owner_id", user.id)
+        .order("created_at", { ascending: false }),
       supabase.from("ad_slots").select("id, project_id, status, payout_address, payout_currency"),
       supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual"),
       supabase
