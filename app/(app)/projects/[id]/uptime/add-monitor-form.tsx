@@ -13,7 +13,17 @@ const TYPE_HINT: Record<MonitorType, string> = {
   tcp: "host:port — up when the port accepts a connection.",
 };
 
-export function AddMonitorForm({ projectId }: { projectId: string }) {
+export function AddMonitorForm({
+  projectId,
+  defaultName = "",
+  defaultTarget = "",
+  defaultEmail = "",
+}: {
+  projectId: string;
+  defaultName?: string;
+  defaultTarget?: string;
+  defaultEmail?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<MonitorType>("http");
@@ -78,6 +88,7 @@ export function AddMonitorForm({ projectId }: { projectId: string }) {
           <input
             name="name"
             required
+            defaultValue={defaultName}
             placeholder="My site"
             className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
           />
@@ -89,6 +100,7 @@ export function AddMonitorForm({ projectId }: { projectId: string }) {
         <input
           name="target"
           required
+          defaultValue={defaultTarget}
           placeholder={type === "tcp" ? "db.example.com:5432" : type === "ssl" ? "example.com" : "https://example.com"}
           className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm font-mono"
         />
@@ -134,6 +146,7 @@ export function AddMonitorForm({ projectId }: { projectId: string }) {
           <input
             name="alertEmail"
             type="email"
+            defaultValue={defaultEmail}
             placeholder="you@example.com"
             className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
           />
