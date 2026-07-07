@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { smartFetch } from "./onion";
 
 // Walk a page's <head> (and its web-app manifest) and pick the best logo URL
 // that ACTUALLY RESOLVES to an image. Returns null if nothing plausible loads
@@ -114,7 +115,7 @@ async function fetchManifestIcons(
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), VALIDATE_TIMEOUT_MS);
   try {
-    const res = await fetch(manifestUrl, {
+    const res = await smartFetch(manifestUrl, {
       redirect: "follow",
       signal: ctrl.signal,
       headers: { "User-Agent": UA, Accept: "application/manifest+json,application/json" },
@@ -144,7 +145,7 @@ async function isImageUrl(url: string): Promise<boolean> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), VALIDATE_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await smartFetch(url, {
       method: "GET",
       redirect: "follow",
       signal: ctrl.signal,
@@ -193,7 +194,7 @@ async function fetchHead(url: string): Promise<string | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await smartFetch(url, {
       method: "GET",
       redirect: "follow",
       signal: ctrl.signal,

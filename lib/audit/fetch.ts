@@ -1,4 +1,5 @@
 import type { FetchedPage } from "./types";
+import { smartFetch } from "../onion";
 
 const UA = "CrawlProofBot/1.0 (+https://crawlproof.com/bot)";
 const TIMEOUT_MS = 15_000;
@@ -9,7 +10,9 @@ export async function fetchPage(url: string): Promise<FetchedPage> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    // smartFetch routes .onion targets through Tor (TOR_SOCKS_URL); everything
+    // else is a normal fetch.
+    const res = await smartFetch(url, {
       method: "GET",
       headers: {
         "user-agent": UA,

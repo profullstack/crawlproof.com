@@ -169,6 +169,83 @@ export async function saveCampaign(input: {
   return { ok: true, id: campaign.data.id, refSlug: campaign.data.ref_slug };
 }
 
+// --- Campaign editing (advertiser) ---
+
+export async function updateCampaign(input: {
+  id: string;
+  name?: string;
+  dailyBudgetCents?: number;
+  bidCredits?: number;
+  destinationUrl?: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const patch: Record<string, unknown> = {};
+  if (typeof input.name === "string" && input.name.trim()) {
+    patch.name = input.name.trim().slice(0, 120);
+  }
+  if (Number.isFinite(input.dailyBudgetCents)) {
+    patch.daily_budget_cents = Math.max(0, Math.round(input.dailyBudgetCents!));
+  }
+  if (Number.isFinite(input.bidCredits)) {
+    patch.bid_credits = Math.min(200, Math.max(1, Math.round(input.bidCredits!)));
+  }
+  if (typeof input.destinationUrl === "string" && input.destinationUrl.trim()) {
+    const check = isAllowedTargetUrl(input.destinationUrl);
+    if (!check.ok) return { ok: false, error: check.reason };
+    patch.destination_url = check.url;
+    patch.destination_domain = domainOf(check.url);
+  }
+  if (Object.keys(patch).length === 0) return { ok: true };
+
+  const { error } = await supabase
+    .from("ad_campaigns")
+    .update(patch)
+    .eq("id", input.id)
+    .eq("owner_id", user.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/ads");
+  revalidatePath(`/ads/${input.id}`);
+  return { ok: true };
+}
+
+export async function updateCreatives(input: {
+  campaignId: string;
+  creatives: (Partial<AdCreative> & { id: string })[];
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  for (const c of input.creatives) {
+    const cleaned = cleanCreative(c);
+    if (!cleaned) continue;
+    const { error } = await supabase
+      .from("ad_creatives")
+      .update({
+        headline: cleaned.headline,
+        body: cleaned.body,
+        cta_text: cleaned.ctaText,
+        image_url: cleaned.imageUrl,
+        logo_url: cleaned.logoUrl,
+        bg_color: cleaned.bgColor,
+        fg_color: cleaned.fgColor,
+        accent_color: cleaned.accentColor,
+      })
+      .eq("id", c.id)
+      .eq("owner_id", user.id);
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath(`/ads/${input.campaignId}`);
+  return { ok: true };
+}
+
 // --- Campaign activation (advertiser) ---
 
 const CAMPAIGN_STATUSES = new Set(["active", "paused", "draft"]);

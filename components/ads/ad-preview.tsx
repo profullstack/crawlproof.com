@@ -1,7 +1,7 @@
 "use client";
 
-import type { AdCreative } from "@/lib/ads/creative";
-import { formatSpec } from "@/lib/ads/creative";
+import type { AdCreative } from "@/lib/ads/formats";
+import { formatSpec } from "@/lib/ads/formats";
 
 // Live React mirror of renderCreativeHtml (lib/ads/creative.ts). Kept visually
 // in sync with the served HTML so the editor preview matches production.

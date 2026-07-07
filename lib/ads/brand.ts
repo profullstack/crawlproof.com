@@ -1,4 +1,5 @@
 import { discoverLogoUrl } from "@/lib/discoverLogo";
+import { smartFetch } from "@/lib/onion";
 
 // Extract a site's brand signals for ad-creative generation: title, meta
 // description, logo, and a candidate colour palette. Deliberately lightweight —
@@ -84,7 +85,7 @@ async function fetchHtml(url: string): Promise<string> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await smartFetch(url, {
       method: "GET",
       redirect: "follow",
       signal: ctrl.signal,
