@@ -22,13 +22,24 @@ export default async function SlotsPage() {
 
   let projects: Project[] = [];
   let slots: Slot[] = [];
+  const earnedBySlot = new Map<string, number>();
+  const withdrawnBySlot = new Map<string, number>();
   if (user) {
-    const [{ data: p }, { data: s }] = await Promise.all([
+    const [{ data: p }, { data: s }, { data: ledger }, { data: payouts }] = await Promise.all([
       supabase.from("projects").select("id, name, url").order("created_at", { ascending: false }),
       supabase.from("ad_slots").select("id, project_id, status, payout_address, payout_currency"),
+      supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual"),
+      supabase.from("ad_payouts").select("slot_id, amount_cents, status"),
     ]);
     projects = (p as Project[]) ?? [];
     slots = (s as Slot[]) ?? [];
+    for (const row of (ledger as { slot_id: string; amount_cents: number }[]) ?? []) {
+      if (row.slot_id) earnedBySlot.set(row.slot_id, (earnedBySlot.get(row.slot_id) ?? 0) + (row.amount_cents ?? 0));
+    }
+    for (const row of (payouts as { slot_id: string; amount_cents: number; status: string }[]) ?? []) {
+      if (row.slot_id && row.status !== "failed")
+        withdrawnBySlot.set(row.slot_id, (withdrawnBySlot.get(row.slot_id) ?? 0) + (row.amount_cents ?? 0));
+    }
   }
 
   const slotByProject = new Map(slots.map((s) => [s.project_id, s]));
@@ -54,14 +65,20 @@ export default async function SlotsPage() {
         </div>
       ) : (
         <ul className="mt-6 space-y-3">
-          {projects.map((p) => (
-            <SlotManager
-              key={p.id}
-              project={p}
-              slot={slotByProject.get(p.id) ?? null}
-              origin={env.siteUrl}
-            />
-          ))}
+          {projects.map((p) => {
+            const slot = slotByProject.get(p.id) ?? null;
+            const earned = slot ? earnedBySlot.get(slot.id) ?? 0 : 0;
+            const withdrawn = slot ? withdrawnBySlot.get(slot.id) ?? 0 : 0;
+            return (
+              <SlotManager
+                key={p.id}
+                project={p}
+                slot={slot}
+                origin={env.siteUrl}
+                availableCents={earned - withdrawn}
+              />
+            );
+          })}
         </ul>
       )}
     </div>
