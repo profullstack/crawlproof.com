@@ -34,6 +34,7 @@ type Payout = {
   tx_hash: string | null;
   created_at: string;
 };
+type SlotStat = { slot_id: string; impressions: number; clicks: number; earned_cents: number };
 
 export default async function SlotsPage() {
   const supabase = await createClient();
@@ -46,24 +47,28 @@ export default async function SlotsPage() {
   const earnedBySlot = new Map<string, number>();
   const withdrawnBySlot = new Map<string, number>();
   const payoutsBySlot = new Map<string, Payout[]>();
+  const statsBySlot = new Map<string, SlotStat>();
   if (user) {
-    const [{ data: p }, { data: s }, { data: ledger }, { data: payouts }] = await Promise.all([
-      // Monetization is owner-only: you earn from a slot, so only list projects
-      // you OWN — not org/member-shared ones the broad RLS would also return.
-      supabase
-        .from("projects")
-        .select("id, name, url")
-        .eq("owner_id", user.id)
-        .order("created_at", { ascending: false }),
-      supabase.from("ad_slots").select("id, project_id, status, payout_address, payout_currency"),
-      supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual"),
-      supabase
-        .from("ad_payouts")
-        .select("id, slot_id, amount_cents, currency, status, tx_hash, created_at")
-        .order("created_at", { ascending: false }),
-    ]);
+    const [{ data: p }, { data: s }, { data: ledger }, { data: payouts }, { data: slotStats }] =
+      await Promise.all([
+        // Monetization is owner-only: you earn from a slot, so only list projects
+        // you OWN — not org/member-shared ones the broad RLS would also return.
+        supabase
+          .from("projects")
+          .select("id, name, url")
+          .eq("owner_id", user.id)
+          .order("created_at", { ascending: false }),
+        supabase.from("ad_slots").select("id, project_id, status, payout_address, payout_currency"),
+        supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual"),
+        supabase
+          .from("ad_payouts")
+          .select("id, slot_id, amount_cents, currency, status, tx_hash, created_at")
+          .order("created_at", { ascending: false }),
+        supabase.from("ad_slot_stats").select("slot_id, impressions, clicks, earned_cents"),
+      ]);
     projects = (p as Project[]) ?? [];
     slots = (s as Slot[]) ?? [];
+    for (const st of (slotStats as SlotStat[]) ?? []) statsBySlot.set(st.slot_id, st);
     for (const row of (ledger as { slot_id: string; amount_cents: number }[]) ?? []) {
       if (row.slot_id) earnedBySlot.set(row.slot_id, (earnedBySlot.get(row.slot_id) ?? 0) + (row.amount_cents ?? 0));
     }
@@ -110,6 +115,7 @@ export default async function SlotsPage() {
             const slot = slotByProject.get(p.id) ?? null;
             const earned = slot ? earnedBySlot.get(slot.id) ?? 0 : 0;
             const withdrawn = slot ? withdrawnBySlot.get(slot.id) ?? 0 : 0;
+            const stat = slot ? statsBySlot.get(slot.id) : undefined;
             return (
               <SlotManager
                 key={p.id}
@@ -119,6 +125,7 @@ export default async function SlotsPage() {
                 availableCents={earned - withdrawn}
                 coins={coins}
                 payouts={slot ? payoutsBySlot.get(slot.id) ?? [] : []}
+                stats={stat ? { impressions: stat.impressions, clicks: stat.clicks, earnedCents: stat.earned_cents } : null}
               />
             );
           })}

@@ -58,6 +58,7 @@ export function SlotManager({
   availableCents = 0,
   coins,
   payouts = [],
+  stats = null,
 }: {
   project: Project;
   slot: Slot | null;
@@ -65,6 +66,7 @@ export function SlotManager({
   availableCents?: number;
   coins: { code: string; label: string }[];
   payouts?: Payout[];
+  stats?: { impressions: number; clicks: number; earnedCents: number } | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -203,6 +205,28 @@ export function SlotManager({
 
       {slot && (
         <>
+          {stats && (
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+              <span>
+                <span className="text-[var(--color-muted)]">Impressions: </span>
+                <span className="font-mono font-semibold">{stats.impressions.toLocaleString()}</span>
+              </span>
+              <span>
+                <span className="text-[var(--color-muted)]">Clicks: </span>
+                <span className="font-mono font-semibold">{stats.clicks.toLocaleString()}</span>
+              </span>
+              <span>
+                <span className="text-[var(--color-muted)]">CTR: </span>
+                <span className="font-mono font-semibold">
+                  {stats.impressions ? `${((stats.clicks / stats.impressions) * 100).toFixed(1)}%` : "—"}
+                </span>
+              </span>
+              <span>
+                <span className="text-[var(--color-muted)]">Earned: </span>
+                <span className="font-mono font-semibold">${(stats.earnedCents / 100).toFixed(2)}</span>
+              </span>
+            </div>
+          )}
           <div>
             <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
               Embed — paste on your page
