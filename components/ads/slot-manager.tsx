@@ -12,6 +12,44 @@ type Slot = {
   payout_address: string | null;
   payout_currency: string | null;
 };
+type Payout = {
+  id: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  tx_hash: string | null;
+  created_at: string;
+};
+
+// Minimal shape the CoinPay wallet extension is expected to inject on
+// tronbrowser.dev. The provider is not shipped yet (extension Phase 3), so we
+// feature-detect and no-op gracefully when it's absent.
+type CoinPayProvider = {
+  connect?: () => Promise<{ address?: string } | string>;
+  getAddress?: () => Promise<string>;
+};
+declare global {
+  interface Window {
+    coinpay?: CoinPayProvider;
+  }
+}
+
+function payoutStatusClass(status: string): string {
+  if (status === "confirmed") return "text-[var(--color-accent)]";
+  if (status === "failed") return "text-red-400";
+  return "text-[var(--color-muted)]"; // requested / sent
+}
+
+const TX_EXPLORER: Record<string, string> = {
+  usdc_pol: "https://polygonscan.com/tx/",
+  usdt_pol: "https://polygonscan.com/tx/",
+  pol: "https://polygonscan.com/tx/",
+  usdc_eth: "https://etherscan.io/tx/",
+  eth: "https://etherscan.io/tx/",
+  usdc_sol: "https://solscan.io/tx/",
+  sol: "https://solscan.io/tx/",
+  btc: "https://mempool.space/tx/",
+};
 
 export function SlotManager({
   project,
@@ -19,12 +57,14 @@ export function SlotManager({
   origin,
   availableCents = 0,
   coins,
+  payouts = [],
 }: {
   project: Project;
   slot: Slot | null;
   origin: string;
   availableCents?: number;
   coins: { code: string; label: string }[];
+  payouts?: Payout[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -79,6 +119,30 @@ export function SlotManager({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
+  }
+
+  // One-click connect via the CoinPay wallet extension (tronbrowser.dev). The
+  // provider isn't shipped yet, so this feature-detects and guides the user
+  // otherwise — and lights up automatically once window.coinpay exists.
+  async function connectWallet() {
+    const provider = typeof window !== "undefined" ? window.coinpay : undefined;
+    if (!provider) {
+      alert("Open this page in tronbrowser.dev with the CoinPay wallet extension to connect in one click. Meanwhile, paste your address below.");
+      return;
+    }
+    try {
+      let address: string | undefined;
+      if (provider.connect) {
+        const r = await provider.connect();
+        address = typeof r === "string" ? r : r?.address;
+      } else if (provider.getAddress) {
+        address = await provider.getAddress();
+      }
+      if (address) setAddr(address);
+      else alert("Wallet did not return an address.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not connect wallet.");
+    }
   }
 
   async function submitPr(pick?: { owner: string; repo: string; installation_id: number }) {
@@ -187,9 +251,14 @@ export function SlotManager({
 
           <div className="flex flex-wrap items-end gap-3">
             <label className="block flex-1">
-              <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-                Payout wallet address
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+                  Payout wallet address
+                </span>
+                <button type="button" className="text-xs text-[var(--color-accent)]" onClick={connectWallet}>
+                  Connect wallet
+                </button>
+              </div>
               <input
                 className="input mt-1 font-mono text-sm"
                 placeholder="0x… / T… / bc1…"
@@ -230,9 +299,46 @@ export function SlotManager({
               Withdraw
             </button>
           </div>
+
+          {payouts.length > 0 && (
+            <div className="text-xs">
+              <div className="mb-1 uppercase tracking-wider text-[var(--color-muted)]">
+                Payout history
+              </div>
+              <ul className="space-y-1">
+                {payouts.map((p) => {
+                  const explorer = p.tx_hash ? TX_EXPLORER[p.currency] : undefined;
+                  return (
+                    <li key={p.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-mono">
+                        ${(p.amount_cents / 100).toFixed(2)} {p.currency.toUpperCase()}
+                      </span>
+                      <span className="text-[var(--color-muted)]">
+                        {new Date(p.created_at).toLocaleDateString()}
+                      </span>
+                      <span className={payoutStatusClass(p.status)}>{p.status}</span>
+                      {explorer && p.tx_hash ? (
+                        <a
+                          href={`${explorer}${p.tx_hash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline"
+                        >
+                          tx ↗
+                        </a>
+                      ) : (
+                        <span />
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
           <p className="text-xs text-[var(--color-muted)]">
-            Earnings settle to this address via CoinPay. On tronbrowser.dev with the CoinPay
-            wallet extension you&apos;ll be able to connect it in one click (coming soon).
+            Earnings settle to this address via CoinPay. Open in tronbrowser.dev with the
+            CoinPay wallet extension to connect your wallet in one click.
           </p>
         </>
       )}
