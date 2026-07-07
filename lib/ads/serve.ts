@@ -10,6 +10,7 @@ import {
 } from "./creative";
 import { houseFill } from "./house";
 import { CPC_CENTS, CPC_CREDITS, PLATFORM_RATE } from "./pricing";
+import { assessClickValidity, isBotDevice } from "./fraud";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
@@ -89,6 +90,10 @@ export async function serveAd(
     .maybeSingle();
   if (!slot || slot.status !== "active") return null;
   if (Array.isArray(slot.formats) && !slot.formats.includes(format)) return null;
+
+  // Bots get the house ad — never a paid impression (keeps advertiser stats
+  // clean and avoids exposing paid creatives to crawlers).
+  if (isBotDevice(ctx.device)) return houseFill(format);
 
   // Active campaigns with a ready creative in this format. Join manually:
   // fetch candidate creatives whose campaign is active.
@@ -187,22 +192,51 @@ export async function resolveClick(input: {
     .maybeSingle();
   if (!campaign) return null;
 
-  // Atomic charge: debit advertiser credits, meter the click, accrue the
-  // publisher share + platform fee. Records an unbilled click if the campaign
-  // is out of budget/funds. slot_id must be present (ad_clicks.slot_id NOT NULL).
+  // slot_id must be present (ad_clicks.slot_id NOT NULL) to record a click.
   if (input.slotId) {
-    await sb.rpc("ad_charge_click", {
-      p_campaign: campaign.id,
-      p_slot: input.slotId,
-      p_creative: input.creativeId ?? null,
-      p_impression: input.impressionId ?? null,
-      p_visitor: input.ctx?.visitorId ?? null,
-      p_ip_hash: hashIp(input.ctx?.ip ?? null),
-      p_country: input.ctx?.country ?? null,
-      p_device: input.ctx?.device ?? null,
-      p_cpc_credits: CPC_CREDITS,
-      p_platform_rate: PLATFORM_RATE,
+    const ipHash = hashIp(input.ctx?.ip ?? null);
+    const validity = await assessClickValidity({
+      campaignId: campaign.id,
+      slotId: input.slotId,
+      impressionId: input.impressionId,
+      visitorId: input.ctx?.visitorId,
+      ipHash,
+      device: input.ctx?.device,
     });
+
+    if (validity.valid) {
+      // Atomic charge: debit advertiser credits, meter the click, accrue the
+      // publisher share + platform fee (unbilled if out of budget/funds).
+      await sb.rpc("ad_charge_click", {
+        p_campaign: campaign.id,
+        p_slot: input.slotId,
+        p_creative: input.creativeId ?? null,
+        p_impression: input.impressionId ?? null,
+        p_visitor: input.ctx?.visitorId ?? null,
+        p_ip_hash: ipHash,
+        p_country: input.ctx?.country ?? null,
+        p_device: input.ctx?.device ?? null,
+        p_cpc_credits: CPC_CREDITS,
+        p_platform_rate: PLATFORM_RATE,
+      });
+    } else {
+      // Invalid (bot / duplicate / forged): record an unbilled click for
+      // analytics, charge nobody.
+      await sb.from("ad_clicks").insert({
+        impression_id: input.impressionId ?? null,
+        slot_id: input.slotId,
+        campaign_id: campaign.id,
+        creative_id: input.creativeId ?? null,
+        visitor_id: input.ctx?.visitorId ?? null,
+        ip_hash: ipHash,
+        geo_country: input.ctx?.country ?? null,
+        device: input.ctx?.device ?? null,
+        charged_cents: 0,
+        publisher_earn_cents: 0,
+        platform_cut_cents: 0,
+        valid: false,
+      });
+    }
   }
 
   // Always resolve the redirect, even if the click was unbilled.
