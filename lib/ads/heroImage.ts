@@ -5,10 +5,11 @@ import { smartFetch } from "@/lib/onion";
 import type { SiteBrand } from "./brand";
 
 // The ad hero image shown behind the Medium Rectangle. Chooses, in order:
-//   1. the advertiser's own og:image / share image (free, on-brand) — used
-//      directly by URL since it's already publicly hosted; no re-upload.
-//   2. a gpt-image-1 hero generated from the brand + ad copy, uploaded to the
-//      public ad-assets bucket.
+//   1. a gpt-image-1 hero generated from the brand + ad copy, uploaded to the
+//      public ad-assets bucket — purpose-built ad art reads far better than a
+//      site's share image, so we prefer it.
+//   2. the advertiser's own og:image / share image (free, already hosted) as a
+//      fallback when AI is unavailable or generation fails.
 // Best-effort throughout: any failure returns null and the ad falls back to the
 // accent-tinted wash, never a broken image.
 
@@ -109,9 +110,10 @@ async function uploadHero(
   return supabase.storage.from(ASSET_BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
-// Resolve the hero image URL for a set of ad creatives. og:image first (free),
-// then a gpt-image-1 fallback when openai is provided. Returns null if neither
-// is available — the renderer then uses the accent-tinted fallback.
+// Resolve the hero image URL for a set of ad creatives. A gpt-image-1 hero
+// first (purpose-built ad art), then the advertiser's og:image as a fallback
+// when AI is unavailable/fails. Returns null if neither works — the renderer
+// then uses the accent-tinted fallback.
 export async function resolveAdHeroImage(args: {
   brand: SiteBrand;
   copy: AdHeroCopy;
@@ -120,13 +122,17 @@ export async function resolveAdHeroImage(args: {
 }): Promise<{ url: string; source: "og" | "ai" } | null> {
   const { brand, copy, openai, supabase } = args;
 
+  if (openai) {
+    const bytes = await generateAiHero(openai, brand, copy);
+    if (bytes) {
+      const url = await uploadHero(supabase, bytes);
+      if (url) return { url, source: "ai" };
+    }
+  }
+
   if (brand.ogImage && (await isUsableImage(brand.ogImage))) {
     return { url: brand.ogImage, source: "og" };
   }
 
-  if (!openai) return null;
-  const bytes = await generateAiHero(openai, brand, copy);
-  if (!bytes) return null;
-  const url = await uploadHero(supabase, bytes);
-  return url ? { url, source: "ai" } : null;
+  return null;
 }
