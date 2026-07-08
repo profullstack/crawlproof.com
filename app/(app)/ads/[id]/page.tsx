@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { AdCreative, AdFormatId } from "@/lib/ads/formats";
+import { formatSpec, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import { AdPreview } from "@/components/ads/ad-preview";
 import { CampaignActions, RegenerateButton } from "@/components/ads/campaign-actions";
 import { CampaignTrend } from "@/components/ads/campaign-trend";
@@ -145,7 +145,7 @@ export default async function CampaignDetailPage({
               <div key={c.id} className="card p-3">
                 <AdPreview creative={c} />
                 <div className="mt-2 text-center text-xs text-[var(--color-muted)]">
-                  {c.format.replace("banner_", "").replace("x", " × ")}
+                  {formatSpec(c.format).label}
                 </div>
               </div>
             ))}
