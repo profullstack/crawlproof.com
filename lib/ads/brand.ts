@@ -18,6 +18,7 @@ export type SiteBrand = {
   description: string;
   text: string; // reduced page text for the LLM
   logoUrl: string | null;
+  ogImage: string | null; // social/share image, used as the ad hero when present
   themeColor: string | null;
   palette: string[]; // up to ~6 candidate hex colours, most common first
 };
@@ -148,6 +149,24 @@ export async function extractSiteBrand(rawUrl: string): Promise<SiteBrand> {
       /<meta[^>]+name=["']theme-color["'][^>]+content=["']([^"']*)["']/i,
     ]) || null;
 
+  // Social/share image — the advertiser's own hero art. content= may come before
+  // or after property=, so match both orderings.
+  const ogImageRaw = metaContent(html, [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']/i,
+    /<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:image["']/i,
+    /<meta[^>]+property=["']og:image:url["'][^>]+content=["']([^"']*)["']/i,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']*)["']/i,
+    /<meta[^>]+content=["']([^"']*)["'][^>]+name=["']twitter:image["']/i,
+  ]);
+  let ogImage: string | null = null;
+  if (ogImageRaw) {
+    try {
+      ogImage = new URL(ogImageRaw, url).toString();
+    } catch {
+      ogImage = null;
+    }
+  }
+
   return {
     url,
     domain,
@@ -155,6 +174,7 @@ export async function extractSiteBrand(rawUrl: string): Promise<SiteBrand> {
     description,
     text: reduceText(html),
     logoUrl,
+    ogImage,
     themeColor,
     palette: extractPalette(html),
   };

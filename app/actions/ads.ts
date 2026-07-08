@@ -42,7 +42,7 @@ export async function previewAds(input: { url: string }): Promise<
   if (!check.ok) return { ok: false, error: check.reason };
 
   try {
-    const { brand, creatives, provider } = await generateAdCreatives(check.url);
+    const { brand, creatives, provider } = await generateAdCreatives(check.url, { supabase });
     return {
       ok: true,
       brand,
@@ -243,6 +243,82 @@ export async function updateCreatives(input: {
     if (error) return { ok: false, error: error.message };
   }
   revalidatePath(`/ads/${input.campaignId}`);
+  return { ok: true };
+}
+
+// Re-run the AI creative pipeline for an existing campaign and refresh its
+// creatives in place — updating each format's copy/colours/logo/hero image and
+// adding any format that didn't exist yet. Rows are upserted by (campaign,
+// format) rather than deleted, so creative ids (and their impression/click
+// history, which FK-cascades on delete) are preserved.
+export async function regenerateCampaign(input: {
+  id: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const { data: campaign } = await supabase
+    .from("ad_campaigns")
+    .select("id, destination_url")
+    .eq("id", input.id)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+
+  let generated;
+  try {
+    generated = await generateAdCreatives(campaign.destination_url, { supabase });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not regenerate ads.",
+    };
+  }
+
+  const { data: existing } = await supabase
+    .from("ad_creatives")
+    .select("id, format")
+    .eq("campaign_id", input.id);
+  const idByFormat = new Map<string, string>(
+    (existing ?? []).map((r) => [r.format as string, r.id as string]),
+  );
+
+  for (const c of generated.creatives) {
+    const fields = {
+      headline: c.headline,
+      body: c.body,
+      cta_text: c.ctaText,
+      image_url: c.imageUrl,
+      logo_url: c.logoUrl,
+      bg_color: c.bgColor,
+      fg_color: c.fgColor,
+      accent_color: c.accentColor,
+      font_family: c.fontFamily,
+    };
+    const existingId = idByFormat.get(c.format);
+    if (existingId) {
+      const { error } = await supabase
+        .from("ad_creatives")
+        .update(fields)
+        .eq("id", existingId)
+        .eq("owner_id", user.id);
+      if (error) return { ok: false, error: error.message };
+    } else {
+      const { error } = await supabase.from("ad_creatives").insert({
+        campaign_id: input.id,
+        owner_id: user.id,
+        format: c.format,
+        ...fields,
+      });
+      if (error) return { ok: false, error: error.message };
+    }
+  }
+
+  revalidatePath("/ads");
+  revalidatePath(`/ads/${input.id}`);
   return { ok: true };
 }
 
