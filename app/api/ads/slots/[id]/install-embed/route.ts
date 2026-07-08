@@ -109,6 +109,31 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     );
   }
 
+  // Track the install as a PR run (mirrors the stats-tracker installer) so it
+  // shows up alongside other automated PRs for the project.
+  const { data: run } = await (svc as any)
+    .from("project_pr_runs")
+    .insert({
+      project_id: slot.project_id,
+      owner_id: user.id,
+      kind: "install_ad",
+      installation_id: installationId!,
+      repo_owner: owner!,
+      repo_name: repo!,
+      status: "running",
+    })
+    .select("id")
+    .single();
+  const runId = run?.id as string | undefined;
+
+  async function finalize(patch: Record<string, unknown>) {
+    if (!runId) return;
+    await (svc as any)
+      .from("project_pr_runs")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("id", runId);
+  }
+
   try {
     const token = await getOrMintInstallationToken(installationId!);
     const result = await installAdEmbed({
@@ -118,9 +143,16 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       slotId,
       targetPath: body.target_path,
     });
+    await finalize({
+      status: result.status,
+      pr_url: result.prUrl ?? null,
+      pr_number: result.prNumber ?? null,
+      branch_name: result.branch ?? null,
+    });
     return NextResponse.json({ data: result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await finalize({ status: "failed", error: msg });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

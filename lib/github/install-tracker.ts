@@ -447,7 +447,7 @@ export async function previewInstallAtPath(input: {
   };
 }
 
-function addSourceToDirective(content: string, directive: string, source: string) {
+export function addSourceToDirective(content: string, directive: string, source: string) {
   const re = new RegExp(
     `(${directive}\\b[^;"\`\\n\\r]*)(?=[;"\`\\n\\r]|$)`,
     "gi",
@@ -463,11 +463,11 @@ function addSourceToDirective(content: string, directive: string, source: string
   return changed ? next : content;
 }
 
-function hasDirective(content: string, directive: string) {
+export function hasDirective(content: string, directive: string) {
   return new RegExp(`${directive}\\b`, "i").test(content);
 }
 
-function looksLikeCsp(content: string) {
+export function looksLikeCsp(content: string) {
   return /Content-Security-Policy|script-src|script-src-elem|default-src|connect-src/i.test(
     content,
   );
@@ -507,12 +507,16 @@ export function patchCspForTracker(content: string): string | null {
   return updated === content ? null : updated;
 }
 
-async function findCspPatchTargets(input: {
+// Scans the repo for CSP config files and returns the ones that `patch`
+// rewrites (append-only). Reused by both the tracker and ad installers — the
+// only difference is which origins/directives `patch` touches.
+export async function findCspPatchTargets(input: {
   token: string;
   owner: string;
   repo: string;
   ref: string;
   root: string;
+  patch: (content: string) => string | null;
 }) {
   const found = new Map<
     string,
@@ -530,7 +534,7 @@ async function findCspPatchTargets(input: {
       ref: input.ref,
     });
     if (!file) return;
-    const updated = patchCspForTracker(file.content);
+    const updated = input.patch(file.content);
     if (updated) {
       found.set(file.path, { ...file, updated });
     }
@@ -731,6 +735,7 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     repo: input.repo,
     ref: base,
     root,
+    patch: patchCspForTracker,
   });
 
   if (!target && cspPatches.length === 0) {
