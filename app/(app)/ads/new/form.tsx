@@ -262,6 +262,24 @@ export function NewAdForm() {
                   Remove logo
                 </button>
               )}
+              <label className="btn cursor-pointer text-sm">
+                {uploading ? "Uploading…" : current.imageUrl ? "Replace image" : "Upload image"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={onUpload("imageUrl")}
+                  disabled={uploading}
+                />
+              </label>
+              {current.imageUrl && (
+                <button className="text-xs text-[var(--color-muted)] underline" onClick={() => patchAll({ imageUrl: null })}>
+                  Remove image
+                </button>
+              )}
+              <span className="text-xs text-[var(--color-muted)]">
+                Image fills the Medium Rectangle background
+              </span>
             </div>
           </div>
 

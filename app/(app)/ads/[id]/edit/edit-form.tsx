@@ -44,16 +44,18 @@ export function EditCampaignForm({
     setCreatives((cs) => cs.map((c) => ({ ...c, ...patch })));
   }
 
-  async function onUploadLogo(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    const fd = new FormData();
-    fd.set("file", file);
-    const res = await uploadAdAsset(fd);
-    setUploading(false);
-    if (!res.ok) return setError(res.error);
-    patchAll({ logoUrl: res.url });
+  function onUpload(kind: "logoUrl" | "imageUrl") {
+    return async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setUploading(true);
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await uploadAdAsset(fd);
+      setUploading(false);
+      if (!res.ok) return setError(res.error);
+      patchAll({ [kind]: res.url } as Partial<AdCreative>);
+    };
   }
 
   function save() {
@@ -163,8 +165,22 @@ export function EditCampaignForm({
             <ColorField label="Accent" value={current.accentColor} onChange={(v) => patchAll({ accentColor: v })} />
             <label className="btn cursor-pointer text-sm">
               {uploading ? "Uploading…" : current.logoUrl ? "Replace logo" : "Upload logo"}
-              <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={onUploadLogo} disabled={uploading} />
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={onUpload("logoUrl")} disabled={uploading} />
             </label>
+            {current.logoUrl && (
+              <button type="button" className="text-xs text-[var(--color-muted)] underline" onClick={() => patchAll({ logoUrl: null })}>
+                Remove logo
+              </button>
+            )}
+            <label className="btn cursor-pointer text-sm">
+              {uploading ? "Uploading…" : current.imageUrl ? "Replace image" : "Upload image"}
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onUpload("imageUrl")} disabled={uploading} />
+            </label>
+            {current.imageUrl && (
+              <button type="button" className="text-xs text-[var(--color-muted)] underline" onClick={() => patchAll({ imageUrl: null })}>
+                Remove image
+              </button>
+            )}
           </div>
         </div>
       )}
