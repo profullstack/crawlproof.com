@@ -1,10 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import type { SupabaseClient } from "@supabase/supabase-js";
 // The SDK zod helper needs v4 schemas (z.toJSONSchema). Mirrors brandProfileFetch.
 import { z } from "zod/v4";
 import { env } from "@/lib/env";
 import { generateStructuredOutput } from "@/lib/lx/backendAi";
 import { extractSiteBrand, type SiteBrand } from "./brand";
+import { resolveAdHeroImage } from "./heroImage";
 import {
   AD_FORMATS,
   AD_FORMAT_IDS,
@@ -79,7 +81,7 @@ function buildUserPrompt(brand: SiteBrand): string {
     .join("\n");
 }
 
-function copyToCreatives(brand: SiteBrand, copy: AdCopy): AdCreative[] {
+function copyToCreatives(brand: SiteBrand, copy: AdCopy, heroUrl: string | null): AdCreative[] {
   const bg = safeHex(copy.bgColor, brand.themeColor && HEX.test(brand.themeColor) ? brand.themeColor : "#0b0d10");
   const fg = safeHex(copy.fgColor, "#e7e9ee");
   const accent = safeHex(copy.accentColor, brand.palette[0] ?? "#6ee7b7");
@@ -89,7 +91,7 @@ function copyToCreatives(brand: SiteBrand, copy: AdCopy): AdCreative[] {
     accentColor: accent,
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     logoUrl: brand.logoUrl,
-    imageUrl: null as string | null,
+    imageUrl: heroUrl,
     body: copy.body,
     ctaText: copy.ctaText || "Learn more",
   };
@@ -103,6 +105,7 @@ function copyToCreatives(brand: SiteBrand, copy: AdCopy): AdCreative[] {
 
 export async function generateAdCreatives(
   rawUrl: string,
+  opts: { supabase?: SupabaseClient } = {},
 ): Promise<{ brand: SiteBrand; creatives: AdCreative[]; provider: string }> {
   const brand = await extractSiteBrand(rawUrl);
 
@@ -124,7 +127,21 @@ export async function generateAdCreatives(
     anthropicEffort: "low",
   });
 
-  return { brand, creatives: copyToCreatives(brand, output), provider };
+  // Hero image: the advertiser's og:image when it exists, else a gpt-image-1
+  // fallback (only when we have a Supabase client to host the upload). Best-
+  // effort — a failure just leaves the accent-tint background.
+  let heroUrl: string | null = null;
+  if (opts.supabase) {
+    const hero = await resolveAdHeroImage({
+      brand,
+      copy: { headline: output.headline, body: output.body, bgColor: output.bgColor, accentColor: output.accentColor },
+      openai,
+      supabase: opts.supabase,
+    }).catch(() => null);
+    heroUrl = hero?.url ?? null;
+  }
+
+  return { brand, creatives: copyToCreatives(brand, output, heroUrl), provider };
 }
 
 // Append the campaign ref for click attribution, preserving any existing query.

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { AdCreative, AdFormatId } from "@/lib/ads/formats";
 import { AdPreview } from "@/components/ads/ad-preview";
-import { CampaignActions } from "@/components/ads/campaign-actions";
+import { CampaignActions, RegenerateButton } from "@/components/ads/campaign-actions";
 import { CampaignTrend } from "@/components/ads/campaign-trend";
 import { getCampaignDailySeries } from "@/lib/ads/series";
 
@@ -119,6 +119,7 @@ export default async function CampaignDetailPage({
           <Link href={`/ads/${id}/edit`} className="btn text-sm">
             Edit
           </Link>
+          <RegenerateButton id={id} />
           <CampaignActions id={id} status={campaign.status} />
         </div>
       </div>
