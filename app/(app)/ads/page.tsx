@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { CampaignActions } from "@/components/ads/campaign-actions";
+import { MiniTrend } from "@/components/ads/mini-trend";
+import { getCampaignDailySeries, type CampaignDailyPoint } from "@/lib/ads/series";
 
 export const metadata = { title: "Ad campaigns" };
 
@@ -40,6 +42,7 @@ export default async function AdsPage() {
 
   let campaigns: CampaignRow[] = [];
   const statsById = new Map<string, StatRow>();
+  let seriesById = new Map<string, CampaignDailyPoint[]>();
   if (user) {
     const [{ data }, { data: stats }] = await Promise.all([
       supabase
@@ -52,6 +55,11 @@ export default async function AdsPage() {
     ]);
     campaigns = (data as CampaignRow[]) ?? [];
     for (const s of (stats as StatRow[]) ?? []) statsById.set(s.campaign_id, s);
+    seriesById = await getCampaignDailySeries(
+      supabase,
+      campaigns.map((c) => c.id),
+      30,
+    );
   }
 
   const totals = [...statsById.values()].reduce(
@@ -108,15 +116,20 @@ export default async function AdsPage() {
               <li key={c.id} className="card p-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="truncate font-semibold">{c.name}</div>
+                    <Link href={`/ads/${c.id}`} className="block truncate font-semibold hover:text-[var(--color-accent)]">
+                      {c.name}
+                    </Link>
                     <div className="truncate text-sm text-[var(--color-muted)]">
                       {c.destination_domain} · {dollars(c.daily_budget_cents)}/day ·{" "}
                       <span className="font-mono">{c.ref_slug}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    <Link href={`/ads/${c.id}`} className="hidden sm:block" aria-label="View campaign">
+                      <MiniTrend data={seriesById.get(c.id) ?? []} />
+                    </Link>
                     <span className="badge whitespace-nowrap">{c.status}</span>
-                    <Link href={`/ads/${c.id}`} className="btn text-sm">
+                    <Link href={`/ads/${c.id}/edit`} className="btn text-sm">
                       Edit
                     </Link>
                     <CampaignActions id={c.id} status={c.status} />

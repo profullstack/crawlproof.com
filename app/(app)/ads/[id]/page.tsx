@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { AdCreative, AdFormatId } from "@/lib/ads/creative";
-import { EditCampaignForm } from "./edit-form";
+import type { AdCreative, AdFormatId } from "@/lib/ads/formats";
+import { AdPreview } from "@/components/ads/ad-preview";
+import { CampaignActions } from "@/components/ads/campaign-actions";
+import { CampaignTrend } from "@/components/ads/campaign-trend";
+import { getCampaignDailySeries } from "@/lib/ads/series";
 
-export const metadata = { title: "Edit campaign" };
+export const metadata = { title: "Campaign" };
 
 type CreativeRow = {
   id: string;
@@ -20,7 +23,16 @@ type CreativeRow = {
   font_family: string;
 };
 
-export default async function EditCampaignPage({
+function dollars(cents: number): string {
+  return `$${((cents ?? 0) / 100).toFixed(2)}`;
+}
+
+function ctr(clicks: number, impressions: number): string {
+  if (!impressions) return "—";
+  return `${((clicks / impressions) * 100).toFixed(1)}%`;
+}
+
+export default async function CampaignDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -34,17 +46,33 @@ export default async function EditCampaignPage({
 
   const { data: campaign } = await supabase
     .from("ad_campaigns")
-    .select("id, name, destination_url, daily_budget_cents, bid_credits, status, ref_slug")
+    .select(
+      "id, name, destination_url, destination_domain, daily_budget_cents, bid_credits, status, ref_slug, created_at, spend_today_cents, total_spent_cents",
+    )
     .eq("id", id)
     .eq("owner_id", user.id)
     .maybeSingle();
   if (!campaign) notFound();
 
-  const { data: creativeRows } = await supabase
-    .from("ad_creatives")
-    .select("id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family")
-    .eq("campaign_id", id)
-    .order("format");
+  const [{ data: stats }, { data: creativeRows }, series] = await Promise.all([
+    supabase
+      .from("ad_campaign_stats")
+      .select("impressions, clicks")
+      .eq("campaign_id", id)
+      .maybeSingle(),
+    supabase
+      .from("ad_creatives")
+      .select(
+        "id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family",
+      )
+      .eq("campaign_id", id)
+      .order("format"),
+    getCampaignDailySeries(supabase, [id], 30),
+  ]);
+
+  const impressions = (stats?.impressions as number) ?? 0;
+  const clicks = (stats?.clicks as number) ?? 0;
+  const daily = series.get(id) ?? [];
 
   const creatives: (AdCreative & { id: string })[] = ((creativeRows as CreativeRow[]) ?? []).map(
     (r) => ({
@@ -67,21 +95,71 @@ export default async function EditCampaignPage({
       <Link href="/ads" className="text-sm text-[var(--color-muted)]">
         ← Ad campaigns
       </Link>
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <h1 className="text-3xl font-bold">Edit campaign</h1>
-        <span className="badge font-mono">{campaign.ref_slug}</span>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="truncate text-3xl font-bold">{campaign.name}</h1>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            {campaign.destination_domain && (
+              <a
+                href={campaign.destination_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-accent)] hover:underline"
+              >
+                {campaign.destination_domain}
+              </a>
+            )}{" "}
+            · {dollars(campaign.daily_budget_cents)}/day ·{" "}
+            <span className="font-mono">{campaign.ref_slug}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="badge whitespace-nowrap">{campaign.status}</span>
+          <Link href={`/ads/${id}/edit`} className="btn text-sm">
+            Edit
+          </Link>
+          <CampaignActions id={id} status={campaign.status} />
+        </div>
       </div>
-      <EditCampaignForm
-        campaign={{
-          id: campaign.id,
-          name: campaign.name,
-          destinationUrl: campaign.destination_url,
-          dailyBudgetCents: campaign.daily_budget_cents,
-          bidCredits: campaign.bid_credits ?? 4,
-          status: campaign.status,
-        }}
-        creatives={creatives}
-      />
+
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Impressions" value={impressions.toLocaleString()} />
+        <Stat label="Clicks" value={clicks.toLocaleString()} />
+        <Stat label="CTR" value={ctr(clicks, impressions)} />
+        <Stat label="Total spend" value={dollars(campaign.total_spent_cents)} />
+        <Stat label="Today" value={dollars(campaign.spend_today_cents)} />
+        <Stat label="Daily budget" value={dollars(campaign.daily_budget_cents)} />
+      </div>
+
+      <div className="mt-4">
+        <CampaignTrend data={daily} />
+      </div>
+
+      {creatives.length > 0 && (
+        <div className="mt-6">
+          <h2 className="mb-3 font-semibold">Creatives</h2>
+          <div className="flex flex-wrap gap-4">
+            {creatives.map((c) => (
+              <div key={c.id} className="card p-3">
+                <AdPreview creative={c} />
+                <div className="mt-2 text-center text-xs text-[var(--color-muted)]">
+                  {c.format.replace("banner_", "").replace("x", " × ")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="card p-4">
+      <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
+      <div className="mt-1 text-2xl font-bold">{value}</div>
     </div>
   );
 }
