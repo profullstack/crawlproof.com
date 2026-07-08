@@ -11,6 +11,7 @@ const FORMATS = {
   banner_300x250: [300, 250],
   banner_728x90: [728, 90],
   banner_320x50: [320, 50],
+  text_link: [600, 40],
 } as const;
 
 const snippet = `(function(){
@@ -55,7 +56,8 @@ const snippet = `(function(){
           // Sandbox: allow the ad's click link to open a new tab, nothing else.
           iframe.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');
           iframe.style.border = '0';
-          iframe.style.width = dims[0] + 'px';
+          // Text links are native full-width; banners keep their fixed box.
+          iframe.style.width = (format === 'text_link') ? '100%' : (dims[0] + 'px');
           iframe.style.height = dims[1] + 'px';
           iframe.style.maxWidth = '100%';
           iframe.style.display = 'block';

@@ -25,6 +25,25 @@ function esc(s: string): string {
 
 export function renderHouseAdHtml(format: AdFormatId, clickUrl: string): string {
   const { w, h } = formatSpec(format);
+
+  // Native text link — no artwork, single full-width line.
+  if (format === "text_link") {
+    return `<!doctype html><html><head><meta charset="utf-8"><style>
+      *{box-sizing:border-box;margin:0}
+      a{text-decoration:none;display:block}
+      .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;background:#070a10;
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;padding:0 12px;
+        overflow:hidden;border-radius:8px;border:1px solid rgba(255,255,255,.08);border-left:3px solid #6ee7b7}
+    </style></head><body>
+      <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
+        <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#6ee7b7;flex:0 0 auto">CrawlProof Ads</span>
+        <strong style="color:#eef3f8;flex:0 0 auto;white-space:nowrap">${esc(HOUSE.headline)}</strong>
+        <span style="color:#c7d2de;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto">— ${esc(HOUSE.body)}</span>
+        <span style="color:#6ee7b7;font-weight:600;flex:0 0 auto;white-space:nowrap">${esc(HOUSE.cta)}</span>
+      </a>
+    </body></html>`;
+  }
+
   const img = imageUrlFor(format);
   const isMobile = format === "banner_320x50";
   const isRect = format === "banner_300x250";

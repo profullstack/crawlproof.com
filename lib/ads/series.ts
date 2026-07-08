@@ -59,27 +59,27 @@ export async function getCampaignDailySeries(
   const [{ data: imps }, { data: clicks }] = await Promise.all([
     supabase
       .from("ad_impressions")
-      .select("campaign_id, created_at")
+      .select("campaign_id, ts")
       .in("campaign_id", campaignIds)
-      .gte("created_at", sinceStart),
+      .gte("ts", sinceStart),
     supabase
       .from("ad_clicks")
-      .select("campaign_id, created_at, charged_cents, valid")
+      .select("campaign_id, ts, charged_cents, valid")
       .in("campaign_id", campaignIds)
       .eq("valid", true)
-      .gte("created_at", sinceStart),
+      .gte("ts", sinceStart),
   ]);
 
-  for (const row of (imps as { campaign_id: string; created_at: string }[]) ?? []) {
-    const point = index.get(row.campaign_id)?.get(dayKey(row.created_at));
+  for (const row of (imps as { campaign_id: string; ts: string }[]) ?? []) {
+    const point = index.get(row.campaign_id)?.get(dayKey(row.ts));
     if (point) point.impressions += 1;
   }
   for (const row of (clicks as {
     campaign_id: string;
-    created_at: string;
+    ts: string;
     charged_cents: number | null;
   }[]) ?? []) {
-    const point = index.get(row.campaign_id)?.get(dayKey(row.created_at));
+    const point = index.get(row.campaign_id)?.get(dayKey(row.ts));
     if (point) {
       point.clicks += 1;
       point.spentCents += row.charged_cents ?? 0;
