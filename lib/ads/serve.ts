@@ -8,7 +8,7 @@ import {
   type AdCreative,
   type AdFormatId,
 } from "./creative";
-import { houseFill } from "./house";
+import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import { assessClickValidity, isBotDevice } from "./fraud";
 import { runAuction } from "./auction";
@@ -136,6 +136,11 @@ export async function serveAd(
   });
   // Every candidate is out of budget → fall back to the house ad.
   if (eligible.length === 0) return houseFill(format);
+
+  // Rotate the CrawlProof house ad into a slice of otherwise-fillable requests
+  // so the ad network keeps promoting itself even on well-monetized slots.
+  // Unmetered, so no paid impression is spent on these.
+  if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format);
 
   // First-price auction: highest bid wins (random tie-break). Live today.
   const auction = runAuction(

@@ -14,6 +14,10 @@ const HOUSE = {
   cta: "Advertise →",
 } as const;
 
+// Fraction of fills on a slot with eligible paid inventory that are given the
+// CrawlProof house ad instead, to keep promoting the ad network. Not metered.
+export const HOUSE_AD_ROTATION_RATE = 0.1;
+
 function imageUrlFor(format: AdFormatId): string {
   const rect = format === "banner_300x250";
   return `${env.siteUrl}/ads/house/${rect ? "promo-rect" : "promo-wide"}.webp`;
