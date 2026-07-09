@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { VisitorGlobe, type GlobePoint } from "./visitor-globe";
+import { LiveChart } from "./live-chart";
 
 type LiveEvent = {
   id: number;
@@ -53,6 +54,7 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [minutes, setMinutes] = useState(30);
   const [isDark, setIsDark] = useState(false);
+  const [view, setView] = useState<"globe" | "chart">("globe");
 
   // Detect dark mode
   useEffect(() => {
@@ -106,7 +108,24 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
+          {/* Globe | Chart tab switch */}
+          <div className="inline-flex overflow-hidden rounded border border-[var(--color-border)]">
+            {(["globe", "chart"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`px-2 py-0.5 text-xs capitalize transition-colors ${
+                  view === v
+                    ? "bg-[var(--color-primary)] text-white"
+                    : "text-[var(--color-muted)] hover:text-[var(--color-foreground)]"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
           <span className="text-xs text-[var(--color-muted)]">Window:</span>
           {([5, 15, 30, 60] as const).map((m) => (
             <button
@@ -121,6 +140,7 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
               {m}m
             </button>
           ))}
+          </div>
         </div>
       </div>
 
@@ -132,7 +152,10 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
         </p>
       ) : (
         <>
-          {/* Globe left + stats right */}
+          {view === "chart" ? (
+            <LiveChart events={data?.events ?? []} minutes={minutes} />
+          ) : (
+          /* Globe left + stats right */
           <div className="flex items-center gap-0">
             {/* Globe — 50% of card width, click to toggle spin */}
             <div className="w-1/2 shrink-0 bg-[var(--color-bg-subtle)] dark:bg-slate-900">
@@ -184,6 +207,7 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
               </div>
             </div>
           </div>
+          )}
 
           {/* Recent event feed */}
           <div className="border-t border-[var(--color-border)]">
