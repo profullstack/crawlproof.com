@@ -133,7 +133,9 @@ export async function GET(
     minutes,
     total_events: events.length,
     unique_sessions: sessionsSeen.size,
-    events: events.slice(0, 100),
+    // Up to 300 so the live chart can bucket a fuller slice of the window;
+    // the feed only renders the first 40 and the globe uses globe_points.
+    events: events.slice(0, 300),
     globe_points: globePoints,
     top_pages: topPages,
     top_sources: topSources,
