@@ -38,6 +38,7 @@ import { listInstallationRepos } from "../lib/github/app";
 import { processUserAlerts } from "../lib/alerts/worker";
 import { processDuePortScans } from "../lib/prober-queue";
 import { processDueMonitors } from "../lib/uptime";
+import { processDuePromoteLists } from "../lib/promote/sweep";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1259,6 +1260,21 @@ setInterval(
   () => auditStuckSweep().catch((e) => console.error("[worker] audit stuck sweep", e)),
   60_000,
 );
+// Promote drip engine: generate fresh AI marketing pitches and publish
+// them across connected social accounts on a recurring cadence.
+async function promoteSweep() {
+  const r = await processDuePromoteLists(supabase, { anthropic, openai });
+  if (r.postsAttempted > 0) {
+    console.log(
+      `[worker] promote sweep lists=${r.listsProcessed} attempted=${r.postsAttempted} ok=${r.postsSucceeded} fail=${r.postsFailed} paused=${r.listsPaused}`,
+    );
+  }
+}
+setInterval(
+  () => promoteSweep().catch((e) => console.error("[worker] promote sweep", e)),
+  60_000,
+);
+
 // Port-drift scans: bridge queued rows to the "prober" BullMQ queue and
 // reconcile results (uptime-monitoring-prd.md §12). Short interval so the
 // Security tab's SSE stream gets snappy queued→running→done feedback.
@@ -1291,4 +1307,5 @@ server.listen(port, bindHost, () => {
   console.log(`[worker] listening on ${bindHost}:${port}`);
   sweep().catch(() => {});
   socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e));
+  promoteSweep().catch((e) => console.error("[worker] promote sweep", e));
 });
