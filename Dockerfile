@@ -34,7 +34,7 @@ RUN npm run build
 
 # ---------- runtime ----------
 # Playwright base — ships Chromium + system fonts + the deps Chromium needs.
-FROM mcr.microsoft.com/playwright:v1.60.0-jammy AS runtime
+FROM mcr.microsoft.com/playwright:v1.48.0-jammy AS runtime
 WORKDIR /app
 
 # pandoc for canonical Markdown -> HTML conversion in the worker.
