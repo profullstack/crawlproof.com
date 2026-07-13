@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type OpenAI from "openai";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { smartFetch } from "@/lib/onion";
+import { serviceClient } from "@/lib/supabase/service";
 import type { SiteBrand } from "./brand";
 
 // The ad hero image shown behind the Medium Rectangle. Chooses, in order:
@@ -94,12 +95,15 @@ async function generateAiHero(
   }
 }
 
-async function uploadHero(
-  supabase: SupabaseClient,
-  bytes: Buffer,
-): Promise<string | null> {
+// Heroes are server-generated ad art, not user uploads. The ad-assets bucket's
+// storage RLS only lets an authenticated user write under their own `${uid}/`
+// prefix, so a user-scoped client can't write to `heroes/` (it fails with "new
+// row violates row-level security policy"). Upload with the service-role client,
+// which bypasses RLS.
+async function uploadHero(bytes: Buffer): Promise<string | null> {
+  const svc = serviceClient();
   const path = `heroes/${crypto.randomUUID()}.png`;
-  const { error } = await supabase.storage.from(ASSET_BUCKET).upload(path, bytes, {
+  const { error } = await svc.storage.from(ASSET_BUCKET).upload(path, bytes, {
     contentType: "image/png",
     upsert: false,
   });
@@ -107,7 +111,7 @@ async function uploadHero(
     console.warn("[ads] hero upload failed", error.message);
     return null;
   }
-  return supabase.storage.from(ASSET_BUCKET).getPublicUrl(path).data.publicUrl;
+  return svc.storage.from(ASSET_BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
 // Resolve the hero image URL for a set of ad creatives. A gpt-image-1 hero
@@ -118,14 +122,16 @@ export async function resolveAdHeroImage(args: {
   brand: SiteBrand;
   copy: AdHeroCopy;
   openai: OpenAI | null;
+  // Presence signals that upload hosting is available; the hero itself is
+  // uploaded with the service-role client (see uploadHero).
   supabase: SupabaseClient;
 }): Promise<{ url: string; source: "og" | "ai" } | null> {
-  const { brand, copy, openai, supabase } = args;
+  const { brand, copy, openai } = args;
 
   if (openai) {
     const bytes = await generateAiHero(openai, brand, copy);
     if (bytes) {
-      const url = await uploadHero(supabase, bytes);
+      const url = await uploadHero(bytes);
       if (url) return { url, source: "ai" };
     }
   }

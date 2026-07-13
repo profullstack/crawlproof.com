@@ -24,7 +24,9 @@ export type { AdCreative, AdFormatId };
 
 // Copy is generated once per URL by a frontier-ish model; sizes are rendered
 // from the same copy set. Cheap, fast, and editable — no image-gen required.
-const CLAUDE_MODEL = "claude-sonnet-4-6";
+// Must be a model that supports structured outputs (output_config.format) —
+// Sonnet 4.6 does NOT, so its fallback silently fails "parse structured output".
+const CLAUDE_MODEL = "claude-sonnet-5";
 const OPENAI_MODEL = "gpt-5-mini";
 
 const HEX = /^#([0-9a-fA-F]{6})$/;
@@ -41,10 +43,13 @@ const CopySchema = z.object({
     .string()
     .max(28)
     .describe("A tighter version for tiny mobile banners — max ~4 words."),
+  // Structured-output SDKs strip maxLength and validate client-side, so a tight
+  // cap makes the whole generation throw when copy runs a few chars long. Keep
+  // the prompt guidance short but the hard cap generous (creatives re-truncate).
   body: z
     .string()
-    .max(90)
-    .describe("One concrete benefit line. No hype, no exclamation spam."),
+    .max(130)
+    .describe("One concrete benefit line, ~12 words max. No hype, no exclamation spam."),
   ctaText: z
     .string()
     .max(18)
