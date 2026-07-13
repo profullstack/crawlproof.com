@@ -142,7 +142,8 @@ export async function serveAd(
   // Unmetered, so no paid impression is spent on these.
   if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format);
 
-  // First-price auction: highest bid wins (random tie-break). Live today.
+  // Bid-weighted lottery: every eligible campaign can win, with probability
+  // proportional to its bid, so all active ads rotate (higher bids more often).
   const auction = runAuction(
     eligible.map((row) => ({
       bidCredits: oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
