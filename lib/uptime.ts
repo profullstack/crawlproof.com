@@ -22,6 +22,7 @@ export interface MonitorRow {
   consecutive_failures: number;
   consecutive_successes: number;
   alert_email: string | null;
+  last_down_alert_at: string | null;
 }
 
 interface CheckResult {
@@ -32,6 +33,12 @@ interface CheckResult {
 }
 
 const FROM = process.env.RESEND_FROM ?? "CrawlProof <reports@crawlproof.com>";
+
+// While a monitor stays down, resend the DOWN email on this cadence so a single
+// missed alert doesn't leave an outage unnoticed. Override with UPTIME_REALERT_HOURS
+// (0 or negative disables reminders and keeps the one-shot behavior).
+const REALERT_HOURS = Number(process.env.UPTIME_REALERT_HOURS ?? 6);
+const REALERT_MS = REALERT_HOURS > 0 ? REALERT_HOURS * 3_600_000 : 0;
 
 async function checkHttp(m: MonitorRow): Promise<CheckResult> {
   const timeout = m.timeout_s * 1000;
@@ -139,6 +146,15 @@ function checkSsl(m: MonitorRow): Promise<CheckResult> {
   });
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
 function runCheck(m: MonitorRow): Promise<CheckResult> {
   switch (m.type) {
     case "http":
@@ -156,13 +172,15 @@ async function sendAlert(
   m: MonitorRow,
   kind: "down" | "up",
   detail: string,
+  reminder = false,
 ): Promise<void> {
   if (!m.alert_email) return;
   const down = kind === "down";
-  const subject = `${down ? "🔴 DOWN" : "🟢 RECOVERED"}: ${m.name}`;
+  const subject = `${down ? (reminder ? "🔴 STILL DOWN" : "🔴 DOWN") : "🟢 RECOVERED"}: ${m.name}`;
+  const heading = down ? (reminder ? "Monitor is STILL DOWN" : "Monitor is DOWN") : "Monitor recovered";
   const html = `
     <div style="font-family:system-ui,sans-serif;max-width:520px">
-      <h2 style="margin:0 0 8px">${down ? "Monitor is DOWN" : "Monitor recovered"}</h2>
+      <h2 style="margin:0 0 8px">${heading}</h2>
       <p style="margin:0 0 4px"><strong>${m.name}</strong> (${m.type})</p>
       <p style="margin:0 0 4px;color:#555"><code>${m.target}</code></p>
       <p style="margin:8px 0;color:${down ? "#b91c1c" : "#15803d"}">${detail}</p>
@@ -212,6 +230,22 @@ async function processOne(
     }
   }
 
+  // Reminder: still down, and it's been >= REALERT_MS since the last down alert
+  // (initial or reminder). Keeps missed outages from going unnoticed.
+  const stillDown = transition === "same" && state === "down";
+  const reminderDue =
+    stillDown &&
+    REALERT_MS > 0 &&
+    !!resend &&
+    !!m.alert_email &&
+    (!m.last_down_alert_at || Date.now() - new Date(m.last_down_alert_at).getTime() >= REALERT_MS);
+
+  // Persist the down-alert timestamp: stamp now whenever we (re)send a down
+  // alert, clear it on recovery, otherwise leave it untouched.
+  let downAlertAt: string | null | undefined;
+  if (transition === "down" || reminderDue) downAlertAt = new Date().toISOString();
+  else if (transition === "up") downAlertAt = null;
+
   await supabase
     .from("monitors")
     .update({
@@ -221,6 +255,7 @@ async function processOne(
       last_checked_at: new Date().toISOString(),
       last_error: result.error,
       last_response_ms: result.responseMs,
+      ...(downAlertAt !== undefined ? { last_down_alert_at: downAlertAt } : {}),
     })
     .eq("id", m.id);
 
@@ -231,6 +266,27 @@ async function processOne(
       cause: result.error ?? "check failed",
     });
     if (resend) await sendAlert(resend, m, "down", result.error ?? "Check failed.");
+  } else if (reminderDue && resend) {
+    // Report how long it's been down using the open incident's start time.
+    const { data: open } = await supabase
+      .from("monitor_incidents")
+      .select("started_at")
+      .eq("monitor_id", m.id)
+      .is("ended_at", null)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const downForS = open
+      ? Math.round((Date.now() - new Date(open.started_at).getTime()) / 1000)
+      : null;
+    const forPart = downForS != null ? ` Down for ${formatDuration(downForS)}.` : "";
+    await sendAlert(
+      resend,
+      m,
+      "down",
+      `${result.error ?? "Still failing."}${forPart} Next reminder in ${REALERT_HOURS}h if not recovered.`,
+      true,
+    );
   } else if (transition === "up") {
     // Close the open incident and stamp its duration.
     const { data: open } = await supabase
@@ -267,7 +323,7 @@ export async function processDueMonitors(
   const { data: due } = await supabase
     .from("monitors")
     .select(
-      "id, project_id, name, type, target, config, interval_s, timeout_s, fail_threshold, recover_threshold, current_state, consecutive_failures, consecutive_successes, alert_email",
+      "id, project_id, name, type, target, config, interval_s, timeout_s, fail_threshold, recover_threshold, current_state, consecutive_failures, consecutive_successes, alert_email, last_down_alert_at",
     )
     .eq("enabled", true)
     .lte("due_at", new Date().toISOString())
