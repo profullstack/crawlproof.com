@@ -1,6 +1,6 @@
 // Image attachment for social autoposts. Tries the article's og:image
 // first (free, on-brand). If missing, optionally generates one via
-// gpt-image-1 — but only when the project's image_cadence says we're
+// gpt-image-2 — but only when the project's image_cadence says we're
 // due for one, so the feed doesn't read as AI spam.
 
 import OpenAI from "openai";
@@ -10,7 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 const FETCH_TIMEOUT_MS = 8_000;
 const MIN_OG_IMAGE_BYTES = 2_000; // <2KB is almost certainly a placeholder.
 const BUCKET = "sp-images";
-const IMAGE_MODEL = "gpt-image-1";
+const IMAGE_MODEL = "gpt-image-2";
 const IMAGE_QUALITY: "low" | "medium" | "high" | "auto" = "high";
 
 export type ImageAttachment = {
@@ -25,7 +25,7 @@ export type ImageStyle =
   | "diagram"
   | "screenshot";
 
-// Style → (size, prompt builder). Sizes are picked from gpt-image-1's
+// Style → (size, prompt builder). Sizes are picked from gpt-image-2's
 // native options (1024x1024, 1536x1024, 1024x1536) so we don't pay for
 // crops.
 type StyleSpec = {
