@@ -43,7 +43,7 @@ import {
 import { generateStructuredOutput } from "./backendAi";
 import { SCAN_CREDITS } from "@/lib/credits";
 
-const CLAUDE_MODEL = "claude-sonnet-4-6";
+const CLAUDE_MODEL = "claude-opus-4-8";
 
 type SiteCtx = {
   id: string;
