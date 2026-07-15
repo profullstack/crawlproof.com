@@ -7,7 +7,7 @@
 //   4. Call the configured backend text model with the keyword, site
 //      profile, and link slots to fill. Output is structured JSON
 //      (zod-validated).
-//   5. Generate the featured image with gpt-image-1, upload it to the
+//   5. Generate the featured image with gpt-image-2, upload it to the
 //      lx-article-images public bucket.
 //   6. Render markdown → HTML with marked.
 //   7. Insert the lx_article row at status='ready'; mark the keyword
@@ -34,13 +34,13 @@ import {
 } from "../autopilot/entitlements";
 
 const EMBED_MODEL = "text-embedding-3-small";
-const CLAUDE_MODEL = "claude-sonnet-4-6";
-const IMAGE_MODEL = "gpt-image-1";
+const CLAUDE_MODEL = "claude-opus-4-8";
+const IMAGE_MODEL = "gpt-image-2";
 const IMAGE_SIZE = "1536x1024";
-// gpt-image-1 quality tier: low ($0.011), medium ($0.042), high ($0.167)
-// per image at 1536x1024. We pay the premium tier on hero + 3 inline
-// (~$0.67/article) for visibly sharper textures and better composition
-// — readers spot AI-art at low/medium quality immediately.
+// gpt-image-2 quality tier: low / medium / high / auto. We pay the premium
+// "high" tier on the hero + 3 inline images for visibly sharper textures,
+// better composition, and stronger instruction-following — readers spot
+// AI-art at low/medium quality immediately.
 const IMAGE_QUALITY: "low" | "medium" | "high" | "auto" = "high";
 const BUCKET = "lx-article-images";
 
@@ -126,7 +126,7 @@ export const ArticleSchema = z.object({
           .default("concept"),
         // For chart/flow/comparison/checklist kinds: 2-6 short text
         // labels (≤24 chars each) that should appear in the image.
-        // Empty / ignored for "concept". gpt-image-1 renders these
+        // Empty / ignored for "concept". gpt-image-2 renders these
         // legibly when count is small and labels are short.
         labels: z.array(z.string().max(80)).max(12).default([]),
       }),
@@ -568,9 +568,9 @@ const SHARED_ART_DIRECTION = [
 // Pull the section that contains the Nth inline-image marker out of
 // the article body. Walk backward from the marker to the nearest H2,
 // then forward to the next H2 (or EOF), then strip markdown noise so
-// gpt-image-1 can read the actual prose / numbers / list items. Caps
+// gpt-image-2 can read the actual prose / numbers / list items. Caps
 // at 1500 chars so we leave headroom for the art-direction blob in
-// the final prompt (gpt-image-1 limits the whole prompt to ~4000).
+// the final prompt (gpt-image-2 limits the whole prompt to ~4000).
 //
 // Exported so tests can pin the extraction behavior — wrong section
 // content means the chart renders with the wrong numbers, which is
@@ -845,7 +845,7 @@ export async function generateImage(
   //
   // We feed the model the real article metadata (title, lede, tags,
   // niche) so the image is about the content, then apply the project's
-  // chosen visual treatment. Without the lede, gpt-image-1 collapses
+  // chosen visual treatment. Without the lede, gpt-image-2 collapses
   // every abstract title into the same generic render.
   const style: BannerStyle = meta.style ?? "editorial";
   const lede = (meta.excerpt || meta.metaDescription || "").trim();
