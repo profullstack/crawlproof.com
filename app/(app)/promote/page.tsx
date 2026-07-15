@@ -31,7 +31,7 @@ export default async function PromotePage() {
   let accountCount = 0;
 
   if (user) {
-    const [{ data: listData }, { data: accounts }] = await Promise.all([
+    const [{ data: listData }, { count: acctCount }] = await Promise.all([
       supabase
         .from("promo_list")
         .select("id, name, status, cadence_seconds, post_mode, last_run_at, pause_reason, created_at")
@@ -43,7 +43,7 @@ export default async function PromotePage() {
         .eq("status", "active"),
     ]);
     lists = (listData as ListRow[]) ?? [];
-    accountCount = accounts ?? 0;
+    accountCount = acctCount ?? 0;
 
     if (lists.length > 0) {
       const listIds = lists.map((l) => l.id);
