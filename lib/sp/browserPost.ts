@@ -5,7 +5,7 @@
 //   1. Load sp_post + sp_account for the postId.
 //   2. Decrypt cookies from enc_access_token.
 //   3. If platform needs an image and none was supplied, generate one via
-//      gpt-image-1 using the account's image_style preference.
+//      gpt-image-2 using the account's image_style preference.
 //   4. Dispatch to the platform-specific browser function.
 //   5. Update sp_post with success/failure.
 
