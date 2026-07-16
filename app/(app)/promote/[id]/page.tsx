@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { cadenceLabel } from "@/lib/promote/generatePitch";
 import { PromoteListActions } from "@/components/promote/list-actions";
-import { AutoRefresh } from "@/components/promote/auto-refresh";
+import { PromoteRealtime } from "@/components/promote/promote-realtime";
 import { PromoteEditForm } from "@/components/promote/promote-edit-form";
 import { AddLinksForm } from "@/components/promote/add-links-form";
 import { LinkList } from "@/components/promote/link-list";
@@ -83,7 +83,7 @@ export default async function PromoteDetailPage({ params }: Props) {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <AutoRefresh />
+      <PromoteRealtime listId={list.id} />
       <div className="flex items-center justify-between gap-4">
         <div>
           <Link href="/promote" className="text-sm text-[var(--color-muted)] hover:text-[var(--color-fg)]">

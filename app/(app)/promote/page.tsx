@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { PromoteListActions } from "@/components/promote/list-actions";
-import { AutoRefresh } from "@/components/promote/auto-refresh";
+import { PromoteRealtime } from "@/components/promote/promote-realtime";
 import { cadenceLabel } from "@/lib/promote/generatePitch";
 
 export const metadata = { title: "Promote" };
@@ -85,7 +85,7 @@ export default async function PromotePage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <AutoRefresh />
+      <PromoteRealtime />
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Promote</h1>
         <div className="flex items-center gap-2">
