@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { parseLinks, fetchLinkTitle } from "@/lib/promote/generatePitch";
+import { env } from "@/lib/env";
 
 type Ok<T = Record<string, unknown>> = { ok: true } & T;
 type Err = { ok: false; error: string };
@@ -278,7 +279,8 @@ export async function postNow(listId: string): Promise<Ok | Err> {
   const auth = await requireUser();
   if (!auth.ok) return auth;
   const svc = serviceClient();
-  // Set next_run_at to now so the sweep picks it up immediately.
+  // Make the list due now (and un-pause it). The claim step in the sweep then
+  // stamps next_run_at forward so this can't double-post.
   const { error } = await svc
     .from("promo_list")
     .update({
@@ -289,6 +291,23 @@ export async function postNow(listId: string): Promise<Ok | Err> {
     .eq("id", listId)
     .eq("user_id", auth.userId);
   if (error) return { ok: false, error: error.message };
+
+  // Nudge the worker to run the sweep immediately instead of waiting up to 60s
+  // for its periodic tick. The endpoint acks (202) and posts in the background;
+  // realtime surfaces each post as it lands. If the worker URL isn't
+  // configured, the periodic tick still picks it up (just slower).
+  if (env.workerUrl && env.workerSecret) {
+    try {
+      await fetch(`${env.workerUrl}/promote/sweep`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-worker-secret": env.workerSecret },
+        body: JSON.stringify({ listId }),
+      });
+    } catch {
+      // Worker unreachable — the periodic sweep is the fallback.
+    }
+  }
+
   revalidatePath("/promote");
   revalidatePath(`/promote/${listId}`);
   return { ok: true };
