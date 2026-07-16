@@ -1089,6 +1089,20 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  if (req.method === "POST" && req.url === "/promote/sweep") {
+    // Immediate "Post now": run the promote sweep out-of-band so a manually
+    // triggered list (its next_run_at set to now by the server action) posts
+    // right away instead of waiting up to 60s for the periodic tick.
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    res.writeHead(202, { "content-type": "application/json" });
+    res.end(JSON.stringify({ accepted: true }));
+    promoteSweep().catch((e) => console.error("[worker] promote sweep (triggered)", e));
+    return;
+  }
   if (req.method !== "POST" || req.url !== "/enqueue") {
     res.writeHead(404);
     res.end();

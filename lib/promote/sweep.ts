@@ -78,6 +78,19 @@ export async function processDuePromoteLists(
 
   if (error || !lists || lists.length === 0) return result;
 
+  // Claim each due list by pushing next_run_at forward before processing, so an
+  // overlapping sweep (e.g. the periodic tick racing a manual "Post now"
+  // trigger) can't pick up the same list and double-post. advanceScheduler
+  // re-stamps next_run_at at the end of a successful run.
+  await Promise.all(
+    (lists as PromoList[]).map((l) =>
+      supabase
+        .from("promo_list")
+        .update({ next_run_at: new Date(Date.now() + l.cadence_seconds * 1000).toISOString() })
+        .eq("id", l.id),
+    ),
+  );
+
   for (const list of lists as PromoList[]) {
     try {
       const r = await processOneList(supabase, list, clients);
@@ -236,6 +249,7 @@ async function processOneList(
         model: pitch.model,
         status: postResult.ok ? "posted" : "failed",
         external_post_id: postResult.ok ? postResult.platformPostId : null,
+        post_url: postResult.ok ? postResult.webUrl || null : null,
         error: postResult.ok ? null : postResult.error,
         credits_spent: 1,
         posted_at: postResult.ok ? new Date().toISOString() : null,
