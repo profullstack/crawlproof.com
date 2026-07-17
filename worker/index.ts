@@ -831,12 +831,17 @@ const server = http.createServer(async (req, res) => {
         const payload = JSON.parse(body || "{}") as {
           token?: string;
           markdown?: string;
+          html?: string;
           title?: string;
           target?: string;
           score?: number;
         };
         let pdf: Buffer;
-        if (payload.markdown) {
+        if (payload.html) {
+          // Caller supplies a complete, self-contained HTML document (e.g. the
+          // ads earnings report). Render it as-is — no markdown step.
+          pdf = await renderPdfFromHtml(payload.html);
+        } else if (payload.markdown) {
           const bodyHtml = await markdownToHtml(payload.markdown);
           const html = htmlDocument({
             title: payload.title ?? "CrawlProof audit",
