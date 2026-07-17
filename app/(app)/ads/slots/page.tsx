@@ -105,15 +105,16 @@ export default async function SlotsPage() {
         </Link>
       </div>
       <p className="mt-2 text-[var(--color-muted)]">
-        Show CrawlProof network ads on your site and earn crypto for the clicks. Opt a
-        project in, drop one tag on your page, and add a payout wallet.
+        Each site you monetize is a CrawlProof <strong>project</strong>. Add a site to
+        create one, drop one tag on the page, and add a payout wallet — you earn crypto
+        for the clicks.
       </p>
 
       {projects.length === 0 ? (
         <div className="card mt-6 p-8 text-center text-[var(--color-muted)]">
-          You have no projects yet.{" "}
+          No sites yet — a site is a CrawlProof project.{" "}
           <Link href="/projects/new?next=/ads/slots" className="text-[var(--color-accent)]">
-            Create one
+            Add one
           </Link>{" "}
           to enable a slot.
         </div>
