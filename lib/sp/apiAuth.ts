@@ -27,7 +27,12 @@ export async function authenticateBearer(
   if (!header || !header.toLowerCase().startsWith("bearer ")) {
     return { ok: false, status: 401, error: "Missing bearer token." };
   }
-  const token = header.slice("bearer ".length).trim();
+  return authenticateToken(header.slice("bearer ".length).trim());
+}
+
+// Verify a raw crp_ token (no header parsing). Shared by authenticateBearer and
+// the MCP server's withMcpAuth verifier.
+export async function authenticateToken(token: string): Promise<AuthOk | AuthErr> {
   if (!isApiTokenShape(token)) {
     return { ok: false, status: 401, error: "Malformed token." };
   }
