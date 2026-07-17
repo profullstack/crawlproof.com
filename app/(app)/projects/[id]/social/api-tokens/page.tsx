@@ -59,6 +59,83 @@ export default async function ApiTokensPage({
       </div>
 
       <ApiTokensClient tokens={(tokens ?? []) as TokenRow[]} />
+
+      <McpServerSection />
     </div>
+  );
+}
+
+function McpServerSection() {
+  const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://crawlproof.com";
+  const mcpUrl = `${site}/api/mcp`;
+  const agentConfig = `{
+  "mcpServers": {
+    "crawlproof": {
+      "url": "${mcpUrl}",
+      "headers": { "Authorization": "Bearer crp_YOUR_TOKEN" }
+    }
+  }
+}`;
+  // Note the Accept header — the Streamable-HTTP transport requires both types.
+  const curlList = `curl -s ${mcpUrl} \\
+  -H "Authorization: Bearer $CRAWLPROOF_MCP_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`;
+  const curlPromote = `curl -s ${mcpUrl} \\
+  -H "Authorization: Bearer $CRAWLPROOF_MCP_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+        "name":"promote_url","arguments":{"url":"https://example.com"}}}'`;
+
+  return (
+    <section className="card space-y-4 p-5">
+      <div>
+        <h2 className="text-lg font-semibold">MCP server</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          The same token also authenticates the CrawlProof{" "}
+          <a href="https://modelcontextprotocol.io" target="_blank" rel="noreferrer" className="underline">
+            MCP
+          </a>{" "}
+          server, so an AI agent can write and publish promo posts to your socials. Endpoint:{" "}
+          <code>{mcpUrl}</code>
+        </p>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Add to your agent (Claude Desktop, Cursor, …)
+        </div>
+        <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-bg-deep)] p-3 text-xs">
+          {agentConfig}
+        </pre>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          List the tools (curl)
+        </div>
+        <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-bg-deep)] p-3 text-xs">
+          {curlList}
+        </pre>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Write &amp; post in one call (curl)
+        </div>
+        <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-bg-deep)] p-3 text-xs">
+          {curlPromote}
+        </pre>
+      </div>
+
+      <p className="text-xs text-[var(--color-muted)]">
+        Set <code>CRAWLPROOF_MCP_TOKEN</code> to a token above. Tools:{" "}
+        <code>list_accounts</code>, <code>generate_promo_post</code>, <code>post_to_socials</code>,{" "}
+        <code>promote_url</code>. The <code>Accept: application/json, text/event-stream</code> header
+        is required. Cookie-auth platforms report <code>queued</code> — the post lands shortly after.
+      </p>
+    </section>
   );
 }

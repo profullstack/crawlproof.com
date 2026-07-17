@@ -13,9 +13,17 @@ import { registerPromoteTools } from "@/lib/mcp/promote";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const handler = createMcpHandler((server) => {
-  registerPromoteTools(server);
-});
+const handler = createMcpHandler(
+  (server) => {
+    registerPromoteTools(server);
+  },
+  {},
+  // The route is mounted at /api/mcp, so mcp-handler must derive its endpoint
+  // from basePath "/api" (streamable HTTP → /api/mcp). Without this it looks for
+  // "/mcp" and returns 404 on every real MCP call. maxDuration covers a
+  // promote_url that generates + posts across several accounts.
+  { basePath: "/api", maxDuration: 120 },
+);
 
 // Resolve the crp_ bearer token to a CrawlProof user; stash the user id on the
 // AuthInfo so tool handlers can scope to the caller. Returning undefined (with
