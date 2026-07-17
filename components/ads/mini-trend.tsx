@@ -15,7 +15,11 @@ export function MiniTrend({
   height?: number;
 }) {
   const total = data.reduce((n, p) => n + p.impressions, 0);
-  if (data.length < 2 || total === 0) {
+  // Count clicks as traffic too (a campaign can have clicks logged without a
+  // matching impression row), matching CampaignTrend's empty check. `total`
+  // stays impressions-only for the aria-label below.
+  const activity = data.reduce((n, p) => n + p.impressions + p.clicks, 0);
+  if (data.length < 2 || activity === 0) {
     return (
       <div
         className="flex items-center justify-center text-[10px] text-[var(--color-muted)]"
