@@ -130,6 +130,29 @@ describe("installAdEmbed", () => {
     expect(written).toContain("next.config.ts");
   });
 
+  it("places a leaderboard at the top of the page (after <body>), not before </body>", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body><main>{children}</main></body></html>;\n}\n",
+    );
+
+    await installAdEmbed({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      slotId: "slot-abc",
+      format: "banner_728x90",
+    });
+
+    const write = github.putFile.mock.calls.find((c) => c[0].path === "app/layout.tsx");
+    expect(write).toBeDefined();
+    const content = write![0].contentUtf8 as string;
+    // The embed carries the requested format and lands before <main>, i.e. right
+    // after <body> rather than at the very bottom of the page.
+    expect(content).toContain('data-format="banner_728x90"');
+    expect(content.indexOf("data-cp-ad")).toBeLessThan(content.indexOf("<main>"));
+  });
+
   it("no-ops when the embed exists and no CSP needs changes", async () => {
     github.files.set(
       "app/layout.tsx",
