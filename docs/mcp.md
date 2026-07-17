@@ -71,6 +71,15 @@ Responses come back as SSE frames (`event: message` / `data: {…}`).
 | `post_to_socials` | Publish given text to accounts (all active, or `account_ids`). `{ text, account_ids? }` |
 | `promote_url` | One shot: write a per-platform promo post for a URL and publish it. `{ url, account_ids?, angle?, brand_voice? }` |
 
+## Tools (module: `stats`, read-only)
+
+| Tool | What it does |
+|------|--------------|
+| `list_projects` | The caller's sites/projects (name, url, id). |
+| `recent_audits` | Recent AEO audits with scores + status. `{ url?, limit? }` |
+| `ad_earnings` | Ad-network money summary — earned (publisher), spent (advertiser), net. |
+| `promote_status` | Recent Promote posts and their status (posted / queued / failed). `{ limit? }` |
+
 Cookie-auth platforms (reddit/facebook/…) publish asynchronously, so their
 result reads **`queued`** — the post lands shortly after and the View-post link
 appears in the app's Promote history.

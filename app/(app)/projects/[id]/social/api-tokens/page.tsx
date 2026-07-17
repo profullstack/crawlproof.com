@@ -131,10 +131,12 @@ function McpServerSection() {
       </div>
 
       <p className="text-xs text-[var(--color-muted)]">
-        Set <code>CRAWLPROOF_MCP_TOKEN</code> to a token above. Tools:{" "}
-        <code>list_accounts</code>, <code>generate_promo_post</code>, <code>post_to_socials</code>,{" "}
-        <code>promote_url</code>. The <code>Accept: application/json, text/event-stream</code> header
-        is required. Cookie-auth platforms report <code>queued</code> — the post lands shortly after.
+        Set <code>CRAWLPROOF_MCP_TOKEN</code> to a token above. Tools —{" "}
+        <em>promote:</em> <code>list_accounts</code>, <code>generate_promo_post</code>,{" "}
+        <code>post_to_socials</code>, <code>promote_url</code>; <em>stats (read-only):</em>{" "}
+        <code>list_projects</code>, <code>recent_audits</code>, <code>ad_earnings</code>,{" "}
+        <code>promote_status</code>. The <code>Accept: application/json, text/event-stream</code>{" "}
+        header is required. Cookie-auth platforms report <code>queued</code> — the post lands shortly after.
       </p>
     </section>
   );
