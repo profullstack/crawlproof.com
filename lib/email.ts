@@ -1,11 +1,14 @@
-import { Resend } from "resend";
+import { createEmailer, type Emailer } from "@profullstack/stack/email";
 import { env } from "./env";
 
-let cached: Resend | null = null;
+let cached: Emailer | null = null;
 function client() {
   if (cached) return cached;
   if (!env.resendApiKey) return null;
-  cached = new Resend(env.resendApiKey);
+  cached = createEmailer({
+    resendApiKey: env.resendApiKey,
+    defaultFrom: env.resendFrom,
+  });
   return cached;
 }
 
@@ -309,7 +312,7 @@ export async function sendAuditReadyEmail(input: {
 }) {
   const c = client();
   if (!c) return;
-  await c.emails.send({
+  await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: `Your AEO audit for ${input.targetUrl} is ready (${input.score}/100)`,
@@ -337,7 +340,7 @@ export async function sendAuditReportPdfEmail(input: {
       return input.targetUrl;
     }
   })();
-  const res = await c.emails.send({
+  const res = await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: `Your CrawlProof audit for ${host} (${input.score}/100)`,
@@ -349,7 +352,7 @@ export async function sendAuditReportPdfEmail(input: {
     }),
     attachments: [{ filename: `crawlproof-${host}.pdf`, content: input.pdf.toString("base64") }],
   });
-  if (res.error) return { sent: false, error: String(res.error) };
+  if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
 
@@ -365,7 +368,7 @@ export async function sendDigestEmail(input: {
         `<li><a href="${r.url}">${r.target}</a> — <strong>${r.score}/100</strong></li>`,
     )
     .join("");
-  await c.emails.send({
+  await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: `Your weekly CrawlProof digest`,
@@ -392,7 +395,7 @@ export async function sendMarketingEmail(input: {
       <a href="${unsubUrl}" style="color:#888">Unsubscribe</a>.
     </p>`;
 
-  const res = await c.emails.send({
+  const res = await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: input.subject,
@@ -402,7 +405,7 @@ export async function sendMarketingEmail(input: {
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     },
   });
-  if (res.error) return { sent: false, error: String(res.error) };
+  if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
 
@@ -425,7 +428,7 @@ export async function sendPurchaseReceiptEmail(input: {
   })}`;
   const filename = `crawlproof-receipt-${input.paymentId.slice(0, 12)}.pdf`;
 
-  const res = await c.emails.send({
+  const res = await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: `Your CrawlProof receipt — ${input.creditsAdded} credit${input.creditsAdded === 1 ? "" : "s"}`,
@@ -439,7 +442,7 @@ export async function sendPurchaseReceiptEmail(input: {
     }),
     attachments: [{ filename, content: input.pdf.toString("base64") }],
   });
-  if (res.error) return { sent: false, error: String(res.error) };
+  if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
 
@@ -487,7 +490,7 @@ export async function sendPremiumDeckEmail(input: {
   if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
 
   const deckUrl = `${env.siteUrl}/pdfs/CrawlProof_Premium_Deck.pdf`;
-  const res = await c.emails.send({
+  const res = await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: "Your CrawlProof premium deck",
@@ -499,7 +502,7 @@ export async function sendPremiumDeckEmail(input: {
       },
     ],
   });
-  if (res.error) return { sent: false, error: String(res.error) };
+  if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
 
@@ -537,14 +540,14 @@ export async function sendHireInquiryEmail(input: {
     ${input.message ? `<p style="margin-top:16px"><strong>Message</strong><br/><pre style="white-space:pre-wrap;font-family:inherit;background:#f6f8fa;padding:12px;border-radius:6px">${esc(input.message)}</pre></p>` : ""}
   </body></html>`;
 
-  const res = await c.emails.send({
+  const res = await c.send({
     from: env.resendFrom,
     to: "hello@crawlproof.com",
     replyTo: input.email,
     subject: `Hire-us inquiry: ${input.name} (${input.website})`,
     html,
   });
-  if (res.error) return { sent: false, error: String(res.error) };
+  if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
 
@@ -595,13 +598,13 @@ export async function sendProjectInviteEmail(input: {
     footerNote: "If you weren't expecting this invitation, you can safely ignore this email.",
   });
 
-  const res = await c.emails.send({
+  const res = await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: `${escapeHtml(input.invitedBy)} invited you to ${escapeHtml(input.projectName)} on CrawlProof`,
     html,
   });
-  if (res.error) return { sent: false, error: String(res.error) };
+  if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
 
@@ -644,12 +647,12 @@ export async function sendOrgInviteEmail(input: {
     footerNote: "If you weren't expecting this invitation, you can safely ignore this email.",
   });
 
-  const res = await c.emails.send({
+  const res = await c.send({
     from: env.resendFrom,
     to: input.to,
     subject: `${escapeHtml(input.invitedBy)} invited you to ${escapeHtml(input.orgName)} on CrawlProof`,
     html,
   });
-  if (res.error) return { sent: false, error: String(res.error) };
+  if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { ReferralProvider } from "@profullstack/referrals/react";
+import { FeedbackWidget } from "@profullstack/stack/feedback";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -150,7 +151,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           strategy="afterInteractive"
         />
         </ReferralProvider>
-      <script async src="https://feedback.profullstack.com/embed/profullstack-feedback.js" data-property="crawlproof.com"></script>
+        <FeedbackWidget property="crawlproof.com" />
       </body>
     </html>
   );
