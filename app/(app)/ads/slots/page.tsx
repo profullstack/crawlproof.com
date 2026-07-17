@@ -95,14 +95,19 @@ export default async function SlotsPage() {
       <Link href="/ads" className="text-sm text-[var(--color-muted)]">
         ← Ad campaigns
       </Link>
-      <div className="mt-4 flex items-center justify-between gap-4">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-3xl font-bold">Monetize your site</h1>
-        {/* Always-visible way to add a site to monetize — a site is a project,
-            so this starts the project-creation flow. Previously the only link
-            to it was hidden inside the empty state. */}
-        <Link href="/projects/new?next=/ads/slots" className="btn btn-primary whitespace-nowrap">
-          Monetize a new site
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/ads/earnings" className="btn whitespace-nowrap">
+            Earnings &amp; reports
+          </Link>
+          {/* Always-visible way to add a site to monetize — a site is a project,
+              so this starts the project-creation flow. Previously the only link
+              to it was hidden inside the empty state. */}
+          <Link href="/projects/new?next=/ads/slots" className="btn btn-primary whitespace-nowrap">
+            Monetize a new site
+          </Link>
+        </div>
       </div>
       <p className="mt-2 text-[var(--color-muted)]">
         Each site you monetize is a CrawlProof <strong>project</strong>. Add a site to
