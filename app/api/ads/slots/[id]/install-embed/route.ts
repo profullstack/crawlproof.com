@@ -15,7 +15,6 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { installAdEmbed } from "@/lib/github/install-ad";
-import { AD_FORMAT_IDS } from "@/lib/ads/formats";
 
 export const runtime = "nodejs";
 
@@ -24,8 +23,6 @@ const bodySchema = z.object({
   repo: z.string().min(1).optional(),
   installation_id: z.number().int().positive().optional(),
   target_path: z.string().max(500).optional(),
-  // Which ad size to install. Defaults to the medium rectangle in the installer.
-  format: z.enum(AD_FORMAT_IDS as [string, ...string[]]).optional(),
 });
 
 type BoundRepo = {
@@ -144,7 +141,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       owner: owner!,
       repo: repo!,
       slotId,
-      format: body.format,
       targetPath: body.target_path,
     });
     await finalize({

@@ -18,6 +18,7 @@ import {
   hasDirective,
   looksLikeCsp,
 } from "./install-tracker";
+import { PUBLISHER_FORMAT_IDS } from "@/lib/ads/formats";
 
 const AD_ORIGIN = env.siteUrl.replace(/\/$/, "");
 const BRANCH_PREFIX = "crawlproof/install-ad-embed";
@@ -67,7 +68,6 @@ export interface InstallAdInput {
   owner: string;
   repo: string;
   slotId: string;
-  format?: string;
   rootPath?: string;
   /** Explicit target file; skips discovery when set. */
   targetPath?: string;
@@ -84,25 +84,32 @@ export interface InstallAdResult {
   detail: string;
 }
 
-const DEFAULT_FORMAT = "banner_300x250";
-
-function rawEmbed(slotId: string, format: string): string {
-  return `<div data-cp-ad data-slot="${slotId}" data-format="${format}"></div>\n    <script src="${AD_ORIGIN}/ad.js" async></script>`;
-}
-
-// JSX/TSX layouts: a self-closing div + next/script <Script>. React renders
-// the valueless data attribute as data-cp-ad="true"; the [data-cp-ad] selector
-// still matches.
-function nextEmbed(slotId: string, format: string): string {
-  return `<div data-cp-ad="" data-slot="${slotId}" data-format="${format}" />\n      <Script src="${AD_ORIGIN}/ad.js" strategy="afterInteractive" />`;
-}
-
 function isJsx(path: string): boolean {
   return /\.(tsx|jsx)$/.test(path);
 }
 
-function embedForPath(slotId: string, format: string, path: string): string {
-  return isJsx(path) ? nextEmbed(slotId, format) : rawEmbed(slotId, format);
+// A single ad unit for one size. JSX/TSX layouts get a self-closing div; React
+// renders the valueless data attribute as data-cp-ad="true", which the
+// [data-cp-ad] selector still matches.
+function unitDiv(slotId: string, format: string, path: string): string {
+  return isJsx(path)
+    ? `<div data-cp-ad="" data-slot="${slotId}" data-format="${format}" />`
+    : `<div data-cp-ad data-slot="${slotId}" data-format="${format}"></div>`;
+}
+
+// The one /ad.js loader shared by every unit on the page.
+function loaderScript(path: string): string {
+  return isJsx(path)
+    ? `<Script src="${AD_ORIGIN}/ad.js" strategy="afterInteractive" />`
+    : `<script src="${AD_ORIGIN}/ad.js" async></script>`;
+}
+
+// We can't reliably tell where each size belongs without understanding the
+// page, so the auto-installer drops a unit for every available size stacked
+// before </body>, plus a single loader. Publishers move/keep whichever they
+// want; empty units simply don't render.
+function embedBlock(slotId: string, formats: readonly string[], path: string): string {
+  return [...formats.map((f) => unitDiv(slotId, f, path)), loaderScript(path)].join("\n");
 }
 
 // Already installed if this slot's embed OR our /ad.js is present.
@@ -127,45 +134,20 @@ function injectBeforeBodyClose(content: string, embed: string, path: string): st
   const prefix = content.slice(0, idx);
   const lineStart = prefix.lastIndexOf("\n") + 1;
   const indent = prefix.slice(lineStart).match(/^\s*/)?.[0] ?? "";
-  let updated = `${prefix}${indent}  ${embed}\n${indent}${content.slice(idx)}`;
-  if (isJsx(path) && /<Script\b/.test(embed) && !/from\s+["']next\/script["']/.test(updated)) {
+  // Indent every line of the (possibly multi-unit) block to the </body> depth.
+  const block = embed
+    .split("\n")
+    .map((line) => `${indent}  ${line}`)
+    .join("\n");
+  let updated = `${prefix}${block}\n${indent}${content.slice(idx)}`;
+  if (isJsx(path) && /<Script\b/.test(block) && !/from\s+["']next\/script["']/.test(updated)) {
     updated = addNextScriptImport(updated);
   }
   return updated;
-}
-
-// Inject right after the opening <body …> tag — the "right place" for a
-// leaderboard, which reads best across the top of the page rather than jammed
-// at the very bottom before </body>. Best-effort: callers fall back to
-// injectBeforeBodyClose when there's no <body> tag (e.g. a React fragment).
-function injectAfterBodyOpen(content: string, embed: string, path: string): string | null {
-  const match = content.match(/<body\b[^>]*>/i);
-  if (!match || match.index == null) return null;
-  const openEnd = match.index + match[0].length;
-  const lineStart = content.lastIndexOf("\n", match.index) + 1;
-  const indent = content.slice(lineStart, match.index).match(/^\s*/)?.[0] ?? "";
-  let updated = `${content.slice(0, openEnd)}\n${indent}  ${embed}${content.slice(openEnd)}`;
-  if (isJsx(path) && /<Script\b/.test(embed) && !/from\s+["']next\/script["']/.test(updated)) {
-    updated = addNextScriptImport(updated);
-  }
-  return updated;
-}
-
-// Sizes that want to sit at the top of the page instead of before </body>.
-const TOP_PLACED_FORMATS = new Set<string>(["banner_728x90"]);
-
-// Choose where a format's embed lands. Leaderboards go up top; everything else
-// (rectangle, mobile, text link) drops in before </body>. Always falls back to
-// the other strategy so a missing <body>/<body …> never blocks the install.
-function injectEmbed(content: string, embed: string, path: string, format: string): string | null {
-  if (TOP_PLACED_FORMATS.has(format)) {
-    return injectAfterBodyOpen(content, embed, path) ?? injectBeforeBodyClose(content, embed, path);
-  }
-  return injectBeforeBodyClose(content, embed, path);
 }
 
 export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdResult> {
-  const format = input.format ?? DEFAULT_FORMAT;
+  const formats = PUBLISHER_FORMAT_IDS;
   const repoMeta = await getRepo({ token: input.token, owner: input.owner, repo: input.repo });
   const base = repoMeta.default_branch;
 
@@ -198,10 +180,10 @@ export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdRe
   // Layout may already carry the embed (e.g. a re-run, or the publisher pasted
   // it by hand). We still open a PR when there's a CSP file to patch.
   const alreadyInstalled = hasAdReference(file.content, input.slotId);
-  const embed = embedForPath(input.slotId, format, file.path);
+  const embed = embedBlock(input.slotId, formats, file.path);
   const updated = alreadyInstalled
     ? null
-    : injectEmbed(file.content, embed, file.path, format);
+    : injectBeforeBodyClose(file.content, embed, file.path);
   if (!alreadyInstalled && !updated) {
     return { status: "noop", path: file.path, detail: `No <body> tag in ${file.path}.` };
   }
@@ -242,7 +224,7 @@ export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdRe
       repo: input.repo,
       path: file.path,
       branch,
-      message: "Add CrawlProof ad unit",
+      message: "Add CrawlProof ad units",
       contentUtf8: updated,
       sha: file.sha,
     });
@@ -272,18 +254,18 @@ export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdRe
     repo: input.repo,
     head: branch,
     base,
-    title: updated ? "Add CrawlProof ad unit" : "Allow CrawlProof ads in CSP",
+    title: updated ? "Add CrawlProof ad units" : "Allow CrawlProof ads in CSP",
     body: [
-      "This PR adds the CrawlProof ad unit so this site can show network ads and earn crypto for clicks.",
+      "This PR adds the CrawlProof ad units so this site can show network ads and earn crypto for clicks.",
       "",
       `- Slot: \`${input.slotId}\``,
-      `- Format: \`${format}\``,
+      `- Sizes: ${formats.map((f) => `\`${f}\``).join(", ")}`,
       updated
-        ? `- Injected into \`${file.path}\` before \`</body>\`.`
-        : `- Ad embed already present in \`${file.path}\`.`,
+        ? `- Injected all sizes into \`${file.path}\` before \`</body>\`. Move or delete any you don't want — empty units simply don't render.`
+        : `- Ad units already present in \`${file.path}\`.`,
       cspBody,
       "",
-      "The unit renders inside a sandboxed iframe and never blocks page load. Manage the slot at " +
+      "Each unit renders inside a sandboxed iframe and never blocks page load. Manage the slot at " +
         `${AD_ORIGIN}/ads/slots`,
     ].join("\n"),
   });

@@ -163,7 +163,7 @@ export function SlotManager({
       const res = await fetch(`/api/ads/slots/${slot.id}/install-embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...(pick ?? {}), format: fmt }),
+        body: JSON.stringify(pick ?? {}),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -269,16 +269,25 @@ export function SlotManager({
                 <pre className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-black/30 p-3 text-xs">
                   {embed}
                 </pre>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
+                <div className="mt-2">
                   <button className="btn text-xs" onClick={copy}>
                     {copied ? "Copied!" : "Copy embed"}
-                  </button>
-                  <button className="btn text-xs" onClick={() => submitPr()} disabled={prBusy}>
-                    {prBusy ? "Opening PR…" : "Submit PR to install"}
                   </button>
                 </div>
               </>
             )}
+
+            {/* Auto-install drops a unit for every size before </body> — we
+                can't safely guess where each belongs, so the publisher keeps
+                or moves whichever they want. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-3">
+              <button className="btn text-xs" onClick={() => submitPr()} disabled={prBusy}>
+                {prBusy ? "Opening PR…" : "Submit PR to install all sizes"}
+              </button>
+              <span className="text-xs text-[var(--color-muted)]">
+                Adds every size above <code>&lt;/body&gt;</code>; keep the ones you want.
+              </span>
+            </div>
 
             {repoChoices && (
               <div className="mt-2 rounded border border-[var(--color-border)] p-2 text-xs">
