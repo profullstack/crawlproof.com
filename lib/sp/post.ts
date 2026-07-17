@@ -71,6 +71,11 @@ export type PostOk = {
   postId: string;
   webUrl: string;
   platformPostId: string;
+  // True when the post was only *enqueued* (cookie-auth → async Playwright
+  // worker) and hasn't actually published yet. Callers must not treat this as a
+  // completed post: webUrl/platformPostId are empty and the real outcome is
+  // reconciled later from the worker. Absent/false = published synchronously.
+  pending?: boolean;
 };
 export type PostErr = { ok: false; error: string };
 export type PostResult = PostOk | PostErr;
@@ -137,7 +142,9 @@ export async function postViaAccount(args: {
       return { ok: false, error: insErr?.message ?? "Could not queue post." };
     }
     await enqueueBrowserPost(row.id);
-    return { ok: true, postId: row.id, webUrl: "", platformPostId: "" };
+    // Only enqueued — the Playwright worker publishes later and the caller
+    // reconciles the real URL/status then. Not a completed post.
+    return { ok: true, postId: row.id, webUrl: "", platformPostId: "", pending: true };
   }
 
   let title: string | null = null;

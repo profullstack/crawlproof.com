@@ -1280,7 +1280,7 @@ async function promoteSweep() {
   const r = await processDuePromoteLists(supabase, { anthropic, openai });
   if (r.postsAttempted > 0) {
     console.log(
-      `[worker] promote sweep lists=${r.listsProcessed} attempted=${r.postsAttempted} ok=${r.postsSucceeded} fail=${r.postsFailed} paused=${r.listsPaused}`,
+      `[worker] promote sweep lists=${r.listsProcessed} attempted=${r.postsAttempted} ok=${r.postsSucceeded} pending=${r.postsPending} fail=${r.postsFailed} paused=${r.listsPaused}`,
     );
   }
 }
