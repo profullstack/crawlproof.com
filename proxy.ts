@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { trackReferralCode } from "@profullstack/referrals/next";
+import { trackReferralCode } from "@profullstack/stack/referrals";
 
 type Cookie = { name: string; value: string; options?: CookieOptions };
 
