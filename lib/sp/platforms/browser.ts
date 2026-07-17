@@ -185,6 +185,45 @@ export function parseCookies(raw: string): BrowserCookie[] {
   });
 }
 
+// Keep a cookie session warm: load the platform home with the current cookies
+// and read back the cookies the site issues on that visit — many sites use
+// sliding-expiry session cookies that get extended on activity, so re-saving
+// them lengthens the session. Also reports whether we're still logged in, so a
+// dead session can be flagged proactively (before a scheduled post fails).
+// Cannot revive an already-dead session — a logged-out visit just returns
+// loggedIn:false.
+export async function refreshCookieSession(args: {
+  platform: string;
+  homeUrl: string;
+  cookies: BrowserCookie[];
+}): Promise<{ loggedIn: boolean; cookies: BrowserCookie[] }> {
+  const { browser, ctx } = await launchContext(args.cookies);
+  const page = await ctx.newPage();
+  try {
+    await page.goto(args.homeUrl, { waitUntil: "domcontentloaded" });
+    let loggedIn = true;
+    try {
+      await assertLoggedIn(page, args.platform);
+    } catch {
+      loggedIn = false;
+    }
+    // Playwright's Cookie shape matches BrowserCookie; keep the refreshed set.
+    const fresh: BrowserCookie[] = (await ctx.cookies()).map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      expires: c.expires,
+      httpOnly: c.httpOnly,
+      secure: c.secure,
+      sameSite: c.sameSite as BrowserCookie["sameSite"],
+    }));
+    return { loggedIn, cookies: fresh };
+  } finally {
+    await browser.close();
+  }
+}
+
 // ---------- Reddit ----------
 
 export async function redditBrowserPost(args: {
