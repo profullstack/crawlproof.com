@@ -40,6 +40,28 @@ For clients that only speak stdio, bridge with `mcp-remote`:
 }
 ```
 
+## Raw curl
+
+The Streamable-HTTP transport **requires** `Accept: application/json, text/event-stream`.
+
+```bash
+# list tools
+curl -s https://crawlproof.com/api/mcp \
+  -H "Authorization: Bearer $CRAWLPROOF_MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# write + post in one call
+curl -s https://crawlproof.com/api/mcp \
+  -H "Authorization: Bearer $CRAWLPROOF_MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"promote_url","arguments":{"url":"https://example.com"}}}'
+```
+
+Responses come back as SSE frames (`event: message` / `data: {…}`).
+
 ## Tools (module: `promote`)
 
 | Tool | What it does |
