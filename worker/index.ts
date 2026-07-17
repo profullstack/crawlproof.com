@@ -39,6 +39,7 @@ import { processUserAlerts } from "../lib/alerts/worker";
 import { processDuePortScans } from "../lib/prober-queue";
 import { processDueMonitors } from "../lib/uptime";
 import { processDuePromoteLists } from "../lib/promote/sweep";
+import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1318,6 +1319,25 @@ setInterval(
   15_000,
 );
 
+// Session keep-alive: once a day, reload each cookie-auth social account with
+// its stored cookies and re-save the rotated (sliding-expiry) cookies to extend
+// the session; flag dead sessions token_expired so the user reconnects before a
+// post fails. The 23h gate inside the sweep keeps worker restarts from
+// re-warming a session that was just warmed.
+const DAY_MS = 24 * 60 * 60 * 1000;
+async function sessionRefreshSweep() {
+  const r = await refreshCookieSessions(supabase);
+  if (r.checked > 0) {
+    console.log(
+      `[worker] session refresh checked=${r.checked} refreshed=${r.refreshed} expired=${r.expired} skipped=${r.skipped}`,
+    );
+  }
+}
+setInterval(
+  () => sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e)),
+  DAY_MS,
+);
+
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to
 // run as a separate Railway service.
@@ -1327,4 +1347,5 @@ server.listen(port, bindHost, () => {
   sweep().catch(() => {});
   socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e));
   promoteSweep().catch((e) => console.error("[worker] promote sweep", e));
+  sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
 });
