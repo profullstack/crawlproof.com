@@ -1319,23 +1319,33 @@ setInterval(
   15_000,
 );
 
-// Session keep-alive: once a day, reload each cookie-auth social account with
-// its stored cookies and re-save the rotated (sliding-expiry) cookies to extend
-// the session; flag dead sessions token_expired so the user reconnects before a
-// post fails. The 23h gate inside the sweep keeps worker restarts from
-// re-warming a session that was just warmed.
-const DAY_MS = 24 * 60 * 60 * 1000;
+// Session keep-alive daemon. A FREQUENT tick — not a 24h timer, which would
+// reset on every deploy/restart and so almost never fire. The sweep's 23h
+// per-account DB gate (session_refreshed_at) makes each cookie account actually
+// refresh about once a day, restart-proof: whatever tick lands after an account
+// crosses 23h re-warms it. Reloads each active cookie account with its stored
+// cookies and re-saves the rotated (sliding-expiry) cookies to extend the
+// session; flags dead sessions token_expired so the user reconnects before a
+// post fails. Most ticks find nothing due and are a cheap no-op query.
+const SESSION_REFRESH_TICK_MS = 30 * 60 * 1000; // 30 min
+let sessionRefreshRunning = false;
 async function sessionRefreshSweep() {
-  const r = await refreshCookieSessions(supabase);
-  if (r.checked > 0) {
-    console.log(
-      `[worker] session refresh checked=${r.checked} refreshed=${r.refreshed} expired=${r.expired} skipped=${r.skipped}`,
-    );
+  if (sessionRefreshRunning) return; // never overlap runs (browser launches are slow)
+  sessionRefreshRunning = true;
+  try {
+    const r = await refreshCookieSessions(supabase);
+    if (r.checked > 0) {
+      console.log(
+        `[worker] session refresh checked=${r.checked} refreshed=${r.refreshed} expired=${r.expired} skipped=${r.skipped}`,
+      );
+    }
+  } finally {
+    sessionRefreshRunning = false;
   }
 }
 setInterval(
   () => sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e)),
-  DAY_MS,
+  SESSION_REFRESH_TICK_MS,
 );
 
 // Bind to loopback by default so the worker isn't reachable from the public
