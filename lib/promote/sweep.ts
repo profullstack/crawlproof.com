@@ -18,6 +18,9 @@ export type PromoteSweepResult = {
   postsAttempted: number;
   postsSucceeded: number;
   postsFailed: number;
+  // Cookie-auth posts enqueued this sweep but not yet published (reconciled
+  // later by the worker).
+  postsPending: number;
   listsPaused: number;
 };
 
@@ -63,6 +66,7 @@ export async function processDuePromoteLists(
     postsAttempted: 0,
     postsSucceeded: 0,
     postsFailed: 0,
+    postsPending: 0,
     listsPaused: 0,
   };
 
@@ -98,6 +102,7 @@ export async function processDuePromoteLists(
       result.postsAttempted += r.attempted;
       result.postsSucceeded += r.succeeded;
       result.postsFailed += r.failed;
+      result.postsPending += r.pending;
       if (r.paused) result.listsPaused++;
     } catch (err) {
       console.error(
@@ -123,8 +128,8 @@ async function processOneList(
   supabase: SupabaseClient<any>,
   list: PromoList,
   clients: PromoteSweepClients,
-): Promise<{ attempted: number; succeeded: number; failed: number; paused: boolean }> {
-  const out = { attempted: 0, succeeded: 0, failed: 0, paused: false };
+): Promise<{ attempted: number; succeeded: number; failed: number; pending: number; paused: boolean }> {
+  const out = { attempted: 0, succeeded: 0, failed: 0, pending: 0, paused: false };
 
   // Resolve accounts
   const accounts = await resolveAccounts(supabase, list);
@@ -238,7 +243,12 @@ async function processOneList(
         source: "manual", // reuse existing source type
       });
 
-      // Record the promo_post
+      // Cookie-auth posts (reddit/instagram/mastodon/x/linkedin/facebook/threads)
+      // are only *enqueued* here — the Playwright worker publishes later. Record
+      // them as 'pending' with a link to the sp_post so the worker can reconcile
+      // the real URL/status (and refund on failure). Only synchronous API posts
+      // (bluesky/telegram/discord + OAuth reddit/mastodon) are 'posted' now.
+      const isPending = postResult.ok && postResult.pending === true;
       await supabase.from("promo_post").insert({
         list_id: list.id,
         link_id: targetLink.id,
@@ -247,23 +257,27 @@ async function processOneList(
         body: pitch.body,
         provider: pitch.provider,
         model: pitch.model,
-        status: postResult.ok ? "posted" : "failed",
-        external_post_id: postResult.ok ? postResult.platformPostId : null,
-        post_url: postResult.ok ? postResult.webUrl || null : null,
+        status: !postResult.ok ? "failed" : isPending ? "pending" : "posted",
+        external_post_id: postResult.ok && !isPending ? postResult.platformPostId : null,
+        post_url: postResult.ok && !isPending ? postResult.webUrl || null : null,
         error: postResult.ok ? null : postResult.error,
         credits_spent: 1,
-        posted_at: postResult.ok ? new Date().toISOString() : null,
+        posted_at: postResult.ok && !isPending ? new Date().toISOString() : null,
+        sp_post_id: postResult.ok && isPending ? postResult.postId : null,
       });
 
-      if (postResult.ok) {
-        out.succeeded++;
-      } else {
+      if (!postResult.ok) {
         out.failed++;
-        // Refund credit on post failure
+        // Synchronous failure — refund the credit now. (Async cookie failures
+        // are refunded later by reconcilePromo in the worker.)
         await supabase.rpc("consume_credit", {
           p_owner: list.user_id,
           p_count: -1,
         });
+      } else if (isPending) {
+        out.pending++;
+      } else {
+        out.succeeded++;
       }
     } catch (err) {
       out.failed++;

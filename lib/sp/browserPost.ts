@@ -32,6 +32,7 @@ import {
   type ImageStylePref,
 } from "@/lib/sp/imageGen";
 import { reconcileOutreach } from "@/lib/sp/outreachReconcile";
+import { reconcilePromo } from "@/lib/promote/reconcilePromo";
 import { pickDefaultSubreddit } from "@/lib/sp/redditSubreddit";
 import { makeCodeWaiter } from "@/lib/sp/verificationChallenge";
 
@@ -176,6 +177,10 @@ export async function processBrowserPost(args: {
       auth_mode: "cookie",
     });
     await reconcileOutreach(supabase, postId, "sent", null);
+    await reconcilePromo(supabase, postId, "posted", {
+      postUrl: result.webUrl,
+      platformPostId: result.platformPostId,
+    });
     console.log(`[browser-post] ${postId} published to ${account.platform} → ${result.webUrl}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -230,4 +235,5 @@ async function fail(
     auth_mode: "cookie",
   });
   await reconcileOutreach(supabase, postId, "failed", message);
+  await reconcilePromo(supabase, postId, "failed", { error: message });
 }

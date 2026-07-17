@@ -162,7 +162,9 @@ export default async function PromoteDetailPage({ params }: Props) {
                         p.status === "posted" ? "badge-pass" : p.status === "failed" ? "badge-fail" : ""
                       }`}
                     >
-                      {p.status}
+                      {/* Cookie-auth posts land as 'pending' until the browser
+                          worker publishes and reconciles the real outcome. */}
+                      {p.status === "pending" ? "posting…" : p.status}
                     </span>
                     {p.provider && (
                       <span className="text-xs text-[var(--color-muted)]">via {p.provider}</span>
