@@ -63,6 +63,19 @@ const snippet = `(function(){
           iframe.style.display = 'block';
           iframe.srcdoc = res.html;
           el.innerHTML = '';
+          // A subtle disclosure label above the unit, linking back to
+          // CrawlProof. Skipped for the native text link, which already carries
+          // its own 'Sponsored' mark. Muted + no underline so it stays quiet on
+          // any host page.
+          if (format !== 'text_link') {
+            var cap = document.createElement('a');
+            cap.href = ORIGIN + '/?utm_source=ad-label&utm_medium=ad&utm_campaign=advertisement';
+            cap.target = '_blank';
+            cap.rel = 'noopener sponsored';
+            cap.textContent = 'Advertisement';
+            cap.style.cssText = 'display:block;margin:0 0 3px;font:600 9px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#8a94a3;text-decoration:none;opacity:.75';
+            el.appendChild(cap);
+          }
           el.appendChild(iframe);
         })
         .catch(function(){ el.removeAttribute('data-cp-filled'); });
