@@ -23,6 +23,7 @@ export const PUBLISHER_FORMAT_IDS: AdFormatId[] = [
   "banner_300x250",
   "banner_728x90",
   "banner_320x50",
+  "text_link",
 ];
 
 export function formatSpec(id: AdFormatId) {
