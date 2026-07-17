@@ -23,11 +23,25 @@ function dayAxis(days: number): string[] {
   return out;
 }
 
+type DailySeriesRow = {
+  campaign_id: string;
+  day: string; // YYYY-MM-DD (UTC)
+  impressions: number | string;
+  clicks: number | string;
+  spent_cents: number | string;
+};
+
 /**
- * Per-campaign daily impressions / clicks / spend for the last `days`, built by
- * aggregating raw ad_impressions + ad_clicks rows in JS. RLS lets a campaign
- * owner read their own event rows (see 20260707140000_ad_serving.sql), so no
- * extra view/RPC — and no prod migration — is needed.
+ * Per-campaign daily impressions / clicks / spend for the last `days`.
+ *
+ * Aggregated server-side by the ad_campaign_daily_series RPC (security_invoker,
+ * so RLS scopes it to the caller's own campaigns). We must NOT fetch and bucket
+ * raw ad_impressions rows here: PostgREST caps a response at 1000 rows, so once
+ * total impressions in the window exceed 1000 a few high-volume campaigns eat
+ * the whole page and every other campaign gets zero rows back — rendering
+ * "no traffic yet" despite having recent impressions. The RPC returns at most
+ * (campaigns * days) rows, so it never hits the cap.
+ * See migration 20260717032002_ad_campaign_daily_series_rpc.sql.
  */
 export async function getCampaignDailySeries(
   supabase: SupabaseClient,
@@ -49,40 +63,18 @@ export async function getCampaignDailySeries(
     index.set(id, byDay);
   }
 
-  const since = new Date(
-    Date.now() - (days - 1) * 86_400_000,
-  );
-  const sinceStart = new Date(
-    Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()),
-  ).toISOString();
+  const { data, error } = await supabase.rpc("ad_campaign_daily_series", {
+    days,
+  });
+  // On error, fall back to the zero-filled series rather than throwing the page.
+  if (error) return result;
 
-  const [{ data: imps }, { data: clicks }] = await Promise.all([
-    supabase
-      .from("ad_impressions")
-      .select("campaign_id, ts")
-      .in("campaign_id", campaignIds)
-      .gte("ts", sinceStart),
-    supabase
-      .from("ad_clicks")
-      .select("campaign_id, ts, charged_cents, valid")
-      .in("campaign_id", campaignIds)
-      .eq("valid", true)
-      .gte("ts", sinceStart),
-  ]);
-
-  for (const row of (imps as { campaign_id: string; ts: string }[]) ?? []) {
-    const point = index.get(row.campaign_id)?.get(dayKey(row.ts));
-    if (point) point.impressions += 1;
-  }
-  for (const row of (clicks as {
-    campaign_id: string;
-    ts: string;
-    charged_cents: number | null;
-  }[]) ?? []) {
-    const point = index.get(row.campaign_id)?.get(dayKey(row.ts));
+  for (const row of (data as DailySeriesRow[]) ?? []) {
+    const point = index.get(row.campaign_id)?.get(dayKey(row.day));
     if (point) {
-      point.clicks += 1;
-      point.spentCents += row.charged_cents ?? 0;
+      point.impressions += Number(row.impressions) || 0;
+      point.clicks += Number(row.clicks) || 0;
+      point.spentCents += Number(row.spent_cents) || 0;
     }
   }
 
