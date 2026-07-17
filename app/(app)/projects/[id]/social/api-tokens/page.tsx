@@ -135,7 +135,8 @@ function McpServerSection() {
         <em>promote:</em> <code>list_accounts</code>, <code>generate_promo_post</code>,{" "}
         <code>post_to_socials</code>, <code>promote_url</code>; <em>stats (read-only):</em>{" "}
         <code>list_projects</code>, <code>recent_audits</code>, <code>ad_earnings</code>,{" "}
-        <code>promote_status</code>. The <code>Accept: application/json, text/event-stream</code>{" "}
+        <code>promote_status</code>; <em>audits:</em> <code>start_audit</code>, <code>get_audit</code>.
+        The <code>Accept: application/json, text/event-stream</code>{" "}
         header is required. Cookie-auth platforms report <code>queued</code> — the post lands shortly after.
       </p>
     </section>

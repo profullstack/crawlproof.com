@@ -80,6 +80,15 @@ Responses come back as SSE frames (`event: message` / `data: {…}`).
 | `ad_earnings` | Ad-network money summary — earned (publisher), spent (advertiser), net. |
 | `promote_status` | Recent Promote posts and their status (posted / queued / failed). `{ limit? }` |
 
+## Tools (module: `audits`)
+
+AEO audits run asynchronously, so this is a start + poll pair.
+
+| Tool | What it does |
+|------|--------------|
+| `start_audit` | Kick off an AEO audit of a URL; returns a run id. Engines default to rule+dns (free); AI engines cost credits. `{ url, engines? }` |
+| `get_audit` | Per-engine status + scores for a run. `{ run_id }` |
+
 Cookie-auth platforms (reddit/facebook/…) publish asynchronously, so their
 result reads **`queued`** — the post lands shortly after and the View-post link
 appears in the app's Promote history.
