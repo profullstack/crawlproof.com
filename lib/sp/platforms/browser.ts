@@ -39,6 +39,11 @@ export const LOGIN_WALL_PREFIX = "SESSION_EXPIRED";
 // app — otherwise the composer selectors just time out opaquely. Detects a
 // login URL or a visible password field.
 async function assertLoggedIn(page: Page, platform: string): Promise<void> {
+  // SPAs (Instagram, Threads, …) redirect to a login/signup page CLIENT-SIDE,
+  // AFTER domcontentloaded. Checking the URL immediately lets a dead session
+  // slip through — then the composer selectors just time out opaquely instead
+  // of reporting "reconnect your cookies". Let the app settle first.
+  await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
   const url = page.url().toLowerCase();
   const onLogin =
     /\/login|\/signin|\/sign_in|\/uas\/login|accounts\/login|accounts\/emailsignup|\/signup|\/auth\/login/.test(
@@ -49,7 +54,13 @@ async function assertLoggedIn(page: Page, platform: string): Promise<void> {
     .first()
     .isVisible({ timeout: 1500 })
     .catch(() => false);
-  if (onLogin || passwordVisible) {
+  // A near-empty document means the session didn't authenticate or the headless
+  // browser was blocked — e.g. Threads served a ~40-char shell to a dead cookie
+  // set (confirmed from a captured failure). Treat it as a login wall so the
+  // account gets flagged token_expired and the user is told to reconnect.
+  const bodyText = (await page.locator("body").innerText({ timeout: 2500 }).catch(() => "")).trim();
+  const looksEmpty = bodyText.length < 15;
+  if (onLogin || passwordVisible || looksEmpty) {
     throw new Error(
       `${LOGIN_WALL_PREFIX}: ${platform} session expired — reconnect the account with fresh cookies.`,
     );
@@ -139,9 +150,15 @@ async function captureDom(page: Page, err: unknown): Promise<BrowserPostError> {
   if (err instanceof Error && err.stack) e.stack = err.stack;
   try {
     e.pageUrl = page.url();
-    // Trim — some platform pages are megabytes of inline JSON. This is plenty
-    // to find the compose/form selectors.
-    e.pageHtml = (await page.content()).slice(0, 600_000);
+    // Capture the BODY, not the whole document: sites like Facebook put
+    // megabytes of inline JSON/scripts in <head>, which otherwise eats the whole
+    // budget and truncates before the composer we're trying to debug. Fall back
+    // to full content if body isn't available.
+    const bodyHtml = await page
+      .locator("body")
+      .evaluate((el) => (el as HTMLElement).outerHTML)
+      .catch(() => null);
+    e.pageHtml = (bodyHtml ?? (await page.content())).slice(0, 600_000);
   } catch {
     // Page may already be gone; keep the original message.
   }
@@ -209,11 +226,18 @@ export async function redditBrowserPost(args: {
     // Body — a Lexical contenteditable inside <shreddit-composer name="body">
     // (confirmed: <div data-lexical-editor="true" contenteditable="true">).
     // Lexical ignores programmatic value setting, so type via the keyboard.
+    // The real body editor is the lexical contenteditable inside
+    // <shreddit-composer name="body">. Confirmed from a captured failure DOM:
+    // Reddit ALSO renders a second data-lexical-editor inside
+    // <r-post-flair-edit-modal> (the flair picker) with slot="editor" — hidden —
+    // which is what the old `.first()` / `[slot="editor"]` selectors grabbed and
+    // then timed out waiting to become visible. Scope to the body composer and
+    // require :visible so neither the flair editor nor a mobile-breakpoint copy
+    // can win.
     const bodyEditor = page
-      .locator('div[data-lexical-editor="true"][contenteditable="true"]')
-      .or(page.locator('shreddit-composer [contenteditable="true"]'))
-      .or(page.locator('[slot="editor"][contenteditable="true"]'))
-      .or(page.locator('[data-testid="post-content"] [contenteditable="true"]'))
+      .locator('shreddit-composer[name="body"] [contenteditable="true"]:visible')
+      .or(page.locator('shreddit-composer[name="body"] [data-lexical-editor="true"]:visible'))
+      .or(page.locator('div[data-lexical-editor="true"][contenteditable="true"]:visible'))
       .first();
     await bodyEditor.waitFor({ timeout: 12_000 });
     await bodyEditor.click();
@@ -259,16 +283,19 @@ export async function facebookBrowserPost(args: {
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Facebook"));
     await assertLoggedIn(page, "Facebook");
 
-    // Click the "Write something..." composer
-    const composer = page.getByPlaceholder(/write something/i)
-      .or(page.getByRole("button", { name: /write something/i }))
-      .or(page.locator('[aria-label*="create"]').first())
+    // Click the composer. NB: the old `[aria-label*="create"]` fallback matched
+    // unrelated hidden elements (e.g. "…why you created moshcoding") — a
+    // substring hit on "created" — which is what timed out. Match the real
+    // composer by its button text instead.
+    const composer = page
+      .getByRole("button", { name: /write something|start a post|create a post|what's on your mind/i })
+      .or(page.getByPlaceholder(/write something|what's on your mind/i))
       .first();
     await composer.waitFor({ timeout: 10_000 });
     await composer.click();
 
-    // Type in the post dialog
-    const editor = page.locator('[contenteditable="true"][role="textbox"]').first();
+    // Type in the post dialog (scope to the visible textbox).
+    const editor = page.locator('[contenteditable="true"][role="textbox"]:visible').first();
     await editor.waitFor({ timeout: 8_000 });
     await editor.fill(text);
 
@@ -327,17 +354,19 @@ export async function threadsBrowserPost(args: {
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Threads"));
     await assertLoggedIn(page, "Threads");
 
-    // New Thread button
+    // Open the composer. Threads' compose entry has drifted; try the common
+    // labels + the "What's new?" inline trigger before the generic fallbacks.
     const newThreadBtn = page
-      .getByRole("link", { name: /new thread/i })
-      .or(page.getByRole("button", { name: /new thread/i }))
-      .or(page.locator('[aria-label*="thread" i]').first())
+      .getByRole("link", { name: /new thread|create|post/i })
+      .or(page.getByRole("button", { name: /new thread|create|post/i }))
+      .or(page.getByText(/what's new\?/i))
+      .or(page.locator('[aria-label*="new thread" i], [aria-label*="create" i]').first())
       .first();
     await newThreadBtn.waitFor({ timeout: 10_000 });
     await newThreadBtn.click();
 
-    // Text editor in the compose dialog
-    const editor = page.locator('[contenteditable="true"]').last();
+    // Text editor in the compose dialog (visible one only).
+    const editor = page.locator('[contenteditable="true"]:visible').last();
     await editor.waitFor({ timeout: 8_000 });
     await editor.click();
     await editor.fill(text);
@@ -409,9 +438,11 @@ export async function instagramBrowserPost(args: {
       await createBtn.waitFor({ timeout: 10_000 });
       await createBtn.click();
 
-      // File input (hidden; activated by the create dialog)
+      // File input is display:none — wait for it ATTACHED, not visible (the
+      // reported timeout was waiting for input[type=file] "to be visible",
+      // which a hidden input never satisfies).
       const fileInput = page.locator('input[type="file"]').first();
-      await fileInput.waitFor({ timeout: 8_000 });
+      await fileInput.waitFor({ state: "attached", timeout: 8_000 });
       await fileInput.setInputFiles(tmpPath);
 
       // Next → Next → caption → Share flow
@@ -423,7 +454,9 @@ export async function instagramBrowserPost(args: {
       await page.waitForTimeout(1_000);
 
       // Caption
-      const captionBox = page.locator('textarea[aria-label*="caption" i], [contenteditable="true"]').first();
+      const captionBox = page
+        .locator('textarea[aria-label*="caption" i]:visible, [contenteditable="true"]:visible')
+        .first();
       await captionBox.waitFor({ timeout: 8_000 });
       await captionBox.fill(caption);
 
