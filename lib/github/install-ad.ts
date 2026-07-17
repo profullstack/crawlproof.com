@@ -134,6 +134,36 @@ function injectBeforeBodyClose(content: string, embed: string, path: string): st
   return updated;
 }
 
+// Inject right after the opening <body …> tag — the "right place" for a
+// leaderboard, which reads best across the top of the page rather than jammed
+// at the very bottom before </body>. Best-effort: callers fall back to
+// injectBeforeBodyClose when there's no <body> tag (e.g. a React fragment).
+function injectAfterBodyOpen(content: string, embed: string, path: string): string | null {
+  const match = content.match(/<body\b[^>]*>/i);
+  if (!match || match.index == null) return null;
+  const openEnd = match.index + match[0].length;
+  const lineStart = content.lastIndexOf("\n", match.index) + 1;
+  const indent = content.slice(lineStart, match.index).match(/^\s*/)?.[0] ?? "";
+  let updated = `${content.slice(0, openEnd)}\n${indent}  ${embed}${content.slice(openEnd)}`;
+  if (isJsx(path) && /<Script\b/.test(embed) && !/from\s+["']next\/script["']/.test(updated)) {
+    updated = addNextScriptImport(updated);
+  }
+  return updated;
+}
+
+// Sizes that want to sit at the top of the page instead of before </body>.
+const TOP_PLACED_FORMATS = new Set<string>(["banner_728x90"]);
+
+// Choose where a format's embed lands. Leaderboards go up top; everything else
+// (rectangle, mobile, text link) drops in before </body>. Always falls back to
+// the other strategy so a missing <body>/<body …> never blocks the install.
+function injectEmbed(content: string, embed: string, path: string, format: string): string | null {
+  if (TOP_PLACED_FORMATS.has(format)) {
+    return injectAfterBodyOpen(content, embed, path) ?? injectBeforeBodyClose(content, embed, path);
+  }
+  return injectBeforeBodyClose(content, embed, path);
+}
+
 export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdResult> {
   const format = input.format ?? DEFAULT_FORMAT;
   const repoMeta = await getRepo({ token: input.token, owner: input.owner, repo: input.repo });
@@ -171,9 +201,9 @@ export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdRe
   const embed = embedForPath(input.slotId, format, file.path);
   const updated = alreadyInstalled
     ? null
-    : injectBeforeBodyClose(file.content, embed, file.path);
+    : injectEmbed(file.content, embed, file.path, format);
   if (!alreadyInstalled && !updated) {
-    return { status: "noop", path: file.path, detail: `No </body> tag in ${file.path}.` };
+    return { status: "noop", path: file.path, detail: `No <body> tag in ${file.path}.` };
   }
 
   // Patch the site's CSP so the browser can load /ad.js, reach /api/ads/serve,
