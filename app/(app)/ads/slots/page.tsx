@@ -95,7 +95,15 @@ export default async function SlotsPage() {
       <Link href="/ads" className="text-sm text-[var(--color-muted)]">
         ← Ad campaigns
       </Link>
-      <h1 className="mt-4 text-3xl font-bold">Monetize your site</h1>
+      <div className="mt-4 flex items-center justify-between gap-4">
+        <h1 className="text-3xl font-bold">Monetize your site</h1>
+        {/* Always-visible way to add a site to monetize — a site is a project,
+            so this starts the project-creation flow. Previously the only link
+            to it was hidden inside the empty state. */}
+        <Link href="/projects/new?next=/ads/slots" className="btn btn-primary whitespace-nowrap">
+          Monetize a new site
+        </Link>
+      </div>
       <p className="mt-2 text-[var(--color-muted)]">
         Show CrawlProof network ads on your site and earn crypto for the clicks. Opt a
         project in, drop one tag on your page, and add a payout wallet.
@@ -104,7 +112,7 @@ export default async function SlotsPage() {
       {projects.length === 0 ? (
         <div className="card mt-6 p-8 text-center text-[var(--color-muted)]">
           You have no projects yet.{" "}
-          <Link href="/projects/new" className="text-[var(--color-accent)]">
+          <Link href="/projects/new?next=/ads/slots" className="text-[var(--color-accent)]">
             Create one
           </Link>{" "}
           to enable a slot.
