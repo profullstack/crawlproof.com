@@ -209,11 +209,14 @@ export async function redditBrowserPost(args: {
     // Body — a Lexical contenteditable inside <shreddit-composer name="body">
     // (confirmed: <div data-lexical-editor="true" contenteditable="true">).
     // Lexical ignores programmatic value setting, so type via the keyboard.
+    // Scope to :visible — Reddit renders a hidden lexical-editor template that
+    // otherwise wins .first() and never becomes visible (the reported timeout:
+    // "locator resolved to hidden <div ... data-lexical-editor …>").
     const bodyEditor = page
-      .locator('div[data-lexical-editor="true"][contenteditable="true"]')
-      .or(page.locator('shreddit-composer [contenteditable="true"]'))
-      .or(page.locator('[slot="editor"][contenteditable="true"]'))
-      .or(page.locator('[data-testid="post-content"] [contenteditable="true"]'))
+      .locator('div[data-lexical-editor="true"][contenteditable="true"]:visible')
+      .or(page.locator('shreddit-composer [contenteditable="true"]:visible'))
+      .or(page.locator('[slot="editor"][contenteditable="true"]:visible'))
+      .or(page.locator('[data-testid="post-content"] [contenteditable="true"]:visible'))
       .first();
     await bodyEditor.waitFor({ timeout: 12_000 });
     await bodyEditor.click();
@@ -259,16 +262,19 @@ export async function facebookBrowserPost(args: {
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Facebook"));
     await assertLoggedIn(page, "Facebook");
 
-    // Click the "Write something..." composer
-    const composer = page.getByPlaceholder(/write something/i)
-      .or(page.getByRole("button", { name: /write something/i }))
-      .or(page.locator('[aria-label*="create"]').first())
+    // Click the composer. NB: the old `[aria-label*="create"]` fallback matched
+    // unrelated hidden elements (e.g. "…why you created moshcoding") — a
+    // substring hit on "created" — which is what timed out. Match the real
+    // composer by its button text instead.
+    const composer = page
+      .getByRole("button", { name: /write something|start a post|create a post|what's on your mind/i })
+      .or(page.getByPlaceholder(/write something|what's on your mind/i))
       .first();
     await composer.waitFor({ timeout: 10_000 });
     await composer.click();
 
-    // Type in the post dialog
-    const editor = page.locator('[contenteditable="true"][role="textbox"]').first();
+    // Type in the post dialog (scope to the visible textbox).
+    const editor = page.locator('[contenteditable="true"][role="textbox"]:visible').first();
     await editor.waitFor({ timeout: 8_000 });
     await editor.fill(text);
 
@@ -327,17 +333,19 @@ export async function threadsBrowserPost(args: {
     if (waitForCode) await handleCodeChallenge(page, waitForCode, codePrompt("Threads"));
     await assertLoggedIn(page, "Threads");
 
-    // New Thread button
+    // Open the composer. Threads' compose entry has drifted; try the common
+    // labels + the "What's new?" inline trigger before the generic fallbacks.
     const newThreadBtn = page
-      .getByRole("link", { name: /new thread/i })
-      .or(page.getByRole("button", { name: /new thread/i }))
-      .or(page.locator('[aria-label*="thread" i]').first())
+      .getByRole("link", { name: /new thread|create|post/i })
+      .or(page.getByRole("button", { name: /new thread|create|post/i }))
+      .or(page.getByText(/what's new\?/i))
+      .or(page.locator('[aria-label*="new thread" i], [aria-label*="create" i]').first())
       .first();
     await newThreadBtn.waitFor({ timeout: 10_000 });
     await newThreadBtn.click();
 
-    // Text editor in the compose dialog
-    const editor = page.locator('[contenteditable="true"]').last();
+    // Text editor in the compose dialog (visible one only).
+    const editor = page.locator('[contenteditable="true"]:visible').last();
     await editor.waitFor({ timeout: 8_000 });
     await editor.click();
     await editor.fill(text);
@@ -409,9 +417,11 @@ export async function instagramBrowserPost(args: {
       await createBtn.waitFor({ timeout: 10_000 });
       await createBtn.click();
 
-      // File input (hidden; activated by the create dialog)
+      // File input is display:none — wait for it ATTACHED, not visible (the
+      // reported timeout was waiting for input[type=file] "to be visible",
+      // which a hidden input never satisfies).
       const fileInput = page.locator('input[type="file"]').first();
-      await fileInput.waitFor({ timeout: 8_000 });
+      await fileInput.waitFor({ state: "attached", timeout: 8_000 });
       await fileInput.setInputFiles(tmpPath);
 
       // Next → Next → caption → Share flow
@@ -423,7 +433,9 @@ export async function instagramBrowserPost(args: {
       await page.waitForTimeout(1_000);
 
       // Caption
-      const captionBox = page.locator('textarea[aria-label*="caption" i], [contenteditable="true"]').first();
+      const captionBox = page
+        .locator('textarea[aria-label*="caption" i]:visible, [contenteditable="true"]:visible')
+        .first();
       await captionBox.waitFor({ timeout: 8_000 });
       await captionBox.fill(caption);
 
