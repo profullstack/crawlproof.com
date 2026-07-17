@@ -18,6 +18,7 @@ type AccountRow = {
   status: string;
   last_post_at: string | null;
   consecutive_failures: number;
+  session_refreshed_at: string | null;
 };
 
 const PLATFORM_LOGIN_URLS: Record<string, string | undefined> = {
@@ -39,7 +40,7 @@ export default async function PromoteAccountsPage() {
   const { data: accounts } = await supabase
     .from("sp_account")
     .select(
-      "id, platform, handle, status, last_post_at, consecutive_failures",
+      "id, platform, handle, status, last_post_at, consecutive_failures, session_refreshed_at",
     )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
@@ -96,6 +97,11 @@ export default async function PromoteAccountsPage() {
                   {a.last_post_at && (
                     <p className="mt-1 text-xs text-[var(--color-muted)]">
                       Last post {new Date(a.last_post_at).toLocaleString()}
+                    </p>
+                  )}
+                  {a.status === "active" && a.session_refreshed_at && (
+                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                      Session kept alive {new Date(a.session_refreshed_at).toLocaleString()}
                     </p>
                   )}
                   {a.status !== "active" && PLATFORM_LOGIN_URLS[a.platform] && (
