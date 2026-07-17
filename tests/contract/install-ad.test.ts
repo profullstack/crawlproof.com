@@ -130,10 +130,10 @@ describe("installAdEmbed", () => {
     expect(written).toContain("next.config.ts");
   });
 
-  it("places a leaderboard at the top of the page (after <body>), not before </body>", async () => {
+  it("installs every available size before </body> with a single loader", async () => {
     github.files.set(
       "app/layout.tsx",
-      "export default function RootLayout({ children }) {\n  return <html><body><main>{children}</main></body></html>;\n}\n",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
     );
 
     await installAdEmbed({
@@ -141,16 +141,19 @@ describe("installAdEmbed", () => {
       owner: "owner",
       repo: "repo",
       slotId: "slot-abc",
-      format: "banner_728x90",
     });
 
     const write = github.putFile.mock.calls.find((c) => c[0].path === "app/layout.tsx");
     expect(write).toBeDefined();
     const content = write![0].contentUtf8 as string;
-    // The embed carries the requested format and lands before <main>, i.e. right
-    // after <body> rather than at the very bottom of the page.
+    // A unit for every publisher size…
+    expect(content).toContain('data-format="banner_300x250"');
     expect(content).toContain('data-format="banner_728x90"');
-    expect(content.indexOf("data-cp-ad")).toBeLessThan(content.indexOf("<main>"));
+    // …a single shared /ad.js loader for all of them…
+    expect(content.match(/ad\.js/g)?.length).toBe(1);
+    // …and everything lands above </body>.
+    expect(content.indexOf("data-cp-ad")).toBeLessThan(content.indexOf("</body>"));
+    expect(content.lastIndexOf("data-cp-ad")).toBeLessThan(content.indexOf("</body>"));
   });
 
   it("no-ops when the embed exists and no CSP needs changes", async () => {
