@@ -9,6 +9,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { authenticateToken } from "@/lib/sp/apiAuth";
 import { registerPromoteTools } from "@/lib/mcp/promote";
+import { registerStatsTools } from "@/lib/mcp/stats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,7 @@ export const dynamic = "force-dynamic";
 const handler = createMcpHandler(
   (server) => {
     registerPromoteTools(server);
+    registerStatsTools(server);
   },
   {},
   // The route is mounted at /api/mcp, so mcp-handler must derive its endpoint
