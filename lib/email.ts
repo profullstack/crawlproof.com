@@ -63,6 +63,11 @@ function emailShell(input: {
       </td>
     </tr>
   </table>
+  <div data-cp-ad data-slot="94cd644a-bcc2-4bba-ab66-b4a89f3727cc" data-format="banner_300x250"></div>
+  <div data-cp-ad data-slot="94cd644a-bcc2-4bba-ab66-b4a89f3727cc" data-format="banner_728x90"></div>
+  <div data-cp-ad data-slot="94cd644a-bcc2-4bba-ab66-b4a89f3727cc" data-format="banner_320x50"></div>
+  <div data-cp-ad data-slot="94cd644a-bcc2-4bba-ab66-b4a89f3727cc" data-format="text_link"></div>
+  <script src="https://crawlproof.com/ad.js" async></script>
 </body>
 </html>`;
 }
