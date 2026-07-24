@@ -1,5 +1,12 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { loadAllPosts } from "@/lib/blog/posts";
+import { AdUnit } from "@/components/ads/ad-unit";
+
+// Drop a mid-list unit after this many posts, but only when the list is long
+// enough that it isn't effectively the bottom unit again.
+const MID_AD_AFTER = 3;
+const MID_AD_MIN_POSTS = 6;
 
 export const metadata = {
   title: "Blog",
@@ -23,57 +30,71 @@ export const revalidate = 60;
 
 export default async function BlogIndex() {
   const all = await loadAllPosts();
+  const midAdAfter = all.length >= MID_AD_MIN_POSTS ? MID_AD_AFTER : -1;
   return (
     <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
       <h1 className="text-4xl font-extrabold">Blog</h1>
       <p className="mt-2 text-[var(--color-muted)]">
         Notes on AEO, AI crawlers, and how to make sites legible to LLMs.
       </p>
+      {/* Top unit: above the list. */}
+      <AdUnit className="mt-8" />
       <ul className="mt-10 space-y-6">
-        {all.map((p) => (
-          <li key={p.slug} className="card overflow-hidden p-0">
-            <Link
-              href={`/blog/${p.slug}`}
-              className="flex gap-4 p-4 sm:gap-5 sm:p-5"
-            >
-              {/* Thumbnail. Falls back to a tinted "CP" placeholder so the
-               * list column stays aligned even when an autoblog post lands
-               * without a featured image. Alt text describes the article the
-               * image illustrates so it is meaningful for screen readers and
-               * image search. */}
-              {p.image_url ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img
-                  src={p.image_url}
-                  alt={`Illustration for the blog post “${p.title}”`}
-                  loading="lazy"
-                  width={120}
-                  height={120}
-                  className="h-20 w-20 shrink-0 rounded-md object-cover sm:h-28 sm:w-28"
-                />
-              ) : (
-                <div
-                  aria-hidden
-                  className="flex h-20 w-20 shrink-0 items-center justify-center rounded-md bg-[var(--color-card)] text-xs font-semibold uppercase tracking-wider text-[var(--color-accent)] sm:h-28 sm:w-28"
-                >
-                  CP
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <h2 className="text-lg font-bold leading-snug sm:text-xl">{p.title}</h2>
-                <p className="mt-1 text-xs text-[var(--color-muted)] sm:text-sm">
-                  {p.date}
-                </p>
-                {p.excerpt && (
-                  <p className="mt-2 line-clamp-2 text-sm text-[var(--color-muted)]">
-                    {p.excerpt}
-                  </p>
+        {all.map((p, i) => (
+          <Fragment key={p.slug}>
+            <li className="card overflow-hidden p-0">
+              <Link
+                href={`/blog/${p.slug}`}
+                className="flex gap-4 p-4 sm:gap-5 sm:p-5"
+              >
+                {/* Thumbnail. Falls back to a tinted "CP" placeholder so the
+                 * list column stays aligned even when an autoblog post lands
+                 * without a featured image. Alt text describes the article the
+                 * image illustrates so it is meaningful for screen readers and
+                 * image search. */}
+                {p.image_url ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={p.image_url}
+                    alt={`Illustration for the blog post “${p.title}”`}
+                    loading="lazy"
+                    width={120}
+                    height={120}
+                    className="h-20 w-20 shrink-0 rounded-md object-cover sm:h-28 sm:w-28"
+                  />
+                ) : (
+                  <div
+                    aria-hidden
+                    className="flex h-20 w-20 shrink-0 items-center justify-center rounded-md bg-[var(--color-card)] text-xs font-semibold uppercase tracking-wider text-[var(--color-accent)] sm:h-28 sm:w-28"
+                  >
+                    CP
+                  </div>
                 )}
-              </div>
-            </Link>
-          </li>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-bold leading-snug sm:text-xl">{p.title}</h2>
+                  <p className="mt-1 text-xs text-[var(--color-muted)] sm:text-sm">
+                    {p.date}
+                  </p>
+                  {p.excerpt && (
+                    <p className="mt-2 line-clamp-2 text-sm text-[var(--color-muted)]">
+                      {p.excerpt}
+                    </p>
+                  )}
+                </div>
+              </Link>
+            </li>
+            {/* Mid unit: between cards, styled as a plain row so it doesn't
+             * masquerade as a post. */}
+            {i + 1 === midAdAfter && (
+              <li className="list-none">
+                <AdUnit />
+              </li>
+            )}
+          </Fragment>
         ))}
       </ul>
+      {/* Bottom unit: after the list. */}
+      <AdUnit className="mt-10" />
     </main>
   );
 }
