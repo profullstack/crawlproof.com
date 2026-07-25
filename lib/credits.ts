@@ -155,7 +155,7 @@ export const ENGINES: Record<Engine, EngineMeta> = {
       "Google's flagship with live Search grounding. Frames your site the way Google AI Overviews would.",
   },
   deepseek: {
-    label: "DeepSeek V3",
+    label: "DeepSeek V4",
     cost: SCAN_CREDITS,
     available: true,
     blurb:

@@ -65,6 +65,12 @@ export const env = {
   dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? "",   // Qwen
   moonshotApiKey: process.env.MOONSHOT_API_KEY ?? "",     // Kimi
   deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
+  // DeepSeek retired `deepseek-chat` — GET /models now serves only
+  // `deepseek-v4-flash` and `deepseek-v4-pro`, and calling the old alias
+  // 400s ("The supported API model names are deepseek-v4-pro or
+  // deepseek-v4-flash"). Flash matches this engine's "quick, lightweight
+  // second opinion" billing; set DEEPSEEK_MODEL=deepseek-v4-pro to upgrade.
+  deepseekModel: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash",
   zaiApiKey: process.env.ZAI_API_KEY ?? "",               // Z.AI / Zhipu GLM
   // GLM Coding Plan endpoint (monthly subscription). The standard
   // pay-as-you-go endpoint (.../api/paas/v4) returns 429 "insufficient
