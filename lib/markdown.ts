@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { Marked } from "marked";
+import { formatHours, formatUsd, type Quote } from "./audit/quote";
 
 // Server-side Markdown → HTML.
 //
@@ -141,6 +142,11 @@ export function htmlDocument(input: {
     score?: number;
     generatedAt?: string;
   };
+  /**
+   * Remediation offer rendered on the cover. Priced from the report's own
+   * findings by lib/audit/quote.ts — see quoteFromFindings.
+   */
+  quote?: Quote;
 }): string {
   const meta = input.meta ?? {};
   const score = meta.score;
@@ -243,6 +249,50 @@ export function htmlDocument(input: {
     text-transform: uppercase;
     margin-top: 4px;
   }
+  /* Remediation offer — the cover's call to action. */
+  .quote {
+    margin-top: 0.42in;
+    border: 1.5pt solid #059669;
+    border-radius: 6pt;
+    background: #f0fdf9;
+    padding: 14pt 16pt;
+    page-break-inside: avoid;
+  }
+  .quote .kicker {
+    font-size: 8.5pt;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #047857;
+  }
+  .quote .amount {
+    font-size: 26pt;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: #064e3b;
+    margin-top: 3pt;
+  }
+  .quote .amount .unit { font-size: 12pt; font-weight: 600; color: #047857; }
+  .quote .promise { font-size: 11pt; color: #14532d; margin-top: 4pt; }
+  .quote .split {
+    display: flex;
+    gap: 18pt;
+    margin-top: 11pt;
+    padding-top: 10pt;
+    border-top: 1px solid #a7f3d0;
+  }
+  .quote .split div { font-size: 10pt; color: #14532d; }
+  .quote .split .h {
+    display: block;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13pt;
+    font-weight: 700;
+    color: #064e3b;
+  }
+  .quote .drivers { font-size: 9pt; color: #166534; margin-top: 9pt; line-height: 1.45; }
+  .quote .fine { font-size: 8.5pt; color: #3f6212; margin-top: 8pt; }
+
   .meta-list { font-size: 10.5pt; color: #334155; }
   .meta-list dt { color: #64748b; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.1em; }
   .meta-list dd { margin: 2px 0 12px; padding: 0; font-weight: 600; }
@@ -339,12 +389,53 @@ export function htmlDocument(input: {
           <dt>Audit by</dt><dd>CrawlProof · crawlproof.com</dd>
         </dl>
       </div>
+      ${input.quote ? quoteBlock(input.quote, meta.target) : ""}
     </section>
 
     ${decorateStatusPills(input.bodyHtml)}
   </div>
 </body>
 </html>`;
+}
+
+// The cover's "we'll fix this for you" offer. Every number here comes from the
+// findings in the report it's printed on, so the quote and the evidence for it
+// travel together.
+function quoteBlock(q: Quote, target?: string): string {
+  const host = (() => {
+    if (!target) return "your site";
+    try {
+      return new URL(target).hostname;
+    } catch {
+      return target;
+    }
+  })();
+
+  const drivers = q.drivers
+    .slice(0, 4)
+    .map((d) => `${escapeHtml(d.label)} ${formatHours(d.aiHours + d.manualHours)}`)
+    .join(" · ");
+
+  return `<div class="quote">
+        <div class="kicker">Want us to fix this for you?</div>
+        <div class="amount">${formatUsd(q.amountUsd)} <span class="unit">USD${q.cappedForScoping ? "+" : ""}</span></div>
+        <div class="promise">
+          Estimated <strong>${formatHours(q.totalHours)}</strong> at ${formatUsd(q.rateUsd)}/hour to take
+          ${escapeHtml(host)} to a <strong>${q.targetScore}%+ score across the board</strong>.
+        </div>
+        <div class="split">
+          <div><span class="h">${formatHours(q.aiHours)}</span>AI-assisted automation</div>
+          <div><span class="h">${formatHours(q.manualHours)}</span>Manual engineering</div>
+        </div>
+        ${drivers ? `<div class="drivers"><strong>Where the time goes:</strong> ${drivers}</div>` : ""}
+        <div class="fine">
+          Scoped from the ${q.issueCount} open issue${q.issueCount === 1 ? "" : "s"} in this report${
+            q.cappedForScoping
+              ? ", which exceeds a standard remediation — the final figure is confirmed after a scoping call"
+              : ""
+          }. Fixed fee, quoted before work starts. Reply to this report or email hello@crawlproof.com.
+        </div>
+      </div>`;
 }
 
 function escapeHtml(s: string): string {
