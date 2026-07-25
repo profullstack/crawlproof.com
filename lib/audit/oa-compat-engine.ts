@@ -116,7 +116,59 @@ export type OACompatConfig = {
    * request body verbatim.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * How long to wait for the provider's *response headers* before aborting
+   * (default 90s). The SDK clears its timer as soon as `fetch()` resolves,
+   * so on a streaming call this bounds time-to-first-byte only — mid-stream
+   * stalls are caught by `idleTimeoutMs` below, not this.
+   *
+   * Search-grounded providers do all their retrieval before emitting
+   * headers, so they need a much larger budget than a plain chat model.
+   */
+  timeoutMs?: number;
+  /** SDK retry count (default 2 → up to 3 attempts). */
+  maxRetries?: number;
+  /**
+   * Abort if the stream goes this long between chunks (default 90s). This
+   * is the guard the SDK doesn't give us: without it a provider that opens
+   * the stream and then stalls hangs until the worker's stuck-watchdog
+   * fires, burning the whole audit window on a dead connection.
+   */
+  idleTimeoutMs?: number;
 };
+
+/**
+ * Wrap a stream so a gap between chunks longer than `idleMs` aborts the
+ * request instead of hanging. Aborting via the SDK's controller releases
+ * the socket; without it the dead connection lingers for the full run.
+ */
+async function* withIdleTimeout<T>(
+  stream: AsyncIterable<T> & { controller?: AbortController },
+  idleMs: number,
+  label: string,
+): AsyncGenerator<T> {
+  const iterator = stream[Symbol.asyncIterator]();
+  for (;;) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        stream.controller?.abort();
+        reject(
+          new Error(
+            `${label} opened the stream but sent no data for ${Math.round(idleMs / 1000)}s — treating the connection as stalled.`,
+          ),
+        );
+      }, idleMs);
+    });
+    try {
+      const next = await Promise.race([iterator.next(), idle]);
+      if (next.done) return;
+      yield next.value;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+}
 
 export async function oaCompatAudit(
   targetUrl: string,
@@ -138,11 +190,16 @@ export async function oaCompatAudit(
   // homepage scan caused a 10+ min stall against Kimi. Tightened to
   // 90s per attempt × 3 attempts (~4.5 min worst case) so the user sees
   // a real failure they can retry instead of an indefinite spinner.
+  // Engines whose provider searches the web before answering override
+  // timeoutMs; the idle watchdog below is what keeps that safe.
+  const timeoutMs = cfg.timeoutMs ?? 90 * 1000;
+  const maxRetries = cfg.maxRetries ?? 2;
+  const idleTimeoutMs = cfg.idleTimeoutMs ?? 90 * 1000;
   const client = new OpenAI({
     apiKey: cfg.apiKey,
     baseURL: cfg.baseURL,
-    timeout: 90 * 1000,
-    maxRetries: 2,
+    timeout: timeoutMs,
+    maxRetries,
   });
 
   console.log(
@@ -177,8 +234,37 @@ export async function oaCompatAudit(
     });
   } catch (err) {
     if (err instanceof OpenAI.APIError && err.status === 429) {
+      // The message used to hardcode "5 attempts" while maxRetries was 2,
+      // which sent people hunting for a per-minute limit they weren't
+      // actually hitting. Report the real count, and split "you're out of
+      // money" from "you're going too fast" — they need different fixes.
+      const attempts = maxRetries + 1;
+      const e = err as { code?: string | null; type?: string | null };
+      // Real strings seen in prod: OpenAI `insufficient_quota` / "exceeded
+      // your current quota"; Sakana `usage_limit_reached` / "Prepaid credit
+      // balance is exhausted"; Z.AI "insufficient balance".
+      const detail = [e.code, e.type, err.message]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const outOfCredit = [
+        "insufficient_quota",
+        "insufficient balance",
+        "exceeded your current quota",
+        "usage_limit_reached",
+        "balance is exhausted",
+        "add credits",
+        "billing",
+      ].some((needle) => detail.includes(needle));
       throw new Error(
-        `${cfg.providerLabel} rate-limited the request (HTTP 429) after ${4 + 1} attempts. Provider quota is exhausted — check the API key's tier / per-minute limit.`,
+        outOfCredit
+          ? `${cfg.providerLabel} rejected the request (HTTP 429): the account is out of API credit, not rate-limited. Top up billing for this provider — retrying won't help. Provider said: ${err.message}`
+          : `${cfg.providerLabel} rate-limited the request (HTTP 429) after ${attempts} attempt${attempts === 1 ? "" : "s"}. Check the API key's tier / per-minute limit, then retry.`,
+      );
+    }
+    if (err instanceof OpenAI.APIConnectionTimeoutError) {
+      throw new Error(
+        `${cfg.providerLabel} sent no response headers within ${Math.round(timeoutMs / 1000)}s (${maxRetries + 1} attempts). The provider is slow or down — retry, or raise this engine's timeoutMs.`,
       );
     }
     throw err;
@@ -186,7 +272,7 @@ export async function oaCompatAudit(
 
   let raw = "";
   let finishReason: string | null = null;
-  for await (const chunk of stream) {
+  for await (const chunk of withIdleTimeout(stream, idleTimeoutMs, cfg.providerLabel)) {
     const choice = chunk.choices[0];
     const delta = choice?.delta?.content;
     if (delta) raw += delta;

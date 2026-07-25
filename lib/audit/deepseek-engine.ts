@@ -6,10 +6,13 @@ export async function deepseekAudit(targetUrl: string): Promise<ClaudeAuditResul
   return oaCompatAudit(targetUrl, {
     apiKey: env.deepseekApiKey,
     baseURL: "https://api.deepseek.com",
-    // V3 chat model — cheapest of the live engines, OpenAI-compatible.
-    model: "deepseek-chat",
+    // V4 flash — cheapest of the live engines, OpenAI-compatible.
+    // See env.deepseekModel for why the old `deepseek-chat` alias is gone.
+    model: env.deepseekModel,
     providerLabel: "DeepSeek",
-    // deepseek-chat caps max output at 8K (default 4K).
-    maxOutputTokens: 8_192,
+    // The 8K cap was a deepseek-chat limit. V4 accepts 64K, and both V4
+    // tiers are reasoning models whose reasoning_content draws from the
+    // same budget — the old 8K ceiling would truncate the JSON report.
+    maxOutputTokens: 65_536,
   });
 }

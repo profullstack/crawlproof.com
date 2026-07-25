@@ -64,6 +64,27 @@ For each finding:
 
 For score: critical fails dominate. Missing schema, blocking GPTBot, JS-only content → below 50. Clean instrumentation → 80+.`;
 
+/**
+ * A 429 from this engine is almost always `insufficient_quota` — the shared
+ * OPENAI_API_KEY ran out of billing credit — not a per-minute limit. The raw
+ * SDK text ("You exceeded your current quota…") reads like throttling and
+ * sends people to the Retry button, which can never succeed.
+ */
+function explainOpenAIError(err: unknown): unknown {
+  if (err instanceof OpenAI.APIError && err.status === 429) {
+    const code = String((err as { code?: string }).code ?? "");
+    if (code === "insufficient_quota" || /quota|billing/i.test(err.message)) {
+      return new Error(
+        "OpenAI rejected the request (HTTP 429): the OPENAI_API_KEY account is out of API credit, not rate-limited. Top up billing at platform.openai.com — retrying won't help.",
+      );
+    }
+    return new Error(
+      `OpenAI rate-limited the request (HTTP 429). Wait and retry. Provider said: ${err.message}`,
+    );
+  }
+  return err;
+}
+
 export async function openaiAudit(targetUrl: string): Promise<ClaudeAuditResult> {
   if (!env.openaiApiKey) {
     throw new Error("OPENAI_API_KEY is not set — cannot run OpenAI audit.");
@@ -86,16 +107,22 @@ export async function openaiAudit(targetUrl: string): Promise<ClaudeAuditResult>
   // Explicit reasoning.effort=medium so it doesn't default to a
   // minimal reasoning pass and emit a zero-finding shell (same trap
   // Claude hit at effort=low).
-  const response = await client.responses.parse({
-    model: "gpt-5-mini",
-    instructions: SYSTEM_PROMPT,
-    input: userPrompt,
-    tools: [{ type: "web_search_preview" }],
-    reasoning: { effort: "medium" },
-    text: {
-      format: zodTextFormat(ResultSchema, "aeo_audit"),
-    },
-  });
+  // .catch() rather than try/catch so the parsed-output generic still
+  // flows through from zodTextFormat — annotating `let response` erases it.
+  const response = await client.responses
+    .parse({
+      model: "gpt-5-mini",
+      instructions: SYSTEM_PROMPT,
+      input: userPrompt,
+      tools: [{ type: "web_search_preview" }],
+      reasoning: { effort: "medium" },
+      text: {
+        format: zodTextFormat(ResultSchema, "aeo_audit"),
+      },
+    })
+    .catch((err: unknown) => {
+      throw explainOpenAIError(err);
+    });
 
   const parsed = response.output_parsed;
   if (!parsed) {
