@@ -62,6 +62,7 @@ export type Engine =
   | "spec"
   | "dns"
   | "links"
+  | "slop"
   | "vu1nz"
   | "claude"
   | "openai"
@@ -111,6 +112,14 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     available: true,
     blurb:
       "Recursively crawls your root domain (powered by linkinator) and reports every broken link — 404s, dead redirects, unreachable hosts — with the page each was found on. Free.",
+  },
+  slop: {
+    label: "Slop Score",
+    cost: 0,
+    available: true,
+    popular: true,
+    blurb:
+      "Sweeps up to 50 pages and scores how careless your site looks — placeholder copy, near-duplicate pages, leaked template variables, missing first-party evidence, stale dates, design drift — with a per-page fix list. Reports observable defects, not \"was this AI-written\". Free.",
   },
   vu1nz: {
     label: "Vu1nz web scanner",

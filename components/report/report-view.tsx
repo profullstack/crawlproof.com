@@ -1,6 +1,8 @@
 import { SECTIONS } from "@/lib/audit/prompt";
 import { SectionFindings, type FixRun } from "./section";
 import { DataFoundTable } from "./data-found";
+import { SlopMeter } from "./slop-meter";
+import { SLOP_SECTION } from "@/lib/audit/checks/slop";
 import type { Finding } from "@/lib/audit/types";
 import { ENGINES, type Engine } from "@/lib/credits";
 
@@ -98,6 +100,7 @@ export function ReportView({
           }
           return (
             <SectionShell key={s} index={i + 1} title={s}>
+              {s === SLOP_SECTION && <SlopMeter findings={sectionFindings} />}
               <SectionFindings
                 findings={sectionFindings}
                 fixContext={fixContext}
@@ -278,6 +281,7 @@ function EngineReport({
           }
           return (
             <SectionShell key={`${audit.id}-${s}`} index={i + 1} title={s}>
+              {s === SLOP_SECTION && <SlopMeter findings={sectionFindings} />}
               <SectionFindings
                 findings={sectionFindings}
                 fixContext={fixContext}
@@ -294,7 +298,8 @@ export function reportSections(findings: Finding[], engine?: string | null): str
   const findingSections = Array.from(
     new Set(findings.map((f) => f.section).filter(Boolean)),
   );
-  const compactEngine = engine === "dns" || engine === "links" || engine === "spec";
+  const compactEngine =
+    engine === "dns" || engine === "links" || engine === "spec" || engine === "slop";
   if (compactEngine) {
     return findingSections.length > 0 ? findingSections : [...SECTIONS];
   }
