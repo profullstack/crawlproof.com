@@ -6,7 +6,7 @@ import { DEFAULT_PROJECT_ENGINES, ENGINES, selectionCost, type Engine } from "@/
 import { runScanForProject } from "@/app/actions/runAudit";
 import { updateProjectEngines } from "@/app/actions/projects";
 
-const ENGINE_ORDER: Engine[] = ["rule", "spec", "dns", "links", "vu1nz", "claude", "openai", "gemini", "perplexity", "qwen", "kimi", "deepseek", "zai", "fugu"];
+const ENGINE_ORDER: Engine[] = ["rule", "slop", "spec", "dns", "links", "vu1nz", "claude", "openai", "gemini", "perplexity", "qwen", "kimi", "deepseek", "zai", "fugu"];
 
 export function EnginesPanel({
   projectId,
