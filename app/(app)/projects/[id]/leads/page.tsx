@@ -7,6 +7,7 @@ import { LeadFinder } from "@/components/leads/lead-finder";
 import { LeadActions } from "@/components/leads/lead-actions";
 import { CampaignPanel, type CampaignSummary } from "@/components/leads/campaign-panel";
 import { SenderAddress } from "@/components/leads/sender-address";
+import { RefreshLeads } from "@/components/leads/refresh-leads";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 
 export const metadata = { title: "Leads" };
@@ -92,6 +93,12 @@ export default async function LeadsPage({
   const byStatus = new Map<string, number>();
   for (const p of prospects) byStatus.set(p.status, (byStatus.get(p.status) ?? 0) + 1);
 
+  // Leads whose scan may have landed since they were added, plus researched
+  // ones we never found an address for — what "Check scans" would work on.
+  const pendingCount = prospects.filter(
+    (p) => p.channel === "email" && (p.status === "new" || !p.contact_email),
+  ).length;
+
   const since = Date.now() - 24 * 3600 * 1000;
   const liveToday = sends.filter((s) => !s.dry_run && new Date(s.sent_at).getTime() >= since).length;
 
@@ -122,10 +129,13 @@ export default async function LeadsPage({
       <section className="card p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-lg font-semibold">Pipeline</h2>
-          <p className="text-sm text-[var(--color-muted)]">
-            {[...byStatus.entries()].map(([s, n]) => `${n} ${s}`).join(" · ") || "no leads yet"} ·{" "}
-            {liveToday}/{env.outreachDailyCap} sent today
-          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-sm text-[var(--color-muted)]">
+              {[...byStatus.entries()].map(([s, n]) => `${n} ${s}`).join(" · ") || "no leads yet"} ·{" "}
+              {liveToday}/{env.outreachDailyCap} sent today
+            </p>
+            <RefreshLeads projectId={projectId} pendingCount={pendingCount} />
+          </div>
         </div>
 
         {prospects.length === 0 ? (

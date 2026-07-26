@@ -138,6 +138,68 @@ export async function researchLeadAction(input: {
   };
 }
 
+/**
+ * Re-run research on every lead still waiting on a scan.
+ *
+ * The gap this fills: discovery queues a free scan and returns immediately,
+ * so a new lead is created with no findings and no contact. Something has to
+ * come back once the scan lands. A campaign tick does that for its own
+ * leads; leads added by hand from the finder had nothing, so they sat at
+ * "new" forever with "no contact address found" next to a finished scan.
+ */
+export async function refreshLeadsAction(input: {
+  projectId: string;
+  limit?: number;
+}): Promise<Ok<{ note: string; researched: number; contacts: number }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+
+  const { data } = await serviceClient()
+    .from("outreach_prospects")
+    .select("target_key, site_url, campaign_id, status, contact_email")
+    .eq("project_id", input.projectId)
+    .eq("channel", "email")
+    .in("status", ["new", "researched"])
+    .order("created_at", { ascending: true })
+    .limit(Math.min(input.limit ?? 25, 50));
+
+  const rows = (data as Array<{
+    target_key: string;
+    site_url: string | null;
+    campaign_id: string | null;
+    status: string;
+    contact_email: string | null;
+  }> | null) ?? [];
+
+  // Nothing to do for leads that already have what they need.
+  const pending = rows.filter((r) => r.status === "new" || !r.contact_email);
+  if (!pending.length) {
+    return { ok: true, researched: 0, contacts: 0, note: "Every lead is already researched." };
+  }
+
+  let researched = 0;
+  let contacts = 0;
+  let stillScanning = 0;
+  for (const row of pending) {
+    const res = await researchProspect({
+      userId: auth.userId,
+      projectId: input.projectId,
+      url: row.site_url ?? `https://${row.target_key}`,
+      campaignId: row.campaign_id,
+    });
+    if (res.status === "researched") {
+      researched += 1;
+      if (res.contact) contacts += 1;
+    } else if (res.status === "scanning") {
+      stillScanning += 1;
+    }
+  }
+
+  const parts = [`${researched} researched`, `${contacts} with a contact address`];
+  if (stillScanning) parts.push(`${stillScanning} still scanning`);
+  return { ok: true, researched, contacts, note: parts.join(", ") + "." };
+}
+
 export async function draftLeadAction(input: {
   projectId: string;
   host: string;
