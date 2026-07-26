@@ -926,3 +926,95 @@ export function leadCampaignEmailHtml(input: {
     innerHtml,
   });
 }
+
+// ---------------------------------------------------------------- cold outreach
+
+/**
+ * A cold pitch to someone who never gave us their address.
+ *
+ * Deliberately NOT sendMarketingEmail: that footer says "you opted in on
+ * crawlproof.com", which is false here, and its unsubscribe token belongs to
+ * marketing_contacts — putting a cold prospect on that list to give them an
+ * unsubscribe link would also enrol them in the newsletter blast.
+ *
+ * The footer states plainly why they are hearing from us, offers one-click
+ * opt-out for the address and for the whole domain, and carries the postal
+ * address CAN-SPAM §7704(a)(5) requires. Sending refuses without it.
+ */
+export function coldOutreachEmailHtml(input: {
+  host: string;
+  bodyText: string;
+  reportUrl: string | null;
+  unsubscribeUrl: string;
+  postalAddress: string;
+}): string {
+  const paragraphs = input.bodyText
+    .split(/\n{2,}/)
+    .map(
+      (p) =>
+        `<p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#c7cdd8;">${escapeHtml(
+          p,
+        ).replace(/\n/g, "<br>")}</p>`,
+    )
+    .join("");
+
+  const reportBlock = input.reportUrl
+    ? `<tr>
+            <td style="padding:4px 32px 0;">
+              <a href="${input.reportUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                See the full report →
+              </a>
+              <p style="margin:10px 0 0;font-size:12px;line-height:1.6;color:#64748b;">
+                <a href="${input.reportUrl}" style="color:#9aa3b2;word-break:break-all;">${input.reportUrl}</a>
+              </p>
+            </td>
+          </tr>`
+    : "";
+
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              ${paragraphs}
+            </td>
+          </tr>
+          ${reportBlock}
+          <tr><td style="padding:0 32px 20px;"></td></tr>`;
+
+  // Why-you-got-this, opt-out, postal address — the three things a cold
+  // commercial email legally and ethically has to carry.
+  const footerNote = [
+    `You're getting this once because we ran a public scan of ${escapeHtml(input.host)}. No list, no signup — if it's not useful, that's the end of it.`,
+    `<a href="${input.unsubscribeUrl}" style="color:#9aa3b2;">Don't contact me again</a> · <a href="${input.unsubscribeUrl}?scope=domain" style="color:#9aa3b2;">or anyone at ${escapeHtml(input.host)}</a>`,
+    escapeHtml(input.postalAddress),
+  ].join("<br><br>");
+
+  return emailShell({
+    title: `About ${input.host}`,
+    innerHtml,
+    footerNote,
+  });
+}
+
+export async function sendColdOutreachEmail(input: {
+  to: string;
+  subject: string;
+  html: string;
+  unsubscribeUrl: string;
+  replyTo?: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: input.subject,
+    html: input.html,
+    replyTo: input.replyTo,
+    headers: {
+      "List-Unsubscribe": `<${input.unsubscribeUrl}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}

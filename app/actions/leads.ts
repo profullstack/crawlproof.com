@@ -1,0 +1,345 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { serviceClient } from "@/lib/supabase/service";
+import { requireProjectAccess } from "@/lib/lx/currentSite";
+import { env } from "@/lib/env";
+import { normalizeHost, type OutreachStep } from "@/lib/outreach/cold";
+import {
+  PROSPECT_COLUMNS,
+  draftEmail,
+  researchProspect,
+  sendProspectEmail,
+  type ProspectRow,
+} from "@/lib/outreach/pipeline";
+import { addSuppression } from "@/lib/outreach/suppress";
+import { discoverProspects } from "@/lib/outreach/discover";
+import { runEmailCampaignTick, CAMPAIGN_COLUMNS, summarize, type CampaignRow } from "@/lib/outreach/runner";
+
+type Ok<T = Record<string, never>> = { ok: true } & T;
+type Err = { ok: false; error: string };
+
+/**
+ * Leads live under a project, so every action starts by proving the caller
+ * may act on that project. Viewers are excluded: sending mail on a project's
+ * behalf is not a read.
+ */
+async function requireLeadAccess(
+  projectId: string,
+): Promise<{ ok: true; userId: string } | Err> {
+  if (!projectId) return { ok: false, error: "Missing project." };
+  const access = await requireProjectAccess(projectId);
+  if (!access.ok) return { ok: false, error: access.error };
+  if (access.isViewer) return { ok: false, error: "Viewers can't run outreach on this project." };
+  return { ok: true, userId: access.userId };
+}
+
+/**
+ * Everything here goes through the service client after the access check
+ * above, rather than through RLS. The outreach tables have no policies at
+ * all, so a browser session cannot touch them directly — which is what keeps
+ * outreach_sends an honest record of what was sent to whom.
+ */
+async function projectProspect(projectId: string, host: string): Promise<ProspectRow | null> {
+  const { data } = await serviceClient()
+    .from("outreach_prospects")
+    .select(PROSPECT_COLUMNS)
+    .eq("project_id", projectId)
+    .eq("target_key", normalizeHost(host))
+    .maybeSingle();
+  return (data as ProspectRow | null) ?? null;
+}
+
+function leadsPath(projectId: string): string {
+  return `/projects/${projectId}/leads`;
+}
+
+/** Find businesses and queue a free scan for each — the "add leads" button. */
+export async function findLeadsAction(input: {
+  projectId: string;
+  query?: string;
+  seedUrl?: string;
+  limit?: number;
+}): Promise<Ok<{ added: number; scanning: number; note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  if (!input.query?.trim() && !input.seedUrl?.trim()) {
+    return { ok: false, error: "Enter a search query or a directory URL." };
+  }
+
+  const limit = Math.min(input.limit ?? 10, 25);
+  const found = await discoverProspects({
+    queries: input.query?.trim() ? [input.query.trim()] : [],
+    seedUrls: input.seedUrl?.trim() ? [input.seedUrl.trim()] : [],
+    limit,
+  });
+  if (!found.prospects.length) {
+    return { ok: false, error: found.errors.join("; ") || "No businesses found for that search." };
+  }
+
+  let added = 0;
+  let scanning = 0;
+  for (const candidate of found.prospects.slice(0, limit)) {
+    const res = await researchProspect({
+      userId: auth.userId,
+      projectId: input.projectId,
+      url: candidate.url,
+      discoveredVia: candidate.via,
+      discoveryLabel: candidate.label,
+    });
+    if (res.status === "scanning") {
+      scanning += 1;
+      added += 1;
+    } else if (res.status === "researched") {
+      added += 1;
+    }
+  }
+
+  revalidatePath(leadsPath(input.projectId));
+  return {
+    ok: true,
+    added,
+    scanning,
+    note: scanning
+      ? `${added} leads added — ${scanning} are scanning now. Refresh in a minute to see scores.`
+      : `${added} leads added.`,
+  };
+}
+
+/** Re-run research on one lead: pick up a finished scan, refresh the contact. */
+export async function researchLeadAction(input: {
+  projectId: string;
+  host: string;
+  contactEmail?: string;
+}): Promise<Ok<{ note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  const prospect = await projectProspect(input.projectId, input.host);
+  const url = prospect?.site_url ?? `https://${normalizeHost(input.host)}`;
+
+  const res = await researchProspect({
+    userId: auth.userId,
+    projectId: input.projectId,
+    url,
+    campaignId: prospect?.campaign_id ?? null,
+    contactEmail: input.contactEmail,
+  });
+  if (res.status === "error") return { ok: false, error: res.message };
+  revalidatePath(leadsPath(input.projectId));
+  return {
+    ok: true,
+    note:
+      res.status === "scanning"
+        ? res.message
+        : `${res.prospect.target_key}: ${res.prospect.score ?? "—"}/100, ${
+            res.contact ? `contact ${res.contact.email}` : "no contact address published"
+          }.`,
+  };
+}
+
+export async function draftLeadAction(input: {
+  projectId: string;
+  host: string;
+  step?: number;
+  angle?: string;
+}): Promise<Ok<{ subject: string; body: string; to: string | null }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  const prospect = await projectProspect(input.projectId, input.host);
+  if (!prospect) return { ok: false, error: "Lead not found." };
+
+  const step = Math.min(Math.max(input.step ?? (prospect.last_step || 0) + 1, 1), 3) as OutreachStep;
+  const draft = await draftEmail({ prospect, step, angle: input.angle });
+  if (!draft.ok) return { ok: false, error: draft.problems.join("; ") };
+
+  await serviceClient()
+    .from("outreach_prospects")
+    .update({ status: prospect.status === "new" ? "drafted" : prospect.status })
+    .eq("id", prospect.id);
+  revalidatePath(leadsPath(input.projectId));
+  return { ok: true, subject: draft.subject, body: draft.body, to: prospect.contact_email };
+}
+
+export async function sendLeadAction(input: {
+  projectId: string;
+  host: string;
+  subject: string;
+  body: string;
+  step?: number;
+  replyTo?: string;
+  dryRun?: boolean;
+}): Promise<Ok<{ note: string; dryRun: boolean }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  const prospect = await projectProspect(input.projectId, input.host);
+  if (!prospect) return { ok: false, error: "Lead not found." };
+
+  const dryRun = input.dryRun !== false;
+  const step = Math.min(Math.max(input.step ?? 1, 1), 3) as OutreachStep;
+  const outcome = await sendProspectEmail({
+    userId: auth.userId,
+    prospect,
+    subject: input.subject,
+    body: input.body,
+    step,
+    campaign: "leads-ui",
+    replyTo: input.replyTo,
+    dryRun,
+  });
+  if (!outcome.ok) return { ok: false, error: outcome.reason };
+
+  revalidatePath(leadsPath(input.projectId));
+  return {
+    ok: true,
+    dryRun: outcome.dryRun,
+    note: outcome.dryRun
+      ? `Dry run OK — nothing sent. ${outcome.sentToday}/${env.outreachDailyCap} used today.`
+      : `Sent to ${outcome.to}. ${outcome.sentToday + 1}/${env.outreachDailyCap} used today.`,
+  };
+}
+
+export async function suppressLeadAction(input: {
+  projectId: string;
+  value: string;
+  scope?: "email" | "domain" | "reddit_user";
+}): Promise<Ok<{ note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  const scope = input.scope ?? (input.value.includes("@") ? "email" : "domain");
+  const res = await addSuppression({
+    scope,
+    value: input.value,
+    reason: "added from the Leads page",
+    addedBy: auth.userId,
+  });
+  if (!res.ok) return { ok: false, error: res.error ?? "Could not add the suppression." };
+
+  // Take them out of every funnel, not just this project's — the suppression
+  // list is global, so leaving a live row in a sibling project would have the
+  // next tick draft for someone who just asked to be left alone.
+  const sb = serviceClient();
+  if (scope === "domain") {
+    await sb
+      .from("outreach_prospects")
+      .update({ status: "skipped", notes: "do-not-contact" })
+      .eq("target_key", normalizeHost(input.value));
+  } else if (scope === "email") {
+    await sb
+      .from("outreach_prospects")
+      .update({ status: "skipped", notes: "do-not-contact" })
+      .ilike("contact_email", input.value);
+  }
+
+  revalidatePath(leadsPath(input.projectId));
+  return { ok: true, note: `${input.value} will not be contacted again (${scope}).` };
+}
+
+export async function saveCampaignAction(input: {
+  projectId: string;
+  name: string;
+  queries: string;
+  seedUrls: string;
+  maxScore: number;
+  dailySendLimit: number;
+  autoSend: boolean;
+  active: boolean;
+  angle?: string;
+  senderName?: string;
+  replyTo?: string;
+}): Promise<Ok<{ note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  if (!input.name.trim()) return { ok: false, error: "Give the campaign a name." };
+
+  const queries = input.queries.split("\n").map((s) => s.trim()).filter(Boolean);
+  const seedUrls = input.seedUrls.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (!queries.length && !seedUrls.length) {
+    return { ok: false, error: "A campaign needs at least one search query or directory URL." };
+  }
+  if (input.autoSend && !env.outreachPostalAddress) {
+    return {
+      ok: false,
+      error:
+        "OUTREACH_POSTAL_ADDRESS is not set. CAN-SPAM requires a physical postal address in commercial email, so live sending stays off until it is.",
+    };
+  }
+
+  const { error } = await serviceClient()
+    .from("outreach_campaigns")
+    .upsert(
+      {
+        project_id: input.projectId,
+        owner_id: auth.userId,
+        name: input.name.trim(),
+        channel: "email",
+        active: input.active,
+        queries,
+        seed_urls: seedUrls,
+        max_score: input.maxScore,
+        daily_send_limit: input.dailySendLimit,
+        auto_send: input.autoSend,
+        angle: input.angle?.trim() || null,
+        sender_name: input.senderName?.trim() || null,
+        reply_to: input.replyTo?.trim() || null,
+      },
+      { onConflict: "project_id,name" },
+    );
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(leadsPath(input.projectId));
+  return {
+    ok: true,
+    note: input.autoSend
+      ? `"${input.name}" saved — auto-send is ON, so the cron tick will email real people.`
+      : `"${input.name}" saved. It will find, scan and draft; sending stays off until you turn it on.`,
+  };
+}
+
+export async function runCampaignAction(input: {
+  projectId: string;
+  name: string;
+}): Promise<Ok<{ note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  const { data } = await serviceClient()
+    .from("outreach_campaigns")
+    .select(CAMPAIGN_COLUMNS)
+    .eq("project_id", input.projectId)
+    .eq("name", input.name)
+    .maybeSingle();
+  if (!data) return { ok: false, error: "Campaign not found." };
+
+  const result = await runEmailCampaignTick(data as CampaignRow);
+  revalidatePath(leadsPath(input.projectId));
+  return { ok: true, note: `${result.campaign}: ${summarize(result)}` };
+}
+
+export async function toggleCampaignAction(input: {
+  projectId: string;
+  name: string;
+  field: "active" | "auto_send";
+  value: boolean;
+}): Promise<Ok<{ note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+  if (input.field === "auto_send" && input.value && !env.outreachPostalAddress) {
+    return {
+      ok: false,
+      error: "OUTREACH_POSTAL_ADDRESS is not set — live sending is blocked until it is.",
+    };
+  }
+  const { error } = await serviceClient()
+    .from("outreach_campaigns")
+    .update({ [input.field]: input.value })
+    .eq("project_id", input.projectId)
+    .eq("name", input.name);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(leadsPath(input.projectId));
+  return {
+    ok: true,
+    note:
+      input.field === "active"
+        ? `"${input.name}" ${input.value ? "resumed" : "paused"}.`
+        : `"${input.name}" auto-send ${input.value ? "ON — it will email real people" : "off"}.`,
+  };
+}

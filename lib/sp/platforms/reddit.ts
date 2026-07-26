@@ -25,8 +25,19 @@ const API_BASE = "https://oauth.reddit.com";
 
 // 'duration=permanent' grants a refresh_token alongside the access_token.
 // 'identity submit' is the minimum scope set for "log in + post text posts".
-// We don't ask for `read` / `vote` / etc. — least privilege.
-export const REDDIT_DEFAULT_SCOPES = ["identity", "submit"] as const;
+//
+// `read` and `privatemessages` were added for the outreach toolset
+// (lib/mcp/reddit-outreach.ts), which searches threads and replies to them.
+// They are still least-privilege for what the feature does — notably absent:
+// `vote`, `edit`, `history`, `modposts`. Accounts connected before this
+// change hold a token without the new scopes; Reddit answers those calls with
+// 403 insufficient_scope and the tools tell the user to reconnect.
+export const REDDIT_DEFAULT_SCOPES = [
+  "identity",
+  "submit",
+  "read",
+  "privatemessages",
+] as const;
 
 // Reddit's hard limits for self posts.
 export const REDDIT_TITLE_MAX = 300;

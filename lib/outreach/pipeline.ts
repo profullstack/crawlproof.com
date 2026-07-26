@@ -1,0 +1,550 @@
+// The cold-outreach pipeline: the stages a prospect moves through, written
+// once and driven from two places — the MCP tools (an agent stepping through
+// it deliberately) and the cron runner (the same stages, unattended).
+//
+// Stages: discover → scan → research → draft → send → follow up.
+//
+// Every stage is resumable and idempotent, because the unattended caller runs
+// on a tick and will re-enter mid-funnel constantly. Nothing here decides on
+// its own to contact anybody: sending is always an explicit act by the
+// caller, gated by lib/outreach/suppress.ts.
+
+import crypto from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import { z } from "zod/v4";
+import { env } from "@/lib/env";
+import { serviceClient } from "@/lib/supabase/service";
+import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { isAllowedTargetUrl, checkPerTargetLimit } from "@/lib/rateLimit";
+import { DEFAULT_PROJECT_ENGINES } from "@/lib/credits";
+import { newShareToken } from "@/lib/shareToken";
+import { hostOf } from "@/lib/audit/share-card";
+import { quoteFromFindings, formatUsd } from "@/lib/audit/quote";
+import type { Finding } from "@/lib/audit/types";
+import { isThirdPartyHost } from "@/lib/leadCampaign";
+import { coldOutreachEmailHtml, sendColdOutreachEmail } from "@/lib/email";
+import {
+  CONTACT_PATHS,
+  bestContact,
+  discoverContactEmails,
+  explainSuppression,
+  looksLikeEmail,
+  normalizeEmail,
+  normalizeHost,
+  outreachSubject,
+  stepGuidance,
+  suppressionReason,
+  unsupportedClaims,
+  type ContactCandidate,
+  type OutreachStep,
+  type ProspectFacts,
+} from "./cold";
+import { isEmailSuppressed, marketingUnsubscribedAt, sendsInLast24h } from "./suppress";
+
+export type ProspectRow = {
+  id: string;
+  project_id: string;
+  owner_id: string;
+  target_key: string;
+  site_url: string | null;
+  contact_email: string | null;
+  contact_source: string | null;
+  audit_id: string | null;
+  report_token: string | null;
+  score: number | null;
+  score_kind: string | null;
+  top_issues: string[];
+  quote_usd: number | null;
+  status: string;
+  unsubscribe_token: string;
+  last_sent_at: string | null;
+  last_step: number;
+  campaign_id: string | null;
+};
+
+export const PROSPECT_COLUMNS =
+  "id, project_id, owner_id, target_key, site_url, contact_email, contact_source, audit_id, report_token, score, score_kind, top_issues, quote_usd, status, unsubscribe_token, last_sent_at, last_step, campaign_id";
+
+type AuditRow = {
+  id: string;
+  target_url: string;
+  status: string;
+  score: number | null;
+  engine: string;
+  share_token: string | null;
+  completed_at: string | null;
+};
+
+export function siteBase(): string {
+  return env.siteUrl.replace(/\/$/, "");
+}
+
+export function aiClients() {
+  return {
+    anthropic: env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null,
+    openai: env.openaiApiKey ? new OpenAI({ apiKey: env.openaiApiKey }) : null,
+  };
+}
+
+export function factsOf(p: ProspectRow): ProspectFacts {
+  return {
+    host: p.target_key,
+    score: p.score,
+    kind: p.score_kind === "slop" ? "slop" : "aeo",
+    topIssues: Array.isArray(p.top_issues) ? p.top_issues : [],
+    reportUrl: p.report_token ? `${siteBase()}/r/${p.report_token}` : null,
+    quoteUsd: p.quote_usd,
+  };
+}
+
+/**
+ * Is this site weak enough that "want us to fix it?" is a true statement?
+ * The slop dial runs the other way — high is bad there — and conflating the
+ * two pitches a rescue at the sites that least need one.
+ */
+export function isWeakEnough(input: {
+  score: number | null;
+  engine: string;
+  maxScore: number;
+}): boolean {
+  if (input.score === null) return false;
+  return input.engine === "slop" ? input.score >= 100 - input.maxScore : input.score <= input.maxScore;
+}
+
+export async function findingsFor(auditId: string): Promise<Finding[]> {
+  const { data } = await serviceClient()
+    .from("audit_findings")
+    .select("section, check_key, status, title, detail, evidence, priority")
+    .eq("audit_id", auditId)
+    .order("priority", { ascending: true });
+  return (data as Finding[] | null) ?? [];
+}
+
+/** Newest completed audit this user owns for the host, if any. */
+export async function latestAuditForHost(userId: string, host: string): Promise<AuditRow | null> {
+  const { data } = await serviceClient()
+    .from("audits")
+    .select("id, target_url, status, score, engine, share_token, completed_at")
+    .eq("owner_id", userId)
+    .eq("status", "complete")
+    .order("completed_at", { ascending: false })
+    .limit(300);
+  const rows = (data as AuditRow[] | null) ?? [];
+  return rows.find((r) => hostOf(r.target_url) === host) ?? null;
+}
+
+/** One lead in one project. Leads are project-scoped: the same business can
+ * legitimately be a lead for two different projects. */
+export async function loadProspect(projectId: string, key: string): Promise<ProspectRow | null> {
+  const { data } = await serviceClient()
+    .from("outreach_prospects")
+    .select(PROSPECT_COLUMNS)
+    .eq("project_id", projectId)
+    .eq("channel", "email")
+    .eq("target_key", normalizeHost(key))
+    .maybeSingle();
+  return (data as ProspectRow | null) ?? null;
+}
+
+/**
+ * Kick off the free engines for a URL. Free on purpose: an unattended
+ * campaign that spends credits per discovered domain would burn a balance on
+ * prospects that turn out to be unreachable.
+ */
+export async function startFreeScan(input: {
+  userId: string;
+  url: string;
+}): Promise<{ ok: true; scanRunId: string } | { ok: false; error: string }> {
+  const check = isAllowedTargetUrl(input.url);
+  if (!check.ok) return { ok: false, error: check.reason };
+  if (!(await checkPerTargetLimit(check.url, input.userId))) {
+    return { ok: false, error: "rate-limited (scanned moments ago)" };
+  }
+  const sb = serviceClient();
+  const scanRunId = crypto.randomUUID();
+  const inserts = DEFAULT_PROJECT_ENGINES.map((e) => ({
+    target_url: check.url,
+    project_id: null,
+    owner_id: input.userId,
+    status: "queued",
+    share_token: newShareToken(),
+    triggered_by: "manual",
+    engine: e,
+    scan_run_id: scanRunId,
+  }));
+  const { data, error } = await sb.from("audits").insert(inserts).select("id");
+  if (error || !data) return { ok: false, error: error?.message ?? "insert failed" };
+  if (env.workerUrl) {
+    for (const r of data as { id: string }[]) {
+      await fetch(`${env.workerUrl}/enqueue`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-worker-secret": env.workerSecret },
+        body: JSON.stringify({ auditId: r.id }),
+      }).catch(() => {});
+    }
+  }
+  return { ok: true, scanRunId };
+}
+
+/**
+ * Fetch a few likely pages and read the contact address the business
+ * publishes. Only the prospect's own site is touched — no data broker, no
+ * purchased list, which is both the ethical line and the reason the address
+ * is current.
+ */
+export async function findContact(host: string): Promise<ContactCandidate[]> {
+  const found: ContactCandidate[] = [];
+  for (const path of CONTACT_PATHS) {
+    try {
+      const res = await fetch(`https://${host}${path}`, {
+        headers: { "user-agent": "CrawlProofOutreach/1.0 (+https://crawlproof.com)" },
+        signal: AbortSignal.timeout(8_000),
+        redirect: "follow",
+      });
+      if (!res.ok) continue;
+      found.push(...discoverContactEmails(await res.text(), host));
+      // Homepage plus one contact page is normally enough; stop rather than
+      // crawling a stranger's site hunting for addresses.
+      if (found.some((c) => c.sameDomain)) break;
+    } catch {
+      // A dead path is normal. Try the next one.
+    }
+  }
+  const seen = new Set<string>();
+  return found.filter((c) => !seen.has(c.email) && seen.add(c.email));
+}
+
+export type ResearchResult =
+  | { status: "scanning"; message: string }
+  | { status: "researched"; prospect: ProspectRow; contact: ContactCandidate | null; candidates: ContactCandidate[]; quoteLabel: string }
+  | { status: "error"; message: string };
+
+/**
+ * Attach evidence to a prospect: reuse or start a scan, pull the findings,
+ * price the fix, find the address. Safe to call repeatedly — a prospect
+ * mid-scan just answers "scanning" again.
+ */
+export async function researchProspect(input: {
+  userId: string;
+  projectId: string;
+  url: string;
+  campaignId?: string | null;
+  contactEmail?: string | null;
+  notes?: string | null;
+  discoveredVia?: string | null;
+  discoveryLabel?: string | null;
+}): Promise<ResearchResult> {
+  const check = isAllowedTargetUrl(input.url);
+  if (!check.ok) return { status: "error", message: check.reason };
+  const target = check.url;
+  // normalizeHost, not hostOf: target_key is the dedupe key and the unique
+  // index is over the plain column, so it must be lower-cased on the way in.
+  const host = normalizeHost(target);
+
+  if (isThirdPartyHost(host)) {
+    return { status: "error", message: `${host} is a third-party platform, not a site someone owns.` };
+  }
+  if (await isEmailSuppressed(`x@${host}`)) {
+    return { status: "error", message: `${host} is on the do-not-contact list.` };
+  }
+
+  const audit = await latestAuditForHost(input.userId, host);
+  if (!audit) {
+    const started = await startFreeScan({ userId: input.userId, url: target });
+    if (!started.ok) return { status: "error", message: started.error };
+    // Record the prospect now so the funnel can see it waiting on a scan.
+    await serviceClient()
+      .from("outreach_prospects")
+      .upsert(
+        {
+          project_id: input.projectId,
+          owner_id: input.userId,
+          channel: "email",
+          target_key: host,
+          site_url: target,
+          campaign_id: input.campaignId ?? null,
+          discovered_via: input.discoveredVia ?? null,
+          discovery_label: input.discoveryLabel ?? null,
+          status: "new",
+        },
+        { onConflict: "project_id,channel,target_key" },
+      );
+    return {
+      status: "scanning",
+      message: `Started a free scan of ${host} (${DEFAULT_PROJECT_ENGINES.join(", ")}). Re-run in ~30–60s.`,
+    };
+  }
+
+  const findings = await findingsFor(audit.id);
+  const problems = findings.filter((f) => f.status === "fail" || f.status === "warn");
+  const topIssues = problems.slice(0, 5).map((f) => f.title);
+  const quote = quoteFromFindings(findings);
+
+  const candidates = input.contactEmail
+    ? [
+        {
+          email: normalizeEmail(input.contactEmail),
+          source: "manual" as const,
+          sameDomain: normalizeEmail(input.contactEmail).endsWith(`@${host}`),
+        },
+      ]
+    : await findContact(host);
+  const contact = bestContact(candidates);
+
+  const { data, error } = await serviceClient()
+    .from("outreach_prospects")
+    .upsert(
+      {
+        project_id: input.projectId,
+        owner_id: input.userId,
+        channel: "email",
+        target_key: host,
+        site_url: target,
+        campaign_id: input.campaignId ?? null,
+        discovered_via: input.discoveredVia ?? null,
+        discovery_label: input.discoveryLabel ?? null,
+        contact_email: contact?.email ?? null,
+        contact_source: contact?.source ?? null,
+        audit_id: audit.id,
+        report_token: audit.share_token,
+        score: audit.score,
+        score_kind: audit.engine === "slop" ? "slop" : "aeo",
+        top_issues: topIssues,
+        quote_usd: quote.cappedForScoping ? null : Math.round(quote.amountUsd),
+        status: contact ? "researched" : "new",
+        ...(input.notes ? { notes: input.notes } : {}),
+      },
+      { onConflict: "project_id,channel,target_key" },
+    )
+    .select(PROSPECT_COLUMNS)
+    .maybeSingle();
+  if (error || !data) {
+    return { status: "error", message: error?.message ?? "Could not save the prospect." };
+  }
+
+  return {
+    status: "researched",
+    prospect: data as ProspectRow,
+    contact,
+    candidates,
+    quoteLabel: quote.cappedForScoping
+      ? `too large to auto-quote (${quote.issueCount} issues)`
+      : `${formatUsd(quote.amountUsd)} (${quote.totalHours}h to reach ${quote.targetScore}/100)`,
+  };
+}
+
+// ------------------------------------------------------------------- drafting
+
+const DraftSchema = z.object({
+  subject: z.string().describe("Subject line. States the finding; never a question, never fake familiarity."),
+  body: z.string().describe("Plain-text email body, including a short sign-off."),
+  evidence_used: z.array(z.string()).describe("Which supplied findings this draft cites."),
+});
+
+export const DRAFT_SYSTEM = `You write cold outreach email for CrawlProof, which scans websites for how they read to AI answer engines and fixes what it finds.
+
+Hard rules, in order of importance:
+1. Every factual claim about the recipient's website must come from the FINDINGS supplied to you. If a fact is not in the findings, you do not know it, and you may not state it.
+2. Never imply a prior relationship. This person has never heard from us. No "following up", no "as discussed", no "thanks for your time".
+3. No invented urgency, no fake deadlines, no invented traffic or revenue numbers, no "I was browsing your site and loved it".
+4. Lead with the specific defect, named. "Your homepage has no meta description" beats "your SEO could be improved" every time.
+5. Short. Under 120 words for a first contact. A cold email that needs scrolling does not get read.
+6. Plain language. No "In today's digital landscape", "unlock", "leverage", "elevate", "game-changer", "delve", "reach out", "circle back", "I hope this email finds you well".
+7. One ask, and make it the low-commitment one: look at the report. Never ask for a call in a first message.
+8. Write like a person who ran a scan and thought the result was worth mentioning — because that is exactly what happened.`;
+
+export type DraftResult =
+  | { ok: true; subject: string; body: string; evidenceUsed: string[] }
+  | { ok: false; problems: string[] };
+
+export async function draftEmail(input: {
+  prospect: ProspectRow;
+  step: OutreachStep;
+  angle?: string | null;
+  sender?: string | null;
+}): Promise<DraftResult> {
+  const facts = factsOf(input.prospect);
+  if (!facts.topIssues.length && facts.score === null) {
+    return { ok: false, problems: ["no findings and no score on file — nothing truthful to say"] };
+  }
+  const { anthropic, openai } = aiClients();
+  if (!anthropic && !openai) {
+    return { ok: false, problems: ["no AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY)"] };
+  }
+
+  const findings = input.prospect.audit_id ? await findingsFor(input.prospect.audit_id) : [];
+  const detailed = findings
+    .filter((f) => f.status === "fail" || f.status === "warn")
+    .slice(0, 8)
+    .map((f) => `- ${f.title}${f.detail ? ` — ${f.detail}` : ""}`);
+
+  const userPrompt = [
+    `Recipient's website: ${facts.host}`,
+    facts.score !== null
+      ? `Scan score: ${facts.score}/100 (${facts.kind === "slop" ? "carelessness scan — HIGHER is worse" : "AI answer-engine scan — HIGHER is better"})`
+      : "Scan score: none — do not cite a score.",
+    "",
+    "FINDINGS (the only facts you may state about their site):",
+    ...(detailed.length ? detailed : facts.topIssues.map((t) => `- ${t}`)),
+    "",
+    facts.reportUrl
+      ? `Their full report is at ${facts.reportUrl} — the caller renders it as a button, so say "the full report" rather than pasting the URL.`
+      : "There is no shareable report link. Do not mention a report.",
+    facts.quoteUsd
+      ? `If the message mentions cost at all, the honest number for fixing everything found is ${formatUsd(facts.quoteUsd)}. Mentioning it is optional.`
+      : "",
+    "",
+    `SEQUENCE POSITION: ${stepGuidance(input.step)}`,
+    input.angle ? `Emphasis requested: ${input.angle}` : "",
+    `Sign off as: ${input.sender ?? "the CrawlProof team"}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  let output: { subject: string; body: string; evidence_used: string[] };
+  try {
+    const res = await generateStructuredOutput({
+      name: "cold_outreach_draft",
+      schema: DraftSchema,
+      system: DRAFT_SYSTEM,
+      user: userPrompt,
+      anthropic,
+      openai,
+      preference: env.backendAiProvider,
+      anthropicModel: "claude-haiku-4-5-20251001",
+      openaiModel: env.backendAiOpenaiModel,
+      maxTokens: 900,
+      anthropicEffort: false,
+    });
+    output = res.output;
+  } catch (err) {
+    return { ok: false, problems: [`generation failed: ${err instanceof Error ? err.message : "unknown"}`] };
+  }
+
+  // The model is the least trustworthy part of this pipeline, so its output
+  // is checked against the same facts it was handed.
+  const problems = unsupportedClaims(output.body, facts);
+  if (problems.length) return { ok: false, problems };
+
+  return {
+    ok: true,
+    subject: output.subject?.trim() || outreachSubject(facts, input.step),
+    body: output.body.trim(),
+    evidenceUsed: output.evidence_used ?? [],
+  };
+}
+
+// -------------------------------------------------------------------- sending
+
+export type SendOutcome =
+  | { ok: true; dryRun: boolean; to: string; sentToday: number }
+  | { ok: false; reason: string };
+
+/**
+ * The only function in the codebase that puts a cold email on the wire.
+ * Everything protective lives here rather than in the callers, so a new
+ * caller cannot forget it.
+ */
+export async function sendProspectEmail(input: {
+  userId: string;
+  prospect: ProspectRow;
+  subject: string;
+  body: string;
+  step: OutreachStep;
+  campaign: string;
+  to?: string | null;
+  replyTo?: string | null;
+  dryRun: boolean;
+}): Promise<SendOutcome> {
+  const to = normalizeEmail(input.to ?? input.prospect.contact_email ?? "");
+  if (!looksLikeEmail(to)) return { ok: false, reason: "no usable recipient address" };
+
+  const sb = serviceClient();
+  const [suppressed, unsubAt, sentToday, prior] = await Promise.all([
+    isEmailSuppressed(to),
+    marketingUnsubscribedAt(to),
+    sendsInLast24h({ ownerId: input.userId, channels: ["email"] }),
+    sb
+      .from("outreach_sends")
+      .select("id")
+      .eq("owner_id", input.userId)
+      .eq("channel", "email")
+      .eq("campaign", input.campaign)
+      .eq("step", input.step)
+      .eq("dry_run", false)
+      .ilike("recipient", to)
+      .limit(1),
+  ]);
+
+  const reason = suppressionReason({
+    email: to,
+    suppressed,
+    unsubscribedAt: unsubAt,
+    alreadyContacted: ((prior.data as unknown[] | null) ?? []).length > 0,
+    sentToday,
+    dailyCap: env.outreachDailyCap,
+  });
+  if (reason) return { ok: false, reason: explainSuppression(reason) };
+
+  const facts = factsOf(input.prospect);
+  const claims = unsupportedClaims(input.body, facts);
+  if (claims.length) return { ok: false, reason: `unsupported claims: ${claims.join("; ")}` };
+
+  if (!input.dryRun && !env.outreachPostalAddress) {
+    return {
+      ok: false,
+      reason:
+        "OUTREACH_POSTAL_ADDRESS is unset — CAN-SPAM requires a physical postal address in commercial email",
+    };
+  }
+
+  const unsubscribeUrl = `${siteBase()}/unsubscribe/${input.prospect.unsubscribe_token}`;
+  let failed: string | null = null;
+  if (!input.dryRun) {
+    const res = await sendColdOutreachEmail({
+      to,
+      subject: input.subject,
+      html: coldOutreachEmailHtml({
+        host: facts.host,
+        bodyText: input.body,
+        reportUrl: facts.reportUrl,
+        unsubscribeUrl,
+        postalAddress: env.outreachPostalAddress,
+      }),
+      unsubscribeUrl,
+      replyTo: input.replyTo ?? undefined,
+    });
+    if (!res.sent) failed = res.error ?? "send failed";
+  }
+
+  await sb.from("outreach_sends").insert({
+    project_id: input.prospect.project_id,
+    owner_id: input.userId,
+    prospect_id: input.prospect.id,
+    channel: "email",
+    campaign: input.campaign,
+    step: input.step,
+    recipient: to,
+    subject: input.subject,
+    body: input.body,
+    target_url: input.prospect.site_url,
+    provider: input.dryRun ? "dry-run" : "resend",
+    dry_run: input.dryRun || !!failed,
+  });
+
+  if (failed) return { ok: false, reason: failed };
+
+  if (!input.dryRun) {
+    await sb
+      .from("outreach_prospects")
+      .update({
+        status: "contacted",
+        last_sent_at: new Date().toISOString(),
+        last_step: input.step,
+      })
+      .eq("id", input.prospect.id);
+  }
+
+  return { ok: true, dryRun: input.dryRun, to, sentToday };
+}
