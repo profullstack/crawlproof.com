@@ -13,6 +13,7 @@ import {
   type ProspectRow,
 } from "@/lib/outreach/pipeline";
 import { addSuppression } from "@/lib/outreach/suppress";
+import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 import { discoverProspects } from "@/lib/outreach/discover";
 import { runEmailCampaignTick, CAMPAIGN_COLUMNS, summarize, type CampaignRow } from "@/lib/outreach/runner";
 
@@ -234,6 +235,99 @@ export async function suppressLeadAction(input: {
   return { ok: true, note: `${input.value} will not be contacted again (${scope}).` };
 }
 
+/**
+ * Save the CAN-SPAM postal address at one of the three levels.
+ *
+ * `scope: "account"` is the global one — set it once and every project can
+ * pull it in with a click. Only the org owner may write the org-level
+ * address, since it signs mail for everybody in it.
+ */
+export async function savePostalAddressAction(input: {
+  projectId: string;
+  scope: "project" | "organization" | "account";
+  address: string;
+}): Promise<Ok<{ note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+
+  // Empty clears the level, which is how you fall back to a broader one.
+  const address = input.address.trim() || null;
+  const sb = serviceClient();
+
+  if (input.scope === "account") {
+    const { error } = await sb
+      .from("profiles")
+      .update({ outreach_postal_address: address })
+      .eq("id", auth.userId);
+    if (error) return { ok: false, error: error.message };
+  } else if (input.scope === "organization") {
+    const { data: project } = await sb
+      .from("projects")
+      .select("organization_id")
+      .eq("id", input.projectId)
+      .maybeSingle();
+    const orgId = (project?.organization_id as string | null) ?? null;
+    if (!orgId) return { ok: false, error: "This project isn't in an organization." };
+    const { data: org } = await sb
+      .from("organizations")
+      .select("owner_id")
+      .eq("id", orgId)
+      .maybeSingle();
+    if ((org?.owner_id as string | null) !== auth.userId) {
+      return { ok: false, error: "Only the organization owner can set the org-wide address." };
+    }
+    const { error } = await sb
+      .from("organizations")
+      .update({ outreach_postal_address: address })
+      .eq("id", orgId);
+    if (error) return { ok: false, error: error.message };
+  } else {
+    const { error } = await sb
+      .from("projects")
+      .update({ outreach_postal_address: address })
+      .eq("id", input.projectId);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  revalidatePath(leadsPath(input.projectId));
+  const where =
+    input.scope === "account" ? "your account" : input.scope === "organization" ? "the organization" : "this project";
+  return {
+    ok: true,
+    note: address ? `Saved to ${where}.` : `Cleared the address on ${where}.`,
+  };
+}
+
+/** One-click "use my account address here" — copies down a level. */
+export async function importPostalAddressAction(input: {
+  projectId: string;
+  from: "account" | "organization";
+}): Promise<Ok<{ note: string; address: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+
+  const settings = await loadAddressSettings({ projectId: input.projectId, ownerId: auth.userId });
+  const source = input.from === "account" ? settings.levels.account : settings.levels.organization;
+  if (!source) {
+    return {
+      ok: false,
+      error:
+        input.from === "account"
+          ? "No address saved on your account yet — set one first."
+          : "No org-wide address saved yet.",
+    };
+  }
+
+  const { error } = await serviceClient()
+    .from("projects")
+    .update({ outreach_postal_address: source })
+    .eq("id", input.projectId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(leadsPath(input.projectId));
+  return { ok: true, address: source, note: `Imported from ${input.from === "account" ? "your account" : "the organization"}.` };
+}
+
 export async function saveCampaignAction(input: {
   projectId: string;
   name: string;
@@ -256,12 +350,15 @@ export async function saveCampaignAction(input: {
   if (!queries.length && !seedUrls.length) {
     return { ok: false, error: "A campaign needs at least one search query or directory URL." };
   }
-  if (input.autoSend && !env.outreachPostalAddress) {
-    return {
-      ok: false,
-      error:
-        "OUTREACH_POSTAL_ADDRESS is not set. CAN-SPAM requires a physical postal address in commercial email, so live sending stays off until it is.",
-    };
+  if (input.autoSend) {
+    const postal = await loadAddressSettings({ projectId: input.projectId, ownerId: auth.userId });
+    if (!postal.address) {
+      return {
+        ok: false,
+        error:
+          "No sender postal address is set. CAN-SPAM requires one in commercial email, so live sending stays off until you add it above.",
+      };
+    }
   }
 
   const { error } = await serviceClient()
@@ -322,11 +419,11 @@ export async function toggleCampaignAction(input: {
 }): Promise<Ok<{ note: string }> | Err> {
   const auth = await requireLeadAccess(input.projectId);
   if (!auth.ok) return auth;
-  if (input.field === "auto_send" && input.value && !env.outreachPostalAddress) {
-    return {
-      ok: false,
-      error: "OUTREACH_POSTAL_ADDRESS is not set — live sending is blocked until it is.",
-    };
+  if (input.field === "auto_send" && input.value) {
+    const postal = await loadAddressSettings({ projectId: input.projectId, ownerId: auth.userId });
+    if (!postal.address) {
+      return { ok: false, error: "No sender postal address is set — live sending is blocked until you add one." };
+    }
   }
   const { error } = await serviceClient()
     .from("outreach_campaigns")
