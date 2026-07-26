@@ -13,7 +13,12 @@ export const metadata = {
   },
 };
 
-export default function HirePage() {
+export default async function HirePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ email?: string; website?: string }>;
+}) {
+  const sp = await searchParams;
   return (
     <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
       <p className="text-xs uppercase tracking-wider text-[var(--color-accent)]">
@@ -63,7 +68,7 @@ export default function HirePage() {
           A few quick details and we&apos;ll reply with next steps.
         </p>
         <div className="mt-4">
-          <HireForm />
+          <HireForm defaultEmail={sp.email ?? ""} defaultWebsite={sp.website ?? ""} />
         </div>
       </div>
     </main>
