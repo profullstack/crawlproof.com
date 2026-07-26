@@ -167,5 +167,23 @@ export const env = {
   githubAppClientSecret: process.env.GITHUB_APP_CLIENT_SECRET ?? "",
   githubAppPrivateKey: process.env.GITHUB_APP_PRIVATE_KEY ?? "",
   githubAppSlug: process.env.GITHUB_APP_SLUG ?? "",
+  // ---- Cold outreach ----
+  // CAN-SPAM §7704(a)(5) requires a valid physical postal address in every
+  // commercial email. A cold pitch is commercial by definition, so
+  // send_outreach refuses to send live without this set. Dry runs still work,
+  // which is how you develop the copy before the address exists.
+  outreachPostalAddress: process.env.OUTREACH_POSTAL_ADDRESS ?? "",
+  // Hard ceiling on live cold emails per user per rolling 24h. Deliberately
+  // small: cold outreach that works is researched one prospect at a time, and
+  // a runaway agent loop on a shared sending domain is unrecoverable.
+  outreachDailyCap: Number(process.env.OUTREACH_DAILY_CAP ?? "50"),
+  // Same idea for Reddit, where the account — not just the domain — is what
+  // gets burned. Per rolling 24h, per user.
+  redditOutreachDailyCap: Number(process.env.REDDIT_OUTREACH_DAILY_CAP ?? "10"),
+  // Per subreddit, per rolling 24h. Reddit's spam heuristics key on
+  // concentration in one community more than on raw volume.
+  redditOutreachSubredditCap: Number(
+    process.env.REDDIT_OUTREACH_SUBREDDIT_CAP ?? "3",
+  ),
   required,
 };

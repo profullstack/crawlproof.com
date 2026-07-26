@@ -1,14 +1,14 @@
 import { HireForm } from "@/components/hire-form";
 
 export const metadata = {
-  title: "Hire us — Fix your AEO in under 24 hours",
+  title: "Hire us — done-for-you AEO fixes",
   description:
-    "Get a human team to fix your website's AEO (Answer Engine Optimization) so AI assistants and bots can find, cite, and recommend your site. Turnaround under 24 hours.",
+    "Get a human team to fix your website's AEO (Answer Engine Optimization) so AI assistants and bots can find, cite, and recommend your site. Scoped from your scan and billed by the hour.",
   alternates: { canonical: "/hire" },
   openGraph: {
     title: "Hire us · CrawlProof",
     description:
-      "Get your website's AEO fixed by a human team in under 24 hours.",
+      "Get your website's AEO fixed by a human team, scoped from a real scan of your site.",
     url: "/hire",
   },
 };
@@ -25,7 +25,7 @@ export default async function HirePage({
         Done-for-you
       </p>
       <h1 className="mt-2 text-4xl font-extrabold leading-tight sm:text-5xl">
-        We&apos;ll fix your site&apos;s AEO in under 24 hours.
+        We&apos;ll fix your site&apos;s AEO — properly.
       </h1>
       <p className="mt-4 max-w-2xl text-lg text-[var(--color-muted)]">
         Schema, llms.txt, AI-bot-friendly rendering, internal linking,
@@ -36,9 +36,10 @@ export default async function HirePage({
 
       <ul className="mt-6 grid gap-3 text-sm sm:grid-cols-2">
         <li className="card p-4">
-          <strong>&lt; 24h turnaround</strong>
+          <strong>Scoped from your scan</strong>
           <p className="mt-1 text-[var(--color-muted)]">
-            Most fixes are live the same business day after we get access.
+            We price the work off what the report actually found, at $100/hour.
+            Most engagements run two to three weeks.
           </p>
         </li>
         <li className="card p-4">

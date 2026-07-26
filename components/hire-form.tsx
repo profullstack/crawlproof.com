@@ -179,8 +179,8 @@ export function HireForm({
         {pending ? "Sending…" : "Request a fix"}
       </button>
       <p className="text-xs text-[var(--color-muted)]">
-        We typically respond within a few hours and turn around fixes in under
-        24 hours.
+        We typically respond within a few hours with a scope and a quote. The
+        work itself usually runs two to three weeks.
       </p>
     </form>
   );
