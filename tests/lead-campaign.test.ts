@@ -3,6 +3,7 @@ import {
   campaignSubject,
   excludeReason,
   isStrongScore,
+  isThirdPartyHost,
   hireUrlFor,
   selectRecipients,
   type LeadRow,
@@ -55,6 +56,42 @@ describe("excludeReason", () => {
   it("skips anyone with no report to talk about", () => {
     // The whole email is about their scan; without one it's a generic blast.
     expect(excludeReason(lead({ reportToken: null }), "all")).toBe("no-report");
+  });
+});
+
+describe("isThirdPartyHost", () => {
+  it("flags sites the recipient plainly does not own", () => {
+    // These people were trying the tool, not auditing their property. Asking
+    // "want us to fix it?" about x.com reads as a mailshot that didn't look
+    // at its own data.
+    for (const h of [
+      "x.com", "github.com", "wikipedia.org", "linkedin.com", "share.google",
+      "docs.google.com", "linktr.ee", "www.youtube.com",
+    ]) {
+      expect(isThirdPartyHost(h)).toBe(true);
+    }
+  });
+
+  it("leaves ordinary sites alone", () => {
+    for (const h of ["acme.com", "labautomation101.ai", "kabstreat.com", "mygithub.io"]) {
+      expect(isThirdPartyHost(h)).toBe(false);
+    }
+  });
+
+  it("excludes a third-party scan from the campaign", () => {
+    expect(excludeReason(lead({ host: "x.com" }), "all")).toBe("third-party-scan");
+  });
+});
+
+describe("already-sent guard", () => {
+  it("never mails the same address twice in one campaign", () => {
+    expect(excludeReason(lead({ alreadySent: true }), "all")).toBe("already-sent");
+    expect(excludeReason(lead({ alreadySent: false }), "all")).toBeNull();
+  });
+
+  it("still lets unsubscribe win over a prior send", () => {
+    const row = lead({ alreadySent: true, unsubscribedAt: "2026-01-01" });
+    expect(excludeReason(row, "all")).toBe("unsubscribed");
   });
 });
 
