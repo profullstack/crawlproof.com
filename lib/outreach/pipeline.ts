@@ -27,6 +27,7 @@ import { coldOutreachEmailHtml, sendColdOutreachEmail } from "@/lib/email";
 import {
   CONTACT_PATHS,
   bestContact,
+  contactLinksFrom,
   discoverContactEmails,
   explainSuppression,
   looksLikeEmail,
@@ -189,29 +190,64 @@ export async function startFreeScan(input: {
 }
 
 /**
- * Fetch a few likely pages and read the contact address the business
- * publishes. Only the prospect's own site is touched — no data broker, no
- * purchased list, which is both the ethical line and the reason the address
- * is current.
+ * Read the contact address the business publishes on its own site. No data
+ * broker and no purchased list — which is both the ethical line and the
+ * reason the address is current.
+ *
+ * Follows the site's own contact-ish links rather than only guessing paths.
+ * Measured against nine real agency sites, guessing found 2/9: /contact 404s
+ * where /contact-us works, and one address only existed on /privacy-policy.
+ * The homepage's own nav knows where its contact page is; we don't.
  */
 export async function findContact(host: string): Promise<ContactCandidate[]> {
   const found: ContactCandidate[] = [];
-  for (const path of CONTACT_PATHS) {
+  const visited = new Set<string>();
+
+  const fetchPage = async (url: string): Promise<string | null> => {
+    if (visited.has(url) || visited.size >= 7) return null;
+    visited.add(url);
     try {
-      const res = await fetch(`https://${host}${path}`, {
+      const res = await fetch(url, {
         headers: { "user-agent": "CrawlProofOutreach/1.0 (+https://crawlproof.com)" },
         signal: AbortSignal.timeout(8_000),
         redirect: "follow",
       });
-      if (!res.ok) continue;
-      found.push(...discoverContactEmails(await res.text(), host));
-      // Homepage plus one contact page is normally enough; stop rather than
-      // crawling a stranger's site hunting for addresses.
-      if (found.some((c) => c.sameDomain)) break;
+      if (!res.ok) return null;
+      return await res.text();
     } catch {
-      // A dead path is normal. Try the next one.
+      return null;
+    }
+  };
+
+  const collect = (html: string) => {
+    found.push(...discoverContactEmails(html, host));
+    return found.some((c) => c.sameDomain);
+  };
+
+  // Some hosts only answer on www; without the retry those sites yield
+  // nothing at all rather than a missing address.
+  const home = (await fetchPage(`https://${host}/`)) ?? (await fetchPage(`https://www.${host}/`));
+  if (home) {
+    if (collect(home)) return dedupe(found);
+
+    for (const link of contactLinksFrom(home, `https://${host}/`)) {
+      const html = await fetchPage(link);
+      if (html && collect(html)) return dedupe(found);
     }
   }
+
+  // Backstop for sites whose nav is rendered client-side, so the homepage
+  // HTML carries no links to follow.
+  for (const path of CONTACT_PATHS) {
+    if (path === "/") continue;
+    const html = await fetchPage(`https://${host}${path}`);
+    if (html && collect(html)) break;
+  }
+
+  return dedupe(found);
+}
+
+function dedupe(found: ContactCandidate[]): ContactCandidate[] {
   const seen = new Set<string>();
   return found.filter((c) => !seen.has(c.email) && seen.add(c.email));
 }

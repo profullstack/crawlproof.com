@@ -11,6 +11,9 @@ import {
   stepGuidance,
   suppressionReason,
   unsupportedClaims,
+  contactLinksFrom,
+  decodeCfEmail,
+  deobfuscateEmails,
   type ProspectFacts,
 } from "@/lib/outreach/cold";
 import {
@@ -362,5 +365,66 @@ describe("postal address precedence", () => {
 
   it("trims the address it returns", () => {
     expect(pickPostalAddress({ account: "  Me, 3 Home Rd  " }).address).toBe("Me, 3 Home Rd");
+  });
+});
+
+describe("obfuscated contact discovery", () => {
+  it("decodes a Cloudflare-protected address", () => {
+    // Encoded with key 0x27, the form Cloudflare emits in data-cfemail.
+    const plain = "support@thomasdigital.com";
+    const key = 0x27;
+    const hex =
+      key.toString(16).padStart(2, "0") +
+      [...plain].map((c) => (c.charCodeAt(0) ^ key).toString(16).padStart(2, "0")).join("");
+    expect(decodeCfEmail(hex)).toBe(plain);
+  });
+
+  it("rejects junk rather than emitting a garbage address", () => {
+    expect(decodeCfEmail("zzzz")).toBeNull();
+    expect(decodeCfEmail("27")).toBeNull();
+    expect(decodeCfEmail("2712")).toBeNull();
+  });
+
+  it("reads addresses written to defeat scrapers", () => {
+    expect(deobfuscateEmails("hello (at) example (dot) com")).toContain("hello@example.com");
+    expect(deobfuscateEmails("jane at example dot com")).toContain("jane@example.com");
+    expect(deobfuscateEmails("team&#64;example.com")).toContain("team@example.com");
+  });
+
+  it("finds nothing in prose that merely contains the word at", () => {
+    expect(deobfuscateEmails("We are at the office today")).toEqual([]);
+  });
+});
+
+describe("contactLinksFrom", () => {
+  const base = "https://example.com/";
+
+  it("ranks a contact page above a deep marketing page", () => {
+    const html = `
+      <a href="/about/are-we-fit">Are we a fit?</a>
+      <a href="/contact-us">Contact</a>
+      <a href="/about">About</a>`;
+    expect(contactLinksFrom(html, base)[0]).toBe("https://example.com/contact-us");
+  });
+
+  it("keeps legal pages, where a hidden address usually is", () => {
+    const html = `<a href="/privacy-policy">Privacy</a><a href="/blog/post">Blog</a>`;
+    expect(contactLinksFrom(html, base)).toEqual(["https://example.com/privacy-policy"]);
+  });
+
+  it("does not treat directory listings as contact pages", () => {
+    // "company" matched every listing on a jobs directory and ate the budget.
+    const html = `<a href="/company/block-inc">Block</a><a href="/company/braze">Braze</a>`;
+    expect(contactLinksFrom(html, base)).toEqual([]);
+  });
+
+  it("prefers the shallower page when both match", () => {
+    const html = `<a href="/about/team/leadership">Leadership</a><a href="/about">About</a>`;
+    expect(contactLinksFrom(html, base)[0]).toBe("https://example.com/about");
+  });
+
+  it("ignores off-site links and the page itself", () => {
+    const html = `<a href="https://vendor.io/privacy">Privacy</a><a href="/">Contact home</a>`;
+    expect(contactLinksFrom(html, base)).toEqual([]);
   });
 });
