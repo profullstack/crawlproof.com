@@ -17,6 +17,10 @@ import { env } from "@/lib/env";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+// Identifies this campaign in campaign_sends. Bump it to deliberately mail a
+// previously-contacted audience again.
+const CAMPAIGN_ID = "lead-reengagement-2026-07";
+
 // One-off re-engagement of people who ran a scan and asked for the PDF.
 //
 // Why this exists rather than /api/admin/email-broadcast: that route selects
@@ -65,10 +69,14 @@ async function loadAudience(): Promise<LeadRow[]> {
   );
   if (emails.length === 0) return [];
 
-  const [{ data: contacts }, { data: profiles }] = await Promise.all([
+  const [{ data: contacts }, { data: profiles }, { data: alreadySent }] = await Promise.all([
     svc.from("marketing_contacts").select("email, unsubscribed_at, consented_at").in("email", emails),
     svc.from("profiles").select("email").in("email", emails),
+    svc.from("campaign_sends").select("email").eq("campaign", CAMPAIGN_ID),
   ]);
+  const sentAlready = new Set(
+    (alreadySent ?? []).map((r) => String(r.email ?? "").trim().toLowerCase()),
+  );
 
   const contactByEmail = new Map(
     (contacts ?? []).map((c) => [String(c.email).toLowerCase(), c]),
@@ -118,6 +126,7 @@ async function loadAudience(): Promise<LeadRow[]> {
       isCustomer: customerEmails.has(email),
       unsubscribedAt: (contact?.unsubscribed_at as string | null) ?? null,
       consentedAt: (contact?.consented_at as string | null) ?? null,
+      alreadySent: sentAlready.has(email),
     });
   }
   return out;
@@ -225,8 +234,18 @@ export async function POST(req: NextRequest) {
       unsubscribeToken: contact.unsubscribe_token as string,
     });
 
-    if (res.sent) sent++;
-    else {
+    if (res.sent) {
+      sent++;
+      // Log AFTER a confirmed send. Logging first would suppress a retry of a
+      // message that never actually went out.
+      if (!body.testTo) {
+        await svc.from("campaign_sends").insert({
+          campaign: CAMPAIGN_ID,
+          email: row.email,
+          subject: campaignSubject(row),
+        });
+      }
+    } else {
       failed++;
       if (errors.length < 10) errors.push(`${row.email}: ${res.error}`);
     }

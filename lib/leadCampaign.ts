@@ -19,6 +19,8 @@ export type LeadRow = {
   isCustomer: boolean;
   unsubscribedAt: string | null;
   consentedAt: string | null;
+  /** True when this campaign already mailed this address. */
+  alreadySent?: boolean;
 };
 
 export type Segment = "users" | "leads" | "all";
@@ -28,11 +30,35 @@ const INTERNAL = /@(profullstack\.com|crawlproof\.com)$/i;
 const ROLE_LOCALPART =
   /^(postmaster|abuse|noreply|no-reply|donotreply|mailer-daemon|admin|webmaster|hostmaster)@/i;
 
+/**
+ * Hosts nobody in our audience owns. Someone who scanned x.com or wikipedia.org
+ * was trying the tool, not auditing their property — asking "want us to fix
+ * it?" about a site they can't change reads as a mailshot that didn't look at
+ * its own data. They stay leads; they're just the wrong audience for THIS
+ * pitch.
+ */
+const THIRD_PARTY_HOSTS = [
+  "google.com", "share.google", "docs.google.com", "x.com", "twitter.com",
+  "youtube.com", "facebook.com", "instagram.com", "linkedin.com", "github.com",
+  "wikipedia.org", "linktr.ee", "sciencedirect.com", "medium.com", "reddit.com",
+  "amazon.com", "notion.so", "chatgpt.com", "openai.com", "apple.com",
+  "microsoft.com", "tiktok.com", "pinterest.com", "yahoo.com", "bing.com",
+];
+
+export function isThirdPartyHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^www\./, "");
+  if (!h) return false;
+  const apex = h.split(".").slice(-2).join(".");
+  return THIRD_PARTY_HOSTS.some((t) => h === t || apex === t || h.endsWith(`.${t}`));
+}
+
 export type ExclusionReason =
   | "unsubscribed"
   | "internal"
   | "role-account"
   | "no-report"
+  | "third-party-scan"
+  | "already-sent"
   | "wrong-segment";
 
 export function excludeReason(row: LeadRow, segment: Segment): ExclusionReason | null {
@@ -44,6 +70,9 @@ export function excludeReason(row: LeadRow, segment: Segment): ExclusionReason |
   // The whole message is about their report. Without one there is nothing to
   // say, and it degrades into the generic blast we're avoiding.
   if (!row.reportToken) return "no-report";
+  if (isThirdPartyHost(row.host)) return "third-party-scan";
+  // Set by the caller from the campaign_sends log — nobody gets this twice.
+  if (row.alreadySent) return "already-sent";
   if (segment === "users" && !row.isCustomer) return "wrong-segment";
   if (segment === "leads" && row.isCustomer) return "wrong-segment";
   return null;
