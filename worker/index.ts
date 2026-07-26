@@ -23,6 +23,8 @@ import { markdownToHtml, htmlDocument } from "../lib/markdown";
 import { auditReadyEmailHtml, scanRunSummaryEmailHtml, type SummaryEngineRow } from "../lib/email";
 import { ENGINES, type Engine } from "../lib/credits";
 import { buildScanRunMarkdown } from "../lib/audit/summary-markdown";
+import { quoteFromFindings, type Quote } from "../lib/audit/quote";
+import type { Finding } from "../lib/audit/types";
 import { auditStuckAfterMinutes, auditStuckAfterMs } from "../lib/audit/timeouts";
 import OpenAI from "openai";
 import { crawlSitemap } from "../lib/lx/sitemapCrawl";
@@ -692,6 +694,23 @@ async function maybeSendEmail(input: {
   await sendSummaryEmail({ scanRunId, projectId, pdfEmail, targetUrl, rows });
 }
 
+// Price the "we'll fix this for you" cover offer from the findings we just
+// wrote. Best-effort — a failed lookup drops the offer rather than the PDF.
+async function quoteForAudits(auditIds: string[]): Promise<Quote | undefined> {
+  if (auditIds.length === 0) return undefined;
+  try {
+    const { data, error } = await supabase
+      .from("audit_findings")
+      .select("section, check_key, status, title, priority")
+      .in("audit_id", auditIds);
+    if (error || !data || data.length === 0) return undefined;
+    return quoteFromFindings(data as unknown as Finding[]);
+  } catch (err) {
+    console.warn("[worker] quote lookup failed; PDF will omit the offer", err);
+    return undefined;
+  }
+}
+
 async function sendPerEngineEmail(input: {
   auditId: string;
   pdfEmail: string;
@@ -712,6 +731,7 @@ async function sendPerEngineEmail(input: {
       score,
       generatedAt: new Date().toISOString(),
     },
+    quote: await quoteForAudits([auditId]),
   });
   const pdf = await renderPdfFromHtml(html);
   const filename = `crawlproof-${new URL(targetUrl).hostname}-${auditId.slice(0, 8)}.pdf`;
@@ -788,6 +808,8 @@ async function sendSummaryEmail(input: {
       score: avgScore ?? undefined,
       generatedAt: new Date().toISOString(),
     },
+    // Consolidated PDF quotes the whole job — every engine in the run.
+    quote: await quoteForAudits(rows.filter((r) => r.status === "complete").map((r) => r.id)),
   });
   const pdf = await renderPdfFromHtml(combinedHtml);
   const filename = `crawlproof-${host}-${scanRunId.slice(0, 8)}.pdf`;
@@ -844,6 +866,7 @@ const server = http.createServer(async (req, res) => {
           title?: string;
           target?: string;
           score?: number;
+          quote?: Quote;
         };
         let pdf: Buffer;
         if (payload.html) {
@@ -860,6 +883,7 @@ const server = http.createServer(async (req, res) => {
               score: payload.score,
               generatedAt: new Date().toISOString(),
             },
+            quote: payload.quote,
           });
           pdf = await renderPdfFromHtml(html);
         } else if (payload.token) {
