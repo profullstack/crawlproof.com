@@ -69,6 +69,11 @@ export default async function AdminPage() {
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
         <h1 className="text-3xl font-bold">Admin</h1>
+        <p className="mt-2 text-sm">
+          <a href="/admin/leads" className="text-[var(--color-accent)] hover:underline">
+            Leads &amp; campaigns →
+          </a>
+        </p>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Grant or remove credits by email. Every grant is logged in{" "}
           <code>admin_credit_grants</code>.
