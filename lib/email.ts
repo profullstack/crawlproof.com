@@ -829,3 +829,97 @@ export async function sendWatchChangeEmail(input: {
   if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
+
+// ============================================================
+// Lead re-engagement campaign — personalised from the recipient's OWN scan.
+//
+// Deliberately not a newsletter blast. Everyone who gets this asked us for a
+// PDF of a specific report, so the email is about that report: their host,
+// their score, their worst findings. That converts better than a generic
+// pitch, and it keeps the message tied to the thing they actually requested.
+// ============================================================
+
+export function leadCampaignEmailHtml(input: {
+  host: string;
+  scoreLabel: string;
+  score: number | null;
+  scaleHint: string;
+  topIssues: string[];
+  reportUrl: string;
+  hireUrl: string;
+  isCustomer: boolean;
+}): string {
+  const issues = input.topIssues.length
+    ? `<ul style="margin:14px 0 0;padding-left:18px;color:#9aa3b2;font-size:14px;line-height:1.8;">
+         ${input.topIssues.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}
+       </ul>`
+    : "";
+
+  const scoreBlock =
+    input.score !== null
+      ? `<tr>
+            <td style="padding:20px 32px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background:#12161c;border:1px solid #1f2630;color:#e7e9ee;font-weight:800;font-size:26px;padding:14px 22px;border-radius:12px;line-height:1;">
+                    ${input.score}<span style="font-size:13px;opacity:.6;font-weight:700;"> / 100</span>
+                  </td>
+                  <td style="padding-left:14px;color:#9aa3b2;font-size:13px;">
+                    ${escapeHtml(input.scoreLabel)}<br>
+                    <span style="color:#64748b;font-size:12px;">${escapeHtml(input.scaleHint)}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`
+      : "";
+
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                About your ${escapeHtml(input.host)} scan
+              </h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                You ran a CrawlProof report on
+                <strong style="color:#e7e9ee;">${escapeHtml(input.host)}</strong>
+                and asked us to email you the PDF. Here's where it landed${input.isCustomer ? "" : " — and an offer, if you'd rather not fix it yourself"}.
+              </p>
+            </td>
+          </tr>
+          ${scoreBlock}
+          <tr>
+            <td style="padding:18px 32px 0;">
+              ${input.topIssues.length ? `<p style="margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;">Biggest items on that report</p>` : ""}
+              ${issues}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 0;">
+              <p style="margin:0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                We also fix these directly. Tell us about the site and we'll come
+                back with what it takes to move that number — no obligation.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px 8px;">
+              <a href="${input.hireUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                Get a fix quote →
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <p style="margin:8px 0 0;font-size:12px;line-height:1.6;color:#64748b;">
+                Your report is still live:<br>
+                <a href="${input.reportUrl}" style="color:#9aa3b2;word-break:break-all;">${input.reportUrl}</a>
+              </p>
+            </td>
+          </tr>`;
+
+  return emailShell({
+    title: `Your CrawlProof scan of ${input.host}`,
+    innerHtml,
+  });
+}
