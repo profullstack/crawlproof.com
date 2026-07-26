@@ -6,6 +6,8 @@ import { env } from "@/lib/env";
 import { LeadFinder } from "@/components/leads/lead-finder";
 import { LeadActions } from "@/components/leads/lead-actions";
 import { CampaignPanel, type CampaignSummary } from "@/components/leads/campaign-panel";
+import { SenderAddress } from "@/components/leads/sender-address";
+import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 
 export const metadata = { title: "Leads" };
 export const dynamic = "force-dynamic";
@@ -92,7 +94,14 @@ export default async function LeadsPage({
 
   const since = Date.now() - 24 * 3600 * 1000;
   const liveToday = sends.filter((s) => !s.dry_run && new Date(s.sent_at).getTime() >= since).length;
-  const canSendLive = Boolean(env.outreachPostalAddress);
+
+  // Live sending is gated on having a CAN-SPAM footer address, resolved
+  // project → org → account → env.
+  const addressSettings = await loadAddressSettings({
+    projectId,
+    ownerId: access.userId,
+  });
+  const canSendLive = Boolean(addressSettings.address);
 
   return (
     <div className="space-y-6">
@@ -104,12 +113,7 @@ export default async function LeadsPage({
         </p>
       </div>
 
-      {!canSendLive && (
-        <p className="card border-[var(--color-warn,#facc15)] p-3 text-sm">
-          <strong>Live sending is off.</strong> Set <code>OUTREACH_POSTAL_ADDRESS</code> — CAN-SPAM
-          requires a physical postal address in commercial email. Dry runs work without it.
-        </p>
-      )}
+      <SenderAddress projectId={projectId} settings={addressSettings} />
 
       <LeadFinder projectId={projectId} />
 

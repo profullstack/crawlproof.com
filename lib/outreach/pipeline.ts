@@ -41,6 +41,7 @@ import {
   type ProspectFacts,
 } from "./cold";
 import { isEmailSuppressed, marketingUnsubscribedAt, sendsInLast24h } from "./suppress";
+import { resolvePostalAddress } from "./postalAddress";
 
 export type ProspectRow = {
   id: string;
@@ -491,11 +492,19 @@ export async function sendProspectEmail(input: {
   const claims = unsupportedClaims(input.body, facts);
   if (claims.length) return { ok: false, reason: `unsupported claims: ${claims.join("; ")}` };
 
-  if (!input.dryRun && !env.outreachPostalAddress) {
+  // CAN-SPAM requires a physical postal address in commercial email. It is
+  // resolved per project (project → org → account → env) rather than read
+  // from one global env var, so an agency signs each client's outreach with
+  // that client's address.
+  const postal = await resolvePostalAddress({
+    projectId: input.prospect.project_id,
+    ownerId: input.userId,
+  });
+  if (!input.dryRun && !postal.address) {
     return {
       ok: false,
       reason:
-        "OUTREACH_POSTAL_ADDRESS is unset — CAN-SPAM requires a physical postal address in commercial email",
+        "no sender postal address is set — CAN-SPAM requires one in commercial email. Add it on the Leads page or in Settings",
     };
   }
 
@@ -510,7 +519,7 @@ export async function sendProspectEmail(input: {
         bodyText: input.body,
         reportUrl: facts.reportUrl,
         unsubscribeUrl,
-        postalAddress: env.outreachPostalAddress,
+        postalAddress: postal.address ?? "",
       }),
       unsubscribeUrl,
       replyTo: input.replyTo ?? undefined,

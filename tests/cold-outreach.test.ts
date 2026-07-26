@@ -26,6 +26,7 @@ import {
   leadsToCsv,
 } from "@/lib/outreach/enrich";
 import { isWeakEnough } from "@/lib/outreach/pipeline";
+import { describeAddressSource, pickPostalAddress } from "@/lib/outreach/postalAddress";
 
 function facts(over: Partial<ProspectFacts> = {}): ProspectFacts {
   return {
@@ -325,5 +326,41 @@ describe("normalizeHost", () => {
   it("strips scheme, www and path", () => {
     expect(normalizeHost("https://www.Example.com/contact")).toBe("example.com");
     expect(normalizeHost("example.com")).toBe("example.com");
+  });
+});
+
+describe("postal address precedence", () => {
+  it("prefers the project address over every broader level", () => {
+    const picked = pickPostalAddress({
+      project: "Client Co, 1 High St",
+      organization: "Agency Ltd, 2 Broad St",
+      account: "Me, 3 Home Rd",
+      env: "Env, 4 Server Ln",
+    });
+    expect(picked).toEqual({ address: "Client Co, 1 High St", source: "project" });
+  });
+
+  it("falls through org, then account, then env", () => {
+    expect(pickPostalAddress({ organization: "Agency", account: "Me", env: "Env" }).source).toBe(
+      "organization",
+    );
+    expect(pickPostalAddress({ account: "Me", env: "Env" }).source).toBe("account");
+    expect(pickPostalAddress({ env: "Env" }).source).toBe("env");
+  });
+
+  it("treats a whitespace-only value as unset rather than as an address", () => {
+    // A footer containing "   " satisfies a truthiness check and violates
+    // CAN-SPAM, so blank has to fall through to the next level.
+    const picked = pickPostalAddress({ project: "   ", account: "Me, 3 Home Rd" });
+    expect(picked).toEqual({ address: "Me, 3 Home Rd", source: "account" });
+  });
+
+  it("reports none when nothing is set anywhere", () => {
+    expect(pickPostalAddress({})).toEqual({ address: null, source: "none" });
+    expect(describeAddressSource("none")).toMatch(/no address/i);
+  });
+
+  it("trims the address it returns", () => {
+    expect(pickPostalAddress({ account: "  Me, 3 Home Rd  " }).address).toBe("Me, 3 Home Rd");
   });
 });
