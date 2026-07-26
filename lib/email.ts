@@ -656,3 +656,176 @@ export async function sendOrgInviteEmail(input: {
   if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
+
+// ============================================================
+// "Watch this URL" — M2 of docs/lead-engine-prd.md.
+// ============================================================
+
+export function watchConfirmEmailHtml(input: {
+  host: string;
+  label: string;
+  cadence: string;
+  confirmUrl: string;
+}): string {
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                Confirm you want ${escapeHtml(input.host)} watched
+              </h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                Someone asked us to re-scan
+                <strong style="color:#e7e9ee;">${escapeHtml(input.host)}</strong>
+                ${escapeHtml(input.cadence)} and email this address when its
+                ${escapeHtml(input.label)} changes. Click below to start — we won't
+                send anything until you do.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 8px;">
+              <a href="${input.confirmUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                Start watching ${escapeHtml(input.host)} →
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <p style="margin:8px 0 0;font-size:12px;line-height:1.6;color:#64748b;">
+                Or copy this link into your browser:<br>
+                <a href="${input.confirmUrl}" style="color:#9aa3b2;word-break:break-all;">${input.confirmUrl}</a>
+              </p>
+            </td>
+          </tr>`;
+  return emailShell({
+    title: `Confirm watching ${input.host}`,
+    innerHtml,
+    footerNote:
+      "If you didn't request this, ignore this email and nothing further will be sent. " +
+      "We only start watching a site after this link is clicked.",
+  });
+}
+
+export async function sendWatchConfirmEmail(input: {
+  to: string;
+  host: string;
+  label: string;
+  cadence: string;
+  confirmUrl: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: `Confirm: watch ${input.host} for changes`,
+    html: watchConfirmEmailHtml(input),
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}
+
+export function watchChangeEmailHtml(input: {
+  host: string;
+  label: string;
+  score: number;
+  previousScore: number | null;
+  /** Already accounts for the inverted slop dial. */
+  improved: boolean;
+  first: boolean;
+  scaleHint: string;
+  reportUrl: string;
+  stopUrl: string;
+  cadence: string;
+}): string {
+  const accent = input.first
+    ? { bg: "#6ee7b7", fg: "#042f1a" }
+    : input.improved
+      ? { bg: "#6ee7b7", fg: "#042f1a" }
+      : { bg: "#fca5a5", fg: "#3a0808" };
+
+  const movement = input.first
+    ? `This is the baseline we'll compare future scans against.`
+    : `${input.improved ? "Better" : "Worse"} than last time — it was
+       <strong style="color:#e7e9ee;">${input.previousScore}</strong>.`;
+
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                ${input.first ? `Now watching ${escapeHtml(input.host)}` : `${escapeHtml(input.host)} ${input.improved ? "improved" : "got worse"}`}
+              </h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                ${movement}
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 32px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background:${accent.bg};color:${accent.fg};font-weight:800;font-size:28px;padding:14px 22px;border-radius:12px;line-height:1;">
+                    ${input.score}<span style="font-size:14px;opacity:.7;font-weight:700;"> / 100</span>
+                  </td>
+                  <td style="padding-left:14px;color:#9aa3b2;font-size:13px;">
+                    ${escapeHtml(input.label)}<br>
+                    <span style="color:#64748b;font-size:12px;">${escapeHtml(input.scaleHint)}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 8px;">
+              <a href="${input.reportUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                See what changed →
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <p style="margin:8px 0 0;font-size:12px;line-height:1.6;color:#64748b;">
+                Full report:<br>
+                <a href="${input.reportUrl}" style="color:#9aa3b2;word-break:break-all;">${input.reportUrl}</a>
+              </p>
+            </td>
+          </tr>`;
+  return emailShell({
+    title: `${input.host} — ${input.label} ${input.score}/100`,
+    innerHtml,
+    footerNote:
+      `You asked us to re-scan ${escapeHtml(input.host)} ${escapeHtml(input.cadence)}. ` +
+      `<a href="${input.stopUrl}" style="color:#64748b;">Stop watching this site</a>.`,
+  });
+}
+
+export async function sendWatchChangeEmail(input: {
+  to: string;
+  subject: string;
+  host: string;
+  label: string;
+  score: number;
+  previousScore: number | null;
+  improved: boolean;
+  first: boolean;
+  scaleHint: string;
+  reportUrl: string;
+  stopUrl: string;
+  cadence: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: input.subject,
+    html: watchChangeEmailHtml(input),
+    // Recurring mail, so mail clients get a native one-click stop button.
+    headers: {
+      "List-Unsubscribe": `<${input.stopUrl}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}
