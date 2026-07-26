@@ -11,6 +11,8 @@ export type LeadRow = {
   reportToken: string | null;
   score: number | null;
   scoreLabel: string;
+  /** Which dial the score is on — the two run in opposite directions. */
+  kind: "aeo" | "slop";
   scaleHint: string;
   topIssues: string[];
   /** Has a profiles row — an existing relationship, not a cold lead. */
@@ -68,8 +70,20 @@ export function selectRecipients(
   return { send, excluded };
 }
 
+/**
+ * A site that already scores well is the wrong audience for a "want us to fix
+ * it?" pitch — it reads as a canned mailshot and costs credibility with
+ * exactly the people most likely to be competent buyers. Note the inverted
+ * slop dial: strong means LOW there and HIGH for AEO.
+ */
+export function isStrongScore(row: LeadRow): boolean {
+  if (row.score === null) return false;
+  return row.kind === "slop" ? row.score <= 25 : row.score >= 80;
+}
+
 export function campaignSubject(row: LeadRow): string {
   if (row.score === null) return `Your CrawlProof scan of ${row.host}`;
+  if (isStrongScore(row)) return `${row.host} scores ${row.score}/100 — the last few gaps`;
   return `${row.host} scored ${row.score}/100 — want us to fix it?`;
 }
 
