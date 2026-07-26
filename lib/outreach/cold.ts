@@ -158,23 +158,31 @@ export function explainSuppression(reason: SuppressionReason): string {
 export function discoverContactEmails(html: string, host: string): ContactCandidate[] {
   const apex = apexOf(host);
   const out = new Map<string, ContactCandidate>();
+  const add = (email: string, source: ContactCandidate["source"]) => {
+    if (!looksLikeEmail(email) || out.has(email)) return;
+    out.set(email, { email, source, sameDomain: apexOf(domainOf(email)) === apex });
+  };
 
   for (const match of html.matchAll(/mailto:([^"'?>\s]+)/gi)) {
-    const email = normalizeEmail(decodeURIComponent(match[1] ?? ""));
-    if (!looksLikeEmail(email)) continue;
-    out.set(email, { email, source: "mailto", sameDomain: apexOf(domainOf(email)) === apex });
+    add(normalizeEmail(decodeURIComponent(match[1] ?? "")), "mailto");
+  }
+
+  // Cloudflare-protected addresses. Counted as "mailto" because that is what
+  // they are — an address the site deliberately published, just encoded. On
+  // a site that hides its address this way it is usually the only one there.
+  for (const match of html.matchAll(/data-cfemail=["']([0-9a-fA-F]+)["']/g)) {
+    const decoded = decodeCfEmail(match[1] ?? "");
+    if (decoded) add(decoded, "mailto");
+  }
+  for (const match of html.matchAll(/\/cdn-cgi\/l\/email-protection#([0-9a-fA-F]+)/g)) {
+    const decoded = decodeCfEmail(match[1] ?? "");
+    if (decoded) add(decoded, "mailto");
   }
 
   // Strip tags so we don't harvest addresses out of tracking-script config
   // blobs, which are mostly vendor addresses and never the owner's.
   const text = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ");
-  for (const match of text.matchAll(EMAIL_RE)) {
-    const email = normalizeEmail(match[0]);
-    if (!looksLikeEmail(email) || out.has(email)) continue;
-    // Image filenames and asset hashes routinely satisfy the address shape.
-    if (/\.(png|jpe?g|gif|svg|webp|css|js)$/i.test(email)) continue;
-    out.set(email, { email, source: "text", sameDomain: apexOf(domainOf(email)) === apex });
-  }
+  for (const email of deobfuscateEmails(text)) add(email, "text");
 
   return rankContacts([...out.values()]);
 }
@@ -328,4 +336,110 @@ export function unsupportedClaims(body: string, facts: ProspectFacts): string[] 
     if (lower.includes(phrase)) problems.push(`implies a prior relationship: "${phrase}"`);
   }
   return problems;
+}
+
+// ------------------------------------------------- obfuscation & link crawl
+
+/**
+ * Cloudflare's email obfuscation. The address is hex in data-cfemail (or the
+ * /cdn-cgi/l/email-protection# fragment); the first byte is an XOR key for
+ * the rest. Worth decoding: measured on real agency sites, this is often the
+ * only address published anywhere on the domain.
+ */
+export function decodeCfEmail(hex: string): string | null {
+  const clean = hex.trim().toLowerCase();
+  if (!/^[0-9a-f]{6,}$/.test(clean) || clean.length % 2 !== 0) return null;
+  const key = parseInt(clean.slice(0, 2), 16);
+  let out = "";
+  for (let i = 2; i < clean.length; i += 2) {
+    out += String.fromCharCode(parseInt(clean.slice(i, i + 2), 16) ^ key);
+  }
+  return looksLikeEmail(out) ? normalizeEmail(out) : null;
+}
+
+/**
+ * Undo the human-readable obfuscations. A business that writes "hello (at)
+ * example (dot) com" did so to stop naive scrapers, but it still wants to be
+ * emailed — and the address is on its own public contact page.
+ */
+export function deobfuscateEmails(text: string): string[] {
+  const normalized = text
+    .replace(/&#0?64;|&commat;|&#x40;/gi, "@")
+    .replace(/&#0?46;|&period;|&#x2e;/gi, ".")
+    .replace(/\s*[([{<]\s*(?:at|@)\s*[)\]}>]\s*/gi, "@")
+    .replace(/\s+at\s+/gi, "@")
+    .replace(/\s*[([{<]\s*(?:dot|\.)\s*[)\]}>]\s*/gi, ".")
+    .replace(/\s+dot\s+/gi, ".");
+  const out = new Set<string>();
+  for (const match of normalized.matchAll(EMAIL_RE)) {
+    const email = normalizeEmail(match[0]);
+    if (looksLikeEmail(email)) out.add(email);
+  }
+  return [...out];
+}
+
+/**
+ * Where a contact address might live, best-first.
+ *
+ * Ranked rather than first-N-wins: the naive version spent its whole budget
+ * on /about/are-we-fit and /company/block-inc while the real address sat on
+ * /privacy-policy. Legal pages score high on purpose — a site that hides its
+ * address everywhere else still has to print it there.
+ *
+ * "company" is deliberately absent: on a directory site it matches every
+ * listing on the page.
+ */
+const LINK_PRIORITY: Array<{ re: RegExp; score: number }> = [
+  { re: /contact|get-?in-?touch|reach-?us|write-?us/i, score: 10 },
+  { re: /impressum|imprint|legal-?notice/i, score: 9 },
+  { re: /privacy|terms|legal|gdpr/i, score: 7 },
+  { re: /about/i, score: 5 },
+  { re: /support|help-?cent|team|staff/i, score: 4 },
+];
+
+export function contactLinksFrom(html: string, baseUrl: string): string[] {
+  const scored = new Map<string, number>();
+  let host = "";
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return [];
+  }
+
+  for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]{0,120}?)<\/a>/gi)) {
+    const href = match[1] ?? "";
+    const text = (match[2] ?? "").replace(/<[^>]+>/g, " ");
+    const haystack = `${href} ${text}`;
+
+    let score = 0;
+    for (const rule of LINK_PRIORITY) {
+      if (rule.re.test(haystack)) score = Math.max(score, rule.score);
+    }
+    if (!score) continue;
+
+    try {
+      const url = new URL(href, baseUrl);
+      // Same site only — a "Privacy" link pointing at a third-party policy
+      // host is that vendor's address, not the prospect's.
+      if (url.hostname !== host) continue;
+      if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+      url.hash = "";
+      const path = url.pathname.replace(/\/$/, "");
+      if (!path) continue; // the homepage we are already on
+
+      // Prefer /about over /about/are-we-fit: the shallower page carries the
+      // contact details, the deeper one is marketing.
+      const depth = path.split("/").filter(Boolean).length;
+      const final = score - (depth - 1) * 2;
+      const absolute = url.toString();
+      if ((scored.get(absolute) ?? -Infinity) < final) scored.set(absolute, final);
+    } catch {
+      // Unparseable href; skip.
+    }
+  }
+
+  return [...scored.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([url]) => url);
 }
