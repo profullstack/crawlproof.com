@@ -13,6 +13,7 @@ export type ProjectShellTab =
   | "performance"
   | "scans"
   | "stats"
+  | "leads"
   | "autoblog"
   | "social"
   | "repos"
