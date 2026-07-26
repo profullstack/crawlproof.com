@@ -43,6 +43,7 @@ import {
   siteBase,
 } from "@/lib/outreach/pipeline";
 import { addSuppression, isEmailSuppressed, sendsInLast24h } from "@/lib/outreach/suppress";
+import { describeAddressSource, resolvePostalAddress } from "@/lib/outreach/postalAddress";
 import { discoverProspects } from "@/lib/outreach/discover";
 import { enrichContact, findEmail, leadsToCsv, leadsToJson, type ExportableLead } from "@/lib/outreach/enrich";
 import { CAMPAIGN_COLUMNS, runEmailCampaignTick, summarize, type CampaignRow } from "@/lib/outreach/runner";
@@ -580,6 +581,7 @@ export function registerLeadTools(server: McpServer): void {
       if (!outcome.ok) return errorResult(`Not sent — ${outcome.reason}.`);
 
       const unsubscribeUrl = `${siteBase()}/unsubscribe/${prospect.unsubscribe_token}`;
+      const postal = await resolvePostalAddress({ projectId: project.id, ownerId: userId });
       return textResult(
         outcome.dryRun
           ? [
@@ -588,9 +590,9 @@ export function registerLeadTools(server: McpServer): void {
               `Subject: ${args.subject}`,
               `Step ${step}`,
               `Unsubscribe link: ${unsubscribeUrl}`,
-              env.outreachPostalAddress
-                ? `Postal address in footer: ${env.outreachPostalAddress}`
-                : "⚠ OUTREACH_POSTAL_ADDRESS unset — live sending will be refused until it is.",
+              postal.address
+                ? `Postal address in footer (from ${describeAddressSource(postal.source)}): ${postal.address}`
+                : "⚠ No sender postal address set — live sending will be refused. Add one on the Leads page or in Settings.",
               `Sends used today: ${outcome.sentToday}/${env.outreachDailyCap}`,
               "",
               "Pass dry_run: false to send it.",
