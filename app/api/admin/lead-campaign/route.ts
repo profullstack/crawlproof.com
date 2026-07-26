@@ -7,6 +7,7 @@ import { recordLead } from "@/lib/marketing";
 import {
   campaignSubject,
   hireUrlFor,
+  isStrongScore,
   selectRecipients,
   type LeadRow,
   type Segment,
@@ -111,6 +112,7 @@ async function loadAudience(): Promise<LeadRow[]> {
       reportToken: (r.share_token as string | null) ?? null,
       score: card.score,
       scoreLabel: card.label,
+      kind: card.kind,
       scaleHint: card.scaleHint,
       topIssues: issuesByAudit.get(String(r.id)) ?? [],
       isCustomer: customerEmails.has(email),
@@ -218,6 +220,7 @@ export async function POST(req: NextRequest) {
         reportUrl: `${base}/r/${row.reportToken}`,
         hireUrl: hireUrlFor(row, base),
         isCustomer: row.isCustomer,
+        strong: isStrongScore(row),
       }),
       unsubscribeToken: contact.unsubscribe_token as string,
     });

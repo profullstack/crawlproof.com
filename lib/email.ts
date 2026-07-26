@@ -848,6 +848,8 @@ export function leadCampaignEmailHtml(input: {
   reportUrl: string;
   hireUrl: string;
   isCustomer: boolean;
+  /** Already scoring well — don't pitch a rescue at them. */
+  strong?: boolean;
 }): string {
   const issues = input.topIssues.length
     ? `<ul style="margin:14px 0 0;padding-left:18px;color:#9aa3b2;font-size:14px;line-height:1.8;">
@@ -896,8 +898,9 @@ export function leadCampaignEmailHtml(input: {
           <tr>
             <td style="padding:22px 32px 0;">
               <p style="margin:0;font-size:14px;line-height:1.6;color:#9aa3b2;">
-                We also fix these directly. Tell us about the site and we'll come
-                back with what it takes to move that number — no obligation.
+                ${input.strong
+                  ? `That's a strong result — most sites we scan don't get there. If you want the remaining gaps closed properly, we do that work directly.`
+                  : `We also fix these directly. Tell us about the site and we'll come back with what it takes to move that number — no obligation.`}
               </p>
             </td>
           </tr>
