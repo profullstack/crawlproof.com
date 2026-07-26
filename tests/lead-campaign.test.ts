@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   campaignSubject,
   excludeReason,
+  isStrongScore,
   hireUrlFor,
   selectRecipients,
   type LeadRow,
@@ -14,6 +15,7 @@ function lead(over: Partial<LeadRow> = {}): LeadRow {
     reportToken: "tok123456",
     score: 54,
     scoreLabel: "AEO Score",
+    kind: "aeo",
     scaleHint: "out of 100 · higher is better",
     topIssues: ["Blocks GPTBot", "No structured data"],
     isCustomer: false,
@@ -124,6 +126,34 @@ describe("campaignSubject", () => {
     expect(campaignSubject(lead({ host: "acme.com", score: null }))).toBe(
       "Your CrawlProof scan of acme.com",
     );
+  });
+});
+
+describe("isStrongScore / subject framing", () => {
+  it("does not pitch a rescue at a site that already scores well", () => {
+    // "want us to fix it?" to a 91/100 site reads as a canned mailshot and
+    // costs credibility with the most competent buyers.
+    const row = lead({ host: "share.google", score: 91, kind: "aeo" });
+    expect(isStrongScore(row)).toBe(true);
+    expect(campaignSubject(row)).toBe("share.google scores 91/100 — the last few gaps");
+  });
+
+  it("still pitches the fix at a weak score", () => {
+    const row = lead({ host: "acme.com", score: 40, kind: "aeo" });
+    expect(isStrongScore(row)).toBe(false);
+    expect(campaignSubject(row)).toBe("acme.com scored 40/100 — want us to fix it?");
+  });
+
+  it("inverts 'strong' for the slop dial", () => {
+    // Low slop is good; high slop is bad. The same number flips meaning.
+    expect(isStrongScore(lead({ score: 12, kind: "slop" }))).toBe(true);
+    expect(isStrongScore(lead({ score: 12, kind: "aeo" }))).toBe(false);
+    expect(isStrongScore(lead({ score: 90, kind: "slop" }))).toBe(false);
+    expect(isStrongScore(lead({ score: 90, kind: "aeo" }))).toBe(true);
+  });
+
+  it("is never strong without a score", () => {
+    expect(isStrongScore(lead({ score: null }))).toBe(false);
   });
 });
 
