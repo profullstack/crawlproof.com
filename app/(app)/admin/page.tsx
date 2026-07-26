@@ -69,16 +69,29 @@ export default async function AdminPage() {
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
         <h1 className="text-3xl font-bold">Admin</h1>
-        <p className="mt-2 text-sm">
-          <a href="/admin/leads" className="text-[var(--color-accent)] hover:underline">
-            Leads &amp; campaigns →
-          </a>
-        </p>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Grant or remove credits by email. Every grant is logged in{" "}
           <code>admin_credit_grants</code>.
         </p>
       </div>
+
+      {/* Sits above every tool on this page: it is the only read surface for
+          captured leads, campaign sends, and watches, and a text link under the
+          heading was too easy to miss. */}
+      <section className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">Leads &amp; campaigns</h2>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Captured leads and their status, outbound campaign sends, watched
+              URLs, and live audience counts per segment.
+            </p>
+          </div>
+          <a href="/admin/leads" className="btn btn-primary whitespace-nowrap">
+            Open leads dashboard →
+          </a>
+        </div>
+      </section>
 
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Grant credits</h2>
