@@ -7,6 +7,7 @@ import { LeadFinder } from "@/components/leads/lead-finder";
 import { LeadActions } from "@/components/leads/lead-actions";
 import { CampaignPanel, type CampaignSummary } from "@/components/leads/campaign-panel";
 import { SenderAddress } from "@/components/leads/sender-address";
+import { MailboxConnect, type ConnectedMailbox } from "@/components/leads/mailbox-connect";
 import { RefreshLeads } from "@/components/leads/refresh-leads";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 
@@ -110,6 +111,41 @@ export default async function LeadsPage({
   });
   const canSendLive = Boolean(addressSettings.address);
 
+  // The org's default email sender, when it's a connected mailbox rather than
+  // an API-key provider — that's what the connect panel reflects back.
+  const { data: projectRow } = await supabase
+    .from("projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const orgId = (projectRow?.organization_id as string | null) ?? null;
+  let mailbox: ConnectedMailbox | null = null;
+  if (orgId) {
+    const { data: senderRow } = await supabase
+      .from("organization_outreach_configs")
+      .select(
+        "id, label, from_email, smtp_host, imap_host, discovery_detail, verified_at",
+      )
+      .eq("organization_id", orgId)
+      .eq("channel", "email")
+      .eq("provider", "smtp")
+      .eq("is_default", true)
+      .eq("enabled", true)
+      .maybeSingle();
+    if (senderRow) {
+      const r = senderRow as Record<string, string | null>;
+      mailbox = {
+        id: r.id as string,
+        label: (r.label as string) ?? "",
+        fromEmail: r.from_email,
+        smtpHost: r.smtp_host,
+        imapHost: r.imap_host,
+        discoveryDetail: r.discovery_detail,
+        verifiedAt: r.verified_at,
+      };
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -121,6 +157,8 @@ export default async function LeadsPage({
       </div>
 
       <SenderAddress projectId={projectId} settings={addressSettings} />
+
+      <MailboxConnect projectId={projectId} connected={mailbox} />
 
       <LeadFinder projectId={projectId} />
 

@@ -1,5 +1,6 @@
 import { createEmailer, type Emailer } from "@profullstack/stack/email";
 import { env } from "./env";
+import type { SenderMailbox } from "./outreach/senderMailbox";
 
 let cached: Emailer | null = null;
 function client() {
@@ -1001,7 +1002,51 @@ export async function sendColdOutreachEmail(input: {
   html: string;
   unsubscribeUrl: string;
   replyTo?: string;
-}): Promise<{ sent: boolean; error?: string }> {
+  /**
+   * The org's connected mailbox, when there is one. Passing it sends through
+   * the user's own SMTP server so the mail comes from their address and
+   * replies come back to them; omitting it uses the shared Resend sender.
+   */
+  mailbox?: SenderMailbox | null;
+}): Promise<{ sent: boolean; error?: string; provider?: string }> {
+  const headers = {
+    "List-Unsubscribe": `<${input.unsubscribeUrl}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
+
+  if (input.mailbox) {
+    // Imported lazily: nodemailer is only needed on the connected-mailbox
+    // path, and every other caller of this module runs without it.
+    const { default: nodemailer } = await import("nodemailer");
+    try {
+      const transporter = nodemailer.createTransport({
+        host: input.mailbox.host,
+        port: input.mailbox.port,
+        secure: input.mailbox.secure,
+        auth: { user: input.mailbox.user, pass: input.mailbox.pass },
+      });
+      await transporter.sendMail({
+        from: input.mailbox.fromEmail,
+        to: input.to,
+        subject: input.subject,
+        html: input.html,
+        replyTo: input.replyTo ?? input.mailbox.replyTo ?? undefined,
+        headers,
+      });
+      transporter.close();
+      return { sent: true, provider: "mailbox" };
+    } catch (error) {
+      // No silent fallback to the shared sender: the user asked for mail to
+      // come from their address, and quietly sending as someone else would
+      // misrepresent who is contacting the prospect.
+      return {
+        sent: false,
+        provider: "mailbox",
+        error: error instanceof Error ? error.message : "Mailbox send failed.",
+      };
+    }
+  }
+
   const c = client();
   if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
   const res = await c.send({
@@ -1010,11 +1055,8 @@ export async function sendColdOutreachEmail(input: {
     subject: input.subject,
     html: input.html,
     replyTo: input.replyTo,
-    headers: {
-      "List-Unsubscribe": `<${input.unsubscribeUrl}>`,
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-    },
+    headers,
   });
-  if (!res.sent) return { sent: false, error: res.error };
-  return { sent: true };
+  if (!res.sent) return { sent: false, error: res.error, provider: "resend" };
+  return { sent: true, provider: "resend" };
 }
