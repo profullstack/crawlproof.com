@@ -90,8 +90,12 @@ export type SuppressionReason =
 
 export type ContactCandidate = {
   email: string;
-  /** Where we found it — shown in the draft so a human can sanity-check. */
-  source: "mailto" | "text" | "manual";
+  /**
+   * Where it came from — shown in the draft so a human can sanity-check.
+   * "guess" is a constructed role address that was never published anywhere,
+   * and is the one value that should make a reader look twice.
+   */
+  source: "mailto" | "text" | "manual" | "guess";
   /** True when the address is on the prospect's own domain. */
   sameDomain: boolean;
 };
@@ -257,6 +261,10 @@ export function rankContacts(candidates: ContactCandidate[]): ContactCandidate[]
       let score = 0;
       if (c.sameDomain) score += 100;
       if (c.source === "mailto") score += 20;
+      // A constructed address was never published anywhere, so any address
+      // the site actually printed should win — including one this heuristic
+      // would otherwise rank lower.
+      if (c.source === "guess") score -= 200;
       const idx = ROLE_PREFERENCE.indexOf(localPart(c.email));
       // A local part we don't recognise is likely a person's name, which is
       // the best possible target — worth more than the mailto: bonus, so a
@@ -443,6 +451,42 @@ export function unsupportedCustomClaims(body: string, facts: string[]): string[]
   }
 
   return [...new Set(problems)];
+}
+
+/**
+ * Shared inboxes worth trying when a site publishes no address at all.
+ *
+ * A guess, and marked as one. These bounce more often than a published
+ * address, and bounces cost sender reputation — so this is a last resort
+ * after crawling the site and searching for it have both failed, not a
+ * shortcut past either.
+ *
+ * Ordered by how likely a human is to read a cold message sent there.
+ * `hello` and `info` are read by whoever runs a small company; `press` is
+ * further down because it is monitored but narrower in purpose — though it
+ * demonstrably works, since the message that prompted this arrived on ours.
+ *
+ * Deliberately absent: every address in NEVER_CONTACT_LOCALPART. Guessing
+ * one would manufacture exactly the sends that list exists to prevent.
+ */
+const GUESSABLE_ROLE_LOCALPARTS = [
+  "hello",
+  "info",
+  "contact",
+  "hi",
+  "team",
+  "press",
+  "sales",
+  "enquiries",
+  "inquiries",
+];
+
+export function roleAddressGuesses(host: string): ContactCandidate[] {
+  const domain = normalizeHost(host);
+  if (!domain || !domain.includes(".")) return [];
+  return GUESSABLE_ROLE_LOCALPARTS.map((local) => `${local}@${domain}`)
+    .filter((email) => !isNeverContactMailbox(email))
+    .map((email) => ({ email, source: "guess" as const, sameDomain: true }));
 }
 
 // ------------------------------------------------- obfuscation & link crawl

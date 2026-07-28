@@ -84,12 +84,21 @@ describe("customDraftSystem", () => {
   });
 
   it("keeps the grounding and no-prior-relationship rules", () => {
-    expect(system).toMatch(/may not state it/);
+    expect(system).toMatch(/Invent no numbers/);
     expect(system).toMatch(/prior relationship/);
   });
 
-  it("forbids asserting things about the recipient's business", () => {
-    expect(system).toMatch(/nothing about the recipient's business as fact/i);
+  it("allows an observation about the recipient, bounded to their own words", () => {
+    // This replaces an earlier rule that banned saying anything about the
+    // recipient at all. That prevented hallucination but also prevented the
+    // specific opening line that makes cold email work; the recipient's own
+    // self-description is now supplied so the observation can be true.
+    expect(system).toMatch(/checkable observation about the recipient/);
+    expect(system).toMatch(/drawn only from what their own site says/);
+  });
+
+  it("still refuses praise, which is the failure mode that rule guarded", () => {
+    expect(system).toMatch(/observation, not a compliment/);
   });
 
   it("still refuses a call as the first ask", () => {
