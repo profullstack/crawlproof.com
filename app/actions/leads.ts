@@ -505,6 +505,12 @@ export async function saveCampaignAction(input: {
   pitchAsk?: string;
   pitchFacts?: string;
   scanProspects?: boolean;
+  /**
+   * Minimum public buying intent a lead must show, 0-100. Null or absent
+   * leaves the campaign selecting on resemblance alone, which is what every
+   * campaign did before intent existed.
+   */
+  minIntent?: number | null;
 }): Promise<Ok<{ note: string }> | Err> {
   const auth = await requireLeadAccess(input.projectId);
   if (!auth.ok) return auth;
@@ -572,6 +578,12 @@ export async function saveCampaignAction(input: {
         max_score: input.maxScore,
         daily_send_limit: input.dailySendLimit,
         auto_send: input.autoSend,
+        // Clamped rather than rejected: a bar above 100 silently matches
+        // nothing, which looks like the sweep being broken.
+        min_intent:
+          input.minIntent === null || input.minIntent === undefined
+            ? null
+            : Math.max(0, Math.min(100, Math.round(input.minIntent))),
         angle: input.angle?.trim() || null,
         sender_name: input.senderName?.trim() || null,
         reply_to: input.replyTo?.trim() || null,
