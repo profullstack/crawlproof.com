@@ -43,6 +43,7 @@ import {
 } from "./cold";
 import { isEmailSuppressed, marketingUnsubscribedAt, sendsInLast24h } from "./suppress";
 import { resolvePostalAddress } from "./postalAddress";
+import { loadProjectMailbox } from "./senderMailbox";
 
 export type ProspectRow = {
   id: string;
@@ -546,7 +547,11 @@ export async function sendProspectEmail(input: {
 
   const unsubscribeUrl = `${siteBase()}/unsubscribe/${input.prospect.unsubscribe_token}`;
   let failed: string | null = null;
+  // Defaults to the shared sender; a connected mailbox overrides it so the
+  // pitch arrives from the user's own address.
+  let provider = "resend";
   if (!input.dryRun) {
+    const mailbox = await loadProjectMailbox(input.prospect.project_id);
     const res = await sendColdOutreachEmail({
       to,
       subject: input.subject,
@@ -559,7 +564,9 @@ export async function sendProspectEmail(input: {
       }),
       unsubscribeUrl,
       replyTo: input.replyTo ?? undefined,
+      mailbox,
     });
+    provider = res.provider ?? "resend";
     if (!res.sent) failed = res.error ?? "send failed";
   }
 
@@ -574,7 +581,7 @@ export async function sendProspectEmail(input: {
     subject: input.subject,
     body: input.body,
     target_url: input.prospect.site_url,
-    provider: input.dryRun ? "dry-run" : "resend",
+    provider: input.dryRun ? "dry-run" : provider,
     dry_run: input.dryRun || !!failed,
   });
 
