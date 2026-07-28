@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { unsupportedCustomClaims } from "@/lib/outreach/cold";
+import { separateUrlPunctuation, unsupportedCustomClaims, urlsIn } from "@/lib/outreach/cold";
 
 // Three failures that only appeared once campaigns ran against real
 // businesses. Each is pinned by the case that produced it.
@@ -66,5 +66,53 @@ describe("people are output worth paying for", () => {
 
   it("still refunds a run that truly did nothing", () => {
     expect(runner).toMatch(/if \(billing\.charged\(\) && !producedSomething\)/);
+  });
+});
+
+describe("a link ends where the URL characters end", () => {
+  const guard = unsupportedCustomClaims;
+  const declared = ["download it at https://threatcrush.com/get-whitepaper"];
+
+  it("does not swallow the punctuation jammed against it", () => {
+    // The live draft read "...get-whitepaper—download..." and the guard read
+    // the em-dash and the next word as part of the URL, then rejected the
+    // draft for linking somewhere the campaign never mentioned.
+    expect(urlsIn("grab it at https://threatcrush.com/get-whitepaper—download now")).toEqual([
+      "https://threatcrush.com/get-whitepaper",
+    ]);
+  });
+
+  it("accepts that draft instead of rejecting it", () => {
+    const body = "Grab it at https://threatcrush.com/get-whitepaper—download takes a minute.";
+    expect(guard(body, declared)).toEqual([]);
+  });
+
+  it("still strips ordinary sentence punctuation", () => {
+    expect(urlsIn("see https://x.test/a.")).toEqual(["https://x.test/a"]);
+    expect(urlsIn("see (https://x.test/a), then")).toEqual(["https://x.test/a"]);
+  });
+
+  it("keeps punctuation that is genuinely part of the path", () => {
+    expect(urlsIn("see https://x.test/a_b-c~d/e?f=1&g=2#h then")).toEqual([
+      "https://x.test/a_b-c~d/e?f=1&g=2#h",
+    ]);
+  });
+
+  it("separates the dash so no mail client can autolink it", () => {
+    // Even with the check corrected, a URL welded to an em-dash is a link
+    // some clients will autolink including the dash — a 404 on the one thing
+    // the email asked the recipient to click.
+    expect(separateUrlPunctuation("at https://x.test/p—download now")).toBe(
+      "at https://x.test/p —download now",
+    );
+  });
+
+  it("leaves a well-formed sentence untouched", () => {
+    const clean = "Grab it at https://x.test/p. It takes a minute.";
+    expect(separateUrlPunctuation(clean)).toBe(clean);
+  });
+
+  it("still catches a genuinely invented link", () => {
+    expect(guard("see https://not-declared.test/x", declared).join(" ")).toMatch(/links to/);
   });
 });
