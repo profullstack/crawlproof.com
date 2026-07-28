@@ -92,7 +92,7 @@ export default async function LeadsPage({
     supabase
       .from("outreach_campaigns")
       .select(
-        "id, name, active, auto_send, daily_send_limit, max_score, queries, seed_urls, last_run_at, last_run_note, auth_required_hosts, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, angle, sender_name, reply_to",
+        "id, name, active, auto_send, daily_send_limit, max_score, queries, seed_urls, last_run_at, last_run_note, auth_required_hosts, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, sells_description, angle, sender_name, reply_to",
       )
       .eq("project_id", projectId)
       .order("updated_at", { ascending: false })

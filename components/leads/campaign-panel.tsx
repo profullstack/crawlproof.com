@@ -37,6 +37,7 @@ export type CampaignSummary = {
   pitch_facts: string[];
   scan_prospects: boolean;
   min_intent: number | null;
+  sells_description: string | null;
   auth_required_hosts: string[];
   runs: CampaignRun[];
 };
@@ -89,6 +90,7 @@ export function CampaignPanel({
   // the failure mode the whole feature exists to avoid, so it should be what
   // you turn off deliberately rather than what you remember to turn on.
   const [minIntent, setMinIntent] = useState<number | null>(DEFAULT_MIN_INTENT);
+  const [sellsDescription, setSellsDescription] = useState("");
   const [goal, setGoal] = useState("");
   const [generating, setGenerating] = useState(false);
   const [pitchNote, setPitchNote] = useState<string | null>(null);
@@ -166,6 +168,7 @@ export function CampaignPanel({
     setPitchFacts((c.pitch_facts ?? []).join("\n"));
     setScanProspects(c.scan_prospects);
     setMinIntent(c.min_intent ?? null);
+    setSellsDescription(c.sells_description ?? "");
     // Every field the form submits has to be loaded, not just the ones that
     // changed recently: save() sends the whole form, so anything left blank
     // here is written back as blank and silently wipes the column.
@@ -199,6 +202,7 @@ export function CampaignPanel({
         pitchFacts,
         scanProspects,
         minIntent,
+        sellsDescription,
       });
       if (result.ok) setEditing(null);
       return result;
@@ -516,6 +520,24 @@ export function CampaignPanel({
               </span>
             </span>
           </label>
+
+          {minIntent !== null && (
+            <label className="text-sm sm:col-span-2">
+              What you sell, in a sentence or two
+              <textarea
+                className="input mt-1 w-full"
+                rows={2}
+                value={sellsDescription}
+                onChange={(e) => setSellsDescription(e.target.value)}
+                placeholder="Load testing for teams whose checkout falls over under traffic spikes."
+              />
+              <span className="mt-0.5 block text-xs text-[var(--color-muted)]">
+                Optional, and the single highest-value field here. People with a problem describe
+                the problem, not the product category — so the best requests contain none of your
+                keywords. With this, they get found anyway.
+              </span>
+            </label>
+          )}
 
           {minIntent !== null && (
             <label className="text-sm sm:col-span-2">

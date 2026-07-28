@@ -22,6 +22,7 @@
 
 import { searchSerp } from "@/lib/alerts/valueserp";
 import { scoreIntent, type IntentSignal } from "./intent";
+import { acceptsRelevance, judgeRelevance } from "./intentRelevance";
 
 export type IntentSource = {
   id: string;
@@ -120,6 +121,15 @@ export const INTENT_PHRASINGS = [
   '"what do you use"',
 ];
 
+/**
+ * Model judgements one sweep may make.
+ *
+ * A ceiling rather than a budget-per-source, because the judgement is the only
+ * per-signal cost in the sweep and an index that suddenly returns three
+ * hundred results should not become three hundred model calls.
+ */
+const MAX_RELEVANCE_JUDGEMENTS = 15;
+
 export type IntentHit = {
   source: string;
   url: string;
@@ -199,6 +209,8 @@ export async function sweepIntent(input: {
   /** Only consider posts newer than this. */
   recency?: "day" | "week" | "month";
   minIntent?: number;
+  /** What the campaign sells, in prose. Enables the description path. */
+  sells?: string | null;
   now?: Date;
 }): Promise<IntentSweepResult> {
   const now = input.now ?? new Date();
@@ -208,6 +220,8 @@ export async function sweepIntent(input: {
   const notes: string[] = [];
   const seen = new Set<string>();
   const hits: IntentHit[] = [];
+  // Scored but not yet on-topic: awaiting a description judgement.
+  const pending: IntentHit[] = [];
   let calls = 0;
 
   // One phrasing at a time across every source, rather than every phrasing on
@@ -241,11 +255,12 @@ export async function sweepIntent(input: {
           postedAt,
           keywords: input.keywords,
           negativeKeywords: input.negativeKeywords,
+          allowDescriptionMatch: Boolean(input.sells?.trim()),
           now,
         });
         if (signal.disqualified) continue;
         if (signal.score < (input.minIntent ?? 0)) continue;
-        hits.push({
+        pending.push({
           source: source.id,
           url: r.url,
           title: r.title ?? "",
@@ -259,6 +274,37 @@ export async function sweepIntent(input: {
 
   // Strongest and freshest first — the score already folds both in, so this is
   // simply the order to work them in.
+  // Resolve the keyword misses, cheapest-first: the model only ever sees what
+  // already cleared the score bar, so an unbounded result set cannot turn into
+  // an unbounded number of judgements. Strongest first, so a capped run spends
+  // its judgements on the best candidates.
+  pending.sort((a, b) => b.signal.score - a.signal.score);
+  let judgements = 0;
+  for (const hit of pending) {
+    if (hit.signal.matchPath === "keyword") {
+      hits.push(hit);
+      continue;
+    }
+    if (!input.sells?.trim() || judgements >= MAX_RELEVANCE_JUDGEMENTS) continue;
+    judgements += 1;
+    const verdict = await judgeRelevance({
+      text: `${hit.title}\n${hit.snippet}`,
+      sells: input.sells,
+    });
+    if (!acceptsRelevance(verdict)) continue;
+    hits.push({
+      ...hit,
+      signal: {
+        ...hit.signal,
+        matchPath: "description",
+        // Carried so a user who only listed keywords can see why an unmatched
+        // post appeared, and can tell whether the model was right.
+        reasons: [...hit.signal.reasons, `matches what you sell: ${verdict!.reason}`],
+      },
+    });
+  }
+  if (judgements) notes.push(`${judgements} relevance judgements`);
+
   hits.sort((a, b) => b.signal.score - a.signal.score);
   notes.push(`${hits.length} intent signals from ${enabled.length} sources in ${calls} searches`);
   return { hits, calls, notes };
