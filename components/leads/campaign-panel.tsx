@@ -35,6 +35,7 @@ export type CampaignSummary = {
   pitch_ask: string | null;
   pitch_facts: string[];
   scan_prospects: boolean;
+  min_intent: number | null;
   auth_required_hosts: string[];
   runs: CampaignRun[];
 };
@@ -83,6 +84,9 @@ export function CampaignPanel({
   // scan of the prospect to contribute. Selecting the audit pitch turns it
   // back on, because that pitch is built from findings.
   const [scanProspects, setScanProspects] = useState(false);
+  // Null means "don't qualify on intent" — the behaviour every campaign had
+  // before this existed, and the default for anything already running.
+  const [minIntent, setMinIntent] = useState<number | null>(null);
   const [goal, setGoal] = useState("");
   const [generating, setGenerating] = useState(false);
   const [pitchNote, setPitchNote] = useState<string | null>(null);
@@ -159,6 +163,7 @@ export function CampaignPanel({
     setPitchAsk(c.pitch_ask ?? "");
     setPitchFacts((c.pitch_facts ?? []).join("\n"));
     setScanProspects(c.scan_prospects);
+    setMinIntent(c.min_intent ?? null);
     // Every field the form submits has to be loaded, not just the ones that
     // changed recently: save() sends the whole form, so anything left blank
     // here is written back as blank and silently wipes the column.
@@ -191,6 +196,7 @@ export function CampaignPanel({
         pitchAsk,
         pitchFacts,
         scanProspects,
+        minIntent,
       });
       if (result.ok) setEditing(null);
       return result;
@@ -490,6 +496,42 @@ export function CampaignPanel({
                 />
               </label>
             </>
+          )}
+
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={minIntent !== null}
+              onChange={(e) => setMinIntent(e.target.checked ? 40 : null)}
+            />
+            <span>
+              Only work leads who publicly asked to buy
+              <span className="mt-0.5 block text-xs text-[var(--color-muted)]">
+                Sweeps Reddit, forums, Q&amp;A sites and the social networks for people asking for
+                what you sell, and ranks them by how explicitly they asked and how recently. Cold
+                outreach to people who never asked converts badly however good the copy is.
+              </span>
+            </span>
+          </label>
+
+          {minIntent !== null && (
+            <label className="text-sm sm:col-span-2">
+              Minimum intent score: <span className="font-mono">{minIntent}</span>
+              <input
+                type="range"
+                min={10}
+                max={90}
+                step={5}
+                className="mt-1 w-full"
+                value={minIntent}
+                onChange={(e) => setMinIntent(Number(e.target.value))}
+              />
+              <span className="mt-0.5 block text-xs text-[var(--color-muted)]">
+                Around 40 is a fresh &ldquo;can anyone recommend…&rdquo;. Above 70 is someone naming
+                a budget. Higher means fewer and better.
+              </span>
+            </label>
           )}
 
           <label className="flex items-start gap-2 text-sm sm:col-span-2">

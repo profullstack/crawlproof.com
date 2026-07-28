@@ -26,6 +26,8 @@ import {
 import { nextStepReadyAt, type OutreachStep } from "./cold";
 import { leadRunBilling, outOfCreditsNote } from "./billing";
 import { recordDiscoveredPeople } from "./contacts";
+import { sweepIntent } from "./intentSources";
+import { describeIntent } from "./intent";
 import { LEAD_RUN_CREDITS } from "@/lib/credits";
 
 export type CampaignRow = {
@@ -51,13 +53,17 @@ export type CampaignRow = {
   pitch_ask: string | null;
   pitch_facts: string[] | null;
   scan_prospects: boolean;
+  /** Minimum intent score a lead must show. Null = no intent gate. */
+  min_intent: number | null;
+  intent_sources: string[] | null;
+  intent_recency: "day" | "week" | "month" | null;
   sender_name: string | null;
   reply_to: string | null;
   last_run_at: string | null;
 };
 
 export const CAMPAIGN_COLUMNS =
-  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects";
+  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, intent_sources, intent_recency";
 
 export type TickResult = {
   campaign: string;
@@ -75,6 +81,10 @@ export type TickResult = {
   creditsSpent: number;
   /** People named by this tick and written to the shared contact record. */
   peopleRecorded: number;
+  /** Public requests to buy that this tick found and qualified. */
+  intentFound: number;
+  /** Candidates dropped for showing no intent, when the campaign requires it. */
+  intentRejected: number;
   skipped: string[];
   errors: string[];
 };
@@ -89,6 +99,10 @@ const MAX_SEND_PER_TICK = 5;
 // variable cost in a run — SERP calls scale with how many prospects publish
 // no address — so it gets a ceiling like every other per-tick stage.
 const MAX_CONTACT_SEARCHES_PER_TICK = 10;
+// Searches a tick may spend sweeping for public buying intent. Small, because
+// it runs every fifteen minutes and the window it looks at is days wide — the
+// same request does not need finding four times an hour.
+const MAX_INTENT_SEARCHES_PER_TICK = 6;
 
 export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickResult> {
   const sb = serviceClient();
@@ -103,6 +117,8 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     awaitingAuth: [],
     creditsSpent: 0,
     peopleRecorded: 0,
+    intentFound: 0,
+    intentRejected: 0,
     researched: 0,
     drafted: 0,
     sent: 0,
@@ -251,6 +267,47 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
       .eq("id", campaign.project_id)
       .maybeSingle();
     const organizationId = (projectRow?.organization_id as string | null) ?? null;
+
+    // ---- 4a. Intent first. Someone who publicly asked to buy, recently, is
+    // a categorically different prospect from a company that merely resembles
+    // your customers — so the budget goes here before it goes to resemblance.
+    if (campaign.min_intent !== null && campaign.queries?.length) {
+      const sweep = await sweepIntent({
+        topic: campaign.queries[0],
+        keywords: campaign.keywords ?? campaign.queries,
+        negativeKeywords: campaign.negative_keywords ?? [],
+        sources: campaign.intent_sources ?? undefined,
+        recency: campaign.intent_recency ?? "week",
+        minIntent: campaign.min_intent,
+        maxCalls: MAX_INTENT_SEARCHES_PER_TICK,
+      });
+      result.intentFound = sweep.hits.length;
+      for (const note of sweep.notes) result.skipped.push(`intent: ${note}`);
+
+      // Stored as signals, not as prospects. A prospect is a company with a
+      // domain you can email; this is a person on a platform who asked for
+      // something. Filing the second as the first gives every Reddit thread
+      // the target_key "reddit.com" and collapses the queue into one lead.
+      for (const hit of sweep.hits) {
+        await sb.from("outreach_intent_signals").upsert(
+          {
+            project_id: campaign.project_id,
+            campaign_id: campaign.id,
+            owner_id: campaign.owner_id,
+            source: hit.source,
+            url: hit.url,
+            title: hit.title.slice(0, 400),
+            snippet: hit.snippet.slice(0, 1000),
+            score: hit.signal.score,
+            tier: hit.signal.tier,
+            reasons: hit.signal.reasons,
+            posted_at: hit.postedAt?.toISOString() ?? null,
+            notes: describeIntent(hit.signal),
+          },
+          { onConflict: "project_id,url", ignoreDuplicates: true },
+        );
+      }
+    }
 
     const found = await discoverProspects({
       queries: campaign.queries ?? [],
@@ -476,6 +533,8 @@ export function summarize(r: TickResult): string {
         : `${r.dryRuns} drafted (auto_send off)`,
   ];
   if (r.peopleRecorded) parts.push(`${r.peopleRecorded} people`);
+  if (r.intentFound) parts.push(`${r.intentFound} INTENT`);
+  if (r.intentRejected) parts.push(`${r.intentRejected} no-intent`);
   if (r.awaitingAuth.length) parts.push(`${r.awaitingAuth.length} waiting_for_auth`);
   // Only when something was charged. Printing "0 credits" on every idle tick
   // would bury the line that matters under the ones that cost nothing.
