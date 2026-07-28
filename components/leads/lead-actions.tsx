@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   draftLeadAction,
+  markLeadOutcomeAction,
   researchLeadAction,
   sendLeadAction,
   suppressLeadAction,
@@ -29,6 +30,8 @@ export function LeadActions({
   host: string;
   hasContact: boolean;
   nextStep: number;
+  /** Current pipeline status, so outcome controls only appear once contacted. */
+  status: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -41,6 +44,20 @@ export function LeadActions({
     setNote(null);
     setError(null);
   };
+
+  // Outcomes cannot be observed from here — a send is visible, a reply is
+  // not. Until something reads the sending mailbox, marking one is the only
+  // way the funnel gets a numerator, so the control sits on the lead itself
+  // rather than behind a menu.
+  const markOutcome = (outcome: "replied" | "won" | "lost") =>
+    start(async () => {
+      clear();
+      const res = await markLeadOutcomeAction({ projectId, host, outcome });
+      if (res.ok) {
+        setNote(res.note);
+        router.refresh();
+      } else setError(res.error);
+    });
 
   const research = () =>
     start(async () => {
@@ -111,6 +128,37 @@ export function LeadActions({
           Never contact
         </button>
       </div>
+
+      {/* Only after a lead has actually been mailed — there is no outcome to
+          record before that, and offering one would invite a reply rate
+          computed over people who were never contacted. */}
+      {["contacted", "replied", "won", "lost"].includes(status) && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-[var(--color-muted)]">Outcome:</span>
+          <button
+            onClick={() => markOutcome("replied")}
+            disabled={pending || status !== "contacted"}
+            className="btn text-xs"
+            title={status === "contacted" ? "" : "Already recorded"}
+          >
+            Replied
+          </button>
+          <button
+            onClick={() => markOutcome("won")}
+            disabled={pending || status === "won"}
+            className="btn text-xs"
+          >
+            Won
+          </button>
+          <button
+            onClick={() => markOutcome("lost")}
+            disabled={pending || status === "lost"}
+            className="btn text-xs"
+          >
+            Lost
+          </button>
+        </div>
+      )}
 
       {note && <p className="text-xs text-[var(--color-muted)]">{note}</p>}
       {error && <p className="max-w-md text-right text-xs text-[var(--color-danger,#f87171)]">{error}</p>}
