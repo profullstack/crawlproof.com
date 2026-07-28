@@ -8,6 +8,8 @@ import { LeadActions } from "@/components/leads/lead-actions";
 import { CampaignPanel, type CampaignSummary } from "@/components/leads/campaign-panel";
 import { SenderAddress } from "@/components/leads/sender-address";
 import { MailboxConnect, type ConnectedMailbox } from "@/components/leads/mailbox-connect";
+import { SeedLogins } from "@/components/leads/seed-logins";
+import { listSeedCredentials, type StoredSeedCredential } from "@/lib/outreach/seedCredentials";
 import { RefreshLeads } from "@/components/leads/refresh-leads";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 
@@ -119,6 +121,20 @@ export default async function LeadsPage({
     .eq("id", projectId)
     .maybeSingle();
   const orgId = (projectRow?.organization_id as string | null) ?? null;
+  let seedCredentials: StoredSeedCredential[] = [];
+  if (orgId) seedCredentials = await listSeedCredentials(orgId);
+
+  // Hosts any campaign in this project is parked on, waiting for a sign-in.
+  const waitingHosts = [
+    ...new Set(
+      campaigns.flatMap((c) =>
+        Array.isArray((c as { auth_required_hosts?: string[] }).auth_required_hosts)
+          ? ((c as { auth_required_hosts?: string[] }).auth_required_hosts as string[])
+          : [],
+      ),
+    ),
+  ];
+
   let mailbox: ConnectedMailbox | null = null;
   if (orgId) {
     const { data: senderRow } = await supabase
@@ -163,6 +179,12 @@ export default async function LeadsPage({
       <LeadFinder projectId={projectId} />
 
       <CampaignPanel projectId={projectId} campaigns={campaigns} canSendLive={canSendLive} />
+
+      <SeedLogins
+        projectId={projectId}
+        waitingHosts={waitingHosts}
+        credentials={seedCredentials}
+      />
 
       <section className="card p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
