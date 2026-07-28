@@ -50,6 +50,7 @@
     "resend": "^4.0.0",
     "socks": "^2.8.9",
     "stripe": "^17.4.0",
+    "unpdf": "^1.8.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
