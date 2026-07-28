@@ -8,6 +8,13 @@ import {
   toggleCampaignAction,
 } from "@/app/actions/leads";
 
+export type CampaignRun = {
+  ran_at: string;
+  summary: string;
+  ok: boolean;
+  errors: string[];
+};
+
 export type CampaignSummary = {
   name: string;
   active: boolean;
@@ -18,6 +25,13 @@ export type CampaignSummary = {
   seed_urls: string[];
   last_run_at: string | null;
   last_run_note: string | null;
+  pitch_mode: "audit" | "custom";
+  pitch_intro: string | null;
+  pitch_ask: string | null;
+  pitch_facts: string[];
+  scan_prospects: boolean;
+  auth_required_hosts: string[];
+  runs: CampaignRun[];
 };
 
 /**
@@ -37,6 +51,14 @@ export function CampaignPanel({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Which button is in flight, so only that one shows a spinner instead of
+  // every button in the panel going quiet at once.
+  const [busy, setBusy] = useState<string | null>(null);
+  // Result of the last action per campaign, shown next to that campaign
+  // rather than in one shared line at the top of the panel.
+  const [rowNote, setRowNote] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [editing, setEditing] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState<string | null>(null);
   const [open, setOpen] = useState(campaigns.length === 0);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +87,44 @@ export function CampaignPanel({
         router.refresh();
       } else setError(res.error);
     });
+
+  // Runs one campaign-row action: marks that button busy, then reports the
+  // outcome inline next to the campaign it belongs to.
+  const rowAct = (
+    key: string,
+    campaignName: string,
+    fn: () => Promise<{ ok: true; note?: string } | { ok: false; error: string }>,
+  ) =>
+    start(async () => {
+      setBusy(key);
+      setRowNote((prev) => ({ ...prev, [campaignName]: undefined as never }));
+      const res = await fn();
+      setRowNote((prev) => ({
+        ...prev,
+        [campaignName]: res.ok
+          ? { ok: true, text: res.note ?? "Done." }
+          : { ok: false, text: res.error },
+      }));
+      setBusy(null);
+      if (res.ok) router.refresh();
+    });
+
+  // Load an existing campaign into the form so it can be changed. Saving
+  // upserts on (project, name), so keeping the name edits in place.
+  const startEdit = (c: CampaignSummary) => {
+    setEditing(c.name);
+    setName(c.name);
+    setQueries(c.queries.join("\n"));
+    setSeedUrls(c.seed_urls.join("\n"));
+    setMaxScore(c.max_score);
+    setDailyLimit(c.daily_send_limit);
+    setPitchMode(c.pitch_mode);
+    setPitchIntro(c.pitch_intro ?? "");
+    setPitchAsk(c.pitch_ask ?? "");
+    setPitchFacts((c.pitch_facts ?? []).join("\n"));
+    setScanProspects(c.scan_prospects);
+    setOpen(true);
+  };
 
   const save = () =>
     act(async () =>
@@ -98,7 +158,13 @@ export function CampaignPanel({
             auto-send on.
           </p>
         </div>
-        <button onClick={() => setOpen(!open)} className="btn text-sm">
+        <button
+          onClick={() => {
+            if (open) setEditing(null);
+            setOpen(!open);
+          }}
+          className="btn text-sm"
+        >
           {open ? "Close" : "New campaign"}
         </button>
       </div>
@@ -132,22 +198,33 @@ export function CampaignPanel({
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
-                  onClick={() => act(async () => runCampaignAction({ projectId, name: c.name }))}
+                  onClick={() =>
+                    rowAct(`run:${c.name}`, c.name, () =>
+                      runCampaignAction({ projectId, name: c.name }),
+                    )
+                  }
                   disabled={pending}
                   className="btn text-sm"
                 >
-                  Run now
+                  {busy === `run:${c.name}` ? "Running…" : "Run now"}
+                </button>
+                <button onClick={() => startEdit(c)} disabled={pending} className="btn text-sm">
+                  Edit
                 </button>
                 <button
                   onClick={() =>
-                    act(async () =>
+                    rowAct(`active:${c.name}`, c.name, () =>
                       toggleCampaignAction({ projectId, name: c.name, field: "active", value: !c.active }),
                     )
                   }
                   disabled={pending}
                   className="btn text-sm"
                 >
-                  {c.active ? "Pause" : "Resume"}
+                  {busy === `active:${c.name}`
+                    ? "Saving…"
+                    : c.active
+                      ? "Pause"
+                      : "Resume"}
                 </button>
                 <button
                   onClick={() => {
@@ -159,7 +236,7 @@ export function CampaignPanel({
                     ) {
                       return;
                     }
-                    act(async () =>
+                    rowAct(`send:${c.name}`, c.name, () =>
                       toggleCampaignAction({ projectId, name: c.name, field: "auto_send", value: !c.auto_send }),
                     );
                   }}
@@ -167,9 +244,66 @@ export function CampaignPanel({
                   className="btn text-sm"
                   title={canSendLive ? "" : "OUTREACH_POSTAL_ADDRESS must be set before live sending"}
                 >
-                  {c.auto_send ? "Stop sending" : "Enable sending"}
+                  {busy === `send:${c.name}`
+                    ? "Saving…"
+                    : c.auto_send
+                      ? "Stop sending"
+                      : "Enable sending"}
                 </button>
+                {c.runs.length > 0 && (
+                  <button
+                    onClick={() => setShowHistory(showHistory === c.name ? null : c.name)}
+                    className="btn text-sm"
+                  >
+                    {showHistory === c.name ? "Hide history" : "History"}
+                  </button>
+                )}
               </div>
+
+              {rowNote[c.name] && (
+                <p
+                  className={`w-full text-sm ${
+                    rowNote[c.name].ok ? "" : "text-[var(--color-danger,#f87171)]"
+                  }`}
+                >
+                  {rowNote[c.name].text}
+                </p>
+              )}
+
+              {c.auth_required_hosts.length > 0 && (
+                <p className="w-full text-xs">
+                  <span className="badge badge-warn">waiting_for_auth</span>{" "}
+                  <span className="text-[var(--color-muted)]">
+                    needs a sign-in for {c.auth_required_hosts.length} seed — add one under Seed
+                    logins below.
+                  </span>
+                </p>
+              )}
+
+              {showHistory === c.name && (
+                <div className="w-full rounded border border-[var(--color-border)] p-3">
+                  <p className="text-xs font-medium">Recent ticks</p>
+                  <ul className="mt-2 space-y-2">
+                    {c.runs.map((r) => (
+                      <li key={r.ran_at} className="text-xs">
+                        <span className={r.ok ? "" : "text-[var(--color-danger,#f87171)]"}>
+                          {r.ok ? "✓" : "✕"} {r.ran_at.slice(0, 16).replace("T", " ")}
+                        </span>{" "}
+                        <span className="text-[var(--color-muted)]">{r.summary}</span>
+                        {r.errors.length > 0 && (
+                          <ul className="ml-4 mt-1 list-disc text-[var(--color-muted)]">
+                            {r.errors.slice(0, 5).map((e, i) => (
+                              <li key={i} className="break-all">
+                                {e}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -314,7 +448,7 @@ export function CampaignPanel({
           </label>
           <div className="sm:col-span-2">
             <button onClick={save} disabled={pending || !name.trim()} className="btn btn-primary">
-              {pending ? "Saving…" : "Create campaign"}
+              {pending ? "Saving…" : editing ? `Save changes to "${editing}"` : "Create campaign"}
             </button>
             <p className="mt-2 text-xs text-[var(--color-muted)]">
               Starts in drafts-only mode. Read a few of what it writes, then enable sending.
