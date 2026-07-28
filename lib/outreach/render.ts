@@ -27,6 +27,7 @@ import type { Browser, BrowserContext } from "playwright";
 import { isPrivateAddress } from "./mailboxDiscovery";
 import { looksLikeLoginWall } from "./loginWall";
 import type { SeedCredentials } from "./seedLogin";
+import type { CodeWaiter } from "@/lib/sp/verificationChallenge";
 import dns from "node:dns/promises";
 import net from "node:net";
 
@@ -123,6 +124,8 @@ export async function renderPage(
   opts?: {
     /** Sign in and retry if the page turns out to be gated. */
     credentials?: SeedCredentials | null;
+    /** Lets a user answer a verification code during that sign-in. */
+    codeWaiter?: CodeWaiter | null;
   },
 ): Promise<RenderResult> {
   let parsed: URL;
@@ -194,7 +197,7 @@ export async function renderPage(
       // there — so the form is in front of us. Signing in on this same
       // context keeps the session cookies for the retry.
       const { submitLoginForm } = await import("./seedLogin");
-      const login = await submitLoginForm(page, opts.credentials);
+      const login = await submitLoginForm(page, opts.credentials, opts.codeWaiter ?? undefined);
       if (!login.ok) {
         return {
           ok: false,

@@ -13,6 +13,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import { decryptSecret } from "@/lib/sp/vault";
 import { normalizeHost } from "./cold";
 import type { SeedCredentials } from "./seedLogin";
+import type { CodeWaiter } from "@/lib/sp/verificationChallenge";
 
 export type StoredSeedCredential = {
   id: string;
@@ -21,6 +22,8 @@ export type StoredSeedCredential = {
   loginUrl: string | null;
   verifiedAt: string | null;
   lastError: string | null;
+  /** Non-null means a sign-in is paused, waiting for the user to enter a code. */
+  verificationPrompt: string | null;
 };
 
 /** Host key for a seed URL. Credentials are matched on this. */
@@ -41,11 +44,11 @@ export function seedHost(url: string): string {
 export async function loadSeedCredential(
   organizationId: string,
   host: string,
-): Promise<SeedCredentials | null> {
+): Promise<(SeedCredentials & { id: string }) | null> {
   if (!organizationId || !host) return null;
   const { data } = await serviceClient()
     .from("outreach_seed_credentials")
-    .select("username, enc_password, login_url")
+    .select("id, username, enc_password, login_url")
     .eq("organization_id", organizationId)
     .eq("host", normalizeHost(host))
     .maybeSingle();
@@ -53,9 +56,10 @@ export async function loadSeedCredential(
 
   const row = data as Record<string, string | null>;
   const enc = row.enc_password;
-  if (!enc || !row.username) return null;
+  if (!enc || !row.username || !row.id) return null;
   try {
     return {
+      id: row.id,
       username: row.username,
       password: decryptSecret(enc),
       loginUrl: row.login_url ?? undefined,
@@ -65,13 +69,66 @@ export async function loadSeedCredential(
   }
 }
 
+
+/**
+ * A CodeWaiter bound to one stored credential.
+ *
+ * Same contract as the social-posting one (lib/sp/verificationChallenge.ts):
+ * publish what the site is asking, then poll until the user answers. The code
+ * is cleared the moment it is read so it cannot be replayed, and a timeout
+ * hands the browser slot back rather than holding it open indefinitely.
+ */
+export function makeSeedCodeWaiter(
+  credentialId: string,
+  opts: { timeoutMs?: number; pollMs?: number } = {},
+): CodeWaiter {
+  const timeoutMs = opts.timeoutMs ?? 3 * 60 * 1000;
+  const pollMs = opts.pollMs ?? 3_000;
+
+  return async function waitForCode(prompt: string): Promise<string> {
+    const sb = serviceClient();
+    await sb
+      .from("outreach_seed_credentials")
+      .update({
+        verification_prompt: prompt,
+        verification_requested_at: new Date().toISOString(),
+        verification_code: null,
+      })
+      .eq("id", credentialId);
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      const { data } = await sb
+        .from("outreach_seed_credentials")
+        .select("verification_code")
+        .eq("id", credentialId)
+        .maybeSingle();
+      const code = ((data?.verification_code as string | null) ?? "").trim();
+      if (code) {
+        await sb
+          .from("outreach_seed_credentials")
+          .update({ verification_code: null, verification_prompt: null })
+          .eq("id", credentialId);
+        return code;
+      }
+    }
+
+    await sb
+      .from("outreach_seed_credentials")
+      .update({ verification_prompt: null })
+      .eq("id", credentialId);
+    throw new Error("timed out waiting for the verification code");
+  };
+}
+
 /** Every stored credential for an org, without the secrets. */
 export async function listSeedCredentials(
   organizationId: string,
 ): Promise<StoredSeedCredential[]> {
   const { data } = await serviceClient()
     .from("outreach_seed_credentials")
-    .select("id, host, username, login_url, verified_at, last_error")
+    .select("id, host, username, login_url, verified_at, last_error, verification_prompt")
     .eq("organization_id", organizationId)
     .order("host");
   return ((data as Record<string, string | null>[] | null) ?? []).map((r) => ({
@@ -81,6 +138,7 @@ export async function listSeedCredentials(
     loginUrl: r.login_url,
     verifiedAt: r.verified_at,
     lastError: r.last_error,
+    verificationPrompt: r.verification_prompt,
   }));
 }
 
