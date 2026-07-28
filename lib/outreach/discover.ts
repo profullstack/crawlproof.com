@@ -50,7 +50,90 @@ const NON_PROSPECT_HOSTS = [
   "eventbrite.com", "meetup.com", "substack.com", "medium.com", "blogspot.com",
   "godaddy.com", "cloudflare.com", "gstatic.com", "googleapis.com", "w3.org",
   "schema.org", "archive.org", "youtu.be", "bit.ly", "goo.gl", "t.co",
+  // Creative platforms and marketplaces. A profile on one of these is not a
+  // site the artist owns, and the outreach pipeline needs a domain they do.
+  "artstation.com", "behance.net", "adobe.com", "dribbble.com", "deviantart.com",
+  "sketchfab.com", "cgtrader.com", "turbosquid.com", "cults3d.com", "gumroad.com",
+  "upwork.com", "fiverr.com", "freelancer.com", "peopleperhour.com", "toptal.com",
+  "polywork.com", "contra.com", "patreon.com", "ko-fi.com", "buymeacoffee.com",
+  // Communities, showcases and trade press that dominate these searches.
+  "blenderartists.org", "polycount.com", "cgsociety.org", "therookies.co",
+  "80.lv", "cgchannel.com", "gamedeveloper.com", "gamasutra.com", "wingfox.com",
+  "unrealengine.com", "unity.com", "blender.org", "autodesk.com", "maxon.net",
+  "itch.io", "gamejolt.com", "steampowered.com",
+  // Art and games schools whose domains give no hint of what they are. The
+  // patterns above catch anything with "academy" or ".edu" in it; these have
+  // to be named, and anything similar that turns up will need adding too.
+  "vanarts.com", "cgspectrum.com", "thinktankonline.com", "animationmentor.com",
+  "fxphd.com", "syn-studio.com", "lostboys-studios.com",
 ];
+
+/**
+ * Categories of site that keep surfacing for portfolio-shaped searches and are
+ * never the person you were looking for.
+ *
+ * Searching for "3d artist portfolio" reliably returns the industry around
+ * artists rather than artists: the school that teaches them, the forum where
+ * they post, the marketplace that hosts them, the magazine that covers them.
+ * Every one of those has a contact address, so without this they sail through
+ * discovery and a campaign ends up cold-emailing a university.
+ *
+ * Matched on the host, so a personal site is only caught if its own domain
+ * says school or forum or wiki — which is rare enough to accept, and far
+ * cheaper than the alternative.
+ */
+const NON_PROSPECT_PATTERNS: RegExp[] = [
+  // Education. .edu and .ac.* are decisive; the words are strong signals.
+  /(^|\.)edu(\.[a-z]{2})?$/i,
+  /(^|\.)ac\.[a-z]{2}$/i,
+  /(^|\.|-)(academy|acad|school|schule|institute|university|college|campus|bootcamp)(\.|-|$)/i,
+  // Learning and tutorials.
+  /(^|\.|-)(courses?|tutorials?|learn|training|masterclass)(\.|-|$)/i,
+  // Community and discussion.
+  /(^|\.|-)(forums?|community|wiki|discuss|board)(\.|-|$)/i,
+  // Publishing about the industry rather than working in it.
+  /(^|\.|-)(magazine|news|blog|press|podcast)(\.|-|$)/i,
+  // Hiring marketplaces and job boards: the artists there are reachable
+  // through the platform, not at a site they own.
+  /(^|\.|-)(jobs?|careers?|hiring|recruit)(\.|-|$)/i,
+];
+
+/**
+ * Non-prospects that are still worth reading.
+ *
+ * A forum thread, a community showcase, a school's alumni page or a
+ * "best artists of 2026" listicle is never someone to email — but it is full
+ * of links to the people who are. Dropping those results throws away the best
+ * source of personal sites in the whole pipeline, so they get mined for
+ * outbound links instead of discarded.
+ *
+ * Marketplaces and tooling vendors are deliberately absent: their pages link
+ * to profiles on their own domain, not to sites anyone owns.
+ */
+const MINEABLE_SOURCE_PATTERNS: RegExp[] = [
+  /(^|\.|-)(forums?|community|discuss|board|wiki)(\.|-|$)/i,
+  /(^|\.|-)(magazine|news|blog|press)(\.|-|$)/i,
+  /(^|\.|-)(academy|school|institute|university|college|campus)(\.|-|$)/i,
+  /(^|\.)edu(\.[a-z]{2})?$/i,
+  /(^|\.)ac\.[a-z]{2}$/i,
+];
+
+const MINEABLE_HOSTS = [
+  "blenderartists.org", "polycount.com", "cgsociety.org", "therookies.co",
+  "80.lv", "cgchannel.com", "gamedeveloper.com", "reddit.com", "vanarts.com",
+];
+
+/**
+ * Is this host worth opening for the links it carries, even though nobody
+ * there is a prospect?
+ */
+export function isMineableSource(host: string): boolean {
+  const h = normalizeHost(host);
+  if (!h || !h.includes(".")) return false;
+  const apex = h.split(".").slice(-2).join(".");
+  if (MINEABLE_HOSTS.some((n) => h === n || apex === n || h.endsWith(`.${n}`))) return true;
+  return MINEABLE_SOURCE_PATTERNS.some((re) => re.test(h));
+}
 
 /** File extensions that mean the link is an asset, not a business. */
 const ASSET_RE = /\.(pdf|jpe?g|png|gif|svg|webp|mp4|zip|css|js|xml|rss)$/i;
@@ -60,7 +143,8 @@ export function isNonProspectHost(host: string): boolean {
   if (!h || !h.includes(".")) return true;
   if (isThirdPartyHost(h)) return true;
   const apex = h.split(".").slice(-2).join(".");
-  return NON_PROSPECT_HOSTS.some((n) => h === n || apex === n || h.endsWith(`.${n}`));
+  if (NON_PROSPECT_HOSTS.some((n) => h === n || apex === n || h.endsWith(`.${n}`))) return true;
+  return NON_PROSPECT_PATTERNS.some((re) => re.test(h));
 }
 
 /**
@@ -172,6 +256,9 @@ export function extractSameHostLinks(input: {
 /** Same-host paths that are navigation or account plumbing, never a business. */
 const NON_DETAIL_PATH_RE =
   /^\/(search|login|signin|signup|register|about|contact|terms|privacy|pricing|blog|jobs|help|support|faq|settings|account|cart|checkout|categories|category|tags?|page|feed|rss|api)(\/|$)/i;
+
+/** Cap on community pages opened per tick, since each is a full page load. */
+const MAX_MINED_SOURCES = 5;
 
 const SEED_UA = "CrawlProofOutreach/1.0 (+https://crawlproof.com)";
 
@@ -350,10 +437,17 @@ export async function discoverFromSearch(input: {
   source?: SearchSource;
   /** Org whose stored seed logins apply. Omitted means none are used. */
   organizationId?: string | null;
-}): Promise<{ prospects: DiscoveredProspect[]; calls: number; error?: string }> {
+}): Promise<{
+  prospects: DiscoveredProspect[];
+  calls: number;
+  error?: string;
+  /** Result pages that are not prospects but link to people who are. */
+  mineable: string[];
+}> {
   const limit = Math.min(input.limit ?? 30, 100);
   const source = input.source ?? "auto";
   const out = new Map<string, DiscoveredProspect>();
+  const mineable = new Set<string>();
   const errors: string[] = [];
   let calls = 0;
 
@@ -366,7 +460,15 @@ export async function discoverFromSearch(input: {
     if (!res.ok) errors.push(res.error ?? "ValueSERP failed");
     for (const r of res.results) {
       const host = normalizeHost(r.domain || r.url);
-      if (!host || out.has(host) || isNonProspectHost(host)) continue;
+      if (!host) continue;
+      if (isNonProspectHost(host)) {
+        // Not someone to contact, but a forum thread or alumni page is where
+        // the personal sites actually are. Keep the exact result URL: the
+        // thread is what carries the links, not the site's front page.
+        if (isMineableSource(host) && r.url) mineable.add(r.url);
+        continue;
+      }
+      if (out.has(host)) continue;
       out.set(host, {
         host,
         url: `https://${host}`,
@@ -383,7 +485,11 @@ export async function discoverFromSearch(input: {
     const free = await businessSearch({ query: input.query, limit });
     if (free.error) errors.push(free.error);
     for (const r of free.results) {
-      if (out.has(r.host) || isNonProspectHost(r.host)) continue;
+      if (isNonProspectHost(r.host)) {
+        if (isMineableSource(r.host) && r.url) mineable.add(r.url);
+        continue;
+      }
+      if (out.has(r.host)) continue;
       out.set(r.host, {
         host: r.host,
         url: r.url,
@@ -399,6 +505,7 @@ export async function discoverFromSearch(input: {
   }
   return {
     prospects: [...out.values()],
+    mineable: [...mineable],
     calls,
     error: out.size ? undefined : errors.join("; ") || "no results",
   };
@@ -423,6 +530,7 @@ export async function discoverProspects(input: {
   const merged = new Map<string, DiscoveredProspect>();
   const errors: string[] = [];
   const loginRequiredSeeds: string[] = [];
+  const mineable = new Set<string>();
   let serpCalls = 0;
 
   const queries = (input.queries ?? []).slice(0, 5);
@@ -434,7 +542,26 @@ export async function discoverProspects(input: {
     serpCalls += res.calls;
     if (res.error) errors.push(res.error);
     for (const p of res.prospects) if (!merged.has(p.host)) merged.set(p.host, p);
+    for (const url of res.mineable) mineable.add(url);
     if (merged.size >= limit) break;
+  }
+
+  // Search results that were not prospects but link to people who are: forum
+  // threads, alumni pages, "best artists of" listicles. Mining them is where
+  // most personal sites come from, since an artist's own domain rarely
+  // out-ranks the community discussing their work.
+  //
+  // Only worth the page loads when the funnel still has room, and capped so a
+  // query that returns nothing but forums cannot spend the whole tick here.
+  if (merged.size < limit) {
+    for (const url of [...mineable].slice(0, MAX_MINED_SOURCES)) {
+      if (merged.size >= limit) break;
+      const res = await discoverFromSeed({ seedUrl: url, limit: limit - merged.size, depth: 1 });
+      if (res.error) errors.push(res.error);
+      for (const p of res.prospects) {
+        if (!merged.has(p.host)) merged.set(p.host, { ...p, via: "seed", source: `mined:${url}` });
+      }
+    }
   }
 
   for (const seedUrl of (input.seedUrls ?? []).slice(0, 10)) {
