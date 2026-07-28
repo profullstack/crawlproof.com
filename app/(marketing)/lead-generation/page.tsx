@@ -5,7 +5,7 @@ import { LEADS_PER_CHARGE } from "@/lib/outreach/billing";
 export const metadata = {
   title: "Lead generation & cold outreach",
   description:
-    "Point CrawlProof at a directory or a search, and it finds the companies, finds the people, finds the addresses, writes the email, and reads the replies — from your own mailbox, grounded in facts you supply. 3 credits a run.",
+    "Watch for people publicly asking to buy what you sell, and work them first. Then find the companies, the people and the addresses, write the email and read the replies — from your own mailbox, grounded in facts you supply.",
   alternates: { canonical: "/lead-generation" },
   openGraph: {
     title: "Lead generation & cold outreach · CrawlProof",
@@ -82,6 +82,43 @@ export default function LeadGenerationPage() {
         <p className="mt-4 text-sm text-[var(--color-muted)]">
           {LEAD_RUN_CREDITS} credits a run (~{dollars(runRack)}). A run that finds nothing to do
           costs nothing.
+        </p>
+      </section>
+
+      <section className="mt-20 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-8">
+        <h2 className="text-2xl font-bold">Start with people who already asked</h2>
+        <p className="mt-2 max-w-3xl text-[var(--color-muted)]">
+          The hard part of cold outreach is not building the list. It is that writing to people who
+          have shown no intent converts badly however good the email is, and targeting by
+          resemblance — right industry, right headcount, right tech stack — does not fix that. It
+          selects for people who look like buyers, not people who are buying.
+        </p>
+        <p className="mt-3 max-w-3xl text-[var(--color-muted)]">
+          So a campaign can watch for the opposite signal: somebody saying, in public and recently,
+          that they want to buy what you sell. Those leads are ranked ahead of everything found by
+          resemblance, because they are a different kind of lead rather than a better-matched one.
+        </p>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <Card
+            title="Recency and explicitness, scored"
+            body="A budget named outright outranks a request for suggestions, which outranks a complaint. All of it decays with age — a fortnight-old request has already been answered by somebody."
+          />
+          <Card
+            title="Everywhere people ask"
+            body="Reddit, Hacker News, Stack Exchange, Quora, Indie Hackers, X, LinkedIn and contract boards. One community's regulars are not your whole market."
+          />
+          <Card
+            title="Somebody else's lead is not yours"
+            body="A flawless “anyone recommend a good accountant, happy to pay” is worth nothing if you sell load testing, so intent is only counted when it lands on your topic."
+          />
+          <Card
+            title="It respects a no"
+            body="“No vendors please”, “don't DM me”, free-only and job ads are dropped outright, whatever else they score. The fastest way to lose a channel is to answer the person who said not to."
+          />
+        </div>
+        <p className="mt-6 text-sm text-[var(--color-muted)]">
+          Reply where they asked, in public, as a reply — these are people on a platform, not
+          addresses to mail. The email pipeline below is for the companies you go and find.
         </p>
       </section>
 

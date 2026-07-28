@@ -12,6 +12,7 @@ import { SeedLogins } from "@/components/leads/seed-logins";
 import { FunnelPanel } from "@/components/leads/funnel-panel";
 import { RepliesPanel, type ReplyRow } from "@/components/leads/replies-panel";
 import { ContactsPanel } from "@/components/leads/contacts-panel";
+import { IntentPanel, type IntentSignalRow } from "@/components/leads/intent-panel";
 import { contactNiches } from "@/lib/outreach/contactsExport";
 import { campaignFunnels, projectFunnel } from "@/lib/outreach/funnel";
 import { listSeedCredentials, type StoredSeedCredential } from "@/lib/outreach/seedCredentials";
@@ -91,7 +92,7 @@ export default async function LeadsPage({
     supabase
       .from("outreach_campaigns")
       .select(
-        "id, name, active, auto_send, daily_send_limit, max_score, queries, seed_urls, last_run_at, last_run_note, auth_required_hosts, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, angle, sender_name, reply_to",
+        "id, name, active, auto_send, daily_send_limit, max_score, queries, seed_urls, last_run_at, last_run_note, auth_required_hosts, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, angle, sender_name, reply_to",
       )
       .eq("project_id", projectId)
       .order("updated_at", { ascending: false })
@@ -180,6 +181,17 @@ export default async function LeadsPage({
     .limit(20);
   const replies = (replyData as ReplyRow[] | null) ?? [];
 
+  // Public requests to buy, strongest and freshest first. A separate queue
+  // from the pipeline: these are people on a platform, not domains to email.
+  const { data: intentData } = await supabase
+    .from("outreach_intent_signals")
+    .select("source, url, title, snippet, score, tier, reasons, posted_at, status")
+    .eq("project_id", projectId)
+    .neq("status", "dismissed")
+    .order("score", { ascending: false })
+    .limit(25);
+  const intentSignals = (intentData as IntentSignalRow[] | null) ?? [];
+
   let seedCredentials: StoredSeedCredential[] = [];
   if (orgId) seedCredentials = await listSeedCredentials(orgId);
 
@@ -238,6 +250,8 @@ export default async function LeadsPage({
       <LeadFinder projectId={projectId} />
 
       <CampaignPanel projectId={projectId} campaigns={campaigns} canSendLive={canSendLive} />
+
+      <IntentPanel signals={intentSignals} />
 
       <FunnelPanel project={funnel} campaigns={perCampaignFunnel} />
 
