@@ -10,6 +10,7 @@ import { SenderAddress } from "@/components/leads/sender-address";
 import { MailboxConnect, type ConnectedMailbox } from "@/components/leads/mailbox-connect";
 import { SeedLogins } from "@/components/leads/seed-logins";
 import { FunnelPanel } from "@/components/leads/funnel-panel";
+import { RepliesPanel, type ReplyRow } from "@/components/leads/replies-panel";
 import { campaignFunnels, projectFunnel } from "@/lib/outreach/funnel";
 import { listSeedCredentials, type StoredSeedCredential } from "@/lib/outreach/seedCredentials";
 import { RefreshLeads } from "@/components/leads/refresh-leads";
@@ -41,6 +42,8 @@ type SendRow = {
   subject: string | null;
   dry_run: boolean;
   sent_at: string;
+  opened_at: string | null;
+  open_count: number | null;
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -79,7 +82,7 @@ export default async function LeadsPage({
       .limit(200),
     supabase
       .from("outreach_sends")
-      .select("channel, step, recipient, subject, dry_run, sent_at")
+      .select("channel, step, recipient, subject, dry_run, sent_at, opened_at, open_count")
       .eq("project_id", projectId)
       .order("sent_at", { ascending: false })
       .limit(10),
@@ -164,6 +167,16 @@ export default async function LeadsPage({
     campaignFunnels(projectId),
   ]);
 
+  // What came back. Read from the connected mailbox by the reply-scan cron,
+  // so this fills without anyone marking anything by hand.
+  const { data: replyData } = await supabase
+    .from("outreach_replies")
+    .select("from_email, subject, snippet, received_at, auto_reply")
+    .eq("project_id", projectId)
+    .order("received_at", { ascending: false })
+    .limit(20);
+  const replies = (replyData as ReplyRow[] | null) ?? [];
+
   let seedCredentials: StoredSeedCredential[] = [];
   if (orgId) seedCredentials = await listSeedCredentials(orgId);
 
@@ -224,6 +237,8 @@ export default async function LeadsPage({
       <CampaignPanel projectId={projectId} campaigns={campaigns} canSendLive={canSendLive} />
 
       <FunnelPanel project={funnel} campaigns={perCampaignFunnel} />
+
+      <RepliesPanel replies={replies} />
 
       <SeedLogins
         projectId={projectId}
@@ -329,6 +344,9 @@ export default async function LeadsPage({
                 </span>{" "}
                 {s.sent_at.slice(0, 16).replace("T", " ")} {s.channel} step {s.step} → {s.recipient}
                 {s.subject ? ` — ${s.subject}` : ""}
+                {s.opened_at
+                  ? ` · opened${(s.open_count ?? 0) > 1 ? ` ×${s.open_count}` : ""}`
+                  : ""}
               </li>
             ))}
           </ul>

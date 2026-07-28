@@ -948,6 +948,11 @@ export function coldOutreachEmailHtml(input: {
   reportUrl: string | null;
   unsubscribeUrl: string;
   postalAddress: string;
+  /**
+   * Open-tracking pixel markup, when this send is being tracked. Absent for
+   * dry runs, which are never delivered and so can never be opened.
+   */
+  trackingPixel?: string | null;
 }): string {
   const paragraphs = input.bodyText
     .split(/\n{2,}/)
@@ -973,13 +978,21 @@ export function coldOutreachEmailHtml(input: {
           </tr>`
     : "";
 
+  // Last, after the visible content. A client that stops rendering partway
+  // through has already shown the mail, and one that never reaches the pixel
+  // was never going to report a meaningful open anyway.
+  const pixelRow = input.trackingPixel
+    ? `<tr><td style="padding:0;line-height:0;font-size:0;">${input.trackingPixel}</td></tr>`
+    : "";
+
   const innerHtml = `<tr>
             <td style="padding:24px 32px 0;">
               ${paragraphs}
             </td>
           </tr>
           ${reportBlock}
-          <tr><td style="padding:0 32px 20px;"></td></tr>`;
+          <tr><td style="padding:0 32px 20px;"></td></tr>
+          ${pixelRow}`;
 
   // Why-you-got-this, opt-out, postal address — the three things a cold
   // commercial email legally and ethically has to carry.
@@ -1056,7 +1069,7 @@ export async function sendColdOutreachEmail(input: {
    * replies come back to them; omitting it uses the shared Resend sender.
    */
   mailbox?: SenderMailbox | null;
-}): Promise<{ sent: boolean; error?: string; provider?: string }> {
+}): Promise<{ sent: boolean; error?: string; provider?: string; messageId?: string }> {
   const headers = {
     "List-Unsubscribe": `<${input.unsubscribeUrl}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
@@ -1073,7 +1086,10 @@ export async function sendColdOutreachEmail(input: {
         secure: input.mailbox.secure,
         auth: { user: input.mailbox.user, pass: input.mailbox.pass },
       });
-      await transporter.sendMail({
+      // The Message-Id is what a reply names in In-Reply-To. Keeping it is
+      // what lets reply detection match by thread rather than by guessing
+      // from the sender's domain.
+      const info = await transporter.sendMail({
         from: input.mailbox.fromEmail,
         to: input.to,
         subject: input.subject,
@@ -1082,7 +1098,7 @@ export async function sendColdOutreachEmail(input: {
         headers,
       });
       transporter.close();
-      return { sent: true, provider: "mailbox" };
+      return { sent: true, provider: "mailbox", messageId: info.messageId };
     } catch (error) {
       // No silent fallback to the shared sender: the user asked for mail to
       // come from their address, and quietly sending as someone else would

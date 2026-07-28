@@ -5,7 +5,7 @@ import { LEADS_PER_CHARGE } from "@/lib/outreach/billing";
 export const metadata = {
   title: "Lead generation & cold outreach",
   description:
-    "Point CrawlProof at a directory or a search, and it finds the companies, finds the people, finds the addresses, and writes the email — from your own mailbox, grounded in facts you supply. 3 credits a run.",
+    "Point CrawlProof at a directory or a search, and it finds the companies, finds the people, finds the addresses, writes the email, and reads the replies — from your own mailbox, grounded in facts you supply. 3 credits a run.",
   alternates: { canonical: "/lead-generation" },
   openGraph: {
     title: "Lead generation & cold outreach · CrawlProof",
@@ -18,10 +18,12 @@ export const metadata = {
 /**
  * The sales page for project-level lead generation.
  *
- * Every claim here is one the pipeline actually makes good on. Two things it
- * deliberately does not claim: open tracking and automatic reply detection.
- * Neither is built, and a lead-gen page that oversells is the exact thing the
- * drafting guard exists to stop the product doing to other people's inboxes.
+ * Every claim here is one the pipeline actually makes good on — a lead-gen
+ * page that oversells is the exact thing the drafting guard exists to stop the
+ * product doing to other people's inboxes. Where a number has a known error
+ * bar, the page says so rather than rounding it away: open tracking measures a
+ * floor, not a count, and claiming otherwise would be the first dishonest
+ * sentence on it.
  */
 
 const LADDER = [
@@ -161,7 +163,7 @@ export default function LeadGenerationPage() {
           />
           <Card
             title="Follow-ups that stop"
-            body="At most two follow-ups on a schedule, and marking a lead replied ends the sequence. Nobody gets a fourth email."
+            body="At most two follow-ups on a schedule, and a reply ends the sequence — detected from your mailbox, not waiting on you to log it. Nobody gets a fourth email."
           />
         </div>
       </section>
@@ -201,12 +203,39 @@ export default function LeadGenerationPage() {
       </section>
 
       <section className="mt-20">
+        <h2 className="text-2xl font-bold">It reads the answers too</h2>
+        <p className="mt-2 max-w-3xl text-[var(--color-muted)]">
+          The same mailbox connection that sends is checked for what comes back, so a lead that
+          answers is marked as answered without anybody remembering to do it — and the follow-up
+          sequence stops on its own.
+        </p>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <Card
+            title="Out-of-office is not a reply"
+            body="Auto-responders, bounces and mailing-list traffic are recorded and flagged rather than counted. Counting them would inflate the one number worth reporting."
+          />
+          <Card
+            title="Answers from a colleague still count"
+            body="Mail to info@ often gets answered by a named person. A reply from anyone at the company is matched back to the lead it belongs to."
+          />
+          <Card
+            title="Opens, honestly"
+            body="A per-email pixel, with loads from privacy proxies discarded rather than counted. It measures a floor: the real number is higher, never lower."
+          />
+          <Card
+            title="Nothing is marked by hand"
+            body="Sent, opened, replied and closed are recorded as they happen — so a reply rate of zero means nobody answered, not that nobody logged it."
+          />
+        </div>
+      </section>
+
+      <section className="mt-20">
         <h2 className="text-2xl font-bold">Your numbers, not somebody else&apos;s</h2>
         <p className="mt-2 max-w-3xl text-[var(--color-muted)]">
-          Sends, replies and closes are counted at three levels: the whole project, each campaign,
-          and each individual run. Rates stay hidden until there is enough volume to mean anything —
-          one reply out of three sends is not a 33% reply rate, and showing it as one invites a
-          decision the sample cannot support.
+          Sends, opens, replies and closes are counted at three levels: the whole project, each
+          campaign, and each individual run. Rates stay hidden until there is enough volume to mean
+          anything — one reply out of three sends is not a 33% reply rate, and showing it as one
+          invites a decision the sample cannot support.
         </p>
       </section>
 
