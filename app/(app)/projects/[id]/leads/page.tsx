@@ -11,6 +11,8 @@ import { MailboxConnect, type ConnectedMailbox } from "@/components/leads/mailbo
 import { SeedLogins } from "@/components/leads/seed-logins";
 import { FunnelPanel } from "@/components/leads/funnel-panel";
 import { RepliesPanel, type ReplyRow } from "@/components/leads/replies-panel";
+import { ContactsPanel } from "@/components/leads/contacts-panel";
+import { contactNiches } from "@/lib/outreach/contactsExport";
 import { campaignFunnels, projectFunnel } from "@/lib/outreach/funnel";
 import { listSeedCredentials, type StoredSeedCredential } from "@/lib/outreach/seedCredentials";
 import { RefreshLeads } from "@/components/leads/refresh-leads";
@@ -162,9 +164,10 @@ export default async function LeadsPage({
   // Measured outcomes, project-wide and per campaign. Both read the same
   // tables the pipeline already writes, so this costs two queries rather than
   // any new bookkeeping.
-  const [funnel, perCampaignFunnel] = await Promise.all([
+  const [funnel, perCampaignFunnel, contacts] = await Promise.all([
     projectFunnel(projectId),
     campaignFunnels(projectId),
+    contactNiches(projectId),
   ]);
 
   // What came back. Read from the connected mailbox by the reply-scan cron,
@@ -239,6 +242,13 @@ export default async function LeadsPage({
       <FunnelPanel project={funnel} campaigns={perCampaignFunnel} />
 
       <RepliesPanel replies={replies} />
+
+      <ContactsPanel
+        projectId={projectId}
+        total={contacts.total}
+        withEmail={contacts.withEmail}
+        niches={contacts.niches}
+      />
 
       <SeedLogins
         projectId={projectId}

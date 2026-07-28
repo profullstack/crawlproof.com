@@ -389,6 +389,19 @@ export async function researchProspect(input: {
     }
   }
 
+  // The same record the unscanned path writes. Missing it here is why the
+  // shared contacts table held nine rows against seventy-seven addressable
+  // leads: nearly all of them arrived through this branch, which wrote the
+  // address onto the prospect and nowhere else.
+  const scannedContactId = await recordContact({
+    projectId: input.projectId,
+    host,
+    email: contact?.email ?? null,
+    label: input.discoveryLabel,
+    campaignId: input.campaignId,
+    source: contact?.source === "manual" ? "manual" : contact?.source === "guess" ? "guess" : "page",
+  });
+
   const { data, error } = await serviceClient()
     .from("outreach_prospects")
     .upsert(
@@ -403,6 +416,7 @@ export async function researchProspect(input: {
         discovery_label: input.discoveryLabel ?? null,
         contact_email: contact?.email ?? null,
         contact_source: contact?.source ?? null,
+        contact_id: scannedContactId,
         audit_id: audit.id,
         report_token: audit.share_token,
         score: audit.score,
@@ -454,15 +468,32 @@ async function recordContact(input: {
   host: string;
   email: string | null;
   label?: string | null;
+  campaignId?: string | null;
   source: "page" | "search" | "guess" | "manual";
 }): Promise<string | null> {
-  const { data: project } = await serviceClient()
+  const sb = serviceClient();
+  const { data: project } = await sb
     .from("projects")
     .select("organization_id")
     .eq("id", input.projectId)
     .maybeSingle();
   const organizationId = (project?.organization_id as string | null) ?? null;
   if (!organizationId) return null;
+
+  // The campaign that found them is the best available statement of what
+  // they are: someone found by "game designers in Austin" is a game
+  // designer in Austin. It is the only niche the pipeline can know without
+  // asking a model to guess one, and a list without a niche cannot be
+  // segmented, which is most of what makes a list worth anything.
+  let niche: string | null = null;
+  if (input.campaignId) {
+    const { data: campaign } = await sb
+      .from("outreach_campaigns")
+      .select("name")
+      .eq("id", input.campaignId)
+      .maybeSingle();
+    niche = (campaign?.name as string | null) ?? null;
+  }
 
   const res = await upsertContact({
     organizationId,
@@ -475,6 +506,7 @@ async function recordContact(input: {
       // one rather than guessed into full_name.
       companyName: input.label ?? null,
       companySite: `https://${input.host}`,
+      niche,
     },
   });
   return res?.id ?? null;
@@ -540,6 +572,7 @@ async function researchWithoutScan(input: {
     host,
     email: contact?.email ?? null,
     label: input.discoveryLabel,
+    campaignId: input.campaignId,
     source: contact?.source === "manual" ? "manual" : contact?.source === "guess" ? "guess" : "page",
   });
 
