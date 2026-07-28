@@ -414,12 +414,18 @@ export function unsupportedClaims(body: string, facts: ProspectFacts): string[] 
  * facts, links to places the campaign never mentioned, and claimed prior
  * contact. Tone and phrasing are the prompt's job.
  */
-export function unsupportedCustomClaims(body: string, facts: string[]): string[] {
+export function unsupportedCustomClaims(body: string, declaredText: string[]): string[] {
   const problems: string[] = [];
   const lower = body.toLowerCase();
-  const declared = facts.join(" \n ").toLowerCase();
+  // The grounding set is everything the operator wrote, not the facts list
+  // alone. The intro says who is writing and the ask says what to ask for,
+  // and an ask like "link them to example.com/paper" is an instruction to
+  // include that URL — checking the output against a set that excludes it
+  // rejected every correct draft as a fabrication.
+  const declared = declaredText.join(" \n ").toLowerCase();
 
-  // A number in the body that appears in no declared fact is invented —
+  // A number in the body that appears nowhere the operator wrote is
+  // invented —
   // years of experience, team sizes, prices. Small integers are excluded
   // because they are usually prose ("one thing", "a couple of weeks").
   for (const m of body.matchAll(/\b(\d[\d,]*(?:\.\d+)?)\s*(%|\+)?/g)) {
@@ -435,7 +441,7 @@ export function unsupportedCustomClaims(body: string, facts: string[]): string[]
   for (const m of body.matchAll(/https?:\/\/[^\s)>\]]+/gi)) {
     const url = m[0].replace(/[.,]$/, "");
     if (!declared.includes(url.toLowerCase())) {
-      problems.push(`links to ${url}, which is not in the campaign's declared facts`);
+      problems.push(`links to ${url}, which the campaign never mentions`);
     }
   }
 
