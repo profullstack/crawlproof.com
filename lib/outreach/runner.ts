@@ -256,6 +256,11 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
         campaignId: campaign.id,
         discoveredVia: candidate.via,
         discoveryLabel: candidate.label,
+        // The setting has to be honoured here too, not only when researching
+        // prospects that are already on the board. This is the path that sees
+        // every newly discovered domain, so missing it meant a campaign with
+        // scanning off still scanned everything it found.
+        skipScan: !campaign.scan_prospects,
       });
       if (res.status === "scanning") {
         result.scansStarted += 1;
