@@ -372,7 +372,9 @@ export async function researchProspect(input: {
         score_kind: audit.engine === "slop" ? "slop" : "aeo",
         top_issues: topIssues,
         quote_usd: quote.cappedForScoping ? null : Math.round(quote.amountUsd),
-        status: contact ? "researched" : "new",
+        // Same reasoning as the unscanned path: the scan landed, the search
+        // ran, and no address exists to send anything to.
+        status: contact ? "researched" : "skipped",
         ...(input.notes ? { notes: input.notes } : {}),
       },
       { onConflict: "project_id,channel,target_key" },
@@ -452,8 +454,14 @@ async function researchWithoutScan(input: {
         discovery_label: input.discoveryLabel ?? null,
         contact_email: contact?.email ?? null,
         contact_source: contact?.source ?? null,
-        status: contact ? "researched" : "new",
-        ...(input.notes ? { notes: input.notes } : fallbackNote ? { notes: fallbackNote } : {}),
+        // Crawled the site, then searched for the business, and still found
+        // no address. There is nothing further to try, so it leaves the
+        // funnel rather than sitting at "new" and being re-researched on
+        // every tick for the life of the campaign.
+        status: contact ? "researched" : "skipped",
+        ...(input.notes
+          ? { notes: input.notes }
+          : { notes: contact ? null : (fallbackNote ?? "no contact address found") }),
       },
       { onConflict: "project_id,channel,target_key" },
     )
