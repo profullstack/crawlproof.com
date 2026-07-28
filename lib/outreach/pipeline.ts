@@ -37,6 +37,7 @@ import {
   stepGuidance,
   suppressionReason,
   unsupportedClaims,
+  unsupportedCustomClaims,
   type ContactCandidate,
   type OutreachStep,
   type ProspectFacts,
@@ -272,6 +273,8 @@ export async function researchProspect(input: {
   notes?: string | null;
   discoveredVia?: string | null;
   discoveryLabel?: string | null;
+  /** Don't queue a scan for prospects we have no audit for. */
+  skipScan?: boolean;
 }): Promise<ResearchResult> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { status: "error", message: check.reason };
@@ -288,6 +291,14 @@ export async function researchProspect(input: {
   }
 
   const audit = await latestAuditForHost(input.userId, host);
+  // A campaign that isn't pitching an audit has no use for a scan, and
+  // scanning someone in order to email them about something else is both
+  // wasted worker time and a poor look. Skipping it moves the prospect
+  // straight to contact discovery instead of parking it on a scan that
+  // nothing will ever read.
+  if (!audit && input.skipScan) {
+    return researchWithoutScan({ ...input, host, target });
+  }
   if (!audit) {
     const started = await startFreeScan({ userId: input.userId, url: target });
     if (!started.ok) return { status: "error", message: started.error };
@@ -372,6 +383,71 @@ export async function researchProspect(input: {
   };
 }
 
+/**
+ * Research a prospect without scanning it.
+ *
+ * All a non-audit campaign needs is a way to reach someone, so this does
+ * contact discovery and stops. The prospect lands as "researched" with no
+ * score and no findings, which is honest: nothing was measured, and the
+ * draft path for these campaigns doesn't claim otherwise.
+ */
+async function researchWithoutScan(input: {
+  userId: string;
+  projectId: string;
+  campaignId?: string | null;
+  contactEmail?: string | null;
+  notes?: string | null;
+  discoveredVia?: string | null;
+  discoveryLabel?: string | null;
+  host: string;
+  target: string;
+}): Promise<ResearchResult> {
+  const { host, target } = input;
+  const candidates = input.contactEmail
+    ? [
+        {
+          email: normalizeEmail(input.contactEmail),
+          source: "manual" as const,
+          sameDomain: normalizeEmail(input.contactEmail).endsWith(`@${host}`),
+        },
+      ]
+    : await findContact(host);
+  const contact = bestContact(candidates);
+
+  const { data, error } = await serviceClient()
+    .from("outreach_prospects")
+    .upsert(
+      {
+        project_id: input.projectId,
+        owner_id: input.userId,
+        channel: "email",
+        target_key: host,
+        site_url: target,
+        campaign_id: input.campaignId ?? null,
+        discovered_via: input.discoveredVia ?? null,
+        discovery_label: input.discoveryLabel ?? null,
+        contact_email: contact?.email ?? null,
+        contact_source: contact?.source ?? null,
+        status: contact ? "researched" : "new",
+        ...(input.notes ? { notes: input.notes } : {}),
+      },
+      { onConflict: "project_id,channel,target_key" },
+    )
+    .select(PROSPECT_COLUMNS)
+    .maybeSingle();
+  if (error || !data) {
+    return { status: "error", message: error?.message ?? "Could not save the prospect." };
+  }
+
+  return {
+    status: "researched",
+    prospect: data as ProspectRow,
+    contact,
+    candidates,
+    quoteLabel: "not scanned — this campaign doesn't pitch an audit",
+  };
+}
+
 // ------------------------------------------------------------------- drafting
 
 const DraftSchema = z.object({
@@ -392,6 +468,37 @@ Hard rules, in order of importance:
 7. One ask, and make it the low-commitment one: look at the report. Never ask for a call in a first message.
 8. Write like a person who ran a scan and thought the result was worth mentioning — because that is exactly what happened.`;
 
+/**
+ * A campaign's own pitch, for campaigns that aren't selling a CrawlProof scan.
+ *
+ * `facts` is what the draft is permitted to assert. It replaces scan findings
+ * as the grounding set, so the honesty guarantee survives the change of
+ * subject rather than being dropped along with it.
+ */
+export type CampaignPitch = {
+  intro: string;
+  ask?: string | null;
+  facts: string[];
+};
+
+/** System prompt for a campaign pitching something other than a scan. */
+export function customDraftSystem(pitch: CampaignPitch): string {
+  return `You write cold outreach email on behalf of the sender described below. You are not selling a website audit; write only the pitch described.
+
+WHO IS WRITING AND WHY:
+${pitch.intro}
+
+Hard rules, in order of importance:
+1. Every factual claim must come from the FACTS supplied to you. If something is not in the facts, you do not know it, and you may not state it. Invent no numbers, dates, durations, links, company names or credentials.
+2. Say nothing about the recipient's business as fact. You have not researched them. You may say why you are writing to someone like them, not what they are doing wrong.
+3. Never imply a prior relationship. They have never heard from the sender. No "following up", no "as discussed", no "thanks for your time".
+4. No invented urgency, no fake deadlines, no flattery about work you have not seen.
+5. Short. Under 120 words for a first contact.
+6. Plain language. No "In today's digital landscape", "unlock", "leverage", "elevate", "game-changer", "delve", "reach out", "circle back", "I hope this email finds you well".
+7. One ask${pitch.ask ? `, and it is this: ${pitch.ask}` : ", and make it low-commitment"}. Never ask for a call in a first message.
+8. Write like one person emailing another, because that is what this is.`;
+}
+
 export type DraftResult =
   | { ok: true; subject: string; body: string; evidenceUsed: string[] }
   | { ok: false; problems: string[] };
@@ -401,7 +508,11 @@ export async function draftEmail(input: {
   step: OutreachStep;
   angle?: string | null;
   sender?: string | null;
+  /** Set for a custom campaign; omitted means the CrawlProof audit pitch. */
+  pitch?: CampaignPitch | null;
 }): Promise<DraftResult> {
+  if (input.pitch) return draftCustomEmail({ ...input, pitch: input.pitch });
+
   const facts = factsOf(input.prospect);
   if (!facts.topIssues.length && facts.score === null) {
     return { ok: false, problems: ["no findings and no score on file — nothing truthful to say"] };
@@ -468,6 +579,88 @@ export async function draftEmail(input: {
   return {
     ok: true,
     subject: output.subject?.trim() || outreachSubject(facts, input.step),
+    body: output.body.trim(),
+    evidenceUsed: output.evidence_used ?? [],
+  };
+}
+
+/**
+ * Draft for a campaign pitching something other than a scan.
+ *
+ * Structurally the same as the audit path — build a prompt, generate, then
+ * refuse to trust the result — but grounded in the campaign's declared facts.
+ * Nothing about the recipient's site is supplied, because nothing about it is
+ * known: a custom campaign doesn't scan anyone.
+ */
+async function draftCustomEmail(input: {
+  prospect: ProspectRow;
+  step: OutreachStep;
+  angle?: string | null;
+  sender?: string | null;
+  pitch: CampaignPitch;
+}): Promise<DraftResult> {
+  const facts = input.pitch.facts.map((f) => f.trim()).filter(Boolean);
+  if (!input.pitch.intro.trim()) {
+    return { ok: false, problems: ["the campaign has no pitch description — nothing to say"] };
+  }
+  if (!facts.length) {
+    return {
+      ok: false,
+      problems: [
+        "the campaign declares no facts, so there is nothing the draft would be allowed to state",
+      ],
+    };
+  }
+
+  const { anthropic, openai } = aiClients();
+  if (!anthropic && !openai) {
+    return { ok: false, problems: ["no AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY)"] };
+  }
+
+  const host = normalizeHost(input.prospect.site_url ?? input.prospect.target_key);
+  const userPrompt = [
+    `Recipient: someone at ${host}. You know nothing else about them — do not characterise their work, their site, or their needs as fact.`,
+    "",
+    "FACTS (the only things you may state):",
+    ...facts.map((f) => `- ${f}`),
+    "",
+    `SEQUENCE POSITION: ${stepGuidance(input.step)}`,
+    input.pitch.ask ? `The ask: ${input.pitch.ask}` : "",
+    input.angle ? `Emphasis requested: ${input.angle}` : "",
+    input.sender ? `Sign off as: ${input.sender}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  let output: { subject: string; body: string; evidence_used: string[] };
+  try {
+    const res = await generateStructuredOutput({
+      name: "custom_outreach_draft",
+      schema: DraftSchema,
+      system: customDraftSystem({ ...input.pitch, facts }),
+      user: userPrompt,
+      anthropic,
+      openai,
+      preference: env.backendAiProvider,
+      anthropicModel: "claude-haiku-4-5-20251001",
+      openaiModel: env.backendAiOpenaiModel,
+      maxTokens: 900,
+      anthropicEffort: false,
+    });
+    output = res.output;
+  } catch (err) {
+    return { ok: false, problems: [`generation failed: ${err instanceof Error ? err.message : "unknown"}`] };
+  }
+
+  const problems = unsupportedCustomClaims(output.body, facts);
+  if (problems.length) return { ok: false, problems };
+
+  const subject = output.subject?.trim();
+  if (!subject) return { ok: false, problems: ["the draft came back with no subject"] };
+
+  return {
+    ok: true,
+    subject,
     body: output.body.trim(),
     evidenceUsed: output.evidence_used ?? [],
   };

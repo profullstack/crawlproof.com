@@ -402,6 +402,11 @@ export async function saveCampaignAction(input: {
   angle?: string;
   senderName?: string;
   replyTo?: string;
+  pitchMode?: "audit" | "custom";
+  pitchIntro?: string;
+  pitchAsk?: string;
+  pitchFacts?: string;
+  scanProspects?: boolean;
 }): Promise<Ok<{ note: string }> | Err> {
   const auth = await requireLeadAccess(input.projectId);
   if (!auth.ok) return auth;
@@ -412,6 +417,38 @@ export async function saveCampaignAction(input: {
   if (!queries.length && !seedUrls.length) {
     return { ok: false, error: "A campaign needs at least one search query or directory URL." };
   }
+  const pitchMode = input.pitchMode ?? "audit";
+  const pitchFacts = (input.pitchFacts ?? "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (pitchMode === "custom") {
+    // The same bar the audit pitch holds itself to: without a description
+    // and some declared facts there is nothing truthful for a draft to say,
+    // and the grounding guard would reject every draft anyway.
+    if (!input.pitchIntro?.trim()) {
+      return { ok: false, error: "A custom pitch needs a description of who is writing and why." };
+    }
+    if (!pitchFacts.length) {
+      return {
+        ok: false,
+        error:
+          "A custom pitch needs at least one fact. Drafts may only state what you list here, so an empty list means every draft gets rejected.",
+      };
+    }
+  }
+
+  // Scanning is the audit pitch's evidence step; default it off for a custom
+  // pitch rather than scanning people we're emailing about something else.
+  const scanProspects = input.scanProspects ?? pitchMode === "audit";
+  if (pitchMode === "audit" && !scanProspects) {
+    return {
+      ok: false,
+      error:
+        "The audit pitch is built from scan findings, so it can't run with scanning turned off. Switch to a custom pitch instead.",
+    };
+  }
+
   if (input.autoSend) {
     const postal = await loadAddressSettings({ projectId: input.projectId, ownerId: auth.userId });
     if (!postal.address) {
@@ -440,6 +477,11 @@ export async function saveCampaignAction(input: {
         angle: input.angle?.trim() || null,
         sender_name: input.senderName?.trim() || null,
         reply_to: input.replyTo?.trim() || null,
+        pitch_mode: pitchMode,
+        pitch_intro: input.pitchIntro?.trim() || null,
+        pitch_ask: input.pitchAsk?.trim() || null,
+        pitch_facts: pitchFacts,
+        scan_prospects: scanProspects,
       },
       { onConflict: "project_id,name" },
     );

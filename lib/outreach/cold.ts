@@ -338,6 +338,61 @@ export function unsupportedClaims(body: string, facts: ProspectFacts): string[] 
   return problems;
 }
 
+/**
+ * Grounding guard for a custom pitch.
+ *
+ * The audit pitch earns its claims from a scan. A custom pitch has no scan,
+ * so the campaign declares what it is allowed to say and this checks the
+ * draft against that list. Dropping the guard entirely for custom campaigns
+ * would turn the same machinery into something that states invented facts
+ * about strangers, at volume, over email.
+ *
+ * The check is deliberately narrow. Proving a sentence is entailed by a fact
+ * list is not something a regex can do, and pretending otherwise would give
+ * false confidence. What it catches is the specific, checkable species of
+ * fabrication: numbers and durations that appear nowhere in the declared
+ * facts, links to places the campaign never mentioned, and claimed prior
+ * contact. Tone and phrasing are the prompt's job.
+ */
+export function unsupportedCustomClaims(body: string, facts: string[]): string[] {
+  const problems: string[] = [];
+  const lower = body.toLowerCase();
+  const declared = facts.join(" \n ").toLowerCase();
+
+  // A number in the body that appears in no declared fact is invented —
+  // years of experience, team sizes, prices. Small integers are excluded
+  // because they are usually prose ("one thing", "a couple of weeks").
+  for (const m of body.matchAll(/\b(\d[\d,]*(?:\.\d+)?)\s*(%|\+)?/g)) {
+    const raw = m[1].replace(/,/g, "");
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 3) continue;
+    const appears = declared.includes(raw) || declared.includes(m[1].toLowerCase());
+    if (!appears) problems.push(`states "${m[0].trim()}", which is not in the campaign's declared facts`);
+  }
+
+  // Links have to come from the declared facts too: a made-up portfolio URL
+  // is both a false claim and a broken promise.
+  for (const m of body.matchAll(/https?:\/\/[^\s)>\]]+/gi)) {
+    const url = m[0].replace(/[.,]$/, "");
+    if (!declared.includes(url.toLowerCase())) {
+      problems.push(`links to ${url}, which is not in the campaign's declared facts`);
+    }
+  }
+
+  for (const phrase of [
+    "as we discussed",
+    "following up on our call",
+    "great speaking with you",
+    "as promised",
+    "per our conversation",
+    "thanks for your time yesterday",
+  ]) {
+    if (lower.includes(phrase)) problems.push(`implies a prior relationship: "${phrase}"`);
+  }
+
+  return [...new Set(problems)];
+}
+
 // ------------------------------------------------- obfuscation & link crawl
 
 /**
