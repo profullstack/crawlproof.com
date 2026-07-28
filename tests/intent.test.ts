@@ -181,3 +181,91 @@ describe("searching more than one platform", () => {
     expect(q).toContain("load testing");
   });
 });
+
+describe("buyers and decision makers, not people selling", () => {
+  // The target is whoever can authorise a purchase. The inverse — somebody
+  // advertising their own availability — uses the same vocabulary about the
+  // same topic with the same enthusiasm, and scored identically until this.
+  it("refuses a freelancer advertising themselves", () => {
+    for (const text of [
+      "Experienced load testing consultant, available for hire.",
+      "I do load testing work — DM me for rates.",
+      "Load testing specialist, open to work. My portfolio is here.",
+      "Taking on new clients for load testing this quarter.",
+      "#OpenToWork — load testing and performance engineering.",
+    ]) {
+      const s = scoreIntent({ text, postedAt: agoHours(1), keywords: kw, now: NOW });
+      expect(s.disqualified).toBeTruthy();
+    }
+  });
+
+  it("refuses someone looking for a job rather than a supplier", () => {
+    const s = score("Looking for a job doing load testing.");
+    expect(s.disqualified).toMatch(/looking for work/);
+  });
+
+  it("still accepts a company engaging a firm", () => {
+    // Buying a service, which is a purchase — unlike taking on an employee.
+    const s = score("We're looking to hire an agency for our load testing.");
+    expect(s.disqualified).toBeNull();
+    expect(s.tier).toBe("purchase");
+  });
+
+  it("does not treat employing a person as a purchase", () => {
+    const s = score("We're hiring a load testing engineer.");
+    expect(s.disqualified).toMatch(/job ad/);
+  });
+});
+
+describe("authority separates a buyer from a bystander", () => {
+  it("ranks the person who can sign above the one who cannot", () => {
+    const buyer = score("We're evaluating load testing tools for our team this quarter.");
+    const bystander = score("Anyone know a good load testing tool?");
+    expect(buyer.score).toBeGreaterThan(bystander.score);
+    expect(buyer.decisionMaker).toBe(true);
+    expect(bystander.decisionMaker).toBe(false);
+  });
+
+  it("recognises a stated role", () => {
+    const s = score("I'm the CTO and we need load testing. Any recommendations?");
+    expect(s.decisionMaker).toBe(true);
+    expect(s.reasons.join(" ")).toMatch(/decision-making role/);
+  });
+
+  it("recognises procurement language", () => {
+    expect(score("Load testing vendor review — we need a shortlist.").decisionMaker).toBe(true);
+  });
+
+  it("does not manufacture intent from a job title alone", () => {
+    // Authority is added to an ask, never multiplied by it. Someone who can
+    // sign but has not asked for anything is not a lead.
+    const s = score("I'm the CTO of a company that does load testing.");
+    expect(s.tier).toBe("none");
+    expect(s.score).toBe(0);
+  });
+
+  it("caps the bonus so authority cannot outweigh asking", () => {
+    const loaded = score(
+      "I'm the CTO, our team is evaluating, we need this, procurement approved — struggling with load testing.",
+    );
+    const plainAsk = score("Willing to pay for load testing help.");
+    // A pile of authority markers on a mere complaint must not beat a real
+    // offer of money.
+    expect(loaded.score).toBeLessThanOrEqual(plainAsk.score);
+  });
+});
+
+describe("where it looks for buyers", () => {
+  it("no longer trawls freelance marketplaces", () => {
+    // Dense with the inverse of a lead: people selling, not buying.
+    const sites = INTENT_SOURCES.flatMap((s) => s.sites);
+    for (const board of ["upwork.com", "remoteok.com", "weworkremotely.com"]) {
+      expect(sites).not.toContain(board);
+    }
+  });
+
+  it("watches sites where buyers compare vendors", () => {
+    const sites = INTENT_SOURCES.flatMap((s) => s.sites);
+    expect(sites.some((s) => ["g2.com", "trustradius.com", "capterra.com"].includes(s))).toBe(true);
+  });
+});

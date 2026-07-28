@@ -105,11 +105,15 @@ export default function LeadGenerationPage() {
           />
           <Card
             title="Everywhere people ask"
-            body="Reddit, Hacker News, Stack Exchange, Quora, Indie Hackers, X, LinkedIn and contract boards. One community's regulars are not your whole market."
+            body="Reddit, Hacker News, Stack Exchange, Quora, Indie Hackers, X, LinkedIn and the software review sites where people compare vendors in public. One community's regulars are not your whole market."
           />
           <Card
             title="Somebody else's lead is not yours"
             body="A flawless “anyone recommend a good accountant, happy to pay” is worth nothing if you sell load testing, so intent is only counted when it lands on your topic."
+          />
+          <Card
+            title="Buyers, not people selling"
+            body="Someone advertising their own availability uses the same words about the same topic as someone buying. Freelance boards and “open to work” posts are dropped, and language that means the writer can actually authorise a purchase ranks them up."
           />
           <Card
             title="It respects a no"

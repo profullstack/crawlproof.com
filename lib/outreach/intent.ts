@@ -58,9 +58,18 @@ const TIERS: TierSpec[] = [
       /\b(?:request for proposal|rfp|rfq)\b/i,
       /\b(?:get|need|send|want)\s+(?:a\s+)?(?:quote|quotes|pricing)\b/i,
       /\bwho\s+(?:do|should)\s+(?:i|we)\s+pay\b/i,
-      /\b(?:hire|hiring|contract|engage)\s+(?:someone|a\s+\w+|an\s+agency|a\s+freelancer)\b/i,
+      // Engaging a firm is a purchase; taking on a person is employment, and
+      // the two read alike. Only the first is a buyer.
+      /\b(?:hire|hiring|engage|retain|onboard)\s+(?:an?\s+)?(?:agency|vendor|supplier|firm|consultancy|consultants?|provider|partner)\b/i,
       /\bpaid\s+(?:tool|service|plan|option|solution)\b/i,
       /\bhappy\s+to\s+(?:pay|spend)\b/i,
+      // Mid-purchase by definition. Someone comparing vendors in public has
+      // already decided to buy something and is choosing between suppliers,
+      // which is later in the process than saying they are willing to pay.
+      /\b(?:evaluating|shortlisting|comparing|trialling|trialing|piloting)\s+(?:\w+\s+){0,2}(?:tools?|vendors?|suppliers?|options?|providers?|platforms?|solutions?)\b/i,
+      /\b(?:we(?:'re| are)?)\s+(?:evaluating|shortlisting|comparing|procuring)\b/i,
+      /\b(?:vendor|supplier|security|procurement)\s+review\b/i,
+      /\b(?:proof of concept|poc|bake[- ]off)\b/i,
     ],
   },
   {
@@ -92,6 +101,12 @@ const TIERS: TierSpec[] = [
       /\bwhich\s+(?:tool|service|vendor|provider|agency|platform)\b/i,
       /\bwhat\s+(?:do|are)\s+you\s+(?:all\s+)?(?:use|using)\b/i,
       /\bany\s+(?:tools?|services?|vendors?|agencies)\s+that\b/i,
+      /\bany\s+recommendations?\b/i,
+      // "We need a X" is the plainest way a team states a requirement, and
+      // omitting it lost exactly the plural-first-person phrasing that marks
+      // somebody buying on an organisation's behalf.
+      /\b(?:we|our team|i)\s+(?:need|want|require)\s+(?:a|an|some|better|new)\b/i,
+      /\blooking\s+(?:to|at)\s+(?:replace|adopt|introduce|bring in)\b/i,
     ],
   },
   {
@@ -126,7 +141,69 @@ const DISQUALIFIERS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bno\s+paid\b/i, reason: "free/open-source only" },
   { pattern: /\bthis\s+is\s+(?:an?\s+)?(?:ad|advert|sponsored)\b/i, reason: "the post is itself an advert" },
   { pattern: /\bwe(?:'re| are)\s+hiring\b/i, reason: "a job ad, not a buyer" },
+  // Someone advertising their own services is the exact inverse of a lead,
+  // and reads almost identically to one: same vocabulary, same topic, same
+  // enthusiasm. Freelance and job boards are full of these, which is why the
+  // sweep no longer trawls them.
+  { pattern: /\b(?:available|open)\s+(?:for|to)\s+(?:hire|work|freelance|contract|new clients?|projects?)\b/i, reason: "selling their own services" },
+  { pattern: /\b(?:hire|dm|message|contact)\s+me\b/i, reason: "selling their own services" },
+  { pattern: /\b(?:my|our)\s+(?:rates?|portfolio|services|day rate)\b/i, reason: "selling their own services" },
+  { pattern: /\b(?:i|we)\s+(?:offer|provide|specialis[ez]e in|do)\s+\w+\s+(?:services|work|consulting)\b/i, reason: "selling their own services" },
+  { pattern: /\b(?:taking on|accepting)\s+(?:new\s+)?(?:clients?|work|projects?)\b/i, reason: "selling their own services" },
+  { pattern: /\b(?:looking|searching)\s+for\s+(?:a\s+)?(?:job|gig|work|role|position|employment)\b/i, reason: "looking for work, not for a supplier" },
+  { pattern: /\b(?:#)?(?:opentowork|forhire|hireme)\b/i, reason: "selling their own services" },
 ];
+
+/**
+ * Language that means the speaker can actually authorise a purchase.
+ *
+ * The distinction the tiers alone miss: "I wish we had a better X" and "we are
+ * evaluating X this quarter" express the same want, and only one of them comes
+ * from somebody who can sign. Plural first person is the cheapest reliable
+ * marker — people speaking for an organisation say "we" — and an explicit
+ * title is the strongest.
+ */
+const AUTHORITY: Array<{ pattern: RegExp; weight: number; label: string }> = [
+  {
+    pattern: /\b(?:i(?:'m| am)\s+(?:the\s+)?(?:cto|ceo|coo|cio|ciso|founder|co-?founder|owner|director|vp|head of|manager|lead))\b/i,
+    weight: 20,
+    label: "states a decision-making role",
+  },
+  {
+    pattern: /\b(?:my|our)\s+(?:team|company|org(?:ani[sz]ation)?|firm|agency|startup|department)\b/i,
+    weight: 12,
+    label: "speaking for an organisation",
+  },
+  {
+    pattern: /\b(?:we(?:'re| are)?\s+(?:evaluating|assessing|comparing|shortlisting|reviewing|procuring|rolling out|standardi[sz]ing))\b/i,
+    weight: 18,
+    label: "running a buying process",
+  },
+  {
+    pattern: /\b(?:we|our team)\s+(?:need|want|require|use|are using|have decided|plan to)\b/i,
+    weight: 10,
+    label: "buying on behalf of a team",
+  },
+  {
+    pattern: /\b(?:sign(?:ing)? off|approve[ds]?|procurement|purchase order|vendor review|security review)\b/i,
+    weight: 15,
+    label: "purchasing process language",
+  },
+];
+
+/** How much authority language the text shows, capped. */
+export function authorityBonus(text: string): { bonus: number; reasons: string[] } {
+  let bonus = 0;
+  const reasons: string[] = [];
+  for (const a of AUTHORITY) {
+    if (a.pattern.test(text)) {
+      bonus += a.weight;
+      reasons.push(a.label);
+    }
+  }
+  // Capped: stacking every marker should not outweigh the fact of asking.
+  return { bonus: Math.min(30, bonus), reasons };
+}
 
 export type IntentSignal = {
   /** 0–100, recency already applied. */
@@ -138,6 +215,12 @@ export type IntentSignal = {
   disqualified: string | null;
   /** Age in hours, or null when the source gave no timestamp. */
   ageHours: number | null;
+  /**
+   * Whether the speaker showed signs of being able to authorise a purchase.
+   * False is not disqualifying — plenty of real buyers write tersely — but it
+   * is the difference between a lead and a bystander with the same question.
+   */
+  decisionMaker: boolean;
 };
 
 /**
@@ -179,7 +262,14 @@ export function scoreIntent(input: {
     ? Math.max(0, (now.getTime() - input.postedAt.getTime()) / 3_600_000)
     : null;
 
-  const base: IntentSignal = { score: 0, tier: "none", reasons: [], disqualified: null, ageHours };
+  const base: IntentSignal = {
+    score: 0,
+    tier: "none",
+    reasons: [],
+    disqualified: null,
+    ageHours,
+    decisionMaker: false,
+  };
   if (!text.trim()) return { ...base, disqualified: "no text to read" };
 
   for (const d of DISQUALIFIERS) {
@@ -218,11 +308,17 @@ export function scoreIntent(input: {
   // a better prospect than someone doing either alone — but not twice as good.
   const strongest = matched[0];
   const extra = matched.slice(1).reduce((n, t) => n + t.weight * 0.08, 0);
-  const raw = Math.min(100, strongest.weight + extra);
+  // Authority is added to the ask, not multiplied by it. Someone who can sign
+  // but has not asked for anything is still not a lead — the bonus should
+  // promote a buyer above a bystander who asked the same question, not
+  // manufacture intent out of a job title.
+  const authority = authorityBonus(text);
+  const raw = Math.min(100, strongest.weight + extra + authority.bonus);
 
   const factor = recencyFactor(ageHours);
   const reasons = [...base.reasons, strongest.label];
   for (const t of matched.slice(1)) reasons.push(t.label);
+  for (const r of authority.reasons) reasons.push(r);
 
   if (ageHours === null) {
     reasons.push("no date on the source, so treated as stale");
@@ -240,6 +336,7 @@ export function scoreIntent(input: {
     reasons,
     disqualified: factor === 0 ? `older than ${Math.round(MAX_AGE_HOURS / 24)} days` : null,
     ageHours,
+    decisionMaker: authority.bonus > 0,
   };
 }
 
