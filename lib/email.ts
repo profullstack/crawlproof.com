@@ -996,6 +996,54 @@ export function coldOutreachEmailHtml(input: {
   });
 }
 
+/**
+ * Daily AI spend warning.
+ *
+ * Leads with the number and the breakdown, because "you spent $18" prompts
+ * the question "on what" and the answer should not require opening a
+ * dashboard. States plainly that nothing was stopped, so the mail is not read
+ * as an outage.
+ */
+export async function sendAiSpendAlertEmail(input: {
+  to: string;
+  day: string;
+  spendLabel: string;
+  thresholdLabel: string;
+  calls: number;
+  breakdown: { feature: string; spendLabel: string; calls: number }[];
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+
+  const rows = input.breakdown
+    .map(
+      (b) =>
+        `<tr><td style="padding:4px 12px 4px 0">${b.feature}</td>` +
+        `<td style="padding:4px 12px 4px 0;text-align:right;font-family:monospace">${b.spendLabel}</td>` +
+        `<td style="padding:4px 0;text-align:right;color:#666">${b.calls}</td></tr>`,
+    )
+    .join("");
+
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: `AI spend ${input.spendLabel} on ${input.day} (over ${input.thresholdLabel})`,
+    html: [
+      `<p><strong>${input.spendLabel}</strong> of AI usage so far on ${input.day}, across ${input.calls} calls.</p>`,
+      `<p>That is over your ${input.thresholdLabel}/day warning line. <strong>Nothing has been stopped</strong> — this is a heads-up, not an outage.</p>`,
+      rows
+        ? `<table style="border-collapse:collapse;font-size:14px"><thead><tr>` +
+          `<th style="text-align:left;padding-right:12px">Feature</th>` +
+          `<th style="text-align:right;padding-right:12px">Spend</th>` +
+          `<th style="text-align:right;color:#666">Calls</th></tr></thead><tbody>${rows}</tbody></table>`
+        : "",
+      `<p style="color:#666;font-size:13px">Computed from token counts on each call at published per-model rates. It measures what this app spent, not the balance on the Anthropic account — reading that needs an Admin API key.</p>`,
+    ].join(""),
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}
+
 export async function sendColdOutreachEmail(input: {
   to: string;
   subject: string;
