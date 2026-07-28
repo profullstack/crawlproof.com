@@ -105,3 +105,40 @@ describe("customDraftSystem", () => {
     expect(system).toMatch(/Never ask for a call in a first message/);
   });
 });
+
+describe("the ask is part of the grounding set", () => {
+  // A live campaign rejected every draft it produced. Its ask named a URL,
+  // the model included that URL as instructed, and the guard compared the
+  // body against the facts list alone — so following the instruction was
+  // scored as a fabrication. These are the real values from that campaign.
+  const INTRO =
+    "Anthony owner of threatcrush.com we want to generate leads for people to download our free whitepaper at https://threatcrush.com/get-whitepaper";
+  const ASK =
+    "we want to generate leads for people to download our free whitepaper at https://threatcrush.com/get-whitepaper";
+  const FACTS = ["30 years experience at small startups and enterprise companies as a software engineer."];
+  const declared = [...FACTS, INTRO, ASK];
+
+  it("accepts a URL the ask told it to include", () => {
+    const body =
+      "You can grab the free whitepaper at https://threatcrush.com/get-whitepaper whenever it is useful.";
+    expect(unsupportedCustomClaims(body, declared)).toEqual([]);
+  });
+
+  it("rejected it when only the facts were checked, which was the bug", () => {
+    const body = "Grab it at https://threatcrush.com/get-whitepaper";
+    expect(unsupportedCustomClaims(body, FACTS).join(" ")).toMatch(/threatcrush/);
+  });
+
+  it("still catches a URL nobody wrote anywhere", () => {
+    const body = "See https://not-ours.test/landing for details.";
+    expect(unsupportedCustomClaims(body, declared).join(" ")).toMatch(/not-ours\.test/);
+  });
+
+  it("accepts a number stated in the facts", () => {
+    expect(unsupportedCustomClaims("I have 30 years of experience.", declared)).toEqual([]);
+  });
+
+  it("still catches an invented number", () => {
+    expect(unsupportedCustomClaims("We have 450 customers.", declared).join(" ")).toMatch(/450/);
+  });
+});
