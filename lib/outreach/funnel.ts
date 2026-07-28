@@ -19,6 +19,20 @@ const MIN_SENDS_FOR_RATE = 20;
 export type FunnelCounts = {
   /** Live sends. Dry runs are excluded — nobody received them. */
   sent: number;
+  /**
+   * Sends whose pixel was loaded by something that looked like a person.
+   * Proxy prefetches are excluded, so this understates rather than inflates.
+   */
+  opened: number;
+  /** Null until enough tracked sends exist for the ratio to mean anything. */
+  openRate: number | null;
+  /**
+   * Sends carrying a pixel at all. Anything sent before open tracking, and
+   * anything sent through a client that strips images, is not measurable —
+   * dividing opens by every send ever would report a falling open rate as
+   * old sends accumulate.
+   */
+  tracked: number;
   /** Distinct people contacted, which is what a rate should divide by. */
   contacted: number;
   replied: number;
@@ -33,10 +47,18 @@ export type FunnelCounts = {
 
 export type CampaignFunnel = FunnelCounts & { campaign: string };
 
-function rates(counts: Omit<FunnelCounts, "replyRate" | "closeRate" | "rateNote">): FunnelCounts {
+function rates(
+  counts: Omit<FunnelCounts, "replyRate" | "closeRate" | "rateNote" | "openRate">,
+): FunnelCounts {
+  // Divided by tracked sends, not all sends: an untracked send cannot report
+  // an open, and counting it in the denominator would show a healthy campaign
+  // slowly declining as its pre-tracking history piles up.
+  const openRate =
+    counts.tracked >= MIN_SENDS_FOR_RATE ? counts.opened / counts.tracked : null;
   if (counts.sent < MIN_SENDS_FOR_RATE) {
     return {
       ...counts,
+      openRate,
       replyRate: null,
       closeRate: null,
       rateNote: `needs ${MIN_SENDS_FOR_RATE - counts.sent} more sends before a rate means anything`,
@@ -48,6 +70,7 @@ function rates(counts: Omit<FunnelCounts, "replyRate" | "closeRate" | "rateNote"
   const closeRate = counts.replied > 0 ? counts.won / counts.replied : null;
   return {
     ...counts,
+    openRate,
     replyRate,
     closeRate,
     rateNote: counts.replied === 0 ? "no replies yet, so there is no close rate to show" : null,
@@ -59,10 +82,10 @@ function rates(counts: Omit<FunnelCounts, "replyRate" | "closeRate" | "rateNote"
  */
 export async function projectFunnel(projectId: string): Promise<FunnelCounts> {
   const sb = serviceClient();
-  const [{ count: sent }, { data: prospects }] = await Promise.all([
+  const [{ data: sends }, { data: prospects }] = await Promise.all([
     sb
       .from("outreach_sends")
-      .select("id", { count: "exact", head: true })
+      .select("track_token, opened_at")
       .eq("project_id", projectId)
       .eq("channel", "email")
       .eq("dry_run", false),
@@ -74,7 +97,10 @@ export async function projectFunnel(projectId: string): Promise<FunnelCounts> {
       .in("status", ["contacted", "replied", "won", "lost"]),
   ]);
 
-  return rates(tally(sent ?? 0, (prospects as { status: string }[] | null) ?? []));
+  const rows = (sends as SendRow[] | null) ?? [];
+  return rates(
+    tally(rows, (prospects as { status: string }[] | null) ?? []),
+  );
 }
 
 /** Per campaign, ordered by volume so the busiest reads first. */
@@ -83,7 +109,7 @@ export async function campaignFunnels(projectId: string): Promise<CampaignFunnel
   const [{ data: sends }, { data: prospects }] = await Promise.all([
     sb
       .from("outreach_sends")
-      .select("campaign")
+      .select("campaign, track_token, opened_at")
       .eq("project_id", projectId)
       .eq("channel", "email")
       .eq("dry_run", false),
@@ -105,10 +131,12 @@ export async function campaignFunnels(projectId: string): Promise<CampaignFunnel
     ((campaigns as { id: string; name: string }[] | null) ?? []).map((c) => [c.id, c.name]),
   );
 
-  const sentByCampaign = new Map<string, number>();
-  for (const s of ((sends as { campaign: string | null }[] | null) ?? [])) {
+  const sendsByCampaign = new Map<string, SendRow[]>();
+  for (const s of ((sends as (SendRow & { campaign: string | null })[] | null) ?? [])) {
     const key = s.campaign ?? "(manual)";
-    sentByCampaign.set(key, (sentByCampaign.get(key) ?? 0) + 1);
+    const list = sendsByCampaign.get(key) ?? [];
+    list.push(s);
+    sendsByCampaign.set(key, list);
   }
 
   const statusesByCampaign = new Map<string, { status: string }[]>();
@@ -119,19 +147,25 @@ export async function campaignFunnels(projectId: string): Promise<CampaignFunnel
     statusesByCampaign.set(key, list);
   }
 
-  const names = new Set([...sentByCampaign.keys(), ...statusesByCampaign.keys()]);
+  const names = new Set([...sendsByCampaign.keys(), ...statusesByCampaign.keys()]);
   return [...names]
     .map((campaign) => ({
       campaign,
-      ...rates(tally(sentByCampaign.get(campaign) ?? 0, statusesByCampaign.get(campaign) ?? [])),
+      ...rates(tally(sendsByCampaign.get(campaign) ?? [], statusesByCampaign.get(campaign) ?? [])),
     }))
     .sort((a, b) => b.sent - a.sent);
 }
 
+/** What the funnel needs off a send row. */
+type SendRow = { track_token: string | null; opened_at: string | null };
+
 function tally(
-  sent: number,
+  sends: SendRow[],
   prospects: { status: string }[],
-): Omit<FunnelCounts, "replyRate" | "closeRate" | "rateNote"> {
+): Omit<FunnelCounts, "replyRate" | "closeRate" | "rateNote" | "openRate"> {
+  const sent = sends.length;
+  const tracked = sends.filter((s) => s.track_token).length;
+  const opened = sends.filter((s) => s.opened_at).length;
   let replied = 0;
   let won = 0;
   let lost = 0;
@@ -147,5 +181,5 @@ function tally(
       replied += 1;
     }
   }
-  return { sent, contacted: prospects.length, replied, won, lost };
+  return { sent, tracked, opened, contacted: prospects.length, replied, won, lost };
 }
