@@ -76,6 +76,9 @@ export default async function AdsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Ad campaigns</h1>
         <div className="flex items-center gap-2">
+          <Link href="/ads/earnings" className="btn">
+            Earnings &amp; reports
+          </Link>
           <Link href="/ads/slots" className="btn">
             Monetize a site
           </Link>

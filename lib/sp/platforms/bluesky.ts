@@ -14,6 +14,8 @@
 // Posting: com.atproto.repo.createRecord with the app.bsky.feed.post
 // collection. Returns the post's at:// URI + cid.
 
+import { buildPostRecord } from "../blueskyFacets";
+
 const DEFAULT_PDS = "https://bsky.social";
 
 export type BlueskySession = {
@@ -78,9 +80,8 @@ export async function refreshBlueskySession(input: {
   return { accessJwt: json.accessJwt, refreshJwt: json.refreshJwt };
 }
 
-// Post a single text post. Bluesky's 300-char limit is enforced by
-// the API — we trim client-side and document the limit to the user.
-const MAX_POST_CHARS = 300;
+// Post a single text post. Trimming to Bluesky's limits and working out the
+// rich-text facets both live in ../blueskyFacets.ts.
 
 export type BlueskyPostResult = {
   uri: string;      // at://did:plc:.../app.bsky.feed.post/...
@@ -96,12 +97,9 @@ export async function createBlueskyPost(input: {
   pdsUrl?: string;
 }): Promise<BlueskyPostResult> {
   const pds = (input.pdsUrl ?? DEFAULT_PDS).replace(/\/$/, "");
-  const text = input.text.slice(0, MAX_POST_CHARS);
-  const record = {
-    $type: "app.bsky.feed.post",
-    text,
-    createdAt: new Date().toISOString(),
-  };
+  // Facets are not optional decoration: without them a posted URL is inert
+  // text and a hashtag is just a word. Bluesky parses nothing on its own.
+  const record = buildPostRecord(input.text, new Date().toISOString());
   const res = await fetch(`${pds}/xrpc/com.atproto.repo.createRecord`, {
     method: "POST",
     headers: {
@@ -133,4 +131,6 @@ export async function createBlueskyPost(input: {
   };
 }
 
-export const BLUESKY_MAX_CHARS = MAX_POST_CHARS;
+// Bluesky's limit is 300 graphemes, not 300 JS string units. Callers use
+// this for UI counters; truncateForBluesky does the enforcing.
+export const BLUESKY_MAX_CHARS = 300;

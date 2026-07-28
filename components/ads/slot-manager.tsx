@@ -3,6 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createSlot, setSlotStatus, saveSlotPayout, requestPayout } from "@/app/actions/ads";
+import { PUBLISHER_FORMAT_IDS, formatSpec, type AdFormatId } from "@/lib/ads/formats";
+
+// The paste-once embed for a given size. data-format tells /ad.js which creative
+// to request; the medium rectangle stays the default the auto-installer uses.
+function embedFor(slotId: string, format: AdFormatId, origin: string): string {
+  return `<div data-cp-ad data-slot="${slotId}" data-format="${format}"></div>\n<script src="${origin}/ad.js" async></script>`;
+}
 
 type Project = { id: string; name: string; url: string };
 type Slot = {
@@ -73,15 +80,16 @@ export function SlotManager({
   const [addr, setAddr] = useState(slot?.payout_address ?? "");
   const [currency, setCurrency] = useState(slot?.payout_currency ?? "usdc_pol");
   const [copied, setCopied] = useState(false);
+  // Which size's embed is currently revealed, and whether the code block is open.
+  const [fmt, setFmt] = useState<AdFormatId>(PUBLISHER_FORMAT_IDS[0]);
+  const [showCode, setShowCode] = useState(true);
   const [prBusy, setPrBusy] = useState(false);
   const [prMsg, setPrMsg] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
   const [repoChoices, setRepoChoices] = useState<
     { owner: string; repo: string; installation_id: number }[] | null
   >(null);
 
-  const embed =
-    slot &&
-    `<div data-cp-ad data-slot="${slot.id}" data-format="banner_300x250"></div>\n<script src="${origin}/ad.js" async></script>`;
+  const embed = slot ? embedFor(slot.id, fmt, origin) : null;
 
   function enable() {
     start(async () => {
@@ -229,18 +237,56 @@ export function SlotManager({
           )}
           <div>
             <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-              Embed — paste on your page
+              Embed — pick a size, paste on your page
             </div>
-            <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-black/30 p-3 text-xs">
-              {embed}
-            </pre>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button className="btn text-xs" onClick={copy}>
-                {copied ? "Copied!" : "Copy embed"}
-              </button>
+            {/* One button per available size. Clicking reveals that size's code;
+                clicking the open size again collapses it. */}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {PUBLISHER_FORMAT_IDS.map((id) => {
+                const spec = formatSpec(id);
+                const open = id === fmt && showCode;
+                return (
+                  <button
+                    key={id}
+                    className={`btn text-xs ${open ? "btn-primary" : ""}`}
+                    aria-expanded={open}
+                    onClick={() => {
+                      if (id === fmt) {
+                        setShowCode((s) => !s);
+                      } else {
+                        setFmt(id);
+                        setShowCode(true);
+                      }
+                    }}
+                  >
+                    {spec.label} · {spec.w}×{spec.h}
+                  </button>
+                );
+              })}
+            </div>
+            {showCode && embed && (
+              <>
+                <pre className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-black/30 p-3 text-xs">
+                  {embed}
+                </pre>
+                <div className="mt-2">
+                  <button className="btn text-xs" onClick={copy}>
+                    {copied ? "Copied!" : "Copy embed"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Auto-install drops a unit for every size before </body> — we
+                can't safely guess where each belongs, so the publisher keeps
+                or moves whichever they want. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-3">
               <button className="btn text-xs" onClick={() => submitPr()} disabled={prBusy}>
-                {prBusy ? "Opening PR…" : "Submit PR to install"}
+                {prBusy ? "Opening PR…" : "Submit PR to install all sizes"}
               </button>
+              <span className="text-xs text-[var(--color-muted)]">
+                Adds every size above <code>&lt;/body&gt;</code>; keep the ones you want.
+              </span>
             </div>
 
             {repoChoices && (

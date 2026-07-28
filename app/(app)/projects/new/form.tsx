@@ -4,6 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createProject } from "@/app/actions/createProject";
 
+// Only honour same-site relative paths (guards against open redirects).
+function safeNext(next: string | null | undefined): string | null {
+  return next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+}
+
 function deriveName(url: string): string {
   if (!url) return "";
   try {
@@ -14,8 +19,11 @@ function deriveName(url: string): string {
   }
 }
 
-export function NewProjectForm() {
+export function NewProjectForm({ next }: { next?: string | null }) {
   const router = useRouter();
+  // e.g. /projects/new?next=/ads/slots — return to Monetize after creating so
+  // the new site is right there to "Enable ads".
+  const nextPath = safeNext(next);
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
@@ -41,7 +49,7 @@ export function NewProjectForm() {
         setError(res.error ?? "Could not create project.");
         return;
       }
-      router.push(`/projects/${res.id}`);
+      router.push(nextPath ?? `/projects/${res.id}`);
     });
   }
 

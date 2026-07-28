@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { PromoteListActions } from "@/components/promote/list-actions";
+import { PromoteRealtime } from "@/components/promote/promote-realtime";
 import { cadenceLabel } from "@/lib/promote/generatePitch";
 
 export const metadata = { title: "Promote" };
@@ -28,6 +29,7 @@ export default async function PromotePage() {
   const linkCountById = new Map<string, number>();
   const postCountById = new Map<string, number>();
   const creditsById = new Map<string, number>();
+  const lastPostedById = new Map<string, string>();
   let accountCount = 0;
 
   if (user) {
@@ -57,21 +59,33 @@ export default async function PromotePage() {
         linkCountById.set(r.list_id, (linkCountById.get(r.list_id) ?? 0) + 1);
       }
 
-      // Fetch post counts + credits per list
+      // Fetch post counts + credits + last-posted time per list. "Last posted"
+      // comes from the actual posts (max posted_at), not promo_list.last_run_at
+      // — the scheduler timestamp advances on empty runs and lags mid-tick, so
+      // it would read "never" even while posts are going out.
       const { data: postStats } = await supabase
         .from("promo_post")
-        .select("list_id, credits_spent")
+        .select("list_id, credits_spent, posted_at")
         .in("list_id", listIds)
         .eq("status", "posted");
-      for (const r of (postStats ?? []) as Array<{ list_id: string; credits_spent: number }>) {
+      for (const r of (postStats ?? []) as Array<{
+        list_id: string;
+        credits_spent: number;
+        posted_at: string | null;
+      }>) {
         postCountById.set(r.list_id, (postCountById.get(r.list_id) ?? 0) + 1);
         creditsById.set(r.list_id, (creditsById.get(r.list_id) ?? 0) + (r.credits_spent ?? 0));
+        if (r.posted_at) {
+          const prev = lastPostedById.get(r.list_id);
+          if (!prev || r.posted_at > prev) lastPostedById.set(r.list_id, r.posted_at);
+        }
       }
     }
   }
 
   return (
     <div className="mx-auto max-w-4xl">
+      <PromoteRealtime />
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Promote</h1>
         <div className="flex items-center gap-2">
@@ -111,6 +125,7 @@ export default async function PromotePage() {
             const links = linkCountById.get(l.id) ?? 0;
             const posts = postCountById.get(l.id) ?? 0;
             const credits = creditsById.get(l.id) ?? 0;
+            const lastPosted = lastPostedById.get(l.id);
             return (
               <li key={l.id} className="card p-4">
                 <div className="flex items-center justify-between gap-4">
@@ -154,11 +169,7 @@ export default async function PromotePage() {
                   <MiniStat label="Credits spent" value={credits.toLocaleString()} />
                   <MiniStat
                     label="Last posted"
-                    value={
-                      l.last_run_at
-                        ? new Date(l.last_run_at).toLocaleDateString()
-                        : "never"
-                    }
+                    value={lastPosted ? new Date(lastPosted).toLocaleString() : "never"}
                   />
                 </div>
               </li>

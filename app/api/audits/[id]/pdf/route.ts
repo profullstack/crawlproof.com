@@ -5,6 +5,8 @@ import {
   buildScanRunMarkdown,
   type SummaryRow,
 } from "@/lib/audit/summary-markdown";
+import { quoteFromFindings } from "@/lib/audit/quote";
+import type { Finding } from "@/lib/audit/types";
 
 export const runtime = "nodejs";
 
@@ -75,6 +77,9 @@ export async function GET(
   let markdown = audit.report_markdown;
   let title = `AEO Audit — ${new URL(audit.target_url).hostname}`;
   let scoreForPdf: number | null = audit.score;
+  // Audit ids the quote is priced from — every engine in the run, so a
+  // consolidated PDF quotes the whole job rather than one engine's slice.
+  let quoteAuditIds: string[] = [audit.id as string];
 
   if (audit.scan_run_id) {
     const projectId = (audit as { project_id?: string | null }).project_id;
@@ -103,8 +108,20 @@ export async function GET(
             )
           : null;
       title = `AEO Audit — ${new URL(audit.target_url).hostname} (${rows.length} engines)`;
+      quoteAuditIds = rows.filter((r) => r.status === "complete").map((r) => r.id);
     }
   }
+
+  // Price the remediation offer from the report's own findings. Best-effort:
+  // if the lookup fails the PDF still renders, just without the offer.
+  const { data: findingRows } = await supabase
+    .from("audit_findings")
+    .select("section, check_key, status, title, priority")
+    .in("audit_id", quoteAuditIds);
+  const quote =
+    findingRows && findingRows.length > 0
+      ? quoteFromFindings(findingRows as unknown as Finding[])
+      : undefined;
 
   const workerRes = await fetch(`${env.workerUrl}/pdf`, {
     method: "POST",
@@ -114,6 +131,7 @@ export async function GET(
       title,
       target: audit.target_url,
       score: scoreForPdf,
+      quote,
     }),
   });
   if (!workerRes.ok) {

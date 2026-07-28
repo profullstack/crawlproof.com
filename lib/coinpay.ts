@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { verifyCoinPayWebhook } from "@profullstack/stack/coinpay";
 import { env } from "./env";
 
 // CoinPay HTTP client.
@@ -316,116 +316,20 @@ export async function createCryptoPayout(
   };
 }
 
-// Parse the Stripe-style `t=...,v1=...` header into its parts.
-function parseSignatureHeader(header: string): { t: string; v1: string[] } | null {
-  const t: string[] = [];
-  const v1: string[] = [];
-  for (const part of header.split(",")) {
-    const [k, v] = part.split("=", 2);
-    if (!k || v === undefined) continue;
-    if (k.trim() === "t") t.push(v.trim());
-    else if (k.trim() === "v1") v1.push(v.trim());
-  }
-  if (t.length !== 1 || v1.length === 0) return null;
-  return { t: t[0], v1 };
-}
-
-// Reject signatures older than this window to limit replay attacks.
-const TOLERANCE_SECONDS = 5 * 60;
-
-function hmac(secret: string | Buffer, message: string): string {
-  return crypto.createHmac("sha256", secret).update(message).digest("hex");
-}
-
-// CoinPay's webhook secret is "whsecret_<64 hex chars>" — the hex is a 32-byte
-// key. We don't know which form they HMAC with, so we try them all.
-function secretCandidates(raw: string): Array<[string, string | Buffer]> {
-  const candidates: Array<[string, string | Buffer]> = [];
-  candidates.push(["raw_utf8", raw]);
-  const m = raw.match(/^whsecret_([0-9a-f]+)$/i);
-  if (m) {
-    candidates.push(["hex_string", m[1]]);
-    if (m[1].length % 2 === 0) {
-      try {
-        candidates.push(["hex_decoded", Buffer.from(m[1], "hex")]);
-      } catch {
-        /* skip */
-      }
-    }
-  }
-  return candidates;
-}
-
-function eqTimingSafe(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
-}
-
-// Build several plausible signing forms and try them all. Stripe uses
-// `${t}.${body}`; if CoinPay diverges we'll cover the common variants
-// (omit timestamp, omit separator, reverse). Whichever wins, the next
-// log line tells us which one to keep.
-function candidateMessages(t: string, body: string): Array<[string, string]> {
-  return [
-    ["t.body", `${t}.${body}`],
-    ["t+body", `${t}${body}`],
-    ["body.t", `${body}.${t}`],
-    ["body", body],
-  ];
-}
-
+// Verification itself lives in @profullstack/stack/coinpay: HMAC-SHA256 over
+// `${t}.${rawBody}` with a 5-minute replay tolerance, constant-time compare,
+// and support for multiple `v1=` parts during secret rotation.
 export function verifyWebhookSignature(
   rawBody: string,
   signatureHeader: string | null,
   options: { now?: number; tolerance?: number } = {},
 ): boolean {
-  if (!env.coinpayWebhookSecret || !signatureHeader) return false;
-  const parsed = parseSignatureHeader(signatureHeader);
-  if (!parsed) {
-    console.warn("[coinpay] verify: unparseable signature header", { header: signatureHeader.slice(0, 60) });
-    return false;
-  }
-
-  const ts = Number.parseInt(parsed.t, 10);
-  if (!Number.isFinite(ts)) return false;
-  const now = options.now ?? Math.floor(Date.now() / 1000);
-  const tolerance = options.tolerance ?? TOLERANCE_SECONDS;
-  if (Math.abs(now - ts) > tolerance) {
-    console.warn("[coinpay] verify: timestamp out of tolerance", { ts, now, drift: now - ts });
-    return false;
-  }
-
-  const variants = candidateMessages(parsed.t, rawBody);
-  const secrets = secretCandidates(env.coinpayWebhookSecret);
-
-  for (const [sLabel, secret] of secrets) {
-    for (const [mLabel, message] of variants) {
-      const expected = hmac(secret, message);
-      if (parsed.v1.some((cand) => eqTimingSafe(cand, expected))) {
-        if (sLabel !== "raw_utf8" || mLabel !== "t.body") {
-          console.warn(
-            `[coinpay] verify OK via secret=${sLabel}, signing=${mLabel}`,
-          );
-        }
-        return true;
-      }
-    }
-  }
-
-  // None matched — log enough to compare with the sender. No secret leak.
-  console.warn("[coinpay] verify FAIL", {
-    bodyLen: rawBody.length,
-    ts: parsed.t,
-    v1_tail: parsed.v1.map((s) => s.slice(-8)),
-    secret_len: env.coinpayWebhookSecret.length,
-    tails: Object.fromEntries(
-      secrets.flatMap(([sLabel, secret]) =>
-        variants.map(([mLabel, message]) => [
-          `${sLabel}:${mLabel}`,
-          hmac(secret, message).slice(-8),
-        ]),
-      ),
-    ),
+  if (!env.coinpayWebhookSecret) return false;
+  return verifyCoinPayWebhook({
+    signature: signatureHeader,
+    rawBody,
+    secret: env.coinpayWebhookSecret,
+    now: options.now,
+    toleranceSeconds: options.tolerance,
   });
-  return false;
 }

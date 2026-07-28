@@ -22,6 +22,7 @@ export type EngineTrendPoint = {
 
 const ENGINE_COLORS: Record<Engine, string> = {
   rule: "#9aa3b2",
+  slop: "#d946ef",
   spec: "#64748b",
   dns: "#84cc16",
   links: "#14b8a6",

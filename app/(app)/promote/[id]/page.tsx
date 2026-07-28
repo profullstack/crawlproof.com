@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { cadenceLabel } from "@/lib/promote/generatePitch";
 import { PromoteListActions } from "@/components/promote/list-actions";
+import { PromoteRealtime } from "@/components/promote/promote-realtime";
 import { PromoteEditForm } from "@/components/promote/promote-edit-form";
 import { AddLinksForm } from "@/components/promote/add-links-form";
 import { LinkList } from "@/components/promote/link-list";
@@ -35,7 +36,7 @@ export default async function PromoteDetailPage({ params }: Props) {
       .order("created_at", { ascending: true }),
     supabase
       .from("promo_post")
-      .select("id, link_id, platform, body, status, error, credits_spent, posted_at, provider, external_post_id")
+      .select("id, link_id, platform, body, status, error, credits_spent, posted_at, provider, external_post_id, post_url")
       .eq("list_id", id)
       .order("created_at", { ascending: false })
       .limit(50),
@@ -69,6 +70,7 @@ export default async function PromoteDetailPage({ params }: Props) {
     posted_at: string | null;
     provider: string | null;
     external_post_id: string | null;
+    post_url: string | null;
   }>;
 
   const accountRows = (accounts ?? []) as Array<{
@@ -82,6 +84,7 @@ export default async function PromoteDetailPage({ params }: Props) {
 
   return (
     <div className="mx-auto max-w-4xl">
+      <PromoteRealtime listId={list.id} />
       <div className="flex items-center justify-between gap-4">
         <div>
           <Link href="/promote" className="text-sm text-[var(--color-muted)] hover:text-[var(--color-fg)]">
@@ -159,14 +162,26 @@ export default async function PromoteDetailPage({ params }: Props) {
                         p.status === "posted" ? "badge-pass" : p.status === "failed" ? "badge-fail" : ""
                       }`}
                     >
-                      {p.status}
+                      {/* Cookie-auth posts land as 'pending' until the browser
+                          worker publishes and reconciles the real outcome. */}
+                      {p.status === "pending" ? "posting…" : p.status}
                     </span>
                     {p.provider && (
                       <span className="text-xs text-[var(--color-muted)]">via {p.provider}</span>
                     )}
                   </div>
-                  <span className="text-xs text-[var(--color-muted)]">
+                  <span className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
                     {p.posted_at ? new Date(p.posted_at).toLocaleString() : "—"}
+                    {p.post_url && (
+                      <a
+                        href={p.post_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="whitespace-nowrap font-semibold text-[var(--color-accent)] hover:underline"
+                      >
+                        View post ↗
+                      </a>
+                    )}
                   </span>
                 </div>
                 <p className="mt-1 whitespace-pre-wrap break-words text-[var(--color-fg)]">

@@ -3,12 +3,21 @@
 import { useState, useTransition } from "react";
 import { submitHireInquiry } from "@/app/actions/hireInquiry";
 
-export function HireForm() {
+// defaultEmail / defaultWebsite are prefilled from the query string when the
+// visitor arrives from a campaign email, so the form is already half-filled
+// with what we know. Every field stays editable.
+export function HireForm({
+  defaultEmail = "",
+  defaultWebsite = "",
+}: {
+  defaultEmail?: string;
+  defaultWebsite?: string;
+} = {}) {
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(defaultEmail);
   const [phone, setPhone] = useState("");
-  const [website, setWebsite] = useState("");
+  const [website, setWebsite] = useState(defaultWebsite);
   const [monthlyRevenue, setMonthlyRevenue] = useState("");
   const [location, setLocation] = useState("");
   const [message, setMessage] = useState("");
@@ -170,8 +179,8 @@ export function HireForm() {
         {pending ? "Sending…" : "Request a fix"}
       </button>
       <p className="text-xs text-[var(--color-muted)]">
-        We typically respond within a few hours and turn around fixes in under
-        24 hours.
+        We typically respond within a few hours with a scope and a quote. The
+        work itself usually runs two to three weeks.
       </p>
     </form>
   );

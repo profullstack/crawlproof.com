@@ -15,6 +15,60 @@ export const SCAN_CREDITS = 20;
 // Credits charged for one outreach send (email / SMS recipient / social post).
 export const OUTREACH_CREDITS = 1;
 
+/**
+ * One billable lead-generation tick: discovery, contact lookup and drafting.
+ *
+ * Priced off measured cost rather than a guess. At the per-tick caps the run
+ * spends roughly 3.8c on ValueSERP (five discovery queries plus the contact
+ * fallback), 0.9c on drafting, and a fraction of a cent on rendering — about
+ * 4.9c at the ceiling and closer to 2c in ordinary use. Search dominates;
+ * the AI is under a fifth of it, so pricing off model cost alone would
+ * undercharge by roughly five times.
+ *
+ * Three credits is 15c at rack and 7.5c on the deepest pack, which keeps a
+ * margin at every tier. Two would have been exactly break-even for anyone on
+ * the 100-scan pack.
+ *
+ * Charged only when a tick actually spends: the cron fires every fifteen
+ * minutes, so billing an idle campaign per tick would cost a user 288 credits
+ * a day for no work.
+ */
+export const LEAD_RUN_CREDITS = 3;
+
+/** Leads covered by one charge on the manual finder. */
+export const LEADS_PER_CHARGE = 100;
+
+/**
+ * Paid search lookups a single charge buys.
+ *
+ * Matches the per-tick ceiling the price above was measured against, so a
+ * manual run and an automated one cost the same per unit of the thing that
+ * actually spends money. Without it a thousand-lead run would buy a hundred
+ * lookups for the price of ten.
+ */
+export const CONTACT_SEARCHES_PER_CHARGE = 10;
+
+/**
+ * What a manual find-leads run costs, and the search budget it buys.
+ *
+ * Priced per hundred leads asked for rather than per lead: the request size is
+ * what the user chooses, and it is the only figure available before the run
+ * starts. Rounded up, so asking for one lead is not free.
+ *
+ * Pure, and kept here rather than beside the deduction, so the form can show
+ * the price without pulling a database client into the browser bundle.
+ */
+export function manualRunPrice(limit: number): {
+  credits: number;
+  contactSearches: number;
+} {
+  const blocks = Math.max(1, Math.ceil(limit / LEADS_PER_CHARGE));
+  return {
+    credits: blocks * LEAD_RUN_CREDITS,
+    contactSearches: blocks * CONTACT_SEARCHES_PER_CHARGE,
+  };
+}
+
 export type CreditPack = {
   id: string;
   label: string;
@@ -62,6 +116,7 @@ export type Engine =
   | "spec"
   | "dns"
   | "links"
+  | "slop"
   | "vu1nz"
   | "claude"
   | "openai"
@@ -112,6 +167,14 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     blurb:
       "Recursively crawls your root domain (powered by linkinator) and reports every broken link — 404s, dead redirects, unreachable hosts — with the page each was found on. Free.",
   },
+  slop: {
+    label: "Slop Score",
+    cost: 0,
+    available: true,
+    popular: true,
+    blurb:
+      "Sweeps up to 50 pages and scores how careless your site looks — placeholder copy, near-duplicate pages, leaked template variables, missing first-party evidence, stale dates, design drift — with a per-page fix list. Reports observable defects, not \"was this AI-written\". Free.",
+  },
   vu1nz: {
     label: "Vu1nz web scanner",
     cost: 0,
@@ -155,7 +218,7 @@ export const ENGINES: Record<Engine, EngineMeta> = {
       "Google's flagship with live Search grounding. Frames your site the way Google AI Overviews would.",
   },
   deepseek: {
-    label: "DeepSeek V3",
+    label: "DeepSeek V4",
     cost: SCAN_CREDITS,
     available: true,
     blurb:

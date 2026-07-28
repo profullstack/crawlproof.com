@@ -17,10 +17,28 @@ declare global {
   }
 }
 
-export function HeroAuditForm() {
+type HeroScan = "rule" | "slop";
+
+// Only the two free, self-hosted engines are offered anonymously — kept in
+// sync with ANON_ENGINES in app/actions/runAudit.ts.
+const SCAN_OPTIONS: Array<{ id: HeroScan; label: string; blurb: string }> = [
+  {
+    id: "rule",
+    label: "AEO audit",
+    blurb: "How AI crawlers and answer engines see your site, with fixes.",
+  },
+  {
+    id: "slop",
+    label: "Slop Score",
+    blurb: "Sweeps up to 50 pages for careless content, code, and design.",
+  },
+];
+
+export function HeroAuditForm({ defaultScan = "rule" }: { defaultScan?: HeroScan }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [url, setUrl] = useState("");
+  const [scan, setScan] = useState<HeroScan>(defaultScan);
   const [listPublic, setListPublic] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -41,7 +59,7 @@ export function HeroAuditForm() {
       // URL-first: the report is generated and shown on-page for free.
       // Email / phone / monthly-sales are collected AFTER the report
       // (on /r/<token>) only if the user wants the PDF emailed.
-      const res = await startAuditFromForm({ url, listPublic });
+      const res = await startAuditFromForm({ url, listPublic, engines: [scan] });
       if (!res.ok) {
         setError(res.error ?? "Could not start audit.");
         // Slugify the error message so we don't blow past Datafa.st's
@@ -56,6 +74,7 @@ export function HeroAuditForm() {
       }
       window.datafast?.("audit_submitted", {
         listed_public: listPublic ? "yes" : "no",
+        scan,
       });
       router.push(`/r/${res.token}`);
     });
@@ -63,6 +82,32 @@ export function HeroAuditForm() {
 
   return (
     <form onSubmit={submit} noValidate className="card flex flex-col gap-3 p-4 text-left">
+      <div>
+        <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+          Scan type
+        </span>
+        <div className="flex flex-col gap-2 sm:flex-row" role="radiogroup" aria-label="Scan type">
+          {SCAN_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              role="radio"
+              aria-checked={scan === opt.id}
+              onClick={() => setScan(opt.id)}
+              className="flex-1 rounded-lg border p-3 text-left transition-colors"
+              style={{
+                borderColor: scan === opt.id ? "var(--color-accent)" : "var(--color-border)",
+                background: scan === opt.id ? "color-mix(in oklab, var(--color-accent) 8%, transparent)" : "transparent",
+              }}
+            >
+              <span className="block text-sm font-semibold">{opt.label}</span>
+              <span className="mt-0.5 block text-xs leading-snug text-[var(--color-muted)]">
+                {opt.blurb}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
       <Field label="Website URL" error={urlError}>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
@@ -83,7 +128,7 @@ export function HeroAuditForm() {
             className="btn btn-primary whitespace-nowrap"
             disabled={pending}
           >
-            {pending ? "Starting…" : "Run free audit"}
+            {pending ? "Starting…" : scan === "slop" ? "Get free Slop Score" : "Run free audit"}
           </button>
         </div>
       </Field>

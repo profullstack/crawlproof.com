@@ -4,9 +4,15 @@ const MINUTE_MS = 60 * 1000;
 
 export const DEFAULT_AUDIT_STUCK_AFTER_MS = 7 * MINUTE_MS;
 export const CLAUDE_AUDIT_STUCK_AFTER_MS = 15 * MINUTE_MS;
+// Perplexity Sonar searches the web before it answers, so it runs a 5-minute
+// header timeout × 2 attempts (see perplexity-engine.ts). The 7-minute
+// default would reap a still-healthy run as "stuck" partway through the
+// second attempt.
+export const PERPLEXITY_AUDIT_STUCK_AFTER_MS = 15 * MINUTE_MS;
 
 const ENGINE_STUCK_AFTER_MS: Partial<Record<Engine, number>> = {
   claude: CLAUDE_AUDIT_STUCK_AFTER_MS,
+  perplexity: PERPLEXITY_AUDIT_STUCK_AFTER_MS,
 };
 
 export function auditStuckAfterMs(engine: string | null | undefined): number {

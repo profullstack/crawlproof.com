@@ -6,6 +6,12 @@ const nextConfig: NextConfig = {
   // Produce a self-contained server bundle in .next/standalone/ so the
   // production Dockerfile stays small. Used by the Railway image.
   output: "standalone",
+  // Playwright launches a real Chromium binary and resolves it through its own
+  // package layout, so bundling it into a server chunk breaks that lookup at
+  // runtime. Keep it external and let Node require it from node_modules.
+  // imapflow opens raw TLS sockets and resolves its own compiled deps at
+  // runtime; bundling it breaks both. nodemailer is here for the same reason.
+  serverExternalPackages: ["playwright", "playwright-core", "imapflow", "nodemailer"],
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",

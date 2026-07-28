@@ -19,14 +19,15 @@ import { StatsSubnav } from "./stats-subnav";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
-type StatsRow = { bucket: string; day: string; count: number };
-type EventRow = {
+// Shape returned by the tracker_daily_series RPC. bigint columns arrive as
+// strings over PostgREST, so we coerce with Number() at the call site.
+type SeriesRow = {
   day: string;
-  event: string;
-  page_path: string;
-  referrer_host: string;
-  event_target: string;
-  count: number;
+  pageviews: number | string;
+  interactions: number | string;
+  ai: number | string;
+  bots: number | string;
+  events: number | string;
 };
 type BoundRepo = {
   id: string;
@@ -35,23 +36,10 @@ type BoundRepo = {
   default_branch: string | null;
   added_at: string;
 };
-type GeoRow = {
-  country_code: string;
-  country_name: string;
-  region_code: string;
-  region_name: string;
-  city: string;
-  timezone: string;
-  count: number;
-};
 type DeviceRow = {
   device_type: string;
   browser: string;
   os: string;
-  count: number;
-};
-type ExitRow = {
-  page_path: string;
   count: number;
 };
 
@@ -71,98 +59,148 @@ export default async function ProjectStatsPage({
     .maybeSingle();
   if (!project) notFound();
 
-  const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  const { data: stats } = await supabase
-    .from("tracker_daily_stats")
-    .select("bucket, day, count")
-    .eq("project_id", id)
-    .gte("day", since)
-    .order("day", { ascending: false });
+  // All stats are aggregated server-side (see the tracker_* RPCs). The page
+  // used to fetch raw rollup rows and bucket them in JS, but PostgREST caps a
+  // response at 1000 rows — busy projects blew past that and the newest-first
+  // ordering silently dropped older history, so charts looked like tracking
+  // "just started". Aggregating in Postgres returns at most (days) or (lim)
+  // rows per call, so history is always complete.
+  const days = WINDOW_DAYS;
+  const [
+    seriesRes,
+    bucketsRes,
+    mixRes,
+    pagesRes,
+    referrersRes,
+    actionsRes,
+    exitRes,
+    countriesRes,
+    citiesRes,
+    devicesRes,
+  ] = await Promise.all([
+    supabase.rpc("tracker_daily_series", { p_project: id, days }),
+    supabase.rpc("tracker_bucket_totals", { p_project: id, days, lim: 10 }),
+    supabase.rpc("tracker_event_mix", { p_project: id, days }),
+    supabase.rpc("tracker_top_pages", { p_project: id, days, lim: 10 }),
+    supabase.rpc("tracker_top_referrers", { p_project: id, days, lim: 10 }),
+    supabase.rpc("tracker_top_actions", { p_project: id, days, lim: 10 }),
+    supabase.rpc("tracker_top_exit_pages", { p_project: id, days, lim: 10 }),
+    supabase.rpc("tracker_top_countries", { p_project: id, days, lim: 10 }),
+    supabase.rpc("tracker_top_cities", { p_project: id, days, lim: 10 }),
+    supabase.rpc("tracker_device_totals", { p_project: id, days }),
+  ]);
 
-  const rows = (stats ?? []) as StatsRow[];
-
-  const { data: eventStats } = await supabase
-    .from("tracker_event_daily_stats")
-    .select("day, event, page_path, referrer_host, event_target, count")
-    .eq("project_id", id)
-    .gte("day", since)
-    .order("day", { ascending: false });
-
-  const eventRows = (eventStats ?? []) as EventRow[];
-
-  const { data: exitStats } = await supabase
-    .from("tracker_exit_daily_stats")
-    .select("page_path, count")
-    .eq("project_id", id)
-    .gte("day", since)
-    .gt("count", 0);
-
-  const exitRows = (exitStats ?? []) as ExitRow[];
-
-  const { data: geoStats } = await supabase
-    .from("tracker_geo_daily_stats")
-    .select("country_code, country_name, region_code, region_name, city, timezone, count")
-    .eq("project_id", id)
-    .gte("day", since);
-
-  const geoRows = (geoStats ?? []) as GeoRow[];
-
-  const { data: deviceStats } = await supabase
-    .from("tracker_device_daily_stats")
-    .select("device_type, browser, os, count")
-    .eq("project_id", id)
-    .gte("day", since);
-
-  const deviceRows = (deviceStats ?? []) as DeviceRow[];
-
-  // Roll up by bucket for the table view; sort by total desc.
-  const byBucket = new Map<string, number>();
-  let totalAi = 0;
-  let totalBot = 0;
-  let totalHuman = 0;
-  for (const r of rows) {
-    byBucket.set(r.bucket, (byBucket.get(r.bucket) ?? 0) + r.count);
-    if (r.bucket.startsWith("ai_referral:")) totalAi += r.count;
-    else if (r.bucket.startsWith("bot:")) totalBot += r.count;
-    else if (r.bucket.startsWith("human:") || r.bucket.startsWith("search:") || r.bucket.startsWith("social:") || r.bucket.startsWith("referral:"))
-      totalHuman += r.count;
-  }
-  const buckets = Array.from(byBucket.entries()).sort((a, b) => b[1] - a[1]);
-  const grandTotal = buckets.reduce((s, [, n]) => s + n, 0);
-  const daily = buildDaily(rows, eventRows);
-  const eventMix = topItems(eventRows, (row) => eventLabel(row.event), {
-    fallback: grandTotal ? [{ label: "Pageview", value: grandTotal }] : [],
-  });
-  const topSources = buckets.slice(0, 10).map(([bucket, count]) => ({
-    label: bucketLabel(bucket),
-    value: count,
+  const series = ((seriesRes.data ?? []) as SeriesRow[]).map((r) => ({
+    day: r.day,
+    pageviews: Number(r.pageviews),
+    interactions: Number(r.interactions),
+    ai: Number(r.ai),
+    bots: Number(r.bots),
+    events: Number(r.events),
   }));
-  const topPages = topItems(
-    eventRows.filter((row) => row.event === "pageview"),
-    (row) => row.page_path || "/",
-  );
-  const exitPages = topExitItems(exitRows, (row) => row.page_path || "/");
-  const topReferrers = topItems(
-    eventRows.filter((row) => row.referrer_host),
-    (row) => row.referrer_host,
-  );
-  const topActions = topItems(
-    eventRows.filter((row) => row.event !== "pageview" && row.event_target),
-    (row) => `${eventLabel(row.event)} · ${row.event_target}`,
-  );
-  const topCountries = topGeoItems(geoRows, (row) =>
-    row.countryName || row.countryCode
-      ? `${row.countryName || countryNameFromCode(row.countryCode) || row.countryCode}${row.countryCode ? ` (${row.countryCode})` : ""}`
-      : "",
-  );
-  const topCities = topGeoItems(geoRows, (row) => {
-    if (!row.city) return "";
-    const region = row.regionCode || row.regionName;
-    const country = row.countryCode || row.countryName;
-    return [row.city, region, country].filter(Boolean).join(", ");
-  });
+  const daily = buildDaily(series);
+
+  // Headline metrics come straight from the series so they stay exact even
+  // though Top sources below is truncated to the top 10 buckets. "Other visits"
+  // is everything that isn't an AI referral or a bot (human/search/social/
+  // referral), matching the original bucket-prefix split.
+  const totalAi = series.reduce((s, p) => s + p.ai, 0);
+  const totalBot = series.reduce((s, p) => s + p.bots, 0);
+  const grandTotal = series.reduce((s, p) => s + p.events, 0);
+  const eventTotal = series.reduce((s, p) => s + p.pageviews + p.interactions, 0);
+  const totalHuman = Math.max(0, grandTotal - totalAi - totalBot);
+
+  const topSources = (
+    (bucketsRes.data ?? []) as Array<{ bucket: string; total: number | string }>
+  ).map((r) => ({ label: bucketLabel(r.bucket), value: Number(r.total) }));
+
+  const mixItems = (
+    (mixRes.data ?? []) as Array<{ event: string; total: number | string }>
+  )
+    .map((r) => ({ label: eventLabel(r.event), value: Number(r.total) }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+  const eventMix: TrackerListItem[] = mixItems.length
+    ? mixItems
+    : grandTotal
+      ? [{ label: "Pageview", value: grandTotal }]
+      : [];
+
+  const topPages = (
+    (pagesRes.data ?? []) as Array<{ page_path: string; total: number | string }>
+  ).map((r) => ({ label: r.page_path || "/", value: Number(r.total) }));
+
+  const topReferrers = (
+    (referrersRes.data ?? []) as Array<{
+      referrer_host: string;
+      total: number | string;
+    }>
+  ).map((r) => ({ label: r.referrer_host, value: Number(r.total) }));
+
+  const topActions = (
+    (actionsRes.data ?? []) as Array<{
+      event: string;
+      event_target: string;
+      total: number | string;
+    }>
+  ).map((r) => ({
+    label: `${eventLabel(r.event)} · ${r.event_target}`,
+    value: Number(r.total),
+  }));
+
+  const exitPages = (
+    (exitRes.data ?? []) as Array<{ page_path: string; total: number | string }>
+  ).map((r) => ({ label: r.page_path || "/", value: Number(r.total) }));
+
+  const topCountries = (
+    (countriesRes.data ?? []) as Array<{
+      country_code: string;
+      country_name: string;
+      total: number | string;
+    }>
+  )
+    .map((r) => ({
+      label:
+        r.country_name || r.country_code
+          ? `${r.country_name || countryNameFromCode(r.country_code) || r.country_code}${r.country_code ? ` (${r.country_code})` : ""}`
+          : "",
+      value: Number(r.total),
+    }))
+    .filter((it) => it.label);
+
+  const topCities = (
+    (citiesRes.data ?? []) as Array<{
+      city: string;
+      region_code: string;
+      region_name: string;
+      country_code: string;
+      country_name: string;
+      total: number | string;
+    }>
+  )
+    .map((r) => {
+      const region = r.region_code || r.region_name;
+      const country = r.country_code || r.country_name;
+      return {
+        label: [r.city, region, country].filter(Boolean).join(", "),
+        value: Number(r.total),
+      };
+    })
+    .filter((it) => it.label);
+
+  const deviceRows = (
+    (devicesRes.data ?? []) as Array<{
+      device_type: string;
+      browser: string;
+      os: string;
+      total: number | string;
+    }>
+  ).map((r) => ({
+    device_type: r.device_type,
+    browser: r.browser,
+    os: r.os,
+    count: Number(r.total),
+  }));
 
   const topDevices = topDeviceItems(deviceRows, (row) =>
     deviceTypeLabel(row.device_type),
@@ -299,7 +337,7 @@ export default async function ProjectStatsPage({
           <Metric label="Other visits" value={totalHuman} tone="muted" />
         </div>
 
-        {grandTotal === 0 && eventRows.length === 0 ? (
+        {grandTotal === 0 && eventTotal === 0 ? (
           <section className="card p-4">
             <p className="text-sm text-[var(--color-muted)]">
               {trackerEnabled
@@ -376,7 +414,19 @@ function ConnectedRepos({
   );
 }
 
-function buildDaily(rows: StatsRow[], eventRows: EventRow[]): TrackerDailyPoint[] {
+// Map the per-day series onto a zero-filled WINDOW_DAYS axis (UTC) so gaps
+// render as flat spans rather than being skipped. Days beyond the RPC's own
+// window (should be none) are ignored.
+function buildDaily(
+  series: Array<{
+    day: string;
+    pageviews: number;
+    interactions: number;
+    ai: number;
+    bots: number;
+    events: number;
+  }>,
+): TrackerDailyPoint[] {
   const start = new Date();
   start.setUTCHours(0, 0, 0, 0);
   start.setUTCDate(start.getUTCDate() - WINDOW_DAYS + 1);
@@ -396,19 +446,14 @@ function buildDaily(rows: StatsRow[], eventRows: EventRow[]): TrackerDailyPoint[
     });
   }
 
-  for (const row of rows) {
+  for (const row of series) {
     const point = byDay.get(row.day);
     if (!point) continue;
-    point.events += row.count;
-    if (row.bucket.startsWith("ai_referral:")) point.ai += row.count;
-    if (row.bucket.startsWith("bot:")) point.bots += row.count;
-  }
-
-  for (const row of eventRows) {
-    const point = byDay.get(row.day);
-    if (!point) continue;
-    if (row.event === "pageview") point.pageviews += row.count;
-    else point.interactions += row.count;
+    point.pageviews += row.pageviews;
+    point.interactions += row.interactions;
+    point.ai += row.ai;
+    point.bots += row.bots;
+    point.events += row.events;
   }
 
   for (const point of byDay.values()) {
@@ -416,73 +461,6 @@ function buildDaily(rows: StatsRow[], eventRows: EventRow[]): TrackerDailyPoint[
   }
 
   return Array.from(byDay.values());
-}
-
-function topItems(
-  rows: EventRow[],
-  labelFor: (row: EventRow) => string,
-  options: { fallback?: TrackerListItem[] } = {},
-): TrackerListItem[] {
-  const map = new Map<string, number>();
-  for (const row of rows) {
-    const label = labelFor(row);
-    if (!label) continue;
-    map.set(label, (map.get(label) ?? 0) + row.count);
-  }
-  const items = Array.from(map.entries())
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
-  return items.length ? items : options.fallback ?? [];
-}
-
-function topGeoItems(
-  rows: GeoRow[],
-  labelFor: (row: {
-    countryCode: string;
-    countryName: string;
-    regionCode: string;
-    regionName: string;
-    city: string;
-    timezone: string;
-    count: number;
-  }) => string,
-): TrackerListItem[] {
-  const map = new Map<string, number>();
-  for (const row of rows) {
-    const normalized = {
-      countryCode: row.country_code,
-      countryName: row.country_name,
-      regionCode: row.region_code,
-      regionName: row.region_name,
-      city: row.city,
-      timezone: row.timezone,
-      count: row.count,
-    };
-    const label = labelFor(normalized);
-    if (!label) continue;
-    map.set(label, (map.get(label) ?? 0) + row.count);
-  }
-  return Array.from(map.entries())
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
-}
-
-function topExitItems(
-  rows: ExitRow[],
-  labelFor: (row: ExitRow) => string,
-): TrackerListItem[] {
-  const map = new Map<string, number>();
-  for (const row of rows) {
-    const label = labelFor(row);
-    if (!label) continue;
-    map.set(label, (map.get(label) ?? 0) + row.count);
-  }
-  return Array.from(map.entries())
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
 }
 
 function topDeviceItems(

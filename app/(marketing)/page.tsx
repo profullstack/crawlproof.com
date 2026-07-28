@@ -106,6 +106,7 @@ export default function HomePage() {
           <ModuleCard emoji="📈" title="Uptime Monitoring" body="HTTP, keyword, SSL &amp; TCP checks with instant down/recovery alerts to email, Slack, and Discord." />
           <ModuleCard emoji="🛡️" title="Exposed Services" body="Full-port security scans of your verified hosts — get alerted the moment a database or admin port is exposed." />
           <ModuleCard emoji="✍️" title="Autoblog" body="Research, draft, illustrate, and publish long-form SEO posts to your CMS on a schedule — ~$1 each." />
+          <ModuleCard emoji="🎯" title="Lead Generation" body="Find the companies, the people and the addresses from any directory or search — then send grounded cold email from your own mailbox." href="/lead-generation" />
           <ModuleCard emoji="🔗" title="Link Exchange" body="Verified backlink matching with a real ledger — quality links without four-figure marketplace prices." />
           <ModuleCard emoji="📊" title="Analytics Tracker" body="A drop-in tracker for AI referrals, bot crawls, human traffic, pages, and geo — see who (and what) visits." />
           <ModuleCard emoji="📣" title="Social Posting" body="Draft and schedule social posts and feed autoposts alongside your content pipeline." />
@@ -422,14 +423,38 @@ function FeatureCard({ title, body }: { title: string; body: string }) {
   );
 }
 
-function ModuleCard({ emoji, title, body }: { emoji: string; title: string; body: string }) {
-  return (
-    <div className="card flex flex-col p-5">
+function ModuleCard({
+  emoji,
+  title,
+  body,
+  href,
+}: {
+  emoji: string;
+  title: string;
+  body: string;
+  /** Set only for modules that have a page of their own to go on to. */
+  href?: string;
+}) {
+  const inner = (
+    <>
       <div className="text-2xl" aria-hidden>
         {emoji}
       </div>
       <h3 className="mt-2 font-semibold">{title}</h3>
       <p className="mt-1 text-sm text-[var(--color-muted)]">{body}</p>
-    </div>
+      {href && <p className="mt-3 text-sm font-medium">Learn more →</p>}
+    </>
+  );
+  // A card without somewhere to go stays a card. Wrapping every one in a link
+  // to nowhere would make eight of the nine look clickable and do nothing.
+  return href ? (
+    <Link
+      href={href}
+      className="card flex flex-col p-5 transition hover:border-[var(--color-fg)]"
+    >
+      {inner}
+    </Link>
+  ) : (
+    <div className="card flex flex-col p-5">{inner}</div>
   );
 }
