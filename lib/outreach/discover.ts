@@ -648,6 +648,8 @@ export async function discoverProspects(input: {
   organizationId?: string | null;
 }): Promise<{
   prospects: DiscoveredProspect[];
+  /** People named on the pages the seeds opened, address or not. */
+  people: DiscoveredPerson[];
   serpCalls: number;
   errors: string[];
   /** Seeds that returned a login wall — the UI offers to store credentials for these. */
@@ -658,6 +660,7 @@ export async function discoverProspects(input: {
   const errors: string[] = [];
   const loginRequiredSeeds: string[] = [];
   const mineable = new Set<string>();
+  const people = new Map<string, DiscoveredPerson>();
   let serpCalls = 0;
 
   const queries = (input.queries ?? []).slice(0, 5);
@@ -711,6 +714,9 @@ export async function discoverProspects(input: {
     // Only "waiting on the user" when we have nothing to try. A stored
     // credential that failed is a different problem and reads as an error.
     if (res.loginRequired && !credentials) loginRequiredSeeds.push(seedUrl);
+    for (const person of res.people) {
+      if (!people.has(person.fullName)) people.set(person.fullName, person);
+    }
     if (input.organizationId && credentials) {
       await recordSeedCredentialResult({
         organizationId: input.organizationId,
@@ -722,5 +728,11 @@ export async function discoverProspects(input: {
     for (const p of res.prospects) if (!merged.has(p.host)) merged.set(p.host, p);
   }
 
-  return { prospects: [...merged.values()].slice(0, limit), serpCalls, errors, loginRequiredSeeds };
+  return {
+    prospects: [...merged.values()].slice(0, limit),
+    people: [...people.values()],
+    serpCalls,
+    errors,
+    loginRequiredSeeds,
+  };
 }

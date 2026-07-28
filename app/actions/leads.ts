@@ -15,6 +15,7 @@ import {
 import { addSuppression } from "@/lib/outreach/suppress";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 import { discoverProspects } from "@/lib/outreach/discover";
+import { upsertContact } from "@/lib/outreach/contacts";
 import { runEmailCampaignTick, CAMPAIGN_COLUMNS, summarize, type CampaignRow } from "@/lib/outreach/runner";
 
 type Ok<T = Record<string, never>> = { ok: true } & T;
@@ -75,12 +76,44 @@ export async function findLeadsAction(input: {
   // prospect that publishes no address — so a thousand-lead run gets an
   // explicit ceiling rather than an unbounded bill.
   const contactSearchBudget = { remaining: Math.min(limit, 100) };
+  const { data: projectRow } = await serviceClient()
+    .from("projects")
+    .select("organization_id")
+    .eq("id", input.projectId)
+    .maybeSingle();
+  const orgId = (projectRow?.organization_id as string | null) ?? null;
+
   const found = await discoverProspects({
     queries: input.query?.trim() ? [input.query.trim()] : [],
     seedUrls: input.seedUrl?.trim() ? [input.seedUrl.trim()] : [],
     limit,
   });
-  if (!found.prospects.length) {
+  // People named on the pages we opened are recorded even when no address
+  // was found for them. A directory gives a name, a title and a LinkedIn
+  // profile and withholds the email; discarding that until an address turns
+  // up means rediscovering the same person on every run.
+  let peopleRecorded = 0;
+  if (found.people?.length && orgId) {
+    for (const person of found.people) {
+      const res = await upsertContact({
+        organizationId: orgId,
+        source: person.source === "json-ld" ? "json-ld" : "page",
+        fields: {
+          fullName: person.fullName,
+          title: person.jobTitle,
+          companyName: person.company,
+          companySite: person.companySite,
+          linkedinUrl: person.linkedinUrl,
+          country: person.location,
+          sourceUrl: person.sourceUrl,
+          socials: person.socials,
+        },
+      });
+      if (res) peopleRecorded += 1;
+    }
+  }
+
+  if (!found.prospects.length && !peopleRecorded) {
     return { ok: false, error: found.errors.join("; ") || "No businesses found for that search." };
   }
 
@@ -112,7 +145,9 @@ export async function findLeadsAction(input: {
     ok: true,
     added,
     scanning,
-    note: `${added} leads added.`,
+    note: peopleRecorded
+      ? `${added} leads added, ${peopleRecorded} people recorded.`
+      : `${added} leads added.`,
   };
 }
 
