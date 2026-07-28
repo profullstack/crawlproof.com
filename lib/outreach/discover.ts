@@ -25,6 +25,7 @@ import { loadSeedCredential, makeSeedCodeWaiter, recordSeedCredentialResult, see
 import type { CodeWaiter } from "@/lib/sp/verificationChallenge";
 import { looksLikeLoginWall } from "./loginWall";
 import { extractPerson, type ExtractedPerson } from "./person";
+import { findNextPageUrl } from "./pagination";
 import type { SeedCredentials } from "./seedLogin";
 
 /** A person found on a page, with where they were found. */
@@ -263,6 +264,14 @@ const NON_DETAIL_PATH_RE =
 /** Cap on community pages opened per tick, since each is a full page load. */
 const MAX_MINED_SOURCES = 5;
 
+/**
+ * Listing pages walked per seed.
+ *
+ * A directory that paginates forever would otherwise be walked forever, and
+ * the page after the last one is usually the first one again.
+ */
+const MAX_LISTING_PAGES = 20;
+
 const SEED_UA = "CrawlProofOutreach/1.0 (+https://crawlproof.com)";
 
 /** Statuses that mean "the server refused a bot", not "the page is missing". */
@@ -427,11 +436,53 @@ export async function discoverFromSeed(input: {
   // at all on the first hop, which is exactly the signal to go deeper.
   const firstHopThin = merged.size < (input.detailHopThreshold ?? 3);
   if ((input.depth ?? 1) >= 2 && firstHopThin && merged.size < limit) {
-    const detailPages = extractSameHostLinks({
-      html: seed.html,
-      sourceUrl: input.seedUrl,
-      limit: input.maxDetailPages ?? 12,
-    });
+    // Walk the listing before opening anything. One page of a directory is
+    // a fraction of it, and a fraction reported as a total is
+    // indistinguishable from a small directory.
+    const wantDetails = input.maxDetailPages ?? 12;
+    const detailPages: string[] = [];
+    const seenPages = new Set<string>([input.seedUrl]);
+    let pageHtml = seed.html;
+    let pageUrl: string | null = input.seedUrl;
+
+    for (let page = 0; page < MAX_LISTING_PAGES && detailPages.length < wantDetails; page++) {
+      let addedThisPage = 0;
+      for (const link of extractSameHostLinks({
+        html: pageHtml,
+        sourceUrl: pageUrl,
+        limit: wantDetails,
+      })) {
+        if (detailPages.length >= wantDetails) break;
+        if (!detailPages.includes(link)) {
+          detailPages.push(link);
+          addedThisPage += 1;
+        }
+      }
+
+      // A page that contributes nothing new is the end of the list, whatever
+      // its pager claims. Incrementing a page parameter is a guess, and a
+      // site that ignores the parameter answers every guess with the same
+      // page — which walked twenty-one identical pages before this check.
+      if (page > 0 && addedThisPage === 0) break;
+
+      const next: string | null = findNextPageUrl(pageHtml, pageUrl);
+      // A pager that points back at somewhere already walked is the end of
+      // the list, however it phrases itself.
+      if (!next || seenPages.has(next) || detailPages.length >= wantDetails) break;
+      seenPages.add(next);
+
+      const loaded = await loadSeedHtml(
+        next,
+        allowRender,
+        input.credentials,
+        input.codeWaiter,
+        true,
+      );
+      if ("error" in loaded) break;
+      pageHtml = loaded.html;
+      pageUrl = next;
+    }
+    if (seenPages.size > 1) notes.push(`walked ${seenPages.size} listing pages`);
     if (detailPages.length === 0) {
       notes.push("no listing entries found to open for a second hop");
     }
