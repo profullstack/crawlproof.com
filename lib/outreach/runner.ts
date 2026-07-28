@@ -329,7 +329,18 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
   // it is genuinely spent by then — a search that returned no usable candidate
   // still cost a call — but billing for a tick with no output is a worse trade
   // than eating that occasionally.
-  if (billing.charged() && !result.discovered && !result.researched && !result.drafted && !result.sent) {
+  //
+  // People count as output. A run against a people-directory names humans
+  // without necessarily adding a prospect, and leaving them out of this test
+  // refunded every such run: eleven CTOs rendered, paginated, parsed and
+  // recorded, billed as nothing.
+  const producedSomething =
+    result.discovered ||
+    result.researched ||
+    result.drafted ||
+    result.sent ||
+    result.peopleRecorded;
+  if (billing.charged() && !producedSomething) {
     await billing.refund();
   }
   result.creditsSpent = billing.charged() ? LEAD_RUN_CREDITS : 0;
