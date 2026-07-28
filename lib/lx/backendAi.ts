@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import OpenAI from "openai";
 import { z } from "zod/v4";
+import { recordAiSpend } from "@/lib/ai/spend";
 import { env } from "../env";
 
 export type BackendAiProvider = "anthropic" | "openai";
@@ -120,6 +121,18 @@ async function generateWithAnthropic<T>(
     messages: [{ role: "user", content: args.user }],
   });
   const response = await stream.finalMessage();
+  // Recorded before the parse check: the tokens were spent whether or not the
+  // output turns out to be usable, and a failed parse is exactly the kind of
+  // waste worth seeing in the total.
+  void recordAiSpend({
+    provider: "anthropic",
+    model: response.model ?? args.anthropicModel,
+    feature: args.name,
+    inputTokens: response.usage?.input_tokens ?? 0,
+    outputTokens: response.usage?.output_tokens ?? 0,
+    cacheReadTokens: response.usage?.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: response.usage?.cache_creation_input_tokens ?? 0,
+  });
   const parsed = response.parsed_output as T | null;
   if (!parsed) {
     throw new Error(
@@ -158,6 +171,16 @@ async function generateWithOpenAI<T>(
     reasoning: { effort: "medium" },
     text: { format },
     store: false,
+  });
+  // Same reasoning as the Anthropic path: record before any check that can
+  // throw, because the tokens are already spent by this point.
+  void recordAiSpend({
+    provider: "openai",
+    model: response.model ?? args.openaiModel ?? env.backendAiOpenaiModel,
+    feature: args.name,
+    inputTokens: response.usage?.input_tokens ?? 0,
+    outputTokens: response.usage?.output_tokens ?? 0,
+    cacheReadTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
   });
   if (response.error) {
     throw new Error(response.error.message);
