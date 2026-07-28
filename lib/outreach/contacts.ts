@@ -206,3 +206,60 @@ export async function isContactBlocked(
 }
 
 export { identityKey };
+
+/**
+ * Record everybody a discovery run named.
+ *
+ * Shared because it was not, and the two callers drifted exactly as far apart
+ * as you would expect: the one-shot finder recorded people, the campaign
+ * runner read `prospects` and `errors` off the same result and dropped
+ * `people` on the floor. Every person found by a campaign — which is how a
+ * directory actually gets scraped — was discarded at the last step, after
+ * being rendered, paginated and parsed for.
+ *
+ * A person is worth recording without an address. The directory gives a name,
+ * a title and a profile; the address is what the pipeline goes looking for
+ * afterwards, and discarding the rest until it turns up means rediscovering
+ * the same human on every run.
+ */
+export async function recordDiscoveredPeople(input: {
+  organizationId: string | null;
+  people: Array<{
+    fullName: string;
+    jobTitle?: string | null;
+    company?: string | null;
+    companySite?: string | null;
+    linkedinUrl?: string | null;
+    location?: string | null;
+    sourceUrl?: string | null;
+    socials?: Record<string, string>;
+    source?: string;
+  }>;
+  /** What the campaign was looking for. The only niche available here. */
+  niche?: string | null;
+}): Promise<number> {
+  if (!input.organizationId || !input.people?.length) return 0;
+
+  let recorded = 0;
+  for (const person of input.people) {
+    const res = await upsertContact({
+      organizationId: input.organizationId,
+      // Structured markup is a stronger claim than text scraped off a page,
+      // and the ranking is what decides who wins when the two disagree.
+      source: person.source === "json-ld" ? "json-ld" : "page",
+      fields: {
+        fullName: person.fullName,
+        title: person.jobTitle ?? null,
+        companyName: person.company ?? null,
+        companySite: person.companySite ?? null,
+        linkedinUrl: person.linkedinUrl ?? null,
+        country: person.location ?? null,
+        sourceUrl: person.sourceUrl ?? null,
+        socials: person.socials,
+        niche: input.niche ?? null,
+      },
+    });
+    if (res) recorded += 1;
+  }
+  return recorded;
+}
