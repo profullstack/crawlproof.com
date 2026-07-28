@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   deleteSeedCredentialAction,
   saveSeedCredentialAction,
+  submitSeedVerificationCodeAction,
 } from "@/app/actions/seedCredentials";
 import type { StoredSeedCredential } from "@/lib/outreach/seedCredentials";
 
@@ -34,6 +35,7 @@ export function SeedLogins({
   const [password, setPassword] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [codes, setCodes] = useState<Record<string, string>>({});
 
   const save = (targetHost?: string) =>
     start(async () => {
@@ -54,6 +56,24 @@ export function SeedLogins({
       setUsername("");
       setPassword("");
       setOpen(false);
+      router.refresh();
+    });
+
+  const sendCode = (h: string) =>
+    start(async () => {
+      setError(null);
+      setNote(null);
+      const res = await submitSeedVerificationCodeAction({
+        projectId,
+        host: h,
+        code: codes[h] ?? "",
+      });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setCodes((prev) => ({ ...prev, [h]: "" }));
+      setNote("Code sent to the waiting sign-in.");
       router.refresh();
     });
 
@@ -187,6 +207,37 @@ export function SeedLogins({
                   <p className="mt-1 text-xs text-[var(--color-danger,#f87171)]">{c.lastError}</p>
                 )}
               </div>
+              {c.verificationPrompt && (
+                <div className="w-full rounded border border-[var(--color-warn,#facc15)] p-3">
+                  <p className="text-sm">
+                    <strong>Waiting for a verification code.</strong> {c.verificationPrompt}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-end gap-2">
+                    <input
+                      className="input w-40"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="123456"
+                      value={codes[c.host] ?? ""}
+                      onChange={(e) =>
+                        setCodes((prev) => ({ ...prev, [c.host]: e.target.value }))
+                      }
+                    />
+                    <button
+                      onClick={() => sendCode(c.host)}
+                      disabled={pending || !(codes[c.host] ?? "").trim()}
+                      className="btn btn-primary text-sm"
+                    >
+                      {pending ? "Sending…" : "Submit code"}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--color-muted)]">
+                    The sign-in is held open while you fetch it. It gives up after a few
+                    minutes so the browser is not pinned.
+                  </p>
+                </div>
+              )}
+
               <button
                 onClick={() => remove(c.host)}
                 disabled={pending}

@@ -13,6 +13,16 @@
 // which a form fill can satisfy. Detection stays useful there; this doesn't.
 
 import type { Page } from "playwright";
+import { handleCodeChallenge, type CodeWaiter } from "@/lib/sp/verificationChallenge";
+
+/** Hostname of a URL, for the prompt shown to the user. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "this site";
+  }
+}
 
 export type SeedCredentials = {
   username: string;
@@ -63,6 +73,13 @@ const BAD_CREDENTIALS_RE =
 export async function submitLoginForm(
   page: Page,
   creds: SeedCredentials,
+  /**
+   * Supplied when there is a user around to answer a verification code. The
+   * server cannot answer one itself — and shouldn't be able to, since the
+   * whole point of the code is that it reaches the account's owner — but the
+   * owner can, so the session is held open and the prompt surfaced to them.
+   */
+  waitForCode?: CodeWaiter,
 ): Promise<LoginOutcome> {
   // The password field is the anchor: if there isn't one, this isn't a login
   // form and guessing at the rest would only produce noise.
@@ -123,15 +140,37 @@ export async function submitLoginForm(
     .waitForLoadState("networkidle", { timeout: SETTLE_MS })
     .catch(() => page.waitForTimeout(2_500));
 
-  const body = await page.content().catch(() => "");
+  let body = await page.content().catch(() => "");
 
-  // A second factor is a hard stop, and worth naming precisely: the
-  // credentials may be perfectly correct and still unusable from a server.
+  // A verification code is answerable, just not by us. With a waiter the
+  // prompt goes to the user, their code is typed into this same live session,
+  // and the sign-in carries on.
+  if (waitForCode) {
+    try {
+      const handled = await handleCodeChallenge(
+        page,
+        waitForCode,
+        `Signing in to ${hostOf(page.url())} needs a verification code. Check the inbox or phone for that account and enter the code here.`,
+      );
+      if (handled) body = await page.content().catch(() => "");
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error && /timed out/i.test(error.message)
+            ? "the site asked for a verification code and none was entered in time"
+            : "the verification code was not accepted",
+      };
+    }
+  }
+
+  // Still asking for something extra, with nobody able to answer it.
   if (EXTRA_STEP_RE.test(body)) {
     return {
       ok: false,
-      error:
-        "the site asked for a second step (a verification code, or a challenge) that can't be answered from a server",
+      error: waitForCode
+        ? "the site asked for a step beyond a verification code (a device approval or a captcha) that can't be answered this way"
+        : "the site asked for a verification code, and no one was available to enter it",
     };
   }
 

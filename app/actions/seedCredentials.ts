@@ -99,6 +99,39 @@ export async function saveSeedCredentialAction(input: {
   };
 }
 
+/**
+ * Hand a verification code to a sign-in that is paused waiting for one.
+ *
+ * The browser session is still open on the other side of this, holding the
+ * challenge page; the runner polls this row and types whatever lands here
+ * into the live form. Nothing is stored — the waiter clears the column the
+ * moment it reads it.
+ */
+export async function submitSeedVerificationCodeAction(input: {
+  projectId: string;
+  host: string;
+  code: string;
+}): Promise<{ ok: true } | Err> {
+  const access = await requireOrg(input.projectId);
+  if (!access.ok) return access;
+
+  const code = input.code.trim();
+  if (!code) return { ok: false, error: "Enter the code the site sent you." };
+  if (!/^[A-Za-z0-9-]{4,12}$/.test(code)) {
+    return { ok: false, error: "That doesn\u2019t look like a verification code." };
+  }
+
+  const { error } = await serviceClient()
+    .from("outreach_seed_credentials")
+    .update({ verification_code: code })
+    .eq("organization_id", access.organizationId)
+    .eq("host", normalizeHost(input.host));
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/projects/${input.projectId}/leads`);
+  return { ok: true };
+}
+
 export async function deleteSeedCredentialAction(input: {
   projectId: string;
   host: string;
