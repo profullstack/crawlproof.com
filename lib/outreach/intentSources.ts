@@ -85,14 +85,22 @@ export const INTENT_SOURCES: IntentSource[] = [
     defaultOn: false,
   },
   {
-    id: "jobs",
-    label: "Job and contract boards",
-    // A job ad for the thing you sell is a budget that has already been
-    // approved — it is intent wearing different clothes.
-    sites: ["upwork.com", "weworkremotely.com", "remoteok.com"],
-    defaultOn: false,
+    id: "reviews",
+    label: "Software review and buyer sites",
+    // People comparing vendors in public are mid-purchase by definition, and
+    // the population skews to whoever was handed the evaluation.
+    sites: ["g2.com", "trustradius.com", "capterra.com", "spiceworks.com"],
+    defaultOn: true,
   },
 ];
+
+// Freelance and job boards were on this list and have been removed. They are
+// dense with the exact inverse of a lead: people advertising their own
+// availability, in the same vocabulary and about the same topic as somebody
+// buying. What little genuine demand they carry is demand for labour — a
+// person to employ — rather than for a supplier to pay, and the target here is
+// decision makers and buyers.
+
 
 /**
  * Search phrasings that find a request rather than an article about one.
@@ -101,10 +109,13 @@ export const INTENT_SOURCES: IntentSource[] = [
  * talking. Each is combined with the campaign's own topic words.
  */
 export const INTENT_PHRASINGS = [
+  // Plural first person throughout wherever it reads naturally: people
+  // speaking for an organisation say "we", and that one word separates a
+  // buyer from a bystander with the same question.
+  '"we are evaluating" OR "we\'re evaluating"',
   '"anyone recommend"',
-  '"looking for a"',
-  '"any recommendations"',
-  '"willing to pay"',
+  '"we need a" OR "our team needs"',
+  '"willing to pay" OR "we have budget"',
   '"alternatives to"',
   '"what do you use"',
 ];
