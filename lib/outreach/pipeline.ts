@@ -48,6 +48,7 @@ import { resolvePostalAddress } from "./postalAddress";
 import { findContactViaSearch } from "./contactFallback";
 import { loadProjectMailbox } from "./senderMailbox";
 import { loadRecipientContext, recipientContextPrompt } from "./recipientContext";
+import { upsertContact } from "./contacts";
 
 export type ProspectRow = {
   id: string;
@@ -417,6 +418,45 @@ export async function researchProspect(input: {
  * score and no findings, which is honest: nothing was measured, and the
  * draft path for these campaigns doesn't claim otherwise.
  */
+
+/**
+ * Write the person behind a prospect into the shared contact record.
+ *
+ * Resolves the organization from the project, because contacts are org-scoped
+ * while prospects are project-scoped — that difference is the entire reason
+ * this table exists.
+ */
+async function recordContact(input: {
+  projectId: string;
+  host: string;
+  email: string | null;
+  label?: string | null;
+  source: "page" | "search" | "guess" | "manual";
+}): Promise<string | null> {
+  const { data: project } = await serviceClient()
+    .from("projects")
+    .select("organization_id")
+    .eq("id", input.projectId)
+    .maybeSingle();
+  const organizationId = (project?.organization_id as string | null) ?? null;
+  if (!organizationId) return null;
+
+  const res = await upsertContact({
+    organizationId,
+    source: input.source,
+    fields: {
+      email: input.email,
+      host: input.host,
+      // The discovery label is what the listing called them, which is a
+      // company name far more often than a person's — so it is recorded as
+      // one rather than guessed into full_name.
+      companyName: input.label ?? null,
+      companySite: `https://${input.host}`,
+    },
+  });
+  return res?.id ?? null;
+}
+
 async function researchWithoutScan(input: {
   userId: string;
   projectId: string;
@@ -469,6 +509,17 @@ async function researchWithoutScan(input: {
     }
   }
 
+  // Record the person before the prospect, so the prospect can point at
+  // them. This is what stops the same human becoming a separate row in every
+  // project that happens to find them.
+  const contactId = await recordContact({
+    projectId: input.projectId,
+    host,
+    email: contact?.email ?? null,
+    label: input.discoveryLabel,
+    source: contact?.source === "manual" ? "manual" : contact?.source === "guess" ? "guess" : "page",
+  });
+
   const { data, error } = await serviceClient()
     .from("outreach_prospects")
     .upsert(
@@ -483,6 +534,7 @@ async function researchWithoutScan(input: {
         discovery_label: input.discoveryLabel ?? null,
         contact_email: contact?.email ?? null,
         contact_source: contact?.source ?? null,
+        contact_id: contactId,
         // Crawled the site, then searched for the business, and still found
         // no address. There is nothing further to try, so it leaves the
         // funnel rather than sitting at "new" and being re-researched on
