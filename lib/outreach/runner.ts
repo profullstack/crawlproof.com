@@ -25,6 +25,7 @@ import {
 } from "./pipeline";
 import { nextStepReadyAt, type OutreachStep } from "./cold";
 import { leadRunBilling, outOfCreditsNote } from "./billing";
+import { recordDiscoveredPeople } from "./contacts";
 import { LEAD_RUN_CREDITS } from "@/lib/credits";
 
 export type CampaignRow = {
@@ -72,6 +73,8 @@ export type TickResult = {
   awaitingAuth: string[];
   /** Credits this tick actually charged. Zero when it found nothing to do. */
   creditsSpent: number;
+  /** People named by this tick and written to the shared contact record. */
+  peopleRecorded: number;
   skipped: string[];
   errors: string[];
 };
@@ -99,6 +102,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     autoSend: campaign.auto_send,
     awaitingAuth: [],
     creditsSpent: 0,
+    peopleRecorded: 0,
     researched: 0,
     drafted: 0,
     sent: 0,
@@ -256,6 +260,16 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     });
     result.errors.push(...found.errors);
     result.awaitingAuth = found.loginRequiredSeeds;
+
+    // The people the run named, not just the companies. Reading prospects off
+    // this result and ignoring `people` is what threw away every name, title
+    // and profile link a directory gave up — after paying to render, paginate
+    // and parse for them.
+    result.peopleRecorded = await recordDiscoveredPeople({
+      organizationId,
+      people: found.people,
+      niche: campaign.name,
+    });
 
     // Park the gated hosts on the campaign so the UI can say what it is
     // waiting for, and offer the form that unblocks it, instead of leaving
@@ -450,6 +464,7 @@ export function summarize(r: TickResult): string {
         ? `${r.dryRuns} drafted, 0 sent`
         : `${r.dryRuns} drafted (auto_send off)`,
   ];
+  if (r.peopleRecorded) parts.push(`${r.peopleRecorded} people`);
   if (r.awaitingAuth.length) parts.push(`${r.awaitingAuth.length} waiting_for_auth`);
   // Only when something was charged. Printing "0 credits" on every idle tick
   // would bury the line that matters under the ones that cost nothing.

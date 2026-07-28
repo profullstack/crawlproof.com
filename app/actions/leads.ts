@@ -15,7 +15,7 @@ import {
 import { addSuppression } from "@/lib/outreach/suppress";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 import { discoverProspects } from "@/lib/outreach/discover";
-import { upsertContact } from "@/lib/outreach/contacts";
+import { recordDiscoveredPeople } from "@/lib/outreach/contacts";
 import { generatePitch } from "@/lib/outreach/generatePitch";
 import { leadRunBilling, manualRunPrice } from "@/lib/outreach/billing";
 import { runEmailCampaignTick, CAMPAIGN_COLUMNS, summarize, type CampaignRow } from "@/lib/outreach/runner";
@@ -105,26 +105,12 @@ export async function findLeadsAction(input: {
   // was found for them. A directory gives a name, a title and a LinkedIn
   // profile and withholds the email; discarding that until an address turns
   // up means rediscovering the same person on every run.
-  let peopleRecorded = 0;
-  if (found.people?.length && orgId) {
-    for (const person of found.people) {
-      const res = await upsertContact({
-        organizationId: orgId,
-        source: person.source === "json-ld" ? "json-ld" : "page",
-        fields: {
-          fullName: person.fullName,
-          title: person.jobTitle,
-          companyName: person.company,
-          companySite: person.companySite,
-          linkedinUrl: person.linkedinUrl,
-          country: person.location,
-          sourceUrl: person.sourceUrl,
-          socials: person.socials,
-        },
-      });
-      if (res) peopleRecorded += 1;
-    }
-  }
+  // The same recorder the campaign runner uses. Two copies of this is what
+  // let the runner quietly stop recording people at all.
+  const peopleRecorded = await recordDiscoveredPeople({
+    organizationId: orgId,
+    people: found.people ?? [],
+  });
 
   if (!found.prospects.length && !peopleRecorded) {
     // Nothing to show for it, so nothing to charge for it.
