@@ -271,13 +271,32 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     }
   }
 
+  const ranAt = new Date().toISOString();
+  const summary = summarize(result);
+
   await sb
     .from("outreach_campaigns")
-    .update({
-      last_run_at: new Date().toISOString(),
-      last_run_note: summarize(result),
-    })
+    .update({ last_run_at: ranAt, last_run_note: summary })
     .eq("id", campaign.id);
+
+  // Keep the trail as well as the newest line. last_run_note is overwritten
+  // every tick, so without this a run that errored vanishes fifteen minutes
+  // later and "has this ever found anything?" has no answer.
+  await sb.from("outreach_campaign_runs").insert({
+    campaign_id: campaign.id,
+    project_id: campaign.project_id,
+    ran_at: ranAt,
+    summary,
+    discovered: result.discovered,
+    scans_started: result.scansStarted,
+    researched: result.researched,
+    drafted: result.drafted,
+    sent: result.sent,
+    errors: result.errors,
+    skipped: result.skipped,
+    awaiting_auth: result.awaitingAuth,
+    ok: result.errors.length === 0,
+  });
 
   return result;
 }
