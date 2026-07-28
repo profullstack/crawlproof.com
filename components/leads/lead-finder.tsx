@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { findLeadsAction } from "@/app/actions/leads";
+import { manualRunPrice } from "@/lib/credits";
 
 /**
  * The "add leads" box. A search query finds businesses; a directory URL mines
@@ -15,14 +16,21 @@ import { findLeadsAction } from "@/app/actions/leads";
  * only involvement was appearing in a search. A campaign that does pitch an
  * audit turns scanning back on explicitly.
  */
+// Run sizes. A directory page routinely lists hundreds of businesses, so the
+// old 5/10/25 choices reported a fraction of one and looked broken — and since
+// a run is now priced by how much it is asked for, a large one costs what it
+// costs rather than being free.
+const LIMITS = [25, 100, 250, 500, 1000];
+
 export function LeadFinder({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [mode, setMode] = useState<"query" | "seed">("query");
   const [value, setValue] = useState("");
-  const [limit, setLimit] = useState(10);
+  const [limit, setLimit] = useState(100);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const price = manualRunPrice(limit);
 
   const submit = () => {
     setNote(null);
@@ -76,25 +84,26 @@ export function LeadFinder({ projectId }: { projectId: string }) {
           }}
         />
         <select
-          className="input w-24"
+          className="input w-28"
           value={limit}
           onChange={(e) => setLimit(Number(e.target.value))}
           aria-label="How many leads"
         >
-          {[5, 10, 25].map((n) => (
+          {LIMITS.map((n) => (
             <option key={n} value={n}>
               {n}
             </option>
           ))}
         </select>
         <button onClick={submit} disabled={pending || !value.trim()} className="btn btn-primary">
-          {pending ? "Finding…" : "Find leads"}
+          {pending ? "Finding…" : `Find leads · ${price.credits} credits`}
         </button>
       </div>
       <p className="mt-2 text-xs text-[var(--color-muted)]">
         {mode === "query"
           ? "Finds businesses and looks up a contact address for each. It does not scan them."
-          : "Every outbound link on that page becomes a candidate. Platforms and aggregators are filtered out."}
+          : "Every outbound link on that page becomes a candidate. Platforms and aggregators are filtered out."}{" "}
+        Charged on results — a search that finds nothing is refunded.
       </p>
       {note && <p className="mt-2 text-sm text-[var(--color-fg)]">{note}</p>}
       {error && <p className="mt-2 text-sm text-[var(--color-danger,#f87171)]">{error}</p>}

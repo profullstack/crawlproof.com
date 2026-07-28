@@ -24,6 +24,8 @@ import {
   type ProspectRow,
 } from "./pipeline";
 import { nextStepReadyAt, type OutreachStep } from "./cold";
+import { leadRunBilling, outOfCreditsNote } from "./billing";
+import { LEAD_RUN_CREDITS } from "@/lib/credits";
 
 export type CampaignRow = {
   id: string;
@@ -68,6 +70,8 @@ export type TickResult = {
   autoSend: boolean;
   /** Seed URLs sitting behind a sign-in with no stored credential. */
   awaitingAuth: string[];
+  /** Credits this tick actually charged. Zero when it found nothing to do. */
+  creditsSpent: number;
   skipped: string[];
   errors: string[];
 };
@@ -94,12 +98,25 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     scansStarted: 0,
     autoSend: campaign.auto_send,
     awaitingAuth: [],
+    creditsSpent: 0,
     researched: 0,
     drafted: 0,
     sent: 0,
     dryRuns: 0,
     skipped: [],
     errors: [],
+  };
+
+  // Lazy: nothing is charged until a stage below actually reaches for search
+  // or a model. A tick that finds nothing to do is free, which is what makes
+  // leaving a campaign switched on affordable at one tick every fifteen
+  // minutes.
+  const billing = leadRunBilling(campaign.owner_id);
+  /** Whether this tick may spend. Records the reason once if it may not. */
+  const canSpend = async (): Promise<boolean> => {
+    if (await billing.authorize()) return true;
+    if (!result.errors.includes(outOfCreditsNote())) result.errors.push(outOfCreditsNote());
+    return false;
   };
 
   const { data: pool } = await sb
@@ -131,6 +148,8 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
 
     for (const p of due) {
       if (sendBudget <= 0) break;
+      // Drafting a follow-up costs a model call like any other stage.
+      if (!(await canSpend())) break;
       const step = (p.last_step + 1) as OutreachStep;
       const outcome = await draftAndSend(campaign, p, step);
       applyOutcome(result, outcome);
@@ -161,6 +180,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
       result.skipped.push(`${p.target_key}: daily send budget exhausted`);
       break;
     }
+    if (!(await canSpend())) break;
     const outcome = await draftAndSend(campaign, p, 1);
     applyOutcome(result, outcome);
     if (outcome.kind === "sent") sendBudget -= 1;
@@ -189,6 +209,10 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     // With scanning off there will never be an audit, so waiting for one
     // would strand every prospect at "new" forever.
     if (!audit && campaign.scan_prospects) continue; // still queued in the worker; next tick.
+    // Checked here rather than before the loop: a prospect whose scan has not
+    // landed is skipped above without spending anything, and billing for a
+    // tick that only ever hit that branch would charge for waiting.
+    if (!(await canSpend())) break;
     const res = await researchProspect({
       userId: campaign.owner_id,
       projectId: campaign.project_id,
@@ -213,7 +237,9 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
 
   // ---- 4. Top the funnel up.
   const liveCount = prospects.filter((p) => ["new", "researched", "drafted"].includes(p.status)).length;
-  if (liveCount < campaign.target_pipeline) {
+  // Discovery is the most expensive stage — several search calls before a
+  // single prospect exists — so it is gated like the rest.
+  if (liveCount < campaign.target_pipeline && (await canSpend())) {
     const want = Math.min(campaign.target_pipeline - liveCount, MAX_DISCOVER_PER_TICK);
     const { data: projectRow } = await sb
       .from("projects")
@@ -285,6 +311,15 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     }
   }
 
+  // A run that was charged and produced nothing gives the money back. Some of
+  // it is genuinely spent by then — a search that returned no usable candidate
+  // still cost a call — but billing for a tick with no output is a worse trade
+  // than eating that occasionally.
+  if (billing.charged() && !result.discovered && !result.researched && !result.drafted && !result.sent) {
+    await billing.refund();
+  }
+  result.creditsSpent = billing.charged() ? LEAD_RUN_CREDITS : 0;
+
   const ranAt = new Date().toISOString();
   const summary = summarize(result);
 
@@ -309,6 +344,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     errors: result.errors,
     skipped: result.skipped,
     awaiting_auth: result.awaitingAuth,
+    credits_spent: result.creditsSpent,
     ok: result.errors.length === 0,
   });
 
@@ -415,6 +451,9 @@ export function summarize(r: TickResult): string {
         : `${r.dryRuns} drafted (auto_send off)`,
   ];
   if (r.awaitingAuth.length) parts.push(`${r.awaitingAuth.length} waiting_for_auth`);
+  // Only when something was charged. Printing "0 credits" on every idle tick
+  // would bury the line that matters under the ones that cost nothing.
+  if (r.creditsSpent) parts.push(`${r.creditsSpent} credits`);
   if (r.skipped.length) parts.push(`${r.skipped.length} skipped`);
   if (r.errors.length) parts.push(`${r.errors.length} errors`);
   return parts.join(", ");

@@ -14,6 +14,7 @@ export function SiteFooter() {
           <div className="font-semibold text-[var(--color-fg)]">Product</div>
           <ul className="mt-2 space-y-1">
             <li><Link href="/pricing">Pricing</Link></li>
+            <li><Link href="/lead-generation">Lead generation</Link></li>
             <li><Link href="/slop">Slop Score</Link></li>
             <li><Link href="/get-guide">Get guide</Link></li>
             <li><Link href="/recent">Recent scans</Link></li>
