@@ -52,8 +52,10 @@ describe("recency is half the signal", () => {
   });
 
   it("halves at the half-life", () => {
-    expect(recencyFactor(36)).toBeCloseTo(0.5, 2);
-    expect(recencyFactor(72)).toBeCloseTo(0.25, 2);
+    // 72h, matching the window the Reddit scorer already treats as the edge
+    // of repliable rather than a second number invented alongside it.
+    expect(recencyFactor(72)).toBeCloseTo(0.5, 2);
+    expect(recencyFactor(144)).toBeCloseTo(0.25, 2);
   });
 
   it("gives up entirely on something ancient", () => {
@@ -124,8 +126,26 @@ describe("qualifying against a campaign's bar", () => {
     expect(qualifies(weak, undefined)).toBe(true);
   });
 
-  it("holds a weak signal below the bar", () => {
-    expect(qualifies(score("Struggling with load testing", 24 * 6), DEFAULT_MIN_INTENT)).toBe(false);
+  it("holds a bare complaint below the bar, however fresh", () => {
+    // The bar sits in the measured gap between "somebody asked for something"
+    // and "somebody grumbled": a fresh unattributed complaint scores 42.
+    expect(qualifies(score("Struggling with load testing", 1), DEFAULT_MIN_INTENT)).toBe(false);
+  });
+
+  it("keeps a day-old request in", () => {
+    // These threads stay answerable for days, and losing them to an
+    // over-eager decay curve is what the 72h half-life fixed.
+    expect(qualifies(score("Can anyone recommend a load testing tool?", 24), DEFAULT_MIN_INTENT)).toBe(true);
+  });
+
+  it("lets a team lead's complaint through where a stranger's does not", () => {
+    // "Our team is struggling with X" is a lead. The same words from nobody
+    // in particular are not.
+    expect(qualifies(score("Our team is struggling with load testing.", 6), DEFAULT_MIN_INTENT)).toBe(true);
+  });
+
+  it("drops a request that has gone stale", () => {
+    expect(qualifies(score("Can anyone recommend a load testing tool?", 24 * 5), DEFAULT_MIN_INTENT)).toBe(false);
   });
 
   it("passes a fresh explicit request", () => {
