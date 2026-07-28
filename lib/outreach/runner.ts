@@ -29,6 +29,8 @@ import { recordDiscoveredPeople } from "./contacts";
 import { sweepIntent } from "./intentSources";
 import { describeIntent } from "./intent";
 import { LEAD_RUN_CREDITS } from "@/lib/credits";
+import { sendIntentAlertEmail } from "@/lib/email";
+import { siteBase } from "./pipeline";
 
 export type CampaignRow = {
   id: string;
@@ -57,13 +59,17 @@ export type CampaignRow = {
   min_intent: number | null;
   intent_sources: string[] | null;
   intent_recency: "day" | "week" | "month" | null;
+  /** Prose description of what this campaign sells. Enables the description path. */
+  sells_description: string | null;
+  alert_email: string | null;
+  alerts_enabled: boolean;
   sender_name: string | null;
   reply_to: string | null;
   last_run_at: string | null;
 };
 
 export const CAMPAIGN_COLUMNS =
-  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, intent_sources, intent_recency";
+  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, intent_sources, intent_recency, sells_description, alert_email, alerts_enabled";
 
 export type TickResult = {
   campaign: string;
@@ -85,6 +91,8 @@ export type TickResult = {
   intentFound: number;
   /** Candidates dropped for showing no intent, when the campaign requires it. */
   intentRejected: number;
+  /** Signals included in an alert this tick. */
+  intentAlerted: number;
   skipped: string[];
   errors: string[];
 };
@@ -119,6 +127,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     peopleRecorded: 0,
     intentFound: 0,
     intentRejected: 0,
+    intentAlerted: 0,
     researched: 0,
     drafted: 0,
     sent: 0,
@@ -279,6 +288,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
         sources: campaign.intent_sources ?? undefined,
         recency: campaign.intent_recency ?? "week",
         minIntent: campaign.min_intent,
+        sells: campaign.sells_description,
         maxCalls: MAX_INTENT_SEARCHES_PER_TICK,
       });
       result.intentFound = sweep.hits.length;
@@ -302,11 +312,18 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
             tier: hit.signal.tier,
             reasons: hit.signal.reasons,
             posted_at: hit.postedAt?.toISOString() ?? null,
+            match_path: hit.signal.matchPath,
             notes: describeIntent(hit.signal),
           },
           { onConflict: "project_id,url", ignoreDuplicates: true },
         );
       }
+
+      // Telling somebody is the point. A conversation worth answering has a
+      // useful life measured in hours, and a signal that sits in a table until
+      // someone happens to open the page is indistinguishable from one that
+      // was never found.
+      result.intentAlerted = await alertNewIntent(campaign);
     }
 
     const found = await discoverProspects({
@@ -534,6 +551,7 @@ export function summarize(r: TickResult): string {
   ];
   if (r.peopleRecorded) parts.push(`${r.peopleRecorded} people`);
   if (r.intentFound) parts.push(`${r.intentFound} INTENT`);
+  if (r.intentAlerted) parts.push(`${r.intentAlerted} alerted`);
   if (r.intentRejected) parts.push(`${r.intentRejected} no-intent`);
   if (r.awaitingAuth.length) parts.push(`${r.awaitingAuth.length} waiting_for_auth`);
   // Only when something was charged. Printing "0 credits" on every idle tick
@@ -542,4 +560,69 @@ export function summarize(r: TickResult): string {
   if (r.skipped.length) parts.push(`${r.skipped.length} skipped`);
   if (r.errors.length) parts.push(`${r.errors.length} errors`);
   return parts.join(", ");
+}
+
+/**
+ * Email whoever owns this campaign about signals they have not been told about.
+ *
+ * Dedupe is a column on the row rather than a timestamp window: "have we told
+ * them about this one" is a fact about the signal, and comparing found_at
+ * against a last-alerted-at would double-send anything that arrived while the
+ * previous alert was being composed.
+ *
+ * Marked as alerted only after the send succeeds. The other order loses a
+ * batch permanently to one SMTP hiccup, and a lead nobody heard about is the
+ * thing this exists to prevent.
+ */
+async function alertNewIntent(campaign: CampaignRow): Promise<number> {
+  if (!campaign.alerts_enabled) return 0;
+  const sb = serviceClient();
+
+  const { data } = await sb
+    .from("outreach_intent_signals")
+    .select("id, title, url, source, score, tier, reasons, posted_at")
+    .eq("campaign_id", campaign.id)
+    .is("alerted_at", null)
+    .neq("status", "dismissed")
+    .order("score", { ascending: false })
+    .limit(10);
+
+  const fresh = (data as Record<string, unknown>[] | null) ?? [];
+  if (!fresh.length) return 0;
+
+  // Falls back to the account address, so a campaign does not have to be
+  // configured before it is useful.
+  let to = campaign.alert_email?.trim() || null;
+  if (!to) {
+    const { data: profile } = await sb
+      .from("profiles")
+      .select("email")
+      .eq("id", campaign.owner_id)
+      .maybeSingle();
+    to = (profile?.email as string | null) ?? null;
+  }
+  if (!to) return 0;
+
+  const res = await sendIntentAlertEmail({
+    to,
+    campaign: campaign.name,
+    projectUrl: `${siteBase()}/projects/${campaign.project_id}/leads`,
+    signals: fresh.map((r) => ({
+      title: (r.title as string) ?? "",
+      url: r.url as string,
+      source: (r.source as string) ?? "",
+      score: (r.score as number) ?? 0,
+      tier: (r.tier as string) ?? "",
+      reasons: Array.isArray(r.reasons) ? (r.reasons as string[]) : [],
+      postedAt: (r.posted_at as string | null) ?? null,
+    })),
+  });
+  if (!res.sent) return 0;
+
+  await sb
+    .from("outreach_intent_signals")
+    .update({ alerted_at: new Date().toISOString() })
+    .in("id", fresh.map((r) => r.id as string));
+
+  return fresh.length;
 }

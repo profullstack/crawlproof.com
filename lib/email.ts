@@ -1057,6 +1057,75 @@ export async function sendAiSpendAlertEmail(input: {
   return { sent: true };
 }
 
+/**
+ * Somebody publicly asked for what you sell.
+ *
+ * Batched per campaign per sweep, never per signal: a sweep that finds eleven
+ * conversations has to produce one email. Eleven would be the fastest way to
+ * make the feature something people filter to a folder, and a filtered alert
+ * is the same as no alert.
+ *
+ * The count and the best score go in the subject so it can be triaged from a
+ * phone notification without opening anything — the whole point is answering
+ * before somebody else does, and a lead worth having has a useful life
+ * measured in hours.
+ */
+export async function sendIntentAlertEmail(input: {
+  to: string;
+  campaign: string;
+  projectUrl: string;
+  signals: Array<{
+    title: string;
+    url: string;
+    source: string;
+    score: number;
+    tier: string;
+    reasons: string[];
+    postedAt: string | null;
+  }>;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  if (!input.signals.length) return { sent: false, error: "nothing to send" };
+
+  const best = Math.max(...input.signals.map((s) => s.score));
+  const n = input.signals.length;
+
+  const items = input.signals
+    .map((s) => {
+      const when = s.postedAt
+        ? new Date(s.postedAt).toISOString().slice(0, 16).replace("T", " ")
+        : "undated";
+      return [
+        `<li style="margin:0 0 14px">`,
+        `<a href="${s.url}" style="font-weight:600">${escapeHtml(s.title || s.url)}</a><br>`,
+        `<span style="font-size:13px;color:#666">`,
+        `${s.score}/100 ${escapeHtml(s.tier)} · ${escapeHtml(s.source)} · ${when}`,
+        `</span><br>`,
+        `<span style="font-size:13px;color:#666">${escapeHtml(s.reasons.slice(0, 3).join(" · "))}</span>`,
+        `</li>`,
+      ].join("");
+    })
+    .join("");
+
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject:
+      n === 1
+        ? `1 person asked for what you sell (${best}/100) — ${input.campaign}`
+        : `${n} people asked for what you sell (best ${best}/100) — ${input.campaign}`,
+    html: [
+      `<p>Found by the <strong>${escapeHtml(input.campaign)}</strong> campaign in the last sweep.</p>`,
+      `<ul style="padding-left:18px">${items}</ul>`,
+      `<p style="font-size:13px;color:#666">Reply where they asked, in public, as a reply — these are people on a platform, not addresses to email. Answering early is most of the advantage.</p>`,
+      `<p><a href="${input.projectUrl}">Open the queue</a></p>`,
+    ].join(""),
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}
+
 export async function sendColdOutreachEmail(input: {
   to: string;
   subject: string;
