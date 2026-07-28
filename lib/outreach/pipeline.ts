@@ -39,6 +39,7 @@ import {
   unsupportedClaims,
   roleAddressGuesses,
   unsupportedCustomClaims,
+  separateUrlPunctuation,
   type ContactCandidate,
   type OutreachStep,
   type ProspectFacts,
@@ -841,7 +842,11 @@ async function draftCustomEmail(input: {
   // draft to them for inventing it — the campaign, quite correctly, had never
   // mentioned a four. Naming who you are writing to is not a claim about
   // them; it is the minimum a personalised email does.
-  const problems = unsupportedCustomClaims(output.body, [
+  // Applied before the check, and kept, so the recipient gets the tidied
+  // version rather than a link with punctuation welded to its end.
+  const body = separateUrlPunctuation(output.body);
+
+  const problems = unsupportedCustomClaims(body, [
     ...facts,
     input.pitch.intro,
     input.pitch.ask ?? "",
@@ -857,7 +862,9 @@ async function draftCustomEmail(input: {
   return {
     ok: true,
     subject,
-    body: output.body.trim(),
+    // The tidied body, not the raw one — checking a repaired draft and then
+    // sending the broken original would defeat the repair entirely.
+    body: body.trim(),
     evidenceUsed: output.evidence_used ?? [],
   };
 }
