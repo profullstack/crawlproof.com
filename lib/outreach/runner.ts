@@ -20,6 +20,7 @@ import {
   latestAuditForHost,
   researchProspect,
   sendProspectEmail,
+  type CampaignPitch,
   type ProspectRow,
 } from "./pipeline";
 import { nextStepReadyAt, type OutreachStep } from "./cold";
@@ -42,13 +43,18 @@ export type CampaignRow = {
   auto_send: boolean;
   follow_ups: boolean;
   angle: string | null;
+  pitch_mode: "audit" | "custom";
+  pitch_intro: string | null;
+  pitch_ask: string | null;
+  pitch_facts: string[] | null;
+  scan_prospects: boolean;
   sender_name: string | null;
   reply_to: string | null;
   last_run_at: string | null;
 };
 
 export const CAMPAIGN_COLUMNS =
-  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at";
+  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects";
 
 export type TickResult = {
   campaign: string;
@@ -58,6 +64,8 @@ export type TickResult = {
   drafted: number;
   sent: number;
   dryRuns: number;
+  /** The campaign's actual auto_send setting, so the summary can't misreport it. */
+  autoSend: boolean;
   skipped: string[];
   errors: string[];
 };
@@ -75,6 +83,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     campaign: campaign.name,
     discovered: 0,
     scansStarted: 0,
+    autoSend: campaign.auto_send,
     researched: 0,
     drafted: 0,
     sent: 0,
@@ -122,12 +131,18 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
   // ---- 2. First contact for researched prospects that are weak enough.
   const ready = prospects
     .filter((p) => p.status === "researched" && p.contact_email && p.last_step === 0)
-    .filter((p) =>
-      isWeakEnough({
-        score: p.score,
-        engine: p.score_kind === "slop" ? "slop" : "rule",
-        maxScore: campaign.max_score,
-      }),
+    // The score gate exists so we never pitch a fix to a site that doesn't
+    // need one. A campaign that isn't pitching a fix has nothing to gate on,
+    // and applying it anyway would filter out every prospect, since an
+    // unscanned one has no score.
+    .filter(
+      (p) =>
+        !campaign.scan_prospects ||
+        isWeakEnough({
+          score: p.score,
+          engine: p.score_kind === "slop" ? "slop" : "rule",
+          maxScore: campaign.max_score,
+        }),
     )
     .slice(0, MAX_SEND_PER_TICK);
 
@@ -161,12 +176,15 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
   const pending = prospects.filter((p) => p.status === "new").slice(0, MAX_RESEARCH_PER_TICK);
   for (const p of pending) {
     const audit = await latestAuditForHost(campaign.owner_id, p.target_key);
-    if (!audit) continue; // still queued in the worker; next tick.
+    // With scanning off there will never be an audit, so waiting for one
+    // would strand every prospect at "new" forever.
+    if (!audit && campaign.scan_prospects) continue; // still queued in the worker; next tick.
     const res = await researchProspect({
       userId: campaign.owner_id,
       projectId: campaign.project_id,
       url: p.site_url ?? `https://${p.target_key}`,
       campaignId: campaign.id,
+      skipScan: !campaign.scan_prospects,
     });
     if (res.status === "researched") {
       result.researched += 1;
@@ -250,6 +268,24 @@ type Outcome =
   | { kind: "skipped"; host: string; reason: string }
   | { kind: "error"; host: string; reason: string };
 
+
+/**
+ * The campaign's own pitch, or null when it is selling a CrawlProof scan.
+ *
+ * Null is what keeps every existing campaign on exactly the old path: the
+ * audit pitch is the default and this feature is additive.
+ */
+function campaignPitch(campaign: CampaignRow): CampaignPitch | null {
+  if (campaign.pitch_mode !== "custom") return null;
+  const intro = (campaign.pitch_intro ?? "").trim();
+  if (!intro) return null;
+  return {
+    intro,
+    ask: campaign.pitch_ask,
+    facts: Array.isArray(campaign.pitch_facts) ? campaign.pitch_facts : [],
+  };
+}
+
 async function draftAndSend(
   campaign: CampaignRow,
   prospect: ProspectRow,
@@ -260,6 +296,7 @@ async function draftAndSend(
     step,
     angle: campaign.angle,
     sender: campaign.sender_name,
+    pitch: campaignPitch(campaign),
   });
   if (!draft.ok) {
     return { kind: "error", host: prospect.target_key, reason: draft.problems.join("; ") };
@@ -315,7 +352,14 @@ export function summarize(r: TickResult): string {
     `${r.discovered} discovered`,
     `${r.scansStarted} scans`,
     `${r.researched} researched`,
-    r.sent ? `${r.sent} SENT` : `${r.dryRuns} drafted (auto_send off)`,
+    r.sent
+      ? `${r.sent} SENT`
+      : r.autoSend
+        // Sending is on and nothing went out, so the funnel stalled earlier.
+        // Saying "auto_send off" here was simply false and sent people to
+        // check a switch that was already flipped.
+        ? `${r.dryRuns} drafted, 0 sent`
+        : `${r.dryRuns} drafted (auto_send off)`,
   ];
   if (r.skipped.length) parts.push(`${r.skipped.length} skipped`);
   if (r.errors.length) parts.push(`${r.errors.length} errors`);
