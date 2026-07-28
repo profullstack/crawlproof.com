@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  generatePitchAction,
   runCampaignAction,
   saveCampaignAction,
   toggleCampaignAction,
@@ -81,6 +82,9 @@ export function CampaignPanel({
   // scan of the prospect to contribute. Selecting the audit pitch turns it
   // back on, because that pitch is built from findings.
   const [scanProspects, setScanProspects] = useState(false);
+  const [goal, setGoal] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [pitchNote, setPitchNote] = useState<string | null>(null);
   const [senderName, setSenderName] = useState("");
   const [replyTo, setReplyTo] = useState("");
 
@@ -93,6 +97,30 @@ export function CampaignPanel({
         setNote(res.note);
         router.refresh();
       } else setError(res.error);
+    });
+
+  // Fills the three pitch fields from a plain description of the goal.
+  // Writing an intro, a single ask and a list of checkable claims is a
+  // precise task, and the grounding guard refuses drafts that stray outside
+  // them — which punishes anyone who describes their goal the way people
+  // actually describe goals.
+  const generate = () =>
+    start(async () => {
+      setPitchNote(null);
+      setError(null);
+      setGenerating(true);
+      const res = await generatePitchAction({ projectId, goal, senderName });
+      setGenerating(false);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setPitchIntro(res.intro);
+      setPitchAsk(res.ask);
+      setPitchFacts(res.facts.join("\n"));
+      setPitchMode("custom");
+      setScanProspects(false);
+      setPitchNote("Filled in below — read it before saving. Nothing was invented, but check it says what you meant.");
     });
 
   // Runs one campaign-row action: marks that button busy, then reports the
@@ -398,6 +426,34 @@ export function CampaignPanel({
 
           {pitchMode === "custom" && (
             <>
+              <div className="rounded border border-[var(--color-border)] p-3 sm:col-span-2">
+                <label className="text-sm">
+                  Describe what you&apos;re trying to do
+                  <textarea
+                    className="input mt-1 w-full"
+                    rows={2}
+                    value={goal}
+                    onChange={(e) => setGoal(e.target.value)}
+                    placeholder="I own threatcrush.com and want people to download our free whitepaper at https://threatcrush.com/get-whitepaper"
+                  />
+                </label>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={generate}
+                    disabled={pending || goal.trim().length < 15}
+                    className="btn text-sm"
+                  >
+                    {generating ? "Generating…" : "Generate with AI"}
+                  </button>
+                  <span className="text-xs text-[var(--color-muted)]">
+                    Fills the three fields below. It only rearranges what you wrote — it will not
+                    invent claims, because anything it adds gets stated to strangers as true.
+                  </span>
+                </div>
+                {pitchNote && <p className="mt-2 text-xs">{pitchNote}</p>}
+              </div>
+
               <label className="text-sm sm:col-span-2">
                 Who is writing, and why
                 <textarea
