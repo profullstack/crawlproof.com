@@ -47,6 +47,11 @@ export function CampaignPanel({
   const [maxScore, setMaxScore] = useState(70);
   const [dailyLimit, setDailyLimit] = useState(10);
   const [angle, setAngle] = useState("");
+  const [pitchMode, setPitchMode] = useState<"audit" | "custom">("audit");
+  const [pitchIntro, setPitchIntro] = useState("");
+  const [pitchAsk, setPitchAsk] = useState("");
+  const [pitchFacts, setPitchFacts] = useState("");
+  const [scanProspects, setScanProspects] = useState(true);
   const [senderName, setSenderName] = useState("");
   const [replyTo, setReplyTo] = useState("");
 
@@ -75,6 +80,11 @@ export function CampaignPanel({
         angle,
         senderName,
         replyTo,
+        pitchMode,
+        pitchIntro,
+        pitchAsk,
+        pitchFacts,
+        scanProspects,
       }),
     );
 
@@ -215,6 +225,80 @@ export function CampaignPanel({
               onChange={(e) => setDailyLimit(Number(e.target.value))}
             />
           </label>
+          <label className="text-sm sm:col-span-2">
+            What is this campaign pitching?
+            <select
+              className="input mt-1 w-full"
+              value={pitchMode}
+              onChange={(e) => {
+                const next = e.target.value as "audit" | "custom";
+                setPitchMode(next);
+                // Scanning is the audit pitch's evidence step. A custom pitch
+                // has no reason to scan the people it writes to.
+                setScanProspects(next === "audit");
+              }}
+            >
+              <option value="audit">A CrawlProof scan of their site</option>
+              <option value="custom">Something else — I&apos;ll describe it</option>
+            </select>
+          </label>
+
+          {pitchMode === "custom" && (
+            <>
+              <label className="text-sm sm:col-span-2">
+                Who is writing, and why
+                <textarea
+                  className="input mt-1 w-full"
+                  rows={2}
+                  value={pitchIntro}
+                  onChange={(e) => setPitchIntro(e.target.value)}
+                  placeholder="Anthony, a freelance 3D modeller looking for contract work with game studios"
+                />
+              </label>
+              <label className="text-sm sm:col-span-2">
+                Facts drafts may state — one per line
+                <textarea
+                  className="input mt-1 w-full font-mono text-xs"
+                  rows={4}
+                  value={pitchFacts}
+                  onChange={(e) => setPitchFacts(e.target.value)}
+                  placeholder={"9 years of experience in hard-surface modelling\nPortfolio at https://example.com/work\nAvailable from March"}
+                />
+                <span className="mt-1 block text-xs text-[var(--color-muted)]">
+                  Drafts are checked against this list and rejected if they state anything else.
+                  Numbers and links that don&apos;t appear here are treated as invented.
+                </span>
+              </label>
+              <label className="text-sm sm:col-span-2">
+                The one ask
+                <input
+                  className="input mt-1 w-full"
+                  value={pitchAsk}
+                  onChange={(e) => setPitchAsk(e.target.value)}
+                  placeholder="take a look at my portfolio"
+                />
+              </label>
+            </>
+          )}
+
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={scanProspects}
+              onChange={(e) => setScanProspects(e.target.checked)}
+              disabled={pitchMode === "audit"}
+            />
+            <span>
+              Scan each discovered lead
+              <span className="mt-0.5 block text-xs text-[var(--color-muted)]">
+                {pitchMode === "audit"
+                  ? "Required for the audit pitch — the email is built from what the scan finds."
+                  : "Off by default: this campaign isn't pitching an audit, so there's nothing to scan for."}
+              </span>
+            </span>
+          </label>
+
           <label className="text-sm sm:col-span-2">
             Angle (optional)
             <input
