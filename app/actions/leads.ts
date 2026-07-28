@@ -109,6 +109,36 @@ export async function findLeadsAction(input: {
   };
 }
 
+/**
+ * Record what actually came of a lead.
+ *
+ * Nothing else in the pipeline can set these. A send is observable, a reply
+ * is not — the sending mailbox knows, and until reply detection reads it,
+ * only the user does. Without a way to record the outcome the funnel can
+ * only ever report sends, and a reply rate that is structurally zero is
+ * worse than no reply rate at all.
+ */
+export async function markLeadOutcomeAction(input: {
+  projectId: string;
+  host: string;
+  outcome: "replied" | "won" | "lost" | "contacted";
+}): Promise<Ok<{ note: string }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+
+  const prospect = await projectProspect(input.projectId, input.host);
+  if (!prospect) return { ok: false, error: "That lead isn't in this project." };
+
+  const { error } = await serviceClient()
+    .from("outreach_prospects")
+    .update({ status: input.outcome })
+    .eq("id", prospect.id);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(leadsPath(input.projectId));
+  return { ok: true, note: `Marked ${input.host} as ${input.outcome}.` };
+}
+
 /** Re-run research on one lead: pick up a finished scan, refresh the contact. */
 export async function researchLeadAction(input: {
   projectId: string;

@@ -15,6 +15,26 @@ export const SCAN_CREDITS = 20;
 // Credits charged for one outreach send (email / SMS recipient / social post).
 export const OUTREACH_CREDITS = 1;
 
+/**
+ * One billable lead-generation tick: discovery, contact lookup and drafting.
+ *
+ * Priced off measured cost rather than a guess. At the per-tick caps the run
+ * spends roughly 3.8c on ValueSERP (five discovery queries plus the contact
+ * fallback), 0.9c on drafting, and a fraction of a cent on rendering — about
+ * 4.9c at the ceiling and closer to 2c in ordinary use. Search dominates;
+ * the AI is under a fifth of it, so pricing off model cost alone would
+ * undercharge by roughly five times.
+ *
+ * Three credits is 15c at rack and 7.5c on the deepest pack, which keeps a
+ * margin at every tier. Two would have been exactly break-even for anyone on
+ * the 100-scan pack.
+ *
+ * Charged only when a tick actually spends: the cron fires every fifteen
+ * minutes, so billing an idle campaign per tick would cost a user 288 credits
+ * a day for no work.
+ */
+export const LEAD_RUN_CREDITS = 3;
+
 export type CreditPack = {
   id: string;
   label: string;
