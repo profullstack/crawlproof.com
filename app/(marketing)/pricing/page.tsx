@@ -3,6 +3,9 @@ import {
   CREDIT_PACKS,
   CREDIT_RACK_CENTS,
   ENGINES,
+  LEAD_RUN_CREDITS,
+  OUTREACH_CREDITS,
+  SCAN_CREDITS,
   discountPct,
   dollars,
   perCreditCents,
@@ -57,6 +60,49 @@ export default function PricingPage() {
           );
         })}
       </div>
+
+      {/* Credits buy more than scans, and a page that only prices scans makes
+          every other module look like it is either free or unavailable. */}
+      <section className="mt-14">
+        <h2 className="text-center text-2xl font-bold">What else credits buy</h2>
+        <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-[var(--color-muted)]">
+          One balance across the whole platform. No module has its own plan.
+        </p>
+        <div className="mx-auto mt-6 grid max-w-4xl gap-4 sm:grid-cols-3">
+          <div className="card p-5">
+            <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              {LEAD_RUN_CREDITS} credits
+            </div>
+            <h3 className="mt-1 font-bold">Lead generation run</h3>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              One pass of a campaign: discovery, contact lookup, drafting and sending. A run with
+              nothing to do is not charged.{" "}
+              <Link href="/lead-generation" className="underline">
+                How it works
+              </Link>
+            </p>
+          </div>
+          <div className="card p-5">
+            <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              {OUTREACH_CREDITS} credit
+            </div>
+            <h3 className="mt-1 font-bold">Outreach send</h3>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              One email, SMS recipient or social post sent by hand, outside a campaign run.
+            </p>
+          </div>
+          <div className="card p-5">
+            <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+              {SCAN_CREDITS} credits
+            </div>
+            <h3 className="mt-1 font-bold">Autoblog post</h3>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              A researched, illustrated, published long-form article — the same price as an
+              AI-model scan.
+            </p>
+          </div>
+        </div>
+      </section>
 
       <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {CREDIT_PACKS.map((p) => {

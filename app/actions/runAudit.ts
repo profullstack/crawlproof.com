@@ -47,10 +47,21 @@ async function notifyWorker(auditId: string, pdfEmail?: string) {
   }
 }
 
-const ALL_ENGINES: Engine[] = ["rule", "spec", "dns", "links", "vu1nz", "claude", "openai", "gemini", "qwen", "kimi", "deepseek", "zai", "perplexity", "fugu"];
+const ALL_ENGINES: Engine[] = ["rule", "spec", "dns", "links", "slop", "vu1nz", "claude", "openai", "gemini", "qwen", "kimi", "deepseek", "zai", "perplexity", "fugu"];
+
+// Free engines an anonymous visitor may pick from the hero form. Both are
+// deterministic, self-hosted, and page-budgeted, so opening them up costs us
+// nothing per run and can't be turned into an LLM-spend or partner-API faucet.
+// The per-IP anonymous daily limit still applies to both.
+const ANON_ENGINES: Engine[] = ["rule", "slop"];
 
 function normalizeEngines(input: unknown, signedIn: boolean): Engine[] {
-  if (!signedIn) return ["rule"];
+  if (!signedIn) {
+    const picked = Array.isArray(input)
+      ? input.find((e): e is Engine => typeof e === "string" && (ANON_ENGINES as string[]).includes(e))
+      : undefined;
+    return [picked ?? "rule"];
+  }
   if (!Array.isArray(input) || input.length === 0) return DEFAULT_PROJECT_ENGINES;
   const cleaned = dedupeEngines(
     input.filter((e): e is Engine =>

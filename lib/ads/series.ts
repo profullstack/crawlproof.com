@@ -8,6 +8,13 @@ export type CampaignDailyPoint = {
   spentCents: number;
 };
 
+export type SlotDailyPoint = {
+  /** UTC calendar day, YYYY-MM-DD */
+  date: string;
+  clicks: number;
+  earnedCents: number;
+};
+
 function dayKey(iso: string): string {
   return iso.slice(0, 10);
 }
@@ -23,11 +30,25 @@ function dayAxis(days: number): string[] {
   return out;
 }
 
+type DailySeriesRow = {
+  campaign_id: string;
+  day: string; // YYYY-MM-DD (UTC)
+  impressions: number | string;
+  clicks: number | string;
+  spent_cents: number | string;
+};
+
 /**
- * Per-campaign daily impressions / clicks / spend for the last `days`, built by
- * aggregating raw ad_impressions + ad_clicks rows in JS. RLS lets a campaign
- * owner read their own event rows (see 20260707140000_ad_serving.sql), so no
- * extra view/RPC — and no prod migration — is needed.
+ * Per-campaign daily impressions / clicks / spend for the last `days`.
+ *
+ * Aggregated server-side by the ad_campaign_daily_series RPC (security_invoker,
+ * so RLS scopes it to the caller's own campaigns). We must NOT fetch and bucket
+ * raw ad_impressions rows here: PostgREST caps a response at 1000 rows, so once
+ * total impressions in the window exceed 1000 a few high-volume campaigns eat
+ * the whole page and every other campaign gets zero rows back — rendering
+ * "no traffic yet" despite having recent impressions. The RPC returns at most
+ * (campaigns * days) rows, so it never hits the cap.
+ * See migration 20260717032002_ad_campaign_daily_series_rpc.sql.
  */
 export async function getCampaignDailySeries(
   supabase: SupabaseClient,
@@ -49,42 +70,87 @@ export async function getCampaignDailySeries(
     index.set(id, byDay);
   }
 
-  const since = new Date(
-    Date.now() - (days - 1) * 86_400_000,
-  );
-  const sinceStart = new Date(
-    Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()),
-  ).toISOString();
+  const { data, error } = await supabase.rpc("ad_campaign_daily_series", {
+    days,
+  });
+  // On error, fall back to the zero-filled series rather than throwing the page.
+  if (error) return result;
 
-  const [{ data: imps }, { data: clicks }] = await Promise.all([
-    supabase
-      .from("ad_impressions")
-      .select("campaign_id, ts")
-      .in("campaign_id", campaignIds)
-      .gte("ts", sinceStart),
-    supabase
-      .from("ad_clicks")
-      .select("campaign_id, ts, charged_cents, valid")
-      .in("campaign_id", campaignIds)
-      .eq("valid", true)
-      .gte("ts", sinceStart),
-  ]);
-
-  for (const row of (imps as { campaign_id: string; ts: string }[]) ?? []) {
-    const point = index.get(row.campaign_id)?.get(dayKey(row.ts));
-    if (point) point.impressions += 1;
-  }
-  for (const row of (clicks as {
-    campaign_id: string;
-    ts: string;
-    charged_cents: number | null;
-  }[]) ?? []) {
-    const point = index.get(row.campaign_id)?.get(dayKey(row.ts));
+  for (const row of (data as DailySeriesRow[]) ?? []) {
+    const point = index.get(row.campaign_id)?.get(dayKey(row.day));
     if (point) {
-      point.clicks += 1;
-      point.spentCents += row.charged_cents ?? 0;
+      point.impressions += Number(row.impressions) || 0;
+      point.clicks += Number(row.clicks) || 0;
+      point.spentCents += Number(row.spent_cents) || 0;
     }
   }
 
   return result;
+}
+
+type SlotSeriesRow = {
+  slot_id: string;
+  day: string; // YYYY-MM-DD (UTC)
+  clicks: number | string;
+  earned_cents: number | string;
+};
+
+/**
+ * Per-slot daily clicks / publisher earnings for the last `days`.
+ * Server-side aggregate via the ad_slot_daily_series RPC (security_invoker →
+ * RLS scopes to the caller's own slots). Same 1000-row-cap rationale as
+ * getCampaignDailySeries. See migration 20260717150000_ad_slot_daily_series_rpc.sql.
+ */
+export async function getSlotDailySeries(
+  supabase: SupabaseClient,
+  slotIds: string[],
+  days = 30,
+): Promise<Map<string, SlotDailyPoint[]>> {
+  const axis = dayAxis(days);
+  const result = new Map<string, SlotDailyPoint[]>();
+  const emptyFor = () => axis.map((date) => ({ date, clicks: 0, earnedCents: 0 }));
+  for (const id of slotIds) result.set(id, emptyFor());
+  if (slotIds.length === 0) return result;
+
+  const index = new Map<string, Map<string, SlotDailyPoint>>();
+  for (const id of slotIds) {
+    const byDay = new Map<string, SlotDailyPoint>();
+    for (const p of result.get(id)!) byDay.set(p.date, p);
+    index.set(id, byDay);
+  }
+
+  const { data, error } = await supabase.rpc("ad_slot_daily_series", { days });
+  if (error) return result;
+
+  for (const row of (data as SlotSeriesRow[]) ?? []) {
+    const point = index.get(row.slot_id)?.get(dayKey(row.day));
+    if (point) {
+      point.clicks += Number(row.clicks) || 0;
+      point.earnedCents += Number(row.earned_cents) || 0;
+    }
+  }
+
+  return result;
+}
+
+/** Merge campaign spend series + slot earnings series into one account-wide
+ * daily spend/earn axis (zero-filled, oldest first). */
+export function mergeMoneySeries(
+  campaign: Map<string, CampaignDailyPoint[]>,
+  slot: Map<string, SlotDailyPoint[]>,
+  days = 30,
+): { date: string; spentCents: number; earnedCents: number }[] {
+  const byDate = new Map<string, { date: string; spentCents: number; earnedCents: number }>();
+  for (const date of dayAxis(days)) byDate.set(date, { date, spentCents: 0, earnedCents: 0 });
+  for (const points of campaign.values())
+    for (const p of points) {
+      const d = byDate.get(p.date);
+      if (d) d.spentCents += p.spentCents;
+    }
+  for (const points of slot.values())
+    for (const p of points) {
+      const d = byDate.get(p.date);
+      if (d) d.earnedCents += p.earnedCents;
+    }
+  return [...byDate.values()];
 }

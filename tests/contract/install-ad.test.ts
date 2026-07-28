@@ -130,6 +130,32 @@ describe("installAdEmbed", () => {
     expect(written).toContain("next.config.ts");
   });
 
+  it("installs every available size before </body> with a single loader", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
+    );
+
+    await installAdEmbed({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      slotId: "slot-abc",
+    });
+
+    const write = github.putFile.mock.calls.find((c) => c[0].path === "app/layout.tsx");
+    expect(write).toBeDefined();
+    const content = write![0].contentUtf8 as string;
+    // A unit for every publisher size…
+    expect(content).toContain('data-format="banner_300x250"');
+    expect(content).toContain('data-format="banner_728x90"');
+    // …a single shared /ad.js loader for all of them…
+    expect(content.match(/ad\.js/g)?.length).toBe(1);
+    // …and everything lands above </body>.
+    expect(content.indexOf("data-cp-ad")).toBeLessThan(content.indexOf("</body>"));
+    expect(content.lastIndexOf("data-cp-ad")).toBeLessThan(content.indexOf("</body>"));
+  });
+
   it("no-ops when the embed exists and no CSP needs changes", async () => {
     github.files.set(
       "app/layout.tsx",

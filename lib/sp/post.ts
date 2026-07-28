@@ -7,6 +7,7 @@
 // Extracted so the v1 API can call it without depending on next/cache.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { graphemeLength } from "./blueskyFacets";
 import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
 import { enqueueBrowserPost } from "@/lib/lx/workerClient";
 import { resolveSubreddit } from "@/lib/sp/redditSubreddit";
@@ -71,6 +72,11 @@ export type PostOk = {
   postId: string;
   webUrl: string;
   platformPostId: string;
+  // True when the post was only *enqueued* (cookie-auth → async Playwright
+  // worker) and hasn't actually published yet. Callers must not treat this as a
+  // completed post: webUrl/platformPostId are empty and the real outcome is
+  // reconciled later from the worker. Absent/false = published synchronously.
+  pending?: boolean;
 };
 export type PostErr = { ok: false; error: string };
 export type PostResult = PostOk | PostErr;
@@ -137,16 +143,21 @@ export async function postViaAccount(args: {
       return { ok: false, error: insErr?.message ?? "Could not queue post." };
     }
     await enqueueBrowserPost(row.id);
-    return { ok: true, postId: row.id, webUrl: "", platformPostId: "" };
+    // Only enqueued — the Playwright worker publishes later and the caller
+    // reconciles the real URL/status then. Not a completed post.
+    return { ok: true, postId: row.id, webUrl: "", platformPostId: "", pending: true };
   }
 
   let title: string | null = null;
   let subreddit: string | null = null;
   if (account.platform === "bluesky") {
-    if (text.length > BLUESKY_MAX_CHARS) {
+    // Graphemes, not text.length: Bluesky counts the way a reader does, so
+    // an emoji is one character to it and two to JavaScript.
+    const length = graphemeLength(text);
+    if (length > BLUESKY_MAX_CHARS) {
       return {
         ok: false,
-        error: `Bluesky posts max ${BLUESKY_MAX_CHARS} chars (got ${text.length}).`,
+        error: `Bluesky posts max ${BLUESKY_MAX_CHARS} characters (got ${length}).`,
       };
     }
   } else if (account.platform === "reddit") {

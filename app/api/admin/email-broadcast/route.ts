@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { env } from "@/lib/env";
-import { createEmailer } from "@profullstack/emailer";
+import { createEmailer } from "@profullstack/stack/email";
 
 export const runtime = "nodejs";
 

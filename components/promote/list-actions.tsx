@@ -60,7 +60,7 @@ export function PromoteListActions({
         </button>
       ) : null}
       <button onClick={handlePostNow} disabled={pending} className="btn text-sm">
-        Post now
+        {pending ? "Posting…" : "Post now"}
       </button>
       {showEdit && (
         <Link href={`/promote/${id}`} className="btn text-sm">

@@ -15,10 +15,12 @@ import { LivePoller } from "@/components/report/live-poller";
 import { CopyLink } from "@/components/copy-link";
 import { ShareBanner } from "@/components/share-banner";
 import { EmailReportForm } from "@/components/report/email-report-form";
+import { WatchForm } from "@/components/report/watch-form";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import type { Finding } from "@/lib/audit/types";
 import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
+import { buildShareCard } from "@/lib/audit/share-card";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +35,7 @@ type SeoAudit = {
   created_at: string;
   owner_id: string | null;
   engine: string | null;
+  summary: Record<string, unknown> | null;
 };
 
 function hostOf(url: string): string {
@@ -47,7 +50,7 @@ async function loadSeoAudit(token: string): Promise<SeoAudit | null> {
   const svc = serviceClient();
   const { data } = await svc
     .from("audits")
-    .select("target_url, status, score, completed_at, created_at, owner_id, engine")
+    .select("target_url, status, score, completed_at, created_at, owner_id, engine, summary")
     .eq("share_token", token)
     .maybeSingle();
   return (data as SeoAudit | null) ?? null;
@@ -77,50 +80,52 @@ export async function generateMetadata({
     ? { index: true, follow: true, googleBot: { index: true, follow: true } }
     : { index: false, follow: false, googleBot: { index: false, follow: false } };
 
-  const scoreLabel =
-    audit.status === "complete" && audit.score !== null
-      ? ` — Score ${audit.score}/100`
-      : audit.status === "failed"
-        ? " — Failed"
-        : audit.status === "queued" || audit.status === "running"
-          ? " — Running"
-          : "";
+  // Derive the headline from the same model the OG card renders, so the text
+  // preview and the image can never disagree. They would otherwise: for a slop
+  // scan the headline number lives in `summary.slopScore` (0 = pristine) while
+  // `audits.score` holds the conventional AEO-style score, so a naive title
+  // showed "78/100" beside a card reading "34/100".
+  const card = buildShareCard(audit);
+  const complete = card.state === "complete" && card.score !== null;
+  const stateSuffix = card.state === "failed" ? " — Failed" : " — Running";
 
-  const description =
-    audit.status === "complete" && audit.score !== null
-      ? `AEO audit for ${host} scored ${audit.score}/100. See exactly what AI crawlers — GPTBot, ClaudeBot, PerplexityBot, Google-Extended — can find on the site, plus a prioritised to-do list of fixes.`
-      : `AEO audit for ${host} from CrawlProof. See what AI crawlers can find on the site.`;
+  const title = complete
+    ? card.kind === "slop"
+      ? `Slop Score ${card.score}/100 for ${host}`
+      : `AEO audit for ${host} — Score ${card.score}/100`
+    : card.kind === "slop"
+      ? `Slop Score for ${host}${stateSuffix}`
+      : `AEO audit for ${host}${stateSuffix}`;
+
+  const description = complete
+    ? card.kind === "slop"
+      ? `${host} scored ${card.score}/100 on the CrawlProof Slop Score, where 0 is pristine — ${card.headline}. A free sweep for observable defects: placeholder copy, near-duplicate pages, leaked template variables, stale dates, and design drift.`
+      : `AEO audit for ${host} scored ${card.score}/100. See exactly what AI crawlers — GPTBot, ClaudeBot, PerplexityBot, Google-Extended — can find on the site, plus a prioritised to-do list of fixes.`
+    : `AEO audit for ${host} from CrawlProof. See what AI crawlers can find on the site.`;
 
   return {
-    title: `AEO audit for ${host}${scoreLabel}`,
+    title,
     description,
     alternates: { canonical: url },
     robots,
     openGraph: {
       type: "article",
       url,
-      title: `AEO audit for ${host}${scoreLabel}`,
+      title,
       description,
       siteName: "CrawlProof",
       publishedTime: audit.created_at,
       modifiedTime: audit.completed_at ?? audit.created_at,
-      // Page-level openGraph replaces the layout block wholesale — no
-      // merging — so the banner has to be re-declared here or X/social
-      // previews end up with no thumbnail.
-      images: [
-        {
-          url: "/banner.png",
-          width: 1200,
-          height: 630,
-          alt: `CrawlProof AEO audit for ${host}`,
-        },
-      ],
+      // No `images` here on purpose. Declaring one would override the
+      // generated per-report card in ./opengraph-image.tsx and put every
+      // report back on the identical static banner. The file convention
+      // supplies og:image, its dimensions, and the alt text.
     },
     twitter: {
       card: "summary_large_image",
-      title: `AEO audit for ${host}${scoreLabel}`,
+      title,
       description,
-      images: ["/banner.png"],
+      // Same reason — the card file feeds twitter:image too.
     },
     other: {
       "article:section": "AEO Audit",
@@ -218,6 +223,11 @@ export default async function PublicReportPage({
   const reportAuditIds = reportAudits.map((row) => row.id);
 
   const seo = await loadSeoAudit(token);
+  // Same model the OG card uses, so the watch form names the same score the
+  // visitor is looking at (slop and AEO differ).
+  const watchCard = buildShareCard(
+    seo ?? { target_url: audit.target_url, status: audit.status, score: audit.score, engine: null },
+  );
   const canonicalUrl = `${env.siteUrl.replace(/\/$/, "")}/r/${token}`;
 
   const findingsByAuditId = new Map<string, Finding[]>();
@@ -313,11 +323,20 @@ export default async function PublicReportPage({
         )}
 
         {audit.status !== "failed" && (
-          <div className="mt-8">
+          <div className="mt-8 grid gap-4 lg:grid-cols-2">
             <EmailReportForm
               token={token}
               complete={audit.status === "complete"}
             />
+            {/* The recurring capture sits beside the one-shot PDF ask: the PDF
+                ends the conversation, the watch continues it. */}
+            {seo && (
+              <WatchForm
+                token={token}
+                host={watchCard.host}
+                label={watchCard.label}
+              />
+            )}
           </div>
         )}
       </main>

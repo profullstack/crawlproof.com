@@ -15,6 +15,17 @@ export const AD_FORMATS = [
 export type AdFormatId = (typeof AD_FORMATS)[number]["id"];
 export const AD_FORMAT_IDS = AD_FORMATS.map((f) => f.id) as AdFormatId[];
 
+// Sizes offered to publishers on the Monetize page — the ones they can copy an
+// embed for and install. A subset of AD_FORMATS that grows as each size is
+// surfaced (one PR per size). Keep the medium rectangle first: it's the safe
+// default the auto-installer falls back to.
+export const PUBLISHER_FORMAT_IDS: AdFormatId[] = [
+  "banner_300x250",
+  "banner_728x90",
+  "banner_320x50",
+  "text_link",
+];
+
 export function formatSpec(id: AdFormatId) {
   return AD_FORMATS.find((f) => f.id === id) ?? AD_FORMATS[0];
 }

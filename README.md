@@ -131,11 +131,22 @@ Credit purchases are created through `/api/credits/create-invoice`; successful w
 
 ### Free audit
 
-The homepage form queues a free rule-based audit. Email is optional: users get the on-page report immediately via `/r/<share_token>`, and receive a PDF only when they provide an email. Anonymous free scans are unlisted by default; `/recent` and sitemap deep links include only scans where the submitter explicitly opted into public listing. Common tracking parameters such as `utm_*`, `fbclid`, and `gclid` are stripped before new URLs are saved.
+The homepage form queues a free scan — either the rule-based **AEO audit** or the **Slop Score** (see below). Email is optional: users get the on-page report immediately via `/r/<share_token>`, and receive a PDF only when they provide an email. Anonymous free scans are unlisted by default; `/recent` and sitemap deep links include only scans where the submitter explicitly opted into public listing. Common tracking parameters such as `utm_*`, `fbclid`, and `gclid` are stripped before new URLs are saved.
 
 ### Project scan
 
 Signed-in users can save sites as projects, choose one or more engines, and run scans from the project page. A multi-engine scan creates one `audits` row per engine and ties them together with `scan_run_id` for side-by-side reports, consolidated Markdown/PDF, and project score history.
+
+### Slop Score
+
+`lib/audit/slop-engine.ts` sweeps up to 50 same-origin pages (sitemap.xml first, then breadth-first from the entry page) plus a handful of stylesheets, and scores how careless the site looks: **0 is pristine, 100 is maximum slop**. Analyzers live in `lib/audit/checks/slop.ts` across three dimensions — **content** (filler phrasing, no first-party evidence, thin/near-duplicate/boilerplate pages, placeholders, stale copyright, high-confidence misspellings), **code** (leaked template variables, dev/staging hosts, `console.*` and TODO leftovers, duplicate metadata, dead links, deprecated tags) and **design** (missing viewport, unsized images, placeholder alt text, stock-only imagery, inline-style density, palette/typography/`!important` sprawl). Output is the headline score plus a per-page fix list and systemic rollups for defects that live in a shared template.
+
+Two design rules matter when extending it:
+
+- **It reports observable defects, never "this was written by AI."** An AI-probability score is unfalsifiable, the classifiers are unreliable, and it would accuse paying customers. Every finding must be something the owner can verify in ten seconds and fix.
+- **Ambiguous markers only count in unambiguous positions.** Dogfooding on our own blog showed `coming soon`, `your brand name`, `[product]` and `[your site]` all appear in legitimate prose, and a `.netlify.app` hostname appears as scan-result *text* on `/recent` — so standalone-only matching and attribute-only host scanning are load-bearing, not stylistic. `tests/slop.test.ts` guards each case.
+
+It is free (`cost: 0`), runs no LLM, and is therefore immune to the shared-provider-quota outages that stall Autoblog.
 
 ### Credits and engines
 

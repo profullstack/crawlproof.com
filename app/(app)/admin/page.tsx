@@ -6,6 +6,7 @@ import { GrantCreditsForm, Vu1nzIntegrationForm } from "./form";
 import { IntegrationsManager } from "./integrations-form";
 import { env } from "@/lib/env";
 import { getVu1nzIntegrationStatus } from "@/lib/platform-integrations";
+import { ProviderCostsPanel } from "./provider-costs-panel";
 
 export const metadata = {
   title: "Admin · Crawlproof",
@@ -74,6 +75,31 @@ export default async function AdminPage() {
           <code>admin_credit_grants</code>.
         </p>
       </div>
+
+      {/* Spend is checked before anything else on this page. A drained provider
+          silently breaks audit engines, and previously the only way to notice
+          was opening three vendor dashboards. */}
+      <section className="card p-5">
+        <ProviderCostsPanel />
+      </section>
+
+      {/* Sits above every tool on this page: it is the only read surface for
+          captured leads, campaign sends, and watches, and a text link under the
+          heading was too easy to miss. */}
+      <section className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">Leads &amp; campaigns</h2>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Captured leads and their status, outbound campaign sends, watched
+              URLs, and live audience counts per segment.
+            </p>
+          </div>
+          <a href="/admin/leads" className="btn btn-primary whitespace-nowrap">
+            Open leads dashboard →
+          </a>
+        </div>
+      </section>
 
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Grant credits</h2>

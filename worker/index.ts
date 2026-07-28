@@ -5,6 +5,7 @@ import { runAudit } from "../lib/audit/engine";
 import { specAudit } from "../lib/audit/spec-engine";
 import { dnsAudit } from "../lib/audit/dns-engine";
 import { linksAudit } from "../lib/audit/links-engine";
+import { slopAudit } from "../lib/audit/slop-engine";
 import { vu1nzAudit } from "../lib/audit/vu1nz-engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
 import { openaiAudit } from "../lib/audit/openai-engine";
@@ -22,6 +23,8 @@ import { markdownToHtml, htmlDocument } from "../lib/markdown";
 import { auditReadyEmailHtml, scanRunSummaryEmailHtml, type SummaryEngineRow } from "../lib/email";
 import { ENGINES, type Engine } from "../lib/credits";
 import { buildScanRunMarkdown } from "../lib/audit/summary-markdown";
+import { quoteFromFindings, type Quote } from "../lib/audit/quote";
+import type { Finding } from "../lib/audit/types";
 import { auditStuckAfterMinutes, auditStuckAfterMs } from "../lib/audit/timeouts";
 import OpenAI from "openai";
 import { crawlSitemap } from "../lib/lx/sitemapCrawl";
@@ -39,6 +42,7 @@ import { processUserAlerts } from "../lib/alerts/worker";
 import { processDuePortScans } from "../lib/prober-queue";
 import { processDueMonitors } from "../lib/uptime";
 import { processDuePromoteLists } from "../lib/promote/sweep";
+import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -345,6 +349,7 @@ async function processJob(job: Job) {
         | "spec"
         | "dns"
         | "links"
+        | "slop"
         | "vu1nz"
         | "claude"
         | "openai"
@@ -393,6 +398,12 @@ async function processJob(job: Job) {
       markdown = r.markdown;
     } else if (engine === "links") {
       const r = await linksAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = r.markdown;
+    } else if (engine === "slop") {
+      const r = await slopAudit(audit.target_url);
       score = r.score;
       summary = r.summary;
       findings = r.findings;
@@ -683,6 +694,23 @@ async function maybeSendEmail(input: {
   await sendSummaryEmail({ scanRunId, projectId, pdfEmail, targetUrl, rows });
 }
 
+// Price the "we'll fix this for you" cover offer from the findings we just
+// wrote. Best-effort — a failed lookup drops the offer rather than the PDF.
+async function quoteForAudits(auditIds: string[]): Promise<Quote | undefined> {
+  if (auditIds.length === 0) return undefined;
+  try {
+    const { data, error } = await supabase
+      .from("audit_findings")
+      .select("section, check_key, status, title, priority")
+      .in("audit_id", auditIds);
+    if (error || !data || data.length === 0) return undefined;
+    return quoteFromFindings(data as unknown as Finding[]);
+  } catch (err) {
+    console.warn("[worker] quote lookup failed; PDF will omit the offer", err);
+    return undefined;
+  }
+}
+
 async function sendPerEngineEmail(input: {
   auditId: string;
   pdfEmail: string;
@@ -703,6 +731,7 @@ async function sendPerEngineEmail(input: {
       score,
       generatedAt: new Date().toISOString(),
     },
+    quote: await quoteForAudits([auditId]),
   });
   const pdf = await renderPdfFromHtml(html);
   const filename = `crawlproof-${new URL(targetUrl).hostname}-${auditId.slice(0, 8)}.pdf`;
@@ -779,6 +808,8 @@ async function sendSummaryEmail(input: {
       score: avgScore ?? undefined,
       generatedAt: new Date().toISOString(),
     },
+    // Consolidated PDF quotes the whole job — every engine in the run.
+    quote: await quoteForAudits(rows.filter((r) => r.status === "complete").map((r) => r.id)),
   });
   const pdf = await renderPdfFromHtml(combinedHtml);
   const filename = `crawlproof-${host}-${scanRunId.slice(0, 8)}.pdf`;
@@ -831,12 +862,18 @@ const server = http.createServer(async (req, res) => {
         const payload = JSON.parse(body || "{}") as {
           token?: string;
           markdown?: string;
+          html?: string;
           title?: string;
           target?: string;
           score?: number;
+          quote?: Quote;
         };
         let pdf: Buffer;
-        if (payload.markdown) {
+        if (payload.html) {
+          // Caller supplies a complete, self-contained HTML document (e.g. the
+          // ads earnings report). Render it as-is — no markdown step.
+          pdf = await renderPdfFromHtml(payload.html);
+        } else if (payload.markdown) {
           const bodyHtml = await markdownToHtml(payload.markdown);
           const html = htmlDocument({
             title: payload.title ?? "CrawlProof audit",
@@ -846,6 +883,7 @@ const server = http.createServer(async (req, res) => {
               score: payload.score,
               generatedAt: new Date().toISOString(),
             },
+            quote: payload.quote,
           });
           pdf = await renderPdfFromHtml(html);
         } else if (payload.token) {
@@ -1089,6 +1127,20 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  if (req.method === "POST" && req.url === "/promote/sweep") {
+    // Immediate "Post now": run the promote sweep out-of-band so a manually
+    // triggered list (its next_run_at set to now by the server action) posts
+    // right away instead of waiting up to 60s for the periodic tick.
+    if ((req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    res.writeHead(202, { "content-type": "application/json" });
+    res.end(JSON.stringify({ accepted: true }));
+    promoteSweep().catch((e) => console.error("[worker] promote sweep (triggered)", e));
+    return;
+  }
   if (req.method !== "POST" || req.url !== "/enqueue") {
     res.writeHead(404);
     res.end();
@@ -1266,7 +1318,7 @@ async function promoteSweep() {
   const r = await processDuePromoteLists(supabase, { anthropic, openai });
   if (r.postsAttempted > 0) {
     console.log(
-      `[worker] promote sweep lists=${r.listsProcessed} attempted=${r.postsAttempted} ok=${r.postsSucceeded} fail=${r.postsFailed} paused=${r.listsPaused}`,
+      `[worker] promote sweep lists=${r.listsProcessed} attempted=${r.postsAttempted} ok=${r.postsSucceeded} pending=${r.postsPending} fail=${r.postsFailed} paused=${r.listsPaused}`,
     );
   }
 }
@@ -1299,6 +1351,35 @@ setInterval(
   15_000,
 );
 
+// Session keep-alive daemon. A FREQUENT tick — not a 24h timer, which would
+// reset on every deploy/restart and so almost never fire. The sweep's 23h
+// per-account DB gate (session_refreshed_at) makes each cookie account actually
+// refresh about once a day, restart-proof: whatever tick lands after an account
+// crosses 23h re-warms it. Reloads each active cookie account with its stored
+// cookies and re-saves the rotated (sliding-expiry) cookies to extend the
+// session; flags dead sessions token_expired so the user reconnects before a
+// post fails. Most ticks find nothing due and are a cheap no-op query.
+const SESSION_REFRESH_TICK_MS = 30 * 60 * 1000; // 30 min
+let sessionRefreshRunning = false;
+async function sessionRefreshSweep() {
+  if (sessionRefreshRunning) return; // never overlap runs (browser launches are slow)
+  sessionRefreshRunning = true;
+  try {
+    const r = await refreshCookieSessions(supabase);
+    if (r.checked > 0) {
+      console.log(
+        `[worker] session refresh checked=${r.checked} refreshed=${r.refreshed} expired=${r.expired} skipped=${r.skipped}`,
+      );
+    }
+  } finally {
+    sessionRefreshRunning = false;
+  }
+}
+setInterval(
+  () => sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e)),
+  SESSION_REFRESH_TICK_MS,
+);
+
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to
 // run as a separate Railway service.
@@ -1308,4 +1389,5 @@ server.listen(port, bindHost, () => {
   sweep().catch(() => {});
   socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e));
   promoteSweep().catch((e) => console.error("[worker] promote sweep", e));
+  sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
 });
