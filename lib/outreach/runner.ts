@@ -78,9 +78,16 @@ export type TickResult = {
 const MAX_DISCOVER_PER_TICK = 15;
 const MAX_RESEARCH_PER_TICK = 8;
 const MAX_SEND_PER_TICK = 5;
+// Ceiling on search-based contact lookups per tick. The fallback is the most
+// variable cost in a run — SERP calls scale with how many prospects publish
+// no address — so it gets a ceiling like every other per-tick stage.
+const MAX_CONTACT_SEARCHES_PER_TICK = 10;
 
 export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickResult> {
   const sb = serviceClient();
+  // Shared across every prospect this tick researches, so the ceiling is per
+  // run rather than per prospect.
+  const contactSearchBudget = { remaining: MAX_CONTACT_SEARCHES_PER_TICK };
   const result: TickResult = {
     campaign: campaign.name,
     discovered: 0,
@@ -188,6 +195,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
       url: p.site_url ?? `https://${p.target_key}`,
       campaignId: campaign.id,
       skipScan: !campaign.scan_prospects,
+      contactSearchBudget,
     });
     if (res.status === "researched") {
       result.researched += 1;
@@ -261,6 +269,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
         // every newly discovered domain, so missing it meant a campaign with
         // scanning off still scanned everything it found.
         skipScan: !campaign.scan_prospects,
+        contactSearchBudget,
       });
       if (res.status === "scanning") {
         result.scansStarted += 1;

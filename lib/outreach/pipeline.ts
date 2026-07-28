@@ -276,6 +276,15 @@ export async function researchProspect(input: {
   discoveryLabel?: string | null;
   /** Don't queue a scan for prospects we have no audit for. */
   skipScan?: boolean;
+  /**
+   * Shared, mutable allowance for the search-based contact fallback.
+   *
+   * The fallback spends SERP calls per prospect, so it is the most variable
+   * cost in a tick. The budget is passed rather than counted internally
+   * because it has to be shared across every prospect the tick researches.
+   * Omitted means unlimited, which is what one-off manual research wants.
+   */
+  contactSearchBudget?: { remaining: number };
 }): Promise<ResearchResult> {
   const check = isAllowedTargetUrl(input.url);
   if (!check.ok) return { status: "error", message: check.reason };
@@ -344,7 +353,9 @@ export async function researchProspect(input: {
 
   // Same second step as the unscanned path: a scan we can talk about is
   // worth nothing if there is no address to send it to.
-  if (!contact) {
+  const auditBudget = input.contactSearchBudget;
+  if (!contact && (!auditBudget || auditBudget.remaining > 0)) {
+    if (auditBudget) auditBudget.remaining -= 1;
     const viaSearch = await findContactViaSearch({ host, label: input.discoveryLabel });
     if (viaSearch.candidates.length) {
       candidates = [...candidates, ...viaSearch.candidates];
@@ -412,6 +423,7 @@ async function researchWithoutScan(input: {
   notes?: string | null;
   discoveredVia?: string | null;
   discoveryLabel?: string | null;
+  contactSearchBudget?: { remaining: number };
   host: string;
   target: string;
 }): Promise<ResearchResult> {
@@ -431,7 +443,9 @@ async function researchWithoutScan(input: {
   // The site published nothing reachable. Rather than park the prospect at
   // "new" forever, look the business up — plenty of portfolios hide contact
   // behind a form or an image, and the address exists somewhere else.
-  if (!contact) {
+  const budget = input.contactSearchBudget;
+  if (!contact && (!budget || budget.remaining > 0)) {
+    if (budget) budget.remaining -= 1;
     const viaSearch = await findContactViaSearch({ host, label: input.discoveryLabel });
     if (viaSearch.candidates.length) {
       candidates = [...candidates, ...viaSearch.candidates];
