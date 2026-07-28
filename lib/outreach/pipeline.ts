@@ -49,6 +49,7 @@ import { findContactViaSearch } from "./contactFallback";
 import { loadProjectMailbox } from "./senderMailbox";
 import { loadRecipientContext, recipientContextPrompt } from "./recipientContext";
 import { upsertContact } from "./contacts";
+import { contactsFromDocuments, teamPageLinks } from "./documents";
 
 export type ProspectRow = {
   id: string;
@@ -248,6 +249,27 @@ export async function findContact(host: string): Promise<ContactCandidate[]> {
     if (path === "/") continue;
     const html = await fetchPage(`https://${host}${path}`);
     if (html && collect(html)) break;
+  }
+
+  // The site's own pages had nothing. Two places remain that are still on
+  // their domain and still free, and both are tried before the search
+  // fallback that costs money and long before guessing an address.
+  if (home && !found.some((c) => c.sameDomain)) {
+    // A team page names people, and a named person's address beats info@ by
+    // enough to be worth one more fetch.
+    for (const link of teamPageLinks(home, `https://${host}/`)) {
+      const html = await fetchPage(link);
+      if (html && collect(html)) return dedupe(found);
+    }
+
+    // And the address is often only inside a linked document — a capability
+    // statement or a media kit — on a page whose HTML says nothing.
+    const docs = await contactsFromDocuments({
+      html: home,
+      sourceUrl: `https://${host}/`,
+      host,
+    });
+    found.push(...docs.candidates);
   }
 
   return dedupe(found);
