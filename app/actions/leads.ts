@@ -511,6 +511,8 @@ export async function saveCampaignAction(input: {
    * campaign did before intent existed.
    */
   minIntent?: number | null;
+  /** Plain prose: what this campaign sells. Enables description matching. */
+  sellsDescription?: string;
 }): Promise<Ok<{ note: string }> | Err> {
   const auth = await requireLeadAccess(input.projectId);
   if (!auth.ok) return auth;
@@ -584,6 +586,7 @@ export async function saveCampaignAction(input: {
           input.minIntent === null || input.minIntent === undefined
             ? null
             : Math.max(0, Math.min(100, Math.round(input.minIntent))),
+        sells_description: input.sellsDescription?.trim() || null,
         angle: input.angle?.trim() || null,
         sender_name: input.senderName?.trim() || null,
         reply_to: input.replyTo?.trim() || null,

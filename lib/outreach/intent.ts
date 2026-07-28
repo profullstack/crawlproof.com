@@ -230,6 +230,12 @@ export type IntentSignal = {
    * is the difference between a lead and a bystander with the same question.
    */
   decisionMaker: boolean;
+  /**
+   * Which path put this on topic. Null means the keyword path found nothing
+   * and a description judgement has not been made yet — never that the signal
+   * is off-topic, which is what `disqualified` is for.
+   */
+  matchPath: "keyword" | "description" | null;
 };
 
 /**
@@ -263,6 +269,12 @@ export function scoreIntent(input: {
   /** Campaign topic words. At least one must appear. */
   keywords?: string[];
   negativeKeywords?: string[];
+  /**
+   * Let a signal survive a keyword miss so a description judgement can decide.
+   * Off by default: without somewhere to send the survivors this would simply
+   * widen the funnel.
+   */
+  allowDescriptionMatch?: boolean;
   now?: Date;
 }): IntentSignal {
   const text = (input.text ?? "").slice(0, 8000);
@@ -278,6 +290,7 @@ export function scoreIntent(input: {
     disqualified: null,
     ageHours,
     decisionMaker: false,
+    matchPath: null,
   };
   if (!text.trim()) return { ...base, disqualified: "no text to read" };
 
@@ -295,10 +308,17 @@ export function scoreIntent(input: {
   const keywords = (input.keywords ?? []).filter((k) => k.trim());
   if (keywords.length) {
     const hits = keywords.filter((k) => text.toLowerCase().includes(k.toLowerCase()));
-    if (!hits.length) {
+    if (hits.length) {
+      base.matchPath = "keyword";
+      base.reasons.push(`mentions ${hits.slice(0, 3).join(", ")}`);
+    } else if (!input.allowDescriptionMatch) {
       return { ...base, disqualified: "on-topic for nobody — no campaign keyword appears" };
     }
-    base.reasons.push(`mentions ${hits.slice(0, 3).join(", ")}`);
+    // With a description to judge against, a keyword miss is not a verdict.
+    // The people worth reaching describe their problem, not the product
+    // category that solves it, so the best requests avoid the campaign's
+    // vocabulary by construction. matchPath stays null for the caller to
+    // resolve.
   }
 
   const matched = TIERS.filter((t) => t.patterns.some((p) => p.test(text)));
@@ -309,6 +329,7 @@ export function scoreIntent(input: {
       tier: "none",
       disqualified: null,
       reasons: [...base.reasons, "no expression of intent — nobody asked for anything"],
+      matchPath: base.matchPath,
     };
   }
 
@@ -346,6 +367,7 @@ export function scoreIntent(input: {
     disqualified: factor === 0 ? `older than ${Math.round(MAX_AGE_HOURS / 24)} days` : null,
     ageHours,
     decisionMaker: authority.bonus > 0,
+    matchPath: base.matchPath,
   };
 }
 
