@@ -79,7 +79,7 @@ export async function findLeadsAction(input: {
   }
 
   let added = 0;
-  let scanning = 0;
+  const scanning = 0;
   for (const candidate of found.prospects.slice(0, limit)) {
     const res = await researchProspect({
       userId: auth.userId,
@@ -87,11 +87,15 @@ export async function findLeadsAction(input: {
       url: candidate.url,
       discoveredVia: candidate.via,
       discoveryLabel: candidate.label,
+      // Finding leads for a project does not scan them. The scan exists to
+      // supply findings for the CrawlProof audit pitch, and firing one at
+      // every discovered business spends worker time on evidence nobody is
+      // going to cite — and points a scanner at people who only turned up in
+      // a search. Campaigns that do pitch an audit turn scanning back on
+      // explicitly.
+      skipScan: true,
     });
-    if (res.status === "scanning") {
-      scanning += 1;
-      added += 1;
-    } else if (res.status === "researched") {
+    if (res.status === "researched") {
       added += 1;
     }
   }
@@ -101,9 +105,7 @@ export async function findLeadsAction(input: {
     ok: true,
     added,
     scanning,
-    note: scanning
-      ? `${added} leads added — ${scanning} are scanning now. Refresh in a minute to see scores.`
-      : `${added} leads added.`,
+    note: `${added} leads added.`,
   };
 }
 

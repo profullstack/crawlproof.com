@@ -76,7 +76,11 @@ export function CampaignPanel({
   const [pitchIntro, setPitchIntro] = useState("");
   const [pitchAsk, setPitchAsk] = useState("");
   const [pitchFacts, setPitchFacts] = useState("");
-  const [scanProspects, setScanProspects] = useState(true);
+  // Scanning is off by default now: a project-level campaign is pitching the
+  // project's own offer, not a CrawlProof audit, so there is nothing for a
+  // scan of the prospect to contribute. Selecting the audit pitch turns it
+  // back on, because that pitch is built from findings.
+  const [scanProspects, setScanProspects] = useState(false);
   const [senderName, setSenderName] = useState("");
   const [replyTo, setReplyTo] = useState("");
 
