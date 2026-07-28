@@ -9,6 +9,8 @@ import { CampaignPanel, type CampaignSummary } from "@/components/leads/campaign
 import { SenderAddress } from "@/components/leads/sender-address";
 import { MailboxConnect, type ConnectedMailbox } from "@/components/leads/mailbox-connect";
 import { SeedLogins } from "@/components/leads/seed-logins";
+import { FunnelPanel } from "@/components/leads/funnel-panel";
+import { campaignFunnels, projectFunnel } from "@/lib/outreach/funnel";
 import { listSeedCredentials, type StoredSeedCredential } from "@/lib/outreach/seedCredentials";
 import { RefreshLeads } from "@/components/leads/refresh-leads";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
@@ -154,6 +156,14 @@ export default async function LeadsPage({
     .eq("id", projectId)
     .maybeSingle();
   const orgId = (projectRow?.organization_id as string | null) ?? null;
+  // Measured outcomes, project-wide and per campaign. Both read the same
+  // tables the pipeline already writes, so this costs two queries rather than
+  // any new bookkeeping.
+  const [funnel, perCampaignFunnel] = await Promise.all([
+    projectFunnel(projectId),
+    campaignFunnels(projectId),
+  ]);
+
   let seedCredentials: StoredSeedCredential[] = [];
   if (orgId) seedCredentials = await listSeedCredentials(orgId);
 
@@ -212,6 +222,8 @@ export default async function LeadsPage({
       <LeadFinder projectId={projectId} />
 
       <CampaignPanel projectId={projectId} campaigns={campaigns} canSendLive={canSendLive} />
+
+      <FunnelPanel project={funnel} campaigns={perCampaignFunnel} />
 
       <SeedLogins
         projectId={projectId}
@@ -296,6 +308,7 @@ export default async function LeadsPage({
                       host={p.target_key}
                       hasContact={Boolean(p.contact_email)}
                       nextStep={Math.min((p.last_step ?? 0) + 1, 3)}
+                      status={p.status}
                     />
                   )}
                 </li>
