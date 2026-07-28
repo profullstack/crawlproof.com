@@ -68,7 +68,13 @@ export async function findLeadsAction(input: {
     return { ok: false, error: "Enter a search query or a directory URL." };
   }
 
-  const limit = Math.min(input.limit ?? 10, 25);
+  // A directory can list hundreds of businesses; capping a one-shot run at
+  // ten meant the form reported a fraction of a page and looked broken.
+  const limit = Math.min(input.limit ?? 100, 1000);
+  // Contact lookup is the part that costs money — up to two SERP calls per
+  // prospect that publishes no address — so a thousand-lead run gets an
+  // explicit ceiling rather than an unbounded bill.
+  const contactSearchBudget = { remaining: Math.min(limit, 100) };
   const found = await discoverProspects({
     queries: input.query?.trim() ? [input.query.trim()] : [],
     seedUrls: input.seedUrl?.trim() ? [input.seedUrl.trim()] : [],
@@ -87,6 +93,7 @@ export async function findLeadsAction(input: {
       url: candidate.url,
       discoveredVia: candidate.via,
       discoveryLabel: candidate.label,
+      contactSearchBudget,
       // Finding leads for a project does not scan them. The scan exists to
       // supply findings for the CrawlProof audit pitch, and firing one at
       // every discovered business spends worker time on evidence nobody is

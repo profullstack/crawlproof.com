@@ -24,7 +24,11 @@ import { normalizeHost } from "./cold";
 import { loadSeedCredential, makeSeedCodeWaiter, recordSeedCredentialResult, seedHost } from "./seedCredentials";
 import type { CodeWaiter } from "@/lib/sp/verificationChallenge";
 import { looksLikeLoginWall } from "./loginWall";
+import { extractPerson, type ExtractedPerson } from "./person";
 import type { SeedCredentials } from "./seedLogin";
+
+/** A person found on a page, with where they were found. */
+export type DiscoveredPerson = ExtractedPerson & { sourceUrl: string };
 
 export type DiscoveredProspect = {
   host: string;
@@ -148,7 +152,7 @@ export function extractOutboundProspects(input: {
   const out = new Map<string, DiscoveredProspect>();
 
   $("a[href]").each((_, el) => {
-    if (out.size >= (input.limit ?? 100)) return false;
+    if (out.size >= (input.limit ?? 1000)) return false;
     const href = ($(el).attr("href") ?? "").trim();
     if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) {
       return undefined;
@@ -234,7 +238,22 @@ export function extractSameHostLinks(input: {
     return undefined;
   });
 
-  return [...out];
+  // Entity pages first. Nav and marketing links appear earlier in the
+  // document than the listing itself, so document order spends the page
+  // budget on "For CEOs and Founders" and never reaches a single profile.
+  return [...out].sort((a, b) => Number(isEntityPath(b)) - Number(isEntityPath(a)));
+}
+
+/** Paths that name one entity rather than a section of the site. */
+const ENTITY_PATH_RE =
+  /\/(profile|profiles|people|person|member|members|author|u|in|company|listing|business)\/[^/]+$/i;
+
+function isEntityPath(url: string): boolean {
+  try {
+    return ENTITY_PATH_RE.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
 }
 
 /** Same-host paths that are navigation or account plumbing, never a business. */
@@ -292,6 +311,16 @@ async function loadSeedHtml(
   allowRender: boolean,
   credentials?: SeedCredentials | null,
   codeWaiter?: CodeWaiter | null,
+  /**
+   * Treat same-host entity links as content too.
+   *
+   * A directory's value is the entries it lists, not the sites it links out
+   * to. Judging "did the fetch work" purely on outbound links accepts the
+   * shell of a client-rendered directory — its own footer satisfies the
+   * test — and the listing, which is the entire point of the page, is never
+   * loaded.
+   */
+  wantEntityLinks = false,
 ): Promise<{ html: string; rendered: boolean } | { error: string; loginRequired?: boolean }> {
   const direct = await fetchHtml(url);
   // A login wall is settled unless we hold a credential — without one,
@@ -300,8 +329,14 @@ async function loadSeedHtml(
     return { error: direct.error, loginRequired: true };
   }
   if (direct.ok) {
-    const hasCandidates = extractOutboundProspects({ html: direct.html, sourceUrl: url, limit: 1 }).length > 0;
-    if (hasCandidates || !allowRender) return { html: direct.html, rendered: false };
+    const hasCandidates =
+      extractOutboundProspects({ html: direct.html, sourceUrl: url, limit: 1 }).length > 0;
+    const hasEntries =
+      !wantEntityLinks ||
+      extractSameHostLinks({ html: direct.html, sourceUrl: url, limit: 5 }).some(isEntityPath);
+    if ((hasCandidates && hasEntries) || !allowRender) {
+      return { html: direct.html, rendered: false };
+    }
   } else if (!allowRender) {
     return { error: direct.error };
   }
@@ -342,19 +377,34 @@ export async function discoverFromSeed(input: {
   detailHopThreshold?: number;
 }): Promise<{
   prospects: DiscoveredProspect[];
+  /**
+   * People named on the pages that were opened.
+   *
+   * Collected alongside prospects rather than instead of them. A directory
+   * page often yields both — the people it lists and its own contact
+   * address — and picking one throws away half of what the page offered.
+   */
+  people: DiscoveredPerson[];
   error?: string;
   notes?: string[];
   /** Set when the seed was withheld pending a login, so the UI can offer to store one. */
   loginRequired?: boolean;
 }> {
-  const limit = input.limit ?? 100;
+  const limit = input.limit ?? 1000;
   const allowRender = input.render !== false;
   const notes: string[] = [];
 
-  const seed = await loadSeedHtml(input.seedUrl, allowRender, input.credentials, input.codeWaiter);
+  const seed = await loadSeedHtml(
+    input.seedUrl,
+    allowRender,
+    input.credentials,
+    input.codeWaiter,
+    (input.depth ?? 1) >= 2,
+  );
   if ("error" in seed) {
     return {
       prospects: [],
+      people: [],
       error: `seed ${input.seedUrl} failed: ${seed.error}`,
       loginRequired: seed.loginRequired,
     };
@@ -362,9 +412,13 @@ export async function discoverFromSeed(input: {
   if (seed.rendered) notes.push(`rendered ${input.seedUrl} in a browser`);
 
   const merged = new Map<string, DiscoveredProspect>();
+  const people = new Map<string, DiscoveredPerson>();
   for (const p of extractOutboundProspects({ html: seed.html, sourceUrl: input.seedUrl, limit })) {
     if (!merged.has(p.host)) merged.set(p.host, p);
   }
+  // A seed page is occasionally itself a profile.
+  const seedPerson = extractPerson(seed.html, input.seedUrl);
+  if (seedPerson) people.set(seedPerson.fullName, { ...seedPerson, sourceUrl: input.seedUrl });
 
   // The second hop is expensive — one page load per listing, each possibly a
   // browser render — so it only runs when the first hop came up short. A
@@ -392,11 +446,49 @@ export async function discoverFromSeed(input: {
       })) {
         if (!merged.has(p.host)) merged.set(p.host, p);
       }
+      // Both, from the same fetch. A people directory links only to itself,
+      // so the outbound pass above finds nothing there — but the page still
+      // names someone, and that is the whole reason the page was opened.
+      let person = extractPerson(detail.html, detailUrl);
+
+      // A profile whose identity is injected client-side needs the render
+      // that loadSeedHtml declined to do. Its "good enough" test is whether
+      // the fetch produced any outbound candidate, and a directory's own
+      // footer satisfies that — so the shell is accepted and the person, who
+      // only exists after scripts run, is never seen. Rendering is retried
+      // only when the page looks like it should have named someone and
+      // didn't, so an ordinary listicle still costs one fetch.
+      if (!person && !detail.rendered && allowRender && isEntityPath(detailUrl)) {
+        const { renderPage } = await import("./render");
+        const rendered = await renderPage(detailUrl, {
+          credentials: input.credentials,
+          codeWaiter: input.codeWaiter,
+        });
+        if (rendered.ok) {
+          person = extractPerson(rendered.html, detailUrl);
+          for (const p of extractOutboundProspects({
+            html: rendered.html,
+            sourceUrl: detailUrl,
+            limit: limit - merged.size,
+          })) {
+            if (!merged.has(p.host)) merged.set(p.host, p);
+          }
+        }
+      }
+
+      if (person && !people.has(person.fullName)) {
+        people.set(person.fullName, { ...person, sourceUrl: detailUrl });
+      }
     }
     notes.push(`opened ${detailPages.length} listing entries`);
   }
 
-  return { prospects: [...merged.values()], notes: notes.length ? notes : undefined };
+  if (people.size) notes.push(`named ${people.size} people`);
+  return {
+    prospects: [...merged.values()],
+    people: [...people.values()],
+    notes: notes.length ? notes : undefined,
+  };
 }
 
 /** Which search backend to use. */
