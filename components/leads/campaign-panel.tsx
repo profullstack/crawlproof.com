@@ -9,6 +9,7 @@ import {
   toggleCampaignAction,
 } from "@/app/actions/leads";
 import { LEAD_RUN_CREDITS } from "@/lib/credits";
+import { DEFAULT_MIN_INTENT } from "@/lib/outreach/intent";
 
 export type CampaignRun = {
   ran_at: string;
@@ -84,9 +85,10 @@ export function CampaignPanel({
   // scan of the prospect to contribute. Selecting the audit pitch turns it
   // back on, because that pitch is built from findings.
   const [scanProspects, setScanProspects] = useState(false);
-  // Null means "don't qualify on intent" — the behaviour every campaign had
-  // before this existed, and the default for anything already running.
-  const [minIntent, setMinIntent] = useState<number | null>(null);
+  // On by default for a new campaign. Writing to people who never asked is
+  // the failure mode the whole feature exists to avoid, so it should be what
+  // you turn off deliberately rather than what you remember to turn on.
+  const [minIntent, setMinIntent] = useState<number | null>(DEFAULT_MIN_INTENT);
   const [goal, setGoal] = useState("");
   const [generating, setGenerating] = useState(false);
   const [pitchNote, setPitchNote] = useState<string | null>(null);
@@ -503,7 +505,7 @@ export function CampaignPanel({
               type="checkbox"
               className="mt-1"
               checked={minIntent !== null}
-              onChange={(e) => setMinIntent(e.target.checked ? 40 : null)}
+              onChange={(e) => setMinIntent(e.target.checked ? DEFAULT_MIN_INTENT : null)}
             />
             <span>
               Only work leads who publicly asked to buy
