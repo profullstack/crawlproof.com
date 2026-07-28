@@ -25,6 +25,9 @@ export type CampaignSummary = {
   seed_urls: string[];
   last_run_at: string | null;
   last_run_note: string | null;
+  angle: string | null;
+  sender_name: string | null;
+  reply_to: string | null;
   pitch_mode: "audit" | "custom";
   pitch_intro: string | null;
   pitch_ask: string | null;
@@ -123,20 +126,30 @@ export function CampaignPanel({
     setPitchAsk(c.pitch_ask ?? "");
     setPitchFacts((c.pitch_facts ?? []).join("\n"));
     setScanProspects(c.scan_prospects);
+    // Every field the form submits has to be loaded, not just the ones that
+    // changed recently: save() sends the whole form, so anything left blank
+    // here is written back as blank and silently wipes the column.
+    setAngle(c.angle ?? "");
+    setSenderName(c.sender_name ?? "");
+    setReplyTo(c.reply_to ?? "");
     setOpen(true);
   };
 
   const save = () =>
-    act(async () =>
-      saveCampaignAction({
+    act(async () => {
+      // A new campaign deliberately starts paused-for-sending so its first
+      // drafts can be read. An edit must not quietly re-apply that: it would
+      // switch sending off, and un-pause a campaign the user had paused.
+      const existing = campaigns.find((c) => c.name === editing);
+      const result = await saveCampaignAction({
         projectId,
         name,
         queries,
         seedUrls,
         maxScore,
         dailySendLimit: dailyLimit,
-        autoSend: false,
-        active: true,
+        autoSend: existing?.auto_send ?? false,
+        active: existing?.active ?? true,
         angle,
         senderName,
         replyTo,
@@ -145,8 +158,10 @@ export function CampaignPanel({
         pitchAsk,
         pitchFacts,
         scanProspects,
-      }),
-    );
+      });
+      if (result.ok) setEditing(null);
+      return result;
+    });
 
   return (
     <section className="card p-4">
