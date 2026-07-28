@@ -60,6 +60,11 @@ export const env = {
   backendAiOpenaiModel:
     process.env.BACKEND_AI_OPENAI_MODEL ?? "gpt-5.5",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  // Daily AI spend that triggers a warning. It warns only — nothing throttles
+  // or pauses on it, because an alarm that turns the product off is worse
+  // than the bill it was meant to prevent.
+  aiSpendDailyAlertUsd: Number(process.env.AI_SPEND_DAILY_ALERT_USD ?? "15"),
+  aiSpendAlertEmail: process.env.AI_SPEND_ALERT_EMAIL ?? "anthony@profullstack.com",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? "",   // Qwen
