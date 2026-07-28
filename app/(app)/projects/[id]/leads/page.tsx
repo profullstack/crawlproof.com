@@ -91,7 +91,38 @@ export default async function LeadsPage({
 
   const prospects = (prospectData as ProspectRow[] | null) ?? [];
   const sends = (sendData as SendRow[] | null) ?? [];
-  const campaigns = (campaignData as CampaignSummary[] | null) ?? [];
+  const campaignRows = (campaignData as (CampaignSummary & { id: string })[] | null) ?? [];
+
+  // Recent ticks per campaign. last_run_note holds only the newest line, so
+  // without this there is no way to see that a campaign has been erroring for
+  // an hour, or that it has never found anything at all.
+  const { data: runData } = await supabase
+    .from("outreach_campaign_runs")
+    .select("campaign_id, ran_at, summary, ok, errors")
+    .in("campaign_id", campaignRows.map((c) => c.id))
+    .order("ran_at", { ascending: false })
+    .limit(60);
+
+  const runsByCampaign = new Map<string, CampaignSummary["runs"]>();
+  for (const r of (runData as Record<string, unknown>[] | null) ?? []) {
+    const key = r.campaign_id as string;
+    const list = runsByCampaign.get(key) ?? [];
+    if (list.length >= 8) continue;
+    list.push({
+      ran_at: r.ran_at as string,
+      summary: (r.summary as string) ?? "",
+      ok: (r.ok as boolean) ?? true,
+      errors: Array.isArray(r.errors) ? (r.errors as string[]) : [],
+    });
+    runsByCampaign.set(key, list);
+  }
+
+  const campaigns: CampaignSummary[] = campaignRows.map((c) => ({
+    ...c,
+    pitch_facts: Array.isArray(c.pitch_facts) ? c.pitch_facts : [],
+    auth_required_hosts: Array.isArray(c.auth_required_hosts) ? c.auth_required_hosts : [],
+    runs: runsByCampaign.get(c.id) ?? [],
+  }));
 
   const byStatus = new Map<string, number>();
   for (const p of prospects) byStatus.set(p.status, (byStatus.get(p.status) ?? 0) + 1);
