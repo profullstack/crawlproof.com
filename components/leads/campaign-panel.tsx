@@ -8,6 +8,7 @@ import {
   saveCampaignAction,
   toggleCampaignAction,
 } from "@/app/actions/leads";
+import { LEAD_RUN_CREDITS } from "@/lib/credits";
 
 export type CampaignRun = {
   ran_at: string;
@@ -202,7 +203,8 @@ export function CampaignPanel({
           <h2 className="text-lg font-semibold">Campaigns</h2>
           <p className="text-sm text-[var(--color-muted)]">
             Runs every 15 minutes: finds leads, scans them, writes drafts. Only sends when you turn
-            auto-send on.
+            auto-send on. {LEAD_RUN_CREDITS} credits per run that does work — a run with nothing to
+            do is free, so leaving a campaign on between batches costs nothing.
           </p>
         </div>
         <button

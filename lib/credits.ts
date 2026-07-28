@@ -35,6 +35,40 @@ export const OUTREACH_CREDITS = 1;
  */
 export const LEAD_RUN_CREDITS = 3;
 
+/** Leads covered by one charge on the manual finder. */
+export const LEADS_PER_CHARGE = 100;
+
+/**
+ * Paid search lookups a single charge buys.
+ *
+ * Matches the per-tick ceiling the price above was measured against, so a
+ * manual run and an automated one cost the same per unit of the thing that
+ * actually spends money. Without it a thousand-lead run would buy a hundred
+ * lookups for the price of ten.
+ */
+export const CONTACT_SEARCHES_PER_CHARGE = 10;
+
+/**
+ * What a manual find-leads run costs, and the search budget it buys.
+ *
+ * Priced per hundred leads asked for rather than per lead: the request size is
+ * what the user chooses, and it is the only figure available before the run
+ * starts. Rounded up, so asking for one lead is not free.
+ *
+ * Pure, and kept here rather than beside the deduction, so the form can show
+ * the price without pulling a database client into the browser bundle.
+ */
+export function manualRunPrice(limit: number): {
+  credits: number;
+  contactSearches: number;
+} {
+  const blocks = Math.max(1, Math.ceil(limit / LEADS_PER_CHARGE));
+  return {
+    credits: blocks * LEAD_RUN_CREDITS,
+    contactSearches: blocks * CONTACT_SEARCHES_PER_CHARGE,
+  };
+}
+
 export type CreditPack = {
   id: string;
   label: string;

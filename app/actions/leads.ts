@@ -17,6 +17,7 @@ import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 import { discoverProspects } from "@/lib/outreach/discover";
 import { upsertContact } from "@/lib/outreach/contacts";
 import { generatePitch } from "@/lib/outreach/generatePitch";
+import { leadRunBilling, manualRunPrice } from "@/lib/outreach/billing";
 import { runEmailCampaignTick, CAMPAIGN_COLUMNS, summarize, type CampaignRow } from "@/lib/outreach/runner";
 
 type Ok<T = Record<string, never>> = { ok: true } & T;
@@ -73,10 +74,21 @@ export async function findLeadsAction(input: {
   // A directory can list hundreds of businesses; capping a one-shot run at
   // ten meant the form reported a fraction of a page and looked broken.
   const limit = Math.min(input.limit ?? 100, 1000);
+  // Priced per hundred leads asked for. A thousand-lead run does ten times the
+  // paid search of a hundred-lead one, so charging both the same would make
+  // the largest runs the cheapest place to spend our money.
+  const price = manualRunPrice(limit);
+  const billing = leadRunBilling(auth.userId, price.credits);
+  if (!(await billing.authorize())) {
+    return {
+      ok: false,
+      error: `Finding up to ${limit} leads costs ${price.credits} credits; not enough balance. Buy credits in Billing.`,
+    };
+  }
   // Contact lookup is the part that costs money — up to two SERP calls per
-  // prospect that publishes no address — so a thousand-lead run gets an
-  // explicit ceiling rather than an unbounded bill.
-  const contactSearchBudget = { remaining: Math.min(limit, 100) };
+  // prospect that publishes no address — so the ceiling is what the run paid
+  // for rather than an unbounded bill.
+  const contactSearchBudget = { remaining: price.contactSearches };
   const { data: projectRow } = await serviceClient()
     .from("projects")
     .select("organization_id")
@@ -115,6 +127,8 @@ export async function findLeadsAction(input: {
   }
 
   if (!found.prospects.length && !peopleRecorded) {
+    // Nothing to show for it, so nothing to charge for it.
+    await billing.refund();
     return { ok: false, error: found.errors.join("; ") || "No businesses found for that search." };
   }
 
@@ -147,8 +161,8 @@ export async function findLeadsAction(input: {
     added,
     scanning,
     note: peopleRecorded
-      ? `${added} leads added, ${peopleRecorded} people recorded.`
-      : `${added} leads added.`,
+      ? `${added} leads added, ${peopleRecorded} people recorded — ${price.credits} credits.`
+      : `${added} leads added — ${price.credits} credits.`,
   };
 }
 
