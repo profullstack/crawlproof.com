@@ -6,9 +6,14 @@ import { findLeadsAction } from "@/app/actions/leads";
 
 /**
  * The "add leads" box. A search query finds businesses; a directory URL mines
- * one page's outbound links. Both queue a free scan per domain, because a
- * lead with no report is not a lead — every claim in the eventual email has
- * to trace back to one.
+ * one page's outbound links.
+ *
+ * Neither scans the businesses it finds. Scanning exists to supply findings
+ * for the CrawlProof audit pitch, and a project pitching its own offer has no
+ * use for them — so firing a scan at every discovered domain would spend
+ * worker time on evidence nobody cites, and point a scanner at people whose
+ * only involvement was appearing in a search. A campaign that does pitch an
+ * audit turns scanning back on explicitly.
  */
 export function LeadFinder({ projectId }: { projectId: string }) {
   const router = useRouter();
@@ -88,7 +93,7 @@ export function LeadFinder({ projectId }: { projectId: string }) {
       </div>
       <p className="mt-2 text-xs text-[var(--color-muted)]">
         {mode === "query"
-          ? "Finds businesses, then queues a free scan of each so the pitch can cite real findings."
+          ? "Finds businesses and looks up a contact address for each. It does not scan them."
           : "Every outbound link on that page becomes a candidate. Platforms and aggregators are filtered out."}
       </p>
       {note && <p className="mt-2 text-sm text-[var(--color-fg)]">{note}</p>}
