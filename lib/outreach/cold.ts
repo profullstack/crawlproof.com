@@ -414,6 +414,44 @@ export function unsupportedClaims(body: string, facts: ProspectFacts): string[] 
  * facts, links to places the campaign never mentioned, and claimed prior
  * contact. Tone and phrasing are the prompt's job.
  */
+/**
+ * A URL as it appears inside prose.
+ *
+ * Restricted to the characters RFC 3986 actually permits. Matching "anything
+ * up to whitespace" swallows whatever punctuation the writer put immediately
+ * after the link: a draft reading "...at https://x.test/paper—it takes two
+ * minutes" yielded the URL "https://x.test/paper—it", which matched nothing
+ * the campaign declared and got the draft rejected for linking somewhere
+ * invented. Non-ASCII cannot appear in a URL unencoded, so the dash is the
+ * end of the link by definition.
+ */
+export const URL_IN_TEXT = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
+
+/** Punctuation that ends a sentence rather than belonging to the link. */
+const TRAILING_PUNCT = /[.,;:!?'")\]]+$/;
+
+/** The URLs a piece of text actually links to. */
+export function urlsIn(text: string): string[] {
+  return [...text.matchAll(URL_IN_TEXT)].map((m) => m[0].replace(TRAILING_PUNCT, ""));
+}
+
+/**
+ * Put a space between a link and whatever is jammed against it.
+ *
+ * Belt and braces for the same draft. Even with the check corrected, a URL
+ * butted directly against an em-dash is a link some mail clients will
+ * autolink *including* the dash — so the recipient gets a 404 on the one
+ * thing the email asked them to click.
+ */
+export function separateUrlPunctuation(body: string): string {
+  return body.replace(URL_IN_TEXT, (url, offset: number, whole: string) => {
+    const next = whole[offset + url.length];
+    // Only when something non-ASCII is touching the end of the link. A space,
+    // a full stop or the end of the string are all already fine.
+    return next && next.charCodeAt(0) > 127 ? `${url} ` : url;
+  });
+}
+
 export function unsupportedCustomClaims(body: string, declaredText: string[]): string[] {
   const problems: string[] = [];
   const lower = body.toLowerCase();
@@ -438,8 +476,7 @@ export function unsupportedCustomClaims(body: string, declaredText: string[]): s
 
   // Links must be traceable too: a made-up portfolio URL
   // is both a false claim and a broken promise.
-  for (const m of body.matchAll(/https?:\/\/[^\s)>\]]+/gi)) {
-    const url = m[0].replace(/[.,]$/, "");
+  for (const url of urlsIn(body)) {
     if (!declared.includes(url.toLowerCase())) {
       problems.push(`links to ${url}, which the campaign never mentions`);
     }
