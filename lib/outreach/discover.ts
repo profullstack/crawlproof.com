@@ -108,25 +108,187 @@ export function extractOutboundProspects(input: {
   return [...out.values()];
 }
 
-export async function discoverFromSeed(input: {
-  seedUrl: string;
+/**
+ * Same-host links that look like an entry for one business rather than site
+ * furniture.
+ *
+ * On a platform directory — an artist marketplace, an agency roster — the
+ * listing page links to profiles on its own domain, and the business's real
+ * website only appears on the profile. Those links are invisible to
+ * `extractOutboundProspects`, which drops same-host hrefs as navigation, so
+ * they are collected separately for the second hop.
+ */
+export function extractSameHostLinks(input: {
+  html: string;
+  sourceUrl: string;
   limit?: number;
-}): Promise<{ prospects: DiscoveredProspect[]; error?: string }> {
+}): string[] {
+  const $ = cheerio.load(input.html);
+  const sourceHost = normalizeHost(input.sourceUrl);
+  const sourcePath = (() => {
+    try {
+      return new URL(input.sourceUrl).pathname;
+    } catch {
+      return "/";
+    }
+  })();
+  const out = new Set<string>();
+
+  $("a[href]").each((_, el) => {
+    if (out.size >= (input.limit ?? 20)) return false;
+    const href = ($(el).attr("href") ?? "").trim();
+    if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) {
+      return undefined;
+    }
+    let url: URL;
+    try {
+      url = new URL(href, input.sourceUrl);
+    } catch {
+      return undefined;
+    }
+    if (url.protocol !== "https:") return undefined;
+    if (normalizeHost(url.hostname) !== sourceHost) return undefined;
+    if (ASSET_RE.test(url.pathname)) return undefined;
+    if (url.pathname === sourcePath || url.pathname === "/") return undefined;
+    if (NON_DETAIL_PATH_RE.test(url.pathname)) return undefined;
+
+    // Detail pages sit shallow: /username, /agency/acme. Anything deeper is
+    // usually a sub-tab of a profile rather than another business.
+    const depth = url.pathname.split("/").filter(Boolean).length;
+    if (depth < 1 || depth > 2) return undefined;
+
+    // Query strings on a directory are filters and paging, not new entries.
+    out.add(`${url.origin}${url.pathname}`.replace(/\/$/, ""));
+    return undefined;
+  });
+
+  return [...out];
+}
+
+/** Same-host paths that are navigation or account plumbing, never a business. */
+const NON_DETAIL_PATH_RE =
+  /^\/(search|login|signin|signup|register|about|contact|terms|privacy|pricing|blog|jobs|help|support|faq|settings|account|cart|checkout|categories|category|tags?|page|feed|rss|api)(\/|$)/i;
+
+const SEED_UA = "CrawlProofOutreach/1.0 (+https://crawlproof.com)";
+
+/** Statuses that mean "the server refused a bot", not "the page is missing". */
+function looksBlocked(status: number): boolean {
+  return status === 401 || status === 403 || status === 405 || status === 429 || status === 503;
+}
+
+async function fetchHtml(
+  url: string,
+): Promise<{ ok: true; html: string } | { ok: false; error: string; status?: number }> {
   try {
-    const res = await fetch(input.seedUrl, {
-      headers: { "user-agent": "CrawlProofOutreach/1.0 (+https://crawlproof.com)" },
+    const res = await fetch(url, {
+      headers: { "user-agent": SEED_UA },
       signal: AbortSignal.timeout(15_000),
       redirect: "follow",
     });
-    if (!res.ok) return { prospects: [], error: `seed ${input.seedUrl} returned HTTP ${res.status}` };
-    const html = await res.text();
-    return { prospects: extractOutboundProspects({ html, sourceUrl: input.seedUrl, limit: input.limit }) };
+    if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+    return { ok: true, html: await res.text() };
   } catch (err) {
-    return {
-      prospects: [],
-      error: `seed ${input.seedUrl} failed: ${err instanceof Error ? err.message : "unknown"}`,
-    };
+    return { ok: false, error: err instanceof Error ? err.message : "unknown" };
   }
+}
+
+/**
+ * Get a seed page's HTML, rendering it in Chromium when a plain fetch won't do.
+ *
+ * Fetch runs first because it is an order of magnitude cheaper and most
+ * directories are still server-rendered. The browser is the fallback for the
+ * two cases fetch cannot handle: the server refused us, or it returned a page
+ * whose listings arrive over XHR — which from here looks identical to a
+ * directory with nothing on it.
+ */
+async function loadSeedHtml(
+  url: string,
+  allowRender: boolean,
+): Promise<{ html: string; rendered: boolean } | { error: string }> {
+  const direct = await fetchHtml(url);
+  if (direct.ok) {
+    const hasCandidates = extractOutboundProspects({ html: direct.html, sourceUrl: url, limit: 1 }).length > 0;
+    if (hasCandidates || !allowRender) return { html: direct.html, rendered: false };
+  } else if (!allowRender) {
+    return { error: direct.error };
+  }
+
+  const { renderPage } = await import("./render");
+  const rendered = await renderPage(url);
+  if (rendered.ok) return { html: rendered.html, rendered: true };
+
+  // Prefer the render error: when both fail it is the more specific of the
+  // two, and it distinguishes a bot challenge from an ordinary failure.
+  if (direct.ok) return { html: direct.html, rendered: false };
+  return { error: rendered.error };
+}
+
+export async function discoverFromSeed(input: {
+  seedUrl: string;
+  limit?: number;
+  /** Allow the Chromium fallback. On by default. */
+  render?: boolean;
+  /**
+   * 1 follows only outbound links on the seed page. 2 additionally opens
+   * same-host listing entries and takes the outbound link from each, which is
+   * what platform directories need — their listings all live on their own
+   * domain, so depth 1 finds nothing there.
+   */
+  depth?: 1 | 2;
+  /** Cap on second-hop pages opened, since each is a full page load. */
+  maxDetailPages?: number;
+  /**
+   * Only take the second hop when the first found fewer than this many
+   * businesses. Keeps ordinary directories at one cheap page load.
+   */
+  detailHopThreshold?: number;
+}): Promise<{ prospects: DiscoveredProspect[]; error?: string; notes?: string[] }> {
+  const limit = input.limit ?? 100;
+  const allowRender = input.render !== false;
+  const notes: string[] = [];
+
+  const seed = await loadSeedHtml(input.seedUrl, allowRender);
+  if ("error" in seed) {
+    return { prospects: [], error: `seed ${input.seedUrl} failed: ${seed.error}` };
+  }
+  if (seed.rendered) notes.push(`rendered ${input.seedUrl} in a browser`);
+
+  const merged = new Map<string, DiscoveredProspect>();
+  for (const p of extractOutboundProspects({ html: seed.html, sourceUrl: input.seedUrl, limit })) {
+    if (!merged.has(p.host)) merged.set(p.host, p);
+  }
+
+  // The second hop is expensive — one page load per listing, each possibly a
+  // browser render — so it only runs when the first hop came up short. A
+  // listicle that already yielded a page of businesses has nothing to gain
+  // from opening its own internal links; a platform directory yields nothing
+  // at all on the first hop, which is exactly the signal to go deeper.
+  const firstHopThin = merged.size < (input.detailHopThreshold ?? 3);
+  if ((input.depth ?? 1) >= 2 && firstHopThin && merged.size < limit) {
+    const detailPages = extractSameHostLinks({
+      html: seed.html,
+      sourceUrl: input.seedUrl,
+      limit: input.maxDetailPages ?? 12,
+    });
+    if (detailPages.length === 0) {
+      notes.push("no listing entries found to open for a second hop");
+    }
+    for (const detailUrl of detailPages) {
+      if (merged.size >= limit) break;
+      const detail = await loadSeedHtml(detailUrl, allowRender);
+      if ("error" in detail) continue;
+      for (const p of extractOutboundProspects({
+        html: detail.html,
+        sourceUrl: detailUrl,
+        limit: limit - merged.size,
+      })) {
+        if (!merged.has(p.host)) merged.set(p.host, p);
+      }
+    }
+    notes.push(`opened ${detailPages.length} listing entries`);
+  }
+
+  return { prospects: [...merged.values()], notes: notes.length ? notes : undefined };
 }
 
 /** Which search backend to use. */
@@ -229,7 +391,10 @@ export async function discoverProspects(input: {
 
   for (const seedUrl of (input.seedUrls ?? []).slice(0, 10)) {
     if (merged.size >= limit) break;
-    const res = await discoverFromSeed({ seedUrl, limit });
+    // Depth 2 by default: a platform directory keeps every listing on its own
+    // domain, so depth 1 silently returns nothing for exactly the pages users
+    // most often paste in.
+    const res = await discoverFromSeed({ seedUrl, limit, depth: 2 });
     if (res.error) errors.push(res.error);
     for (const p of res.prospects) if (!merged.has(p.host)) merged.set(p.host, p);
   }
