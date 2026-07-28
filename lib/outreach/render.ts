@@ -25,6 +25,7 @@
 
 import type { Browser, BrowserContext } from "playwright";
 import { isPrivateAddress } from "./mailboxDiscovery";
+import { looksLikeLoginWall } from "./loginWall";
 import dns from "node:dns/promises";
 import net from "node:net";
 
@@ -98,7 +99,14 @@ async function hostIsPublic(hostname: string): Promise<boolean> {
 
 export type RenderResult =
   | { ok: true; html: string; status: number; finalUrl: string }
-  | { ok: false; error: string; status?: number; challenged?: boolean };
+  | {
+      ok: false;
+      error: string;
+      status?: number;
+      challenged?: boolean;
+      /** The page was withheld pending a login, not missing. */
+      loginRequired?: boolean;
+    };
 
 /** Page titles a bot-protection interstitial serves instead of the real page. */
 const CHALLENGE_RE = /just a moment|attention required|verifying you are human|checking your browser/i;
@@ -172,10 +180,25 @@ export async function renderPage(url: string): Promise<RenderResult> {
     }
 
     const html = await page.content();
+    const finalUrl = page.url();
+
+    // A login wall answers 200 with a real page, so it has to be caught by
+    // what the page is rather than by the status. Reported as a failure
+    // because the caller asked for a directory and did not get one.
+    const wall = looksLikeLoginWall({ requestedUrl: url, finalUrl, html });
+    if (wall.loginRequired) {
+      return {
+        ok: false,
+        status,
+        loginRequired: true,
+        error: `the site requires a login — ${wall.reason}`,
+      };
+    }
+
     return {
       ok: true,
       status,
-      finalUrl: page.url(),
+      finalUrl,
       html: html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html,
     };
   } catch (error) {
