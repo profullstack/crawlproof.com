@@ -37,6 +37,7 @@ import {
   stepGuidance,
   suppressionReason,
   unsupportedClaims,
+  roleAddressGuesses,
   unsupportedCustomClaims,
   type ContactCandidate,
   type OutreachStep,
@@ -46,6 +47,7 @@ import { isEmailSuppressed, marketingUnsubscribedAt, sendsInLast24h } from "./su
 import { resolvePostalAddress } from "./postalAddress";
 import { findContactViaSearch } from "./contactFallback";
 import { loadProjectMailbox } from "./senderMailbox";
+import { loadRecipientContext, recipientContextPrompt } from "./recipientContext";
 
 export type ProspectRow = {
   id: string;
@@ -454,6 +456,19 @@ async function researchWithoutScan(input: {
     fallbackNote = viaSearch.note;
   }
 
+  // Last resort: a shared inbox this domain probably has. Only after both
+  // the crawl and the search have found nothing, because a constructed
+  // address bounces more often than a published one and bounces are charged
+  // to the sender's reputation, not the guess.
+  if (!contact) {
+    const guessed = bestContact(roleAddressGuesses(host));
+    if (guessed) {
+      candidates = [...candidates, guessed];
+      contact = guessed;
+      fallbackNote = `no address published or findable — using the guessed shared inbox ${guessed.email}`;
+    }
+  }
+
   const { data, error } = await serviceClient()
     .from("outreach_prospects")
     .upsert(
@@ -529,20 +544,27 @@ export type CampaignPitch = {
 
 /** System prompt for a campaign pitching something other than a scan. */
 export function customDraftSystem(pitch: CampaignPitch): string {
-  return `You write cold outreach email on behalf of the sender described below. You are not selling a website audit; write only the pitch described.
+  return `You write one short cold email on behalf of the sender described below. You are not selling a website audit; write only the pitch described.
 
 WHO IS WRITING AND WHY:
 ${pitch.intro}
 
+SHAPE. Four short paragraphs, in this order, and nothing else:
+1. One specific, checkable observation about the recipient, drawn only from what their own site says about itself. Name the actual thing they do. This is the sentence that decides whether the rest gets read, and a generic opening wastes it.
+2. One sentence naming a problem the sender genuinely addresses and the recipient plausibly has. State it as a general observation, not as a diagnosis of them — you do not know their situation.
+3. One or two sentences on what the sender offers, concretely. Name real specifics from the FACTS. "We help you grow" says nothing; naming the actual thing says everything.
+4. One low-commitment ask${pitch.ask ? `: ${pitch.ask}` : ""}, then a plain sign-off with the sender's name.
+
 Hard rules, in order of importance:
-1. Every factual claim must come from the FACTS supplied to you. If something is not in the facts, you do not know it, and you may not state it. Invent no numbers, dates, durations, links, company names or credentials.
-2. Say nothing about the recipient's business as fact. You have not researched them. You may say why you are writing to someone like them, not what they are doing wrong.
-3. Never imply a prior relationship. They have never heard from the sender. No "following up", no "as discussed", no "thanks for your time".
+1. Every factual claim must come from the FACTS supplied to you, or from the recipient's own self-description quoted in the prompt. Invent no numbers, dates, durations, links, company names or credentials.
+2. Never imply a prior relationship. They have never heard from the sender. No "following up", no "as discussed", no "thanks for your time".
+3. The observation in paragraph 1 is an observation, not a compliment. "You focus on X" is right. "I love your work", "impressive product", "you're crushing it" are not — praise from a stranger reads as a form letter, because it is one.
 4. No invented urgency, no fake deadlines, no flattery about work you have not seen.
-5. Short. Under 120 words for a first contact.
+5. Under 150 words. Cold email that needs scrolling does not get read.
 6. Plain language. No "In today's digital landscape", "unlock", "leverage", "elevate", "game-changer", "delve", "reach out", "circle back", "I hope this email finds you well".
-7. One ask${pitch.ask ? `, and it is this: ${pitch.ask}` : ", and make it low-commitment"}. Never ask for a call in a first message.
-8. Write like one person emailing another, because that is what this is.`;
+7. One ask, and make it small. Offer to send more, not to take an hour of their time. Never ask for a call in a first message.
+8. The subject line names the recipient's own thing and states the actual topic. Do not promise something the body does not deliver — a subject that says "quick question" with no question in it is a small lie, and the reply it earns is owed to the trick rather than the offer.
+9. Write like one person emailing another, because that is what this is.`;
 }
 
 export type DraftResult =
@@ -664,8 +686,12 @@ async function draftCustomEmail(input: {
   }
 
   const host = normalizeHost(input.prospect.site_url ?? input.prospect.target_key);
+  // Paragraph 1 of the shape above needs something true to say. Without it
+  // the model either opens generically or invents a detail, so the site's
+  // own words are fetched and quoted rather than guessed at.
+  const recipient = await loadRecipientContext(host);
   const userPrompt = [
-    `Recipient: someone at ${host}. You know nothing else about them — do not characterise their work, their site, or their needs as fact.`,
+    recipientContextPrompt(recipient, host),
     "",
     "FACTS (the only things you may state):",
     ...facts.map((f) => `- ${f}`),
