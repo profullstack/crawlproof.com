@@ -22,8 +22,48 @@ const INTERNAL = /@(profullstack\.com|crawlproof\.com)$/i;
  * excludes all role accounts because it mails people who opted in personally;
  * this list is deliberately narrower.
  */
+/**
+ * Mailboxes that must never receive cold outreach.
+ *
+ * Not a deliverability heuristic — these are addresses where an unsolicited
+ * pitch is actively harmful. Writing to an opt-out inbox is the opposite of
+ * what it exists for; writing to a data-protection officer hands a complaint
+ * to the one person whose job is filing them; writing to an accessibility or
+ * accommodations queue takes time from people who need it.
+ *
+ * Every entry below was added because a real send reached it. `optout` and
+ * `dpo` were missed by the original list even though `unsubscribe`, `privacy`
+ * and `legal` were on it — near-synonyms are not covered by intent, only by
+ * enumeration, so the list errs toward listing variants. `accomodation` is
+ * the common misspelling and is deliberately included; the address that
+ * prompted it was spelled that way.
+ */
 const NEVER_CONTACT_LOCALPART =
-  /^(noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster|abuse|dmca|security|privacy|legal|unsubscribe|bounce|bounces)$/i;
+  new RegExp(
+    "^(" +
+      [
+        // Automated senders — nobody reads these.
+        "noreply", "no-reply", "donotreply", "do-not-reply", "mailer-daemon",
+        "postmaster", "bounce", "bounces",
+        // Opting out. Mailing these is backwards.
+        "unsubscribe", "optout", "opt-out", "remove", "removeme", "no-contact",
+        // Reporting and enforcement.
+        "abuse", "dmca", "security", "fraud", "phishing", "spam", "complaints",
+        "whistleblower", "ethics",
+        // Data protection. A cold pitch here is a complaint waiting to happen.
+        "privacy", "legal", "compliance", "dpo", "gdpr",
+        "dataprotection", "data-protection",
+        // Accessibility and accommodations — queues for people who need them.
+        "accessibility", "a11y",
+        "accommodation", "accommodations", "accomodation", "accomodations",
+        // Hiring queues. Wrong target for a pitch, and wrong target for a
+        // recruiting pitch too — you are writing to a rival's applicants.
+        "careers", "jobs", "recruiting", "recruitment", "hr", "talent",
+        "candidates", "applications", "admissions",
+      ].join("|") +
+      ")$",
+    "i",
+  );
 
 /** Ranked best-first. A named human beats a shared inbox beats a department. */
 const ROLE_PREFERENCE = [
@@ -81,7 +121,19 @@ export function domainOf(email: string): string {
 }
 
 export function isNeverContactMailbox(email: string): boolean {
-  return NEVER_CONTACT_LOCALPART.test(localPart(email));
+  const local = localPart(email);
+  if (NEVER_CONTACT_LOCALPART.test(local)) return true;
+  // Compound localparts have to be checked token by token: an exact match
+  // alone lets `candidate-accomodations` through while blocking
+  // `accomodations`, which is how a real accessibility queue got mailed.
+  //
+  // Splitting only on separators is what keeps this from over-blocking —
+  // `privacyengineering` and `hrothgar` stay one token and stay contactable,
+  // where a substring match would have refused both.
+  return local
+    .split(/[-._+]/)
+    .filter(Boolean)
+    .some((token) => NEVER_CONTACT_LOCALPART.test(token));
 }
 
 /**
