@@ -834,10 +834,20 @@ async function draftCustomEmail(input: {
 
   // Facts, plus the intro and ask — everything the operator authored counts
   // as grounded, or an ask that names a URL makes its own draft invalid.
+  //
+  // And the recipient's own identity, which the operator could not have
+  // written because it differs per prospect. Addressing a company called
+  // "4 Corner Resources" states the number four, and the guard rejected every
+  // draft to them for inventing it — the campaign, quite correctly, had never
+  // mentioned a four. Naming who you are writing to is not a claim about
+  // them; it is the minimum a personalised email does.
   const problems = unsupportedCustomClaims(output.body, [
     ...facts,
     input.pitch.intro,
     input.pitch.ask ?? "",
+    host,
+    input.prospect.target_key,
+    recipient?.selfDescription ?? "",
   ]);
   if (problems.length) return { ok: false, problems };
 
