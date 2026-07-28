@@ -50,6 +50,7 @@ import { loadProjectMailbox } from "./senderMailbox";
 import { loadRecipientContext, recipientContextPrompt } from "./recipientContext";
 import { upsertContact } from "./contacts";
 import { contactsFromDocuments, teamPageLinks } from "./documents";
+import { newTrackToken, pixelHtml, pixelUrl } from "./openTracking";
 
 export type ProspectRow = {
   id: string;
@@ -891,10 +892,17 @@ export async function sendProspectEmail(input: {
   }
 
   const unsubscribeUrl = `${siteBase()}/unsubscribe/${input.prospect.unsubscribe_token}`;
+  // Minted before the send, because the token has to be inside the message
+  // that goes out — it cannot be attached to the row afterwards. Dry runs get
+  // none: nothing was delivered, so nothing can open it.
+  const trackToken = input.dryRun ? null : newTrackToken();
   let failed: string | null = null;
   // Defaults to the shared sender; a connected mailbox overrides it so the
   // pitch arrives from the user's own address.
   let provider = "resend";
+  // Recorded so a reply naming it in In-Reply-To can be matched to this exact
+  // send rather than inferred from the sender's domain.
+  let providerMessageId: string | null = null;
   if (!input.dryRun) {
     const mailbox = await loadProjectMailbox(input.prospect.project_id);
     const res = await sendColdOutreachEmail({
@@ -906,12 +914,14 @@ export async function sendProspectEmail(input: {
         reportUrl: facts.reportUrl,
         unsubscribeUrl,
         postalAddress: postal.address ?? "",
+        trackingPixel: trackToken ? pixelHtml(pixelUrl(siteBase(), trackToken)) : null,
       }),
       unsubscribeUrl,
       replyTo: input.replyTo ?? undefined,
       mailbox,
     });
     provider = res.provider ?? "resend";
+    providerMessageId = res.messageId ?? null;
     if (!res.sent) failed = res.error ?? "send failed";
   }
 
@@ -927,7 +937,11 @@ export async function sendProspectEmail(input: {
     body: input.body,
     target_url: input.prospect.site_url,
     provider: input.dryRun ? "dry-run" : provider,
+    provider_message_id: providerMessageId,
     dry_run: input.dryRun || !!failed,
+    // Only on a send that actually left. A token on a failed send would sit
+    // in the table waiting for an open that cannot happen.
+    track_token: failed ? null : trackToken,
   });
 
   if (failed) return { ok: false, reason: failed };

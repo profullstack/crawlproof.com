@@ -21,6 +21,12 @@ function Row({ label, f }: { label: string; f: FunnelCounts }) {
     <tr className="border-t border-[var(--color-border)]">
       <td className="py-2 pr-3 font-medium">{label}</td>
       <td className="py-2 pr-3 text-right font-mono">{f.sent}</td>
+      <td className="py-2 pr-3 text-right font-mono">
+        {f.tracked ? f.opened : "—"}
+        {f.openRate !== null && (
+          <span className="ml-1 text-xs text-[var(--color-muted)]">{pct(f.openRate)}</span>
+        )}
+      </td>
       <td className="py-2 pr-3 text-right font-mono">{f.contacted}</td>
       <td className="py-2 pr-3 text-right font-mono">{f.replied}</td>
       <td className="py-2 pr-3 text-right font-mono">{f.won}</td>
@@ -59,11 +65,12 @@ export function FunnelPanel({
       </div>
 
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[34rem] text-sm">
+        <table className="w-full min-w-[40rem] text-sm">
           <thead>
             <tr className="text-xs text-[var(--color-muted)]">
               <th className="pb-1 text-left font-medium">Campaign</th>
               <th className="pb-1 pr-3 text-right font-medium">Sent</th>
+              <th className="pb-1 pr-3 text-right font-medium">Opened</th>
               <th className="pb-1 pr-3 text-right font-medium">People</th>
               <th className="pb-1 pr-3 text-right font-medium">Replied</th>
               <th className="pb-1 pr-3 text-right font-medium">Won</th>
@@ -89,8 +96,14 @@ export function FunnelPanel({
 
       <p className="mt-2 text-xs text-[var(--color-muted)]">
         Reply rate is of people contacted; close rate is of people who replied, since a deal comes
-        out of a conversation. Replies are recorded when you mark a lead — nothing reads your inbox
-        yet.
+        out of a conversation. Replies are read from your connected mailbox — out-of-office and
+        bounce messages are recorded but not counted as replies.
+      </p>
+
+      <p className="mt-2 text-xs text-[var(--color-muted)]">
+        Opens are a floor, not a count. Mail clients that block images report nothing, and loads
+        from privacy proxies are discarded rather than counted — so the real number is higher than
+        this one, never lower. Open rate is of tracked sends only.
       </p>
     </section>
   );
