@@ -776,7 +776,13 @@ async function draftCustomEmail(input: {
     return { ok: false, problems: [`generation failed: ${err instanceof Error ? err.message : "unknown"}`] };
   }
 
-  const problems = unsupportedCustomClaims(output.body, facts);
+  // Facts, plus the intro and ask — everything the operator authored counts
+  // as grounded, or an ask that names a URL makes its own draft invalid.
+  const problems = unsupportedCustomClaims(output.body, [
+    ...facts,
+    input.pitch.intro,
+    input.pitch.ask ?? "",
+  ]);
   if (problems.length) return { ok: false, problems };
 
   const subject = output.subject?.trim();
