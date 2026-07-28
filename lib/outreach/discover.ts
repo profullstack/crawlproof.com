@@ -50,22 +50,11 @@ const NON_PROSPECT_HOSTS = [
   "eventbrite.com", "meetup.com", "substack.com", "medium.com", "blogspot.com",
   "godaddy.com", "cloudflare.com", "gstatic.com", "googleapis.com", "w3.org",
   "schema.org", "archive.org", "youtu.be", "bit.ly", "goo.gl", "t.co",
-  // Creative platforms and marketplaces. A profile on one of these is not a
-  // site the artist owns, and the outreach pipeline needs a domain they do.
-  "artstation.com", "behance.net", "adobe.com", "dribbble.com", "deviantart.com",
-  "sketchfab.com", "cgtrader.com", "turbosquid.com", "cults3d.com", "gumroad.com",
+  // Freelance marketplaces and link-in-bio hosts: a profile on one is not a
+  // domain anyone owns, and these are cross-niche rather than specific to any
+  // one campaign's industry.
   "upwork.com", "fiverr.com", "freelancer.com", "peopleperhour.com", "toptal.com",
-  "polywork.com", "contra.com", "patreon.com", "ko-fi.com", "buymeacoffee.com",
-  // Communities, showcases and trade press that dominate these searches.
-  "blenderartists.org", "polycount.com", "cgsociety.org", "therookies.co",
-  "80.lv", "cgchannel.com", "gamedeveloper.com", "gamasutra.com", "wingfox.com",
-  "unrealengine.com", "unity.com", "blender.org", "autodesk.com", "maxon.net",
-  "itch.io", "gamejolt.com", "steampowered.com",
-  // Art and games schools whose domains give no hint of what they are. The
-  // patterns above catch anything with "academy" or ".edu" in it; these have
-  // to be named, and anything similar that turns up will need adding too.
-  "vanarts.com", "cgspectrum.com", "thinktankonline.com", "animationmentor.com",
-  "fxphd.com", "syn-studio.com", "lostboys-studios.com",
+  "patreon.com", "ko-fi.com", "buymeacoffee.com", "linktr.ee", "gumroad.com",
 ];
 
 /**
@@ -83,19 +72,16 @@ const NON_PROSPECT_HOSTS = [
  * cheaper than the alternative.
  */
 const NON_PROSPECT_PATTERNS: RegExp[] = [
-  // Education. .edu and .ac.* are decisive; the words are strong signals.
+  // Education. These are decisive rather than a guess about any industry.
   /(^|\.)edu(\.[a-z]{2})?$/i,
   /(^|\.)ac\.[a-z]{2}$/i,
-  /(^|\.|-)(academy|acad|school|schule|institute|university|college|campus|bootcamp)(\.|-|$)/i,
-  // Learning and tutorials.
-  /(^|\.|-)(courses?|tutorials?|learn|training|masterclass)(\.|-|$)/i,
-  // Community and discussion.
-  /(^|\.|-)(forums?|community|wiki|discuss|board)(\.|-|$)/i,
-  // Publishing about the industry rather than working in it.
-  /(^|\.|-)(magazine|news|blog|press|podcast)(\.|-|$)/i,
-  // Hiring marketplaces and job boards: the artists there are reachable
-  // through the platform, not at a site they own.
-  /(^|\.|-)(jobs?|careers?|hiring|recruit)(\.|-|$)/i,
+  // Structural subdomains that describe what a page is, in any niche: a
+  // forum is a forum whether the subject is 3D art or dentistry.
+  /(^|\.)(forums?|community|wiki|discuss|board)\./i,
+  /(^|\.)(jobs?|careers?|support|help|docs?|status)\./i,
+  // A company's blog or newsroom is the same business as its apex domain, so
+  // treating it as its own prospect would pitch one business twice.
+  /(^|\.)(blog|news|press)\./i,
 ];
 
 /**
@@ -111,27 +97,25 @@ const NON_PROSPECT_PATTERNS: RegExp[] = [
  * to profiles on their own domain, not to sites anyone owns.
  */
 const MINEABLE_SOURCE_PATTERNS: RegExp[] = [
-  /(^|\.|-)(forums?|community|discuss|board|wiki)(\.|-|$)/i,
-  /(^|\.|-)(magazine|news|blog|press)(\.|-|$)/i,
-  /(^|\.|-)(academy|school|institute|university|college|campus)(\.|-|$)/i,
+  /(^|\.)(forums?|community|discuss|board|wiki)\./i,
+  /(^|\.)(blog|news|press)\./i,
   /(^|\.)edu(\.[a-z]{2})?$/i,
   /(^|\.)ac\.[a-z]{2}$/i,
-];
-
-const MINEABLE_HOSTS = [
-  "blenderartists.org", "polycount.com", "cgsociety.org", "therookies.co",
-  "80.lv", "cgchannel.com", "gamedeveloper.com", "reddit.com", "vanarts.com",
 ];
 
 /**
  * Is this host worth opening for the links it carries, even though nobody
  * there is a prospect?
+ *
+ * Decided from the shape of the hostname alone. Naming the actual sites would
+ * mean maintaining a list per industry — the community hubs for 3D artists
+ * have nothing in common with those for dentists or accountants — and a list
+ * like that is out of date the first time someone points a campaign at a
+ * niche nobody anticipated.
  */
 export function isMineableSource(host: string): boolean {
   const h = normalizeHost(host);
   if (!h || !h.includes(".")) return false;
-  const apex = h.split(".").slice(-2).join(".");
-  if (MINEABLE_HOSTS.some((n) => h === n || apex === n || h.endsWith(`.${n}`))) return true;
   return MINEABLE_SOURCE_PATTERNS.some((re) => re.test(h));
 }
 

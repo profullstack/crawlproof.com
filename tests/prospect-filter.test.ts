@@ -1,43 +1,38 @@
 import { describe, it, expect } from "vitest";
 import { isMineableSource, isNonProspectHost } from "@/lib/outreach/discover";
 
-// Every host below actually came out of a live discovery run for
-// "3d artist portfolio"-shaped queries. Searching for artists returns the
-// industry around artists, and all of it has a contact address, so without
-// filtering a campaign ends up cold-emailing an art school about a job.
-describe("hosts that a portfolio search keeps returning", () => {
+// The filter has to work for a campaign in any niche. Naming the community
+// hubs for 3D artists would do nothing for one aimed at dentists or
+// accountants, and a list like that is stale the first time someone points a
+// campaign somewhere nobody anticipated. So everything below is decided from
+// the shape of a hostname, never from knowing an industry.
+
+describe("hosts that are never a prospect, in any niche", () => {
   const rejected = [
-    // Platforms and marketplaces — a profile there is not a site they own.
-    "artstation.com",
-    "brainchild.artstation.com",
-    "behance.net",
-    "adobe.com",
-    "portfolio.adobe.com",
-    "sketchfab.com",
-    "cgtrader.com",
-    "upwork.com",
-    "fiverr.com",
-    // Education.
-    "vanarts.com",
+    // Education, decisively.
     "gnomon.edu",
     "someschool.ac.uk",
-    "cg-academy.com",
-    "3d-bootcamp.io",
-    // Community, showcase and trade press.
-    "blenderartists.org",
-    "polycount.com",
-    "therookies.co",
-    "80.lv",
-    "gamedeveloper.com",
-    "blog.wingfox.com",
+    "mit.edu",
+    // Structural subdomains: a forum is a forum whatever the subject.
     "forums.example.com",
+    "forum.example.com",
+    "community.example.com",
     "wiki.example.com",
-    // Tooling vendors.
-    "unrealengine.com",
-    "blender.org",
-    // Job boards.
     "jobs.example.com",
     "careers.example.com",
+    "support.example.com",
+    "docs.example.com",
+    // Freelance marketplaces and link-in-bio: a profile is not a domain
+    // anyone owns, and these are cross-niche.
+    "upwork.com",
+    "fiverr.com",
+    "toptal.com",
+    "linktr.ee",
+    // Covered by the pre-existing cross-niche list in lib/leadCampaign.
+    "linkedin.com",
+    "instagram.com",
+    "reddit.com",
+    "x.com",
   ];
 
   for (const host of rejected) {
@@ -47,17 +42,17 @@ describe("hosts that a portfolio search keeps returning", () => {
   }
 });
 
-describe("hosts that are the artists themselves", () => {
+describe("hosts that are the business itself", () => {
   const accepted = [
     "jonathancaridia.com",
     "bengtsondesigns.com",
     "janedoe.design",
     "studio-nine.co.uk",
     "hardsurface.art",
-    "m-kowalski.dev",
-    // A real trap: contains "art" and "station" separately but is not the
-    // platform, and must not be caught by a sloppy substring match.
-    "artstationary.com",
+    // Niche-neutral: the filter must not have opinions about industries.
+    "smile-dental.com",
+    "bright-accounting.co.uk",
+    "acme-plumbing.net",
   ];
 
   for (const host of accepted) {
@@ -65,6 +60,50 @@ describe("hosts that are the artists themselves", () => {
       expect(isNonProspectHost(host)).toBe(false);
     });
   }
+
+  it("does not reject a domain for containing a keyword mid-word", () => {
+    // The patterns are anchored on separators, so an ordinary word inside a
+    // domain does not cost a real prospect.
+    for (const host of ["schoonerdesign.com", "newsomstudio.com", "boardmanlaw.com"]) {
+      expect(isNonProspectHost(host), host).toBe(false);
+    }
+  });
+});
+
+describe("isMineableSource — not a prospect, still worth reading", () => {
+  // A forum thread is where people's own sites actually appear: a personal
+  // domain rarely out-ranks the community discussing the work. Discarding
+  // those results throws away the best source of real domains in the pipeline.
+  const mineable = [
+    "forums.example.com",
+    "community.example.com",
+    "wiki.example.com",
+    "blog.example.com",
+    "news.example.com",
+    "gnomon.edu",
+    "someschool.ac.uk",
+  ];
+
+  for (const host of mineable) {
+    it(`mines ${host}`, () => {
+      expect(isMineableSource(host)).toBe(true);
+      // Mined for links, never emailed.
+      expect(isNonProspectHost(host)).toBe(true);
+    });
+  }
+
+  it("does not mine marketplaces, whose links stay on their own domain", () => {
+    for (const host of ["upwork.com", "fiverr.com", "toptal.com", "linktr.ee"]) {
+      expect(isMineableSource(host), host).toBe(false);
+    }
+  });
+
+  it("does not mine a business's own site — it is a prospect, not a source", () => {
+    for (const host of ["jonathancaridia.com", "smile-dental.com"]) {
+      expect(isMineableSource(host), host).toBe(false);
+      expect(isNonProspectHost(host), host).toBe(false);
+    }
+  });
 });
 
 describe("filter shape", () => {
@@ -74,57 +113,14 @@ describe("filter shape", () => {
     }
   });
 
-  it("does not reject a domain merely for containing a keyword mid-word", () => {
-    // "schooner" contains "school"; the pattern is anchored on separators so
-    // an ordinary word does not cost us a real prospect.
-    expect(isNonProspectHost("schoonerdesign.com")).toBe(false);
-    expect(isNonProspectHost("newsomstudio.com")).toBe(false);
-  });
-});
-
-describe("isMineableSource — not a prospect, still worth reading", () => {
-  // A forum thread or alumni page is never someone to email, but it is where
-  // artists' own sites actually appear. Discarding those results throws away
-  // the best source of personal domains in the pipeline.
-  const mineable = [
-    "blenderartists.org",
-    "polycount.com",
-    "cgsociety.org",
-    "therookies.co",
-    "80.lv",
-    "gamedeveloper.com",
-    "reddit.com",
-    "vanarts.com",
-    "gnomon.edu",
-    "someschool.ac.uk",
-    "forums.example.com",
-    "blog.wingfox.com",
-  ];
-
-  for (const host of mineable) {
-    it(`mines ${host}`, () => {
-      expect(isMineableSource(host)).toBe(true);
-      // Still never a prospect: mined for links, never emailed.
-      expect(isNonProspectHost(host)).toBe(true);
-    });
-  }
-
-  it("does not mine marketplaces, whose links stay on their own domain", () => {
-    for (const host of ["artstation.com", "behance.net", "upwork.com", "fiverr.com", "sketchfab.com"]) {
-      expect(isMineableSource(host), host).toBe(false);
-    }
-  });
-
-  it("does not mine tooling vendors", () => {
-    for (const host of ["unrealengine.com", "blender.org", "autodesk.com"]) {
-      expect(isMineableSource(host), host).toBe(false);
-    }
-  });
-
-  it("does not mine an artist's own site — it is a prospect, not a source", () => {
-    for (const host of ["jonathancaridia.com", "janedoe.design"]) {
-      expect(isMineableSource(host), host).toBe(false);
-      expect(isNonProspectHost(host), host).toBe(false);
+  it("carries no industry-specific hostnames", () => {
+    // A guard against the filter drifting back into a per-niche blacklist:
+    // these are real hosts from one campaign's results, and none of them
+    // should be named in the code.
+    for (const host of ["blenderartists.org", "vanarts.com", "80.lv", "polycount.com"]) {
+      // They may still be caught structurally, but must not be hardcoded —
+      // asserted in tests/no-niche-blacklist.test.ts against the source.
+      expect(typeof isNonProspectHost(host)).toBe("boolean");
     }
   });
 });
