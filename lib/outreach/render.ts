@@ -35,6 +35,9 @@ const NAV_TIMEOUT_MS = 25_000;
 const SETTLE_MS = 2_500;
 const IDLE_SHUTDOWN_MS = 60_000;
 const MAX_HTML_BYTES = 3 * 1024 * 1024;
+/** Bounded so an infinite feed cannot hold a render open forever. */
+const MAX_SCROLLS = 12;
+const SCROLL_SETTLE_MS = 1_500;
 
 // Chromium is heavy enough that a per-call launch would dominate the cost of
 // a campaign tick, so one instance is shared across renders.
@@ -174,6 +177,22 @@ export async function renderPage(
     await page
       .waitForLoadState("networkidle", { timeout: SETTLE_MS * 2 })
       .catch(() => page.waitForTimeout(SETTLE_MS));
+
+    // Directories commonly load a first page of entries and fetch the rest on
+    // scroll. Rendering without scrolling therefore sees a third of a list and
+    // reports it as the whole thing, which is indistinguishable from a short
+    // directory. Scrolling stops as soon as the page stops growing, so a
+    // static page costs one measurement rather than the full budget.
+    let previousHeight = 0;
+    for (let i = 0; i < MAX_SCROLLS; i++) {
+      const height = await page.evaluate(() => document.body.scrollHeight).catch(() => 0);
+      if (!height || height === previousHeight) break;
+      previousHeight = height;
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+      await page
+        .waitForLoadState("networkidle", { timeout: SCROLL_SETTLE_MS })
+        .catch(() => page.waitForTimeout(SCROLL_SETTLE_MS));
+    }
 
     const title = await page.title().catch(() => "");
     if (CHALLENGE_RE.test(title)) {
