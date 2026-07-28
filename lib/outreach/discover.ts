@@ -21,7 +21,9 @@ import { searchSerp, hasValueSerpKey } from "@/lib/alerts/valueserp";
 import { isThirdPartyHost } from "@/lib/leadCampaign";
 import { businessSearch } from "./freeSearch";
 import { normalizeHost } from "./cold";
+import { loadSeedCredential, recordSeedCredentialResult, seedHost } from "./seedCredentials";
 import { looksLikeLoginWall } from "./loginWall";
+import type { SeedCredentials } from "./seedLogin";
 
 export type DiscoveredProspect = {
   host: string;
@@ -216,10 +218,12 @@ async function fetchHtml(
 async function loadSeedHtml(
   url: string,
   allowRender: boolean,
+  credentials?: SeedCredentials | null,
 ): Promise<{ html: string; rendered: boolean } | { error: string; loginRequired?: boolean }> {
   const direct = await fetchHtml(url);
-  // A login wall is settled: rendering it again only renders the login page.
-  if (!direct.ok && direct.loginRequired) {
+  // A login wall is settled unless we hold a credential — without one,
+  // rendering it again only renders the login page.
+  if (!direct.ok && direct.loginRequired && !credentials) {
     return { error: direct.error, loginRequired: true };
   }
   if (direct.ok) {
@@ -230,7 +234,7 @@ async function loadSeedHtml(
   }
 
   const { renderPage } = await import("./render");
-  const rendered = await renderPage(url);
+  const rendered = await renderPage(url, { credentials });
   if (rendered.ok) return { html: rendered.html, rendered: true };
   if (rendered.loginRequired) return { error: rendered.error, loginRequired: true };
 
@@ -254,6 +258,8 @@ export async function discoverFromSeed(input: {
   depth?: 1 | 2;
   /** Cap on second-hop pages opened, since each is a full page load. */
   maxDetailPages?: number;
+  /** Sign-in for a gated directory, when one is stored for this host. */
+  credentials?: SeedCredentials | null;
   /**
    * Only take the second hop when the first found fewer than this many
    * businesses. Keeps ordinary directories at one cheap page load.
@@ -270,7 +276,7 @@ export async function discoverFromSeed(input: {
   const allowRender = input.render !== false;
   const notes: string[] = [];
 
-  const seed = await loadSeedHtml(input.seedUrl, allowRender);
+  const seed = await loadSeedHtml(input.seedUrl, allowRender, input.credentials);
   if ("error" in seed) {
     return {
       prospects: [],
@@ -302,7 +308,7 @@ export async function discoverFromSeed(input: {
     }
     for (const detailUrl of detailPages) {
       if (merged.size >= limit) break;
-      const detail = await loadSeedHtml(detailUrl, allowRender);
+      const detail = await loadSeedHtml(detailUrl, allowRender, input.credentials);
       if ("error" in detail) continue;
       for (const p of extractOutboundProspects({
         html: detail.html,
@@ -338,6 +344,8 @@ export async function discoverFromSearch(input: {
   query: string;
   limit?: number;
   source?: SearchSource;
+  /** Org whose stored seed logins apply. Omitted means none are used. */
+  organizationId?: string | null;
 }): Promise<{ prospects: DiscoveredProspect[]; calls: number; error?: string }> {
   const limit = Math.min(input.limit ?? 30, 100);
   const source = input.source ?? "auto";
@@ -398,6 +406,8 @@ export async function discoverProspects(input: {
   seedUrls?: string[];
   limit?: number;
   source?: SearchSource;
+  /** Org whose stored seed logins apply. Omitted means none are used. */
+  organizationId?: string | null;
 }): Promise<{
   prospects: DiscoveredProspect[];
   serpCalls: number;
@@ -428,9 +438,22 @@ export async function discoverProspects(input: {
     // Depth 2 by default: a platform directory keeps every listing on its own
     // domain, so depth 1 silently returns nothing for exactly the pages users
     // most often paste in.
-    const res = await discoverFromSeed({ seedUrl, limit, depth: 2 });
+    const credentials = input.organizationId
+      ? await loadSeedCredential(input.organizationId, seedHost(seedUrl))
+      : null;
+    const res = await discoverFromSeed({ seedUrl, limit, depth: 2, credentials });
     if (res.error) errors.push(res.error);
-    if (res.loginRequired) loginRequiredSeeds.push(seedUrl);
+    // Only "waiting on the user" when we have nothing to try. A stored
+    // credential that failed is a different problem and reads as an error.
+    if (res.loginRequired && !credentials) loginRequiredSeeds.push(seedUrl);
+    if (input.organizationId && credentials) {
+      await recordSeedCredentialResult({
+        organizationId: input.organizationId,
+        host: seedHost(seedUrl),
+        ok: !res.loginRequired,
+        error: res.error,
+      });
+    }
     for (const p of res.prospects) if (!merged.has(p.host)) merged.set(p.host, p);
   }
 

@@ -26,6 +26,7 @@
 import type { Browser, BrowserContext } from "playwright";
 import { isPrivateAddress } from "./mailboxDiscovery";
 import { looksLikeLoginWall } from "./loginWall";
+import type { SeedCredentials } from "./seedLogin";
 import dns from "node:dns/promises";
 import net from "node:net";
 
@@ -117,7 +118,13 @@ const CHALLENGE_RE = /just a moment|attention required|verifying you are human|c
  * Resolves rather than throws: discovery treats a failed render as "this seed
  * produced nothing", not as a reason to abort a campaign tick.
  */
-export async function renderPage(url: string): Promise<RenderResult> {
+export async function renderPage(
+  url: string,
+  opts?: {
+    /** Sign in and retry if the page turns out to be gated. */
+    credentials?: SeedCredentials | null;
+  },
+): Promise<RenderResult> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -175,18 +182,46 @@ export async function renderPage(url: string): Promise<RenderResult> {
           "the site served a bot-protection challenge instead of the page — rendering can't get past it",
       };
     }
-    if (status >= 400) {
-      return { ok: false, status, error: `rendered with HTTP ${status}` };
-    }
-
-    const html = await page.content();
-    const finalUrl = page.url();
+    let html = await page.content();
+    let finalUrl = page.url();
 
     // A login wall answers 200 with a real page, so it has to be caught by
-    // what the page is rather than by the status. Reported as a failure
-    // because the caller asked for a directory and did not get one.
-    const wall = looksLikeLoginWall({ requestedUrl: url, finalUrl, html });
-    if (wall.loginRequired) {
+    // what the page is rather than by the status.
+    let wall = looksLikeLoginWall({ requestedUrl: url, finalUrl, html });
+
+    if (wall.loginRequired && opts?.credentials) {
+      // We are already sitting on the login page — the redirect put us
+      // there — so the form is in front of us. Signing in on this same
+      // context keeps the session cookies for the retry.
+      const { submitLoginForm } = await import("./seedLogin");
+      const login = await submitLoginForm(page, opts.credentials);
+      if (!login.ok) {
+        return {
+          ok: false,
+          status,
+          loginRequired: true,
+          error: `signing in failed — ${login.error}`,
+        };
+      }
+
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      await page
+        .waitForLoadState("networkidle", { timeout: SETTLE_MS * 2 })
+        .catch(() => page.waitForTimeout(SETTLE_MS));
+
+      html = await page.content();
+      finalUrl = page.url();
+      wall = looksLikeLoginWall({ requestedUrl: url, finalUrl, html });
+      if (wall.loginRequired) {
+        return {
+          ok: false,
+          status,
+          loginRequired: true,
+          error:
+            "signed in, but the page still asked for a login — the account may not have access to it",
+        };
+      }
+    } else if (wall.loginRequired) {
       return {
         ok: false,
         status,
@@ -194,6 +229,8 @@ export async function renderPage(url: string): Promise<RenderResult> {
         error: `the site requires a login — ${wall.reason}`,
       };
     }
+
+    if (status >= 400) return { ok: false, status, error: `rendered with HTTP ${status}` };
 
     return {
       ok: true,

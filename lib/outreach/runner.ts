@@ -66,6 +66,8 @@ export type TickResult = {
   dryRuns: number;
   /** The campaign's actual auto_send setting, so the summary can't misreport it. */
   autoSend: boolean;
+  /** Seed URLs sitting behind a sign-in with no stored credential. */
+  awaitingAuth: string[];
   skipped: string[];
   errors: string[];
 };
@@ -84,6 +86,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     discovered: 0,
     scansStarted: 0,
     autoSend: campaign.auto_send,
+    awaitingAuth: [],
     researched: 0,
     drafted: 0,
     sent: 0,
@@ -204,12 +207,29 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
   const liveCount = prospects.filter((p) => ["new", "researched", "drafted"].includes(p.status)).length;
   if (liveCount < campaign.target_pipeline) {
     const want = Math.min(campaign.target_pipeline - liveCount, MAX_DISCOVER_PER_TICK);
+    const { data: projectRow } = await sb
+      .from("projects")
+      .select("organization_id")
+      .eq("id", campaign.project_id)
+      .maybeSingle();
+    const organizationId = (projectRow?.organization_id as string | null) ?? null;
+
     const found = await discoverProspects({
       queries: campaign.queries ?? [],
       seedUrls: campaign.seed_urls ?? [],
       limit: want * 3, // over-fetch: most candidates are already known or filtered
+      organizationId,
     });
     result.errors.push(...found.errors);
+    result.awaitingAuth = found.loginRequiredSeeds;
+
+    // Park the gated hosts on the campaign so the UI can say what it is
+    // waiting for, and offer the form that unblocks it, instead of leaving
+    // the reason buried in an error string.
+    await sb
+      .from("outreach_campaigns")
+      .update({ auth_required_hosts: found.loginRequiredSeeds })
+      .eq("id", campaign.id);
 
     const known = new Set(prospects.map((p) => p.target_key));
     let added = 0;
@@ -361,6 +381,7 @@ export function summarize(r: TickResult): string {
         ? `${r.dryRuns} drafted, 0 sent`
         : `${r.dryRuns} drafted (auto_send off)`,
   ];
+  if (r.awaitingAuth.length) parts.push(`${r.awaitingAuth.length} waiting_for_auth`);
   if (r.skipped.length) parts.push(`${r.skipped.length} skipped`);
   if (r.errors.length) parts.push(`${r.errors.length} errors`);
   return parts.join(", ");
