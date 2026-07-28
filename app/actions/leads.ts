@@ -16,6 +16,7 @@ import { addSuppression } from "@/lib/outreach/suppress";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
 import { discoverProspects } from "@/lib/outreach/discover";
 import { upsertContact } from "@/lib/outreach/contacts";
+import { generatePitch } from "@/lib/outreach/generatePitch";
 import { runEmailCampaignTick, CAMPAIGN_COLUMNS, summarize, type CampaignRow } from "@/lib/outreach/runner";
 
 type Ok<T = Record<string, never>> = { ok: true } & T;
@@ -160,6 +161,29 @@ export async function findLeadsAction(input: {
  * only ever report sends, and a reply rate that is structurally zero is
  * worse than no reply rate at all.
  */
+/**
+ * Turn a rough goal into the three pitch fields.
+ *
+ * The form asks for precisely-scoped inputs and the grounding guard refuses
+ * drafts that stray outside them, which is a lot to ask of someone who just
+ * wants to describe what they are doing. This does the splitting, and
+ * deliberately does not author: a fact invented here is one the guard will
+ * pass straight through to a stranger, because drafts are checked against
+ * this output rather than against reality.
+ */
+export async function generatePitchAction(input: {
+  projectId: string;
+  goal: string;
+  senderName?: string;
+}): Promise<Ok<{ intro: string; ask: string; facts: string[] }> | Err> {
+  const auth = await requireLeadAccess(input.projectId);
+  if (!auth.ok) return auth;
+
+  const res = await generatePitch({ goal: input.goal, senderName: input.senderName });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, ...res.pitch };
+}
+
 export async function markLeadOutcomeAction(input: {
   projectId: string;
   host: string;

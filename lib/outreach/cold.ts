@@ -433,10 +433,10 @@ export function unsupportedCustomClaims(body: string, declaredText: string[]): s
     const value = Number(raw);
     if (!Number.isFinite(value) || value <= 3) continue;
     const appears = declared.includes(raw) || declared.includes(m[1].toLowerCase());
-    if (!appears) problems.push(`states "${m[0].trim()}", which is not in the campaign's declared facts`);
+    if (!appears) problems.push(`states "${m[0].trim()}", which the campaign never mentions`);
   }
 
-  // Links have to come from the declared facts too: a made-up portfolio URL
+  // Links must be traceable too: a made-up portfolio URL
   // is both a false claim and a broken promise.
   for (const m of body.matchAll(/https?:\/\/[^\s)>\]]+/gi)) {
     const url = m[0].replace(/[.,]$/, "");
