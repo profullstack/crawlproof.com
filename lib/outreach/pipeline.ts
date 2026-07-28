@@ -44,6 +44,7 @@ import {
 } from "./cold";
 import { isEmailSuppressed, marketingUnsubscribedAt, sendsInLast24h } from "./suppress";
 import { resolvePostalAddress } from "./postalAddress";
+import { findContactViaSearch } from "./contactFallback";
 import { loadProjectMailbox } from "./senderMailbox";
 
 export type ProspectRow = {
@@ -330,7 +331,7 @@ export async function researchProspect(input: {
   const topIssues = problems.slice(0, 5).map((f) => f.title);
   const quote = quoteFromFindings(findings);
 
-  const candidates = input.contactEmail
+  let candidates = input.contactEmail
     ? [
         {
           email: normalizeEmail(input.contactEmail),
@@ -339,7 +340,17 @@ export async function researchProspect(input: {
         },
       ]
     : await findContact(host);
-  const contact = bestContact(candidates);
+  let contact = bestContact(candidates);
+
+  // Same second step as the unscanned path: a scan we can talk about is
+  // worth nothing if there is no address to send it to.
+  if (!contact) {
+    const viaSearch = await findContactViaSearch({ host, label: input.discoveryLabel });
+    if (viaSearch.candidates.length) {
+      candidates = [...candidates, ...viaSearch.candidates];
+      contact = bestContact(candidates);
+    }
+  }
 
   const { data, error } = await serviceClient()
     .from("outreach_prospects")
@@ -403,7 +414,7 @@ async function researchWithoutScan(input: {
   target: string;
 }): Promise<ResearchResult> {
   const { host, target } = input;
-  const candidates = input.contactEmail
+  let candidates = input.contactEmail
     ? [
         {
           email: normalizeEmail(input.contactEmail),
@@ -412,7 +423,20 @@ async function researchWithoutScan(input: {
         },
       ]
     : await findContact(host);
-  const contact = bestContact(candidates);
+  let contact = bestContact(candidates);
+  let fallbackNote: string | null = null;
+
+  // The site published nothing reachable. Rather than park the prospect at
+  // "new" forever, look the business up — plenty of portfolios hide contact
+  // behind a form or an image, and the address exists somewhere else.
+  if (!contact) {
+    const viaSearch = await findContactViaSearch({ host, label: input.discoveryLabel });
+    if (viaSearch.candidates.length) {
+      candidates = [...candidates, ...viaSearch.candidates];
+      contact = bestContact(candidates);
+    }
+    fallbackNote = viaSearch.note;
+  }
 
   const { data, error } = await serviceClient()
     .from("outreach_prospects")
@@ -429,7 +453,7 @@ async function researchWithoutScan(input: {
         contact_email: contact?.email ?? null,
         contact_source: contact?.source ?? null,
         status: contact ? "researched" : "new",
-        ...(input.notes ? { notes: input.notes } : {}),
+        ...(input.notes ? { notes: input.notes } : fallbackNote ? { notes: fallbackNote } : {}),
       },
       { onConflict: "project_id,channel,target_key" },
     )
