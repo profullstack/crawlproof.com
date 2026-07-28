@@ -18,8 +18,17 @@
 // The adapters live in intentSources.ts; this file knows nothing about where
 // the words came from.
 
-/** Hours after which a signal has decayed to roughly half its strength. */
-const HALF_LIFE_HOURS = 36;
+/**
+ * Hours after which a signal has decayed to roughly half its strength.
+ *
+ * Matches the 72-hour window the Reddit scorer already treats as the edge of
+ * repliable, rather than a number chosen independently. The first value here
+ * was 36, which priced a day-old "can anyone recommend a X" at barely more
+ * than a fresh unattributed grumble — and those threads stay answerable for
+ * days. Replying to a three-day-old request costs little; missing it costs a
+ * lead.
+ */
+const HALF_LIFE_HOURS = 72;
 /** Past this, treat a signal as stale regardless of how strong it was. */
 const MAX_AGE_HOURS = 24 * 14;
 
@@ -340,8 +349,17 @@ export function scoreIntent(input: {
   };
 }
 
-/** Default bar for acting on a signal. Roughly "a fresh solicitation". */
-export const DEFAULT_MIN_INTENT = 40;
+/**
+ * Default bar for acting on a signal.
+ *
+ * Chosen from the measured spread rather than picked round. At 72-hour
+ * half-life a day-old "can anyone recommend a X" scores 56 and a fresh
+ * unattributed grumble scores 42, and 50 sits in the gap between them: real
+ * requests stay in for about three days, complaints from nobody in particular
+ * never get in. A team lead saying "our team is struggling with X" clears it
+ * at 54, because that is a lead and a stranger's grumble is not.
+ */
+export const DEFAULT_MIN_INTENT = 50;
 
 /**
  * Whether a lead clears a campaign's bar.
