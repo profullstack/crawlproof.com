@@ -21,6 +21,7 @@ import { searchSerp, hasValueSerpKey } from "@/lib/alerts/valueserp";
 import { isThirdPartyHost } from "@/lib/leadCampaign";
 import { businessSearch } from "./freeSearch";
 import { normalizeHost } from "./cold";
+import { looksLikeLoginWall } from "./loginWall";
 
 export type DiscoveredProspect = {
   host: string;
@@ -178,7 +179,10 @@ function looksBlocked(status: number): boolean {
 
 async function fetchHtml(
   url: string,
-): Promise<{ ok: true; html: string } | { ok: false; error: string; status?: number }> {
+): Promise<
+  | { ok: true; html: string; finalUrl: string }
+  | { ok: false; error: string; status?: number; loginRequired?: boolean }
+> {
   try {
     const res = await fetch(url, {
       headers: { "user-agent": SEED_UA },
@@ -186,7 +190,15 @@ async function fetchHtml(
       redirect: "follow",
     });
     if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
-    return { ok: true, html: await res.text() };
+    const html = await res.text();
+    // The redirect onto a login page is visible here even though the login
+    // form itself may only exist after scripts run, so this catches the wall
+    // without paying for a render.
+    const wall = looksLikeLoginWall({ requestedUrl: url, finalUrl: res.url, html });
+    if (wall.loginRequired) {
+      return { ok: false, loginRequired: true, error: `the site requires a login — ${wall.reason}` };
+    }
+    return { ok: true, html, finalUrl: res.url };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "unknown" };
   }
@@ -204,8 +216,12 @@ async function fetchHtml(
 async function loadSeedHtml(
   url: string,
   allowRender: boolean,
-): Promise<{ html: string; rendered: boolean } | { error: string }> {
+): Promise<{ html: string; rendered: boolean } | { error: string; loginRequired?: boolean }> {
   const direct = await fetchHtml(url);
+  // A login wall is settled: rendering it again only renders the login page.
+  if (!direct.ok && direct.loginRequired) {
+    return { error: direct.error, loginRequired: true };
+  }
   if (direct.ok) {
     const hasCandidates = extractOutboundProspects({ html: direct.html, sourceUrl: url, limit: 1 }).length > 0;
     if (hasCandidates || !allowRender) return { html: direct.html, rendered: false };
@@ -216,6 +232,7 @@ async function loadSeedHtml(
   const { renderPage } = await import("./render");
   const rendered = await renderPage(url);
   if (rendered.ok) return { html: rendered.html, rendered: true };
+  if (rendered.loginRequired) return { error: rendered.error, loginRequired: true };
 
   // Prefer the render error: when both fail it is the more specific of the
   // two, and it distinguishes a bot challenge from an ordinary failure.
@@ -242,14 +259,24 @@ export async function discoverFromSeed(input: {
    * businesses. Keeps ordinary directories at one cheap page load.
    */
   detailHopThreshold?: number;
-}): Promise<{ prospects: DiscoveredProspect[]; error?: string; notes?: string[] }> {
+}): Promise<{
+  prospects: DiscoveredProspect[];
+  error?: string;
+  notes?: string[];
+  /** Set when the seed was withheld pending a login, so the UI can offer to store one. */
+  loginRequired?: boolean;
+}> {
   const limit = input.limit ?? 100;
   const allowRender = input.render !== false;
   const notes: string[] = [];
 
   const seed = await loadSeedHtml(input.seedUrl, allowRender);
   if ("error" in seed) {
-    return { prospects: [], error: `seed ${input.seedUrl} failed: ${seed.error}` };
+    return {
+      prospects: [],
+      error: `seed ${input.seedUrl} failed: ${seed.error}`,
+      loginRequired: seed.loginRequired,
+    };
   }
   if (seed.rendered) notes.push(`rendered ${input.seedUrl} in a browser`);
 
@@ -371,10 +398,17 @@ export async function discoverProspects(input: {
   seedUrls?: string[];
   limit?: number;
   source?: SearchSource;
-}): Promise<{ prospects: DiscoveredProspect[]; serpCalls: number; errors: string[] }> {
+}): Promise<{
+  prospects: DiscoveredProspect[];
+  serpCalls: number;
+  errors: string[];
+  /** Seeds that returned a login wall — the UI offers to store credentials for these. */
+  loginRequiredSeeds: string[];
+}> {
   const limit = input.limit ?? 50;
   const merged = new Map<string, DiscoveredProspect>();
   const errors: string[] = [];
+  const loginRequiredSeeds: string[] = [];
   let serpCalls = 0;
 
   const queries = (input.queries ?? []).slice(0, 5);
@@ -396,8 +430,9 @@ export async function discoverProspects(input: {
     // most often paste in.
     const res = await discoverFromSeed({ seedUrl, limit, depth: 2 });
     if (res.error) errors.push(res.error);
+    if (res.loginRequired) loginRequiredSeeds.push(seedUrl);
     for (const p of res.prospects) if (!merged.has(p.host)) merged.set(p.host, p);
   }
 
-  return { prospects: [...merged.values()].slice(0, limit), serpCalls, errors };
+  return { prospects: [...merged.values()].slice(0, limit), serpCalls, errors, loginRequiredSeeds };
 }
