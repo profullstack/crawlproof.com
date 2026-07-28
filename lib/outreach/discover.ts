@@ -21,7 +21,8 @@ import { searchSerp, hasValueSerpKey } from "@/lib/alerts/valueserp";
 import { isThirdPartyHost } from "@/lib/leadCampaign";
 import { businessSearch } from "./freeSearch";
 import { normalizeHost } from "./cold";
-import { loadSeedCredential, recordSeedCredentialResult, seedHost } from "./seedCredentials";
+import { loadSeedCredential, makeSeedCodeWaiter, recordSeedCredentialResult, seedHost } from "./seedCredentials";
+import type { CodeWaiter } from "@/lib/sp/verificationChallenge";
 import { looksLikeLoginWall } from "./loginWall";
 import type { SeedCredentials } from "./seedLogin";
 
@@ -219,6 +220,7 @@ async function loadSeedHtml(
   url: string,
   allowRender: boolean,
   credentials?: SeedCredentials | null,
+  codeWaiter?: CodeWaiter | null,
 ): Promise<{ html: string; rendered: boolean } | { error: string; loginRequired?: boolean }> {
   const direct = await fetchHtml(url);
   // A login wall is settled unless we hold a credential — without one,
@@ -234,7 +236,7 @@ async function loadSeedHtml(
   }
 
   const { renderPage } = await import("./render");
-  const rendered = await renderPage(url, { credentials });
+  const rendered = await renderPage(url, { credentials, codeWaiter });
   if (rendered.ok) return { html: rendered.html, rendered: true };
   if (rendered.loginRequired) return { error: rendered.error, loginRequired: true };
 
@@ -260,6 +262,8 @@ export async function discoverFromSeed(input: {
   maxDetailPages?: number;
   /** Sign-in for a gated directory, when one is stored for this host. */
   credentials?: SeedCredentials | null;
+  /** Lets a user answer a verification code raised during that sign-in. */
+  codeWaiter?: CodeWaiter | null;
   /**
    * Only take the second hop when the first found fewer than this many
    * businesses. Keeps ordinary directories at one cheap page load.
@@ -276,7 +280,7 @@ export async function discoverFromSeed(input: {
   const allowRender = input.render !== false;
   const notes: string[] = [];
 
-  const seed = await loadSeedHtml(input.seedUrl, allowRender, input.credentials);
+  const seed = await loadSeedHtml(input.seedUrl, allowRender, input.credentials, input.codeWaiter);
   if ("error" in seed) {
     return {
       prospects: [],
@@ -308,7 +312,7 @@ export async function discoverFromSeed(input: {
     }
     for (const detailUrl of detailPages) {
       if (merged.size >= limit) break;
-      const detail = await loadSeedHtml(detailUrl, allowRender, input.credentials);
+      const detail = await loadSeedHtml(detailUrl, allowRender, input.credentials, input.codeWaiter);
       if ("error" in detail) continue;
       for (const p of extractOutboundProspects({
         html: detail.html,
@@ -441,7 +445,14 @@ export async function discoverProspects(input: {
     const credentials = input.organizationId
       ? await loadSeedCredential(input.organizationId, seedHost(seedUrl))
       : null;
-    const res = await discoverFromSeed({ seedUrl, limit, depth: 2, credentials });
+    const res = await discoverFromSeed({
+      seedUrl,
+      limit,
+      depth: 2,
+      credentials,
+      // Only offer the code path when a credential exists to sign in with.
+      codeWaiter: credentials ? makeSeedCodeWaiter(credentials.id) : null,
+    });
     if (res.error) errors.push(res.error);
     // Only "waiting on the user" when we have nothing to try. A stored
     // credential that failed is a different problem and reads as an error.
