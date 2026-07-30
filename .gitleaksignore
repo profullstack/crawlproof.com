@@ -13,3 +13,14 @@
 # tag fixture for the tracker integration analyzer test. Not a real secret —
 # it's asserted on by the test, so pin the historical blob rather than rewrite.
 64a771186801871e191fb913b801b086d9ef3235:tests/contract/tracker-integrations.test.ts:generic-api-key:8
+
+# A fingerprint pins one commit, and both lines above survived edits to their
+# files, so the same non-secret matches again under every later SHA that still
+# carries the line. These are the remaining occurrences of the two entries
+# above — same lines, same verdict, later commits.
+#
+# 2eb14f9b: the same pk_test_ fixture.
+2eb14f9b73d3100d207b41ea23d216ee2100acc9:tests/contract/tracker-integrations.test.ts:generic-api-key:8
+# 508859ed: the same curl example, by then reading `-H "Authorization: Bearer
+# $SECRET"` — a shell variable the reader substitutes, not a token.
+508859ed12ff73cd5044a4fd10971372779578cb:app/(marketing)/docs/autoblog-webhook/page.tsx:curl-auth-header:130
