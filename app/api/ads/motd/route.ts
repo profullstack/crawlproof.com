@@ -8,6 +8,11 @@
 // — anywhere an <iframe> can't go. Impressions are metered server-side by
 // serveAd, exactly like the HTML paths; an unknown or inactive slot falls back
 // to the (unmetered) CrawlProof house ad so a login banner is never blank.
+//
+// `slot` identifies the publisher placement being filled — that's who the
+// impression and any click earnings are credited to. Omitting it (a bare curl
+// of this URL) uses ADS_DEFAULT_SLOT_ID, the network's own slot, so the
+// endpoint still rotates real campaigns on every load.
 
 import { NextRequest, NextResponse } from "next/server";
 import { serveAd } from "@/lib/ads/serve";
@@ -16,6 +21,7 @@ import { TERMINAL_FORMAT_ID } from "@/lib/ads/formats";
 import { clampCols, renderCreativeText, terminalDeviceType } from "@/lib/ads/terminal";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { parseDevice } from "@/lib/tracker/device";
+import { env } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,7 +70,11 @@ export async function GET(request: NextRequest) {
   const h = headers(request);
   try {
     const url = new URL(request.url);
-    const slotId = url.searchParams.get("slot");
+    // No ?slot= (someone just curling the bare URL) falls back to the network's
+    // default slot, so the endpoint rotates real campaigns on every load
+    // instead of only ever showing the house ad. Serving needs *a* slot: the
+    // impression row is what a click later resolves back to.
+    const slotId = url.searchParams.get("slot") || env.adsDefaultSlotId;
     const visitorId = url.searchParams.get("v");
     const cols = clampCols(url.searchParams.get("cols") ?? url.searchParams.get("width"));
     const color = wantsColor(url.searchParams.get("color"));
