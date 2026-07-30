@@ -68,5 +68,20 @@ jobs:
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
             | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
+      # A pull request is gated on what IT introduces. Scanning full history
+      # here failed every PR in the repo on the same historical blob, no matter
+      # what the PR touched — and a check that is red on arrival is a check
+      # nobody reads. The history is still scanned, on master and on the weekly
+      # cron below, so a finding cannot be merged out of sight.
+      - name: Scan pull request commits
+        if: github.event_name == 'pull_request'
+        run: |
+          gitleaks detect --source . --redact --verbose --no-banner --exit-code 1 \
+            --log-opts="--no-merges ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      # push to master + schedule: everything, forever. This is what surfaces
+      # credentials already committed; it stays red until they are rotated and
+      # the blob is purged from history.
       - name: Scan history
+        if: github.event_name != 'pull_request'
         run: gitleaks detect --source . --redact --verbose --no-banner --exit-code 1
