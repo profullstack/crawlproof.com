@@ -24,3 +24,9 @@
 # 508859ed: the same curl example, by then reading `-H "Authorization: Bearer
 # $SECRET"` — a shell variable the reader substitutes, not a token.
 508859ed12ff73cd5044a4fd10971372779578cb:app/(marketing)/docs/autoblog-webhook/page.tsx:curl-auth-header:130
+
+# Purging .env.bak-2026-07-28 from history (e3d0f63 -> 5a51ce2) rewrote every
+# commit from 2026-07-28 onward; earlier commits kept their SHAs, so the four
+# fingerprints above still resolve. What changed is the later commit that also
+# carries the pk_test_ fixture line — it has a new SHA and needs its own entry.
+b7360e66a22d02cf8c002ee9347240176b66dcea:tests/contract/tracker-integrations.test.ts:generic-api-key:8
