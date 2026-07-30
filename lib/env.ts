@@ -15,6 +15,12 @@ export const env = {
     process.env.MAXMIND_GEOLITE2_CITY_DB_PATH ??
     process.env.GEOLITE2_CITY_DB_PATH ??
     "data/GeoLite2-City.mmdb",
+  // Ad network — slot used when a serving request names none (the bare
+  // /api/ads/motd URL). Without it a slotless request can't meter an
+  // impression, so it can only ever return the house ad. Points at the
+  // network's own publisher slot: anonymous terminal traffic is CrawlProof's
+  // own inventory, so its impressions/clicks accrue there.
+  adsDefaultSlotId: process.env.ADS_DEFAULT_SLOT_ID ?? "",
   // CoinPay — crypto credit purchases.
   coinpayMerchantId: process.env.COINPAY_MERCHANT_ID ?? "",
   coinpayApiKey: process.env.COINPAY_API_KEY ?? "",
