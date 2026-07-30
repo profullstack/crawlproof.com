@@ -5,9 +5,11 @@ import {
   AD_FORMAT_IDS,
   appendRef,
   renderCreativeHtml,
+  renderCreativeText,
   type AdCreative,
   type AdFormatId,
 } from "./creative";
+import { TERMINAL_FORMAT_ID } from "./formats";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import { assessClickValidity, isBotDevice } from "./fraud";
@@ -27,6 +29,8 @@ export type Fill = {
   creative: AdCreative;
   clickUrl: string;
   html: string;
+  /** ASCII rendering of the same creative, for terminal/MOTD consumers. */
+  text: string;
 };
 
 export function isAdFormat(v: string | null | undefined): v is AdFormatId {
@@ -175,8 +179,13 @@ export async function serveAd(
   const creative = rowToCreative(pick);
 
   // Click goes through our redirector so we can meter it, then lands on the
-  // destination with ?ref= applied.
-  const clickUrl = `${env.siteUrl}/api/ads/click?i=${impressionId}&s=${slotId}&c=${campaign.id}&cr=${pick.id}`;
+  // destination with ?ref= applied. Terminals print the URL as literal text, so
+  // the terminal format gets the short /a/<impression> form — it resolves the
+  // slot/campaign/creative from the impression row instead of the query string.
+  const clickUrl =
+    format === TERMINAL_FORMAT_ID
+      ? `${env.siteUrl}/a/${impressionId}`
+      : `${env.siteUrl}/api/ads/click?i=${impressionId}&s=${slotId}&c=${campaign.id}&cr=${pick.id}`;
 
   return {
     impressionId,
@@ -186,6 +195,7 @@ export async function serveAd(
     creative,
     clickUrl,
     html: renderCreativeHtml(creative, clickUrl),
+    text: renderCreativeText(creative, clickUrl),
   };
 }
 

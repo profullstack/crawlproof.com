@@ -3,12 +3,49 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createSlot, setSlotStatus, saveSlotPayout, requestPayout } from "@/app/actions/ads";
-import { PUBLISHER_FORMAT_IDS, formatSpec, type AdFormatId } from "@/lib/ads/formats";
+import {
+  PUBLISHER_FORMAT_IDS,
+  PUBLISHER_TEXT_FORMAT_IDS,
+  TERMINAL_COLS_LABEL,
+  TERMINAL_FORMAT_ID,
+  formatSpec,
+  type AdFormatId,
+} from "@/lib/ads/formats";
+
+// Every unit a publisher can install: HTML embeds first, then the fetch-based
+// text formats (terminal/MOTD).
+const INSTALLABLE_FORMAT_IDS: AdFormatId[] = [
+  ...PUBLISHER_FORMAT_IDS,
+  ...PUBLISHER_TEXT_FORMAT_IDS,
+];
 
 // The paste-once embed for a given size. data-format tells /ad.js which creative
 // to request; the medium rectangle stays the default the auto-installer uses.
+// The terminal format isn't embedded at all — it's curled, so it gets a shell
+// snippet instead of markup.
 function embedFor(slotId: string, format: AdFormatId, origin: string): string {
+  if (format === TERMINAL_FORMAT_ID) {
+    return [
+      "# Terminal ad — plain ASCII over HTTP. No JavaScript, no HTML, no iframe.",
+      "# Drop in ~/.zshrc, /etc/profile.d/, /etc/update-motd.d, or any CLI banner.",
+      `curl -fsS --max-time 3 "${origin}/api/ads/motd?slot=${slotId}&cols=72"`,
+      "",
+      "# Options: &color=1 for ANSI colour, &cols=44..120 for width,",
+      "# &src=<tag> to tell surfaces apart (rides through to the click URL).",
+      "",
+      "# Rendering a template server-side? Leave a token where the ad goes —",
+      "#   {{ads}}  {{ads:64}}  {{ads:terminal:64}}",
+      "# — and swap it for the fetched text before you send the response.",
+    ].join("\n");
+  }
   return `<div data-cp-ad data-slot="${slotId}" data-format="${format}"></div>\n<script src="${origin}/ad.js" async></script>`;
+}
+
+// Button caption: pixel sizes for banners, columns for the terminal box.
+function formatButtonLabel(id: AdFormatId): string {
+  const spec = formatSpec(id);
+  if (id === TERMINAL_FORMAT_ID) return `${spec.label} · ${TERMINAL_COLS_LABEL}`;
+  return `${spec.label} · ${spec.w}×${spec.h}`;
 }
 
 type Project = { id: string; name: string; url: string };
@@ -237,13 +274,12 @@ export function SlotManager({
           )}
           <div>
             <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-              Embed — pick a size, paste on your page
+              Embed — pick a unit, paste on your page (or in your shell)
             </div>
             {/* One button per available size. Clicking reveals that size's code;
                 clicking the open size again collapses it. */}
             <div className="mt-2 flex flex-wrap gap-2">
-              {PUBLISHER_FORMAT_IDS.map((id) => {
-                const spec = formatSpec(id);
+              {INSTALLABLE_FORMAT_IDS.map((id) => {
                 const open = id === fmt && showCode;
                 return (
                   <button
@@ -259,7 +295,7 @@ export function SlotManager({
                       }
                     }}
                   >
-                    {spec.label} · {spec.w}×{spec.h}
+                    {formatButtonLabel(id)}
                   </button>
                 );
               })}

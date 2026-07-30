@@ -7,6 +7,7 @@ import { env } from "@/lib/env";
 import { generateStructuredOutput } from "@/lib/lx/backendAi";
 import { extractSiteBrand, type SiteBrand } from "./brand";
 import { resolveAdHeroImage } from "./heroImage";
+import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import {
   AD_FORMATS,
   AD_FORMAT_IDS,
@@ -20,6 +21,7 @@ import {
 // Re-export the client-safe format primitives so existing server importers of
 // this module keep working; client components should import from ./formats.
 export { AD_FORMATS, AD_FORMAT_IDS, formatSpec };
+export { renderCreativeText, renderTerminalHtml };
 export type { AdCreative, AdFormatId };
 
 // Copy is generated once per URL by a frontier-ish model; sizes are rendered
@@ -185,6 +187,12 @@ function markHtml(creative: AdCreative, size: number): string {
 // destination with ?ref= already applied.
 export function renderCreativeHtml(creative: AdCreative, clickUrl: string): string {
   const { w, h } = formatSpec(creative.format);
+
+  // Terminal ad — the ASCII artwork in a <pre>, so the same creative can also
+  // fill a web slot. The canonical delivery is /api/ads/motd (text/plain).
+  if (creative.format === "terminal_ascii") {
+    return renderTerminalHtml(creative, clickUrl);
+  }
 
   // Native text link — a borderless, full-width single line. No image/box.
   if (creative.format === "text_link") {
