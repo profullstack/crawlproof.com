@@ -10,6 +10,11 @@ export const AD_FORMATS = [
   // Native, borderless single-line text ad. Renders full-width (the w/h below
   // is the nominal iframe box; the unit itself fills its container).
   { id: "text_link", label: "Text Link", w: 600, h: 40 },
+  // ASCII box for terminals — SSH banners, shell MOTDs, BBS screens, CLI tools.
+  // There is no pixel box: w/h below is only the nominal size used by the web
+  // preview when the same creative is rendered in a <pre>. The real dimension
+  // is TERMINAL_COLS (see ./terminal).
+  { id: "terminal_ascii", label: "Terminal (ASCII)", w: 600, h: 148 },
 ] as const;
 
 export type AdFormatId = (typeof AD_FORMATS)[number]["id"];
@@ -19,12 +24,28 @@ export const AD_FORMAT_IDS = AD_FORMATS.map((f) => f.id) as AdFormatId[];
 // embed for and install. A subset of AD_FORMATS that grows as each size is
 // surfaced (one PR per size). Keep the medium rectangle first: it's the safe
 // default the auto-installer falls back to.
+//
+// WEB ONLY: these are the formats rendered as an <iframe> by /ad.js and dropped
+// into HTML by the GitHub auto-installer. Text/terminal formats must not be in
+// this list — they're fetched, not embedded.
 export const PUBLISHER_FORMAT_IDS: AdFormatId[] = [
   "banner_300x250",
   "banner_728x90",
   "banner_320x50",
   "text_link",
 ];
+
+// The terminal format id, kept as a named constant since several call sites
+// (serving, the MOTD endpoint, the publisher snippet) branch on it.
+export const TERMINAL_FORMAT_ID = "terminal_ascii" as const;
+
+// Caption for the terminal unit's real dimension — it has columns, not pixels.
+export const TERMINAL_COLS_LABEL = "76 cols";
+
+// Formats a publisher consumes over plain HTTP as text rather than embedding —
+// `curl https://crawlproof.com/api/ads/motd?slot=<id>` in a login banner, MOTD,
+// or CLI. Shown as their own group on the Monetize page.
+export const PUBLISHER_TEXT_FORMAT_IDS: AdFormatId[] = [TERMINAL_FORMAT_ID];
 
 export function formatSpec(id: AdFormatId) {
   return AD_FORMATS.find((f) => f.id === id) ?? AD_FORMATS[0];
