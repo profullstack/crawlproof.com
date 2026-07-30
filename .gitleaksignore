@@ -13,3 +13,38 @@
 # tag fixture for the tracker integration analyzer test. Not a real secret —
 # it's asserted on by the test, so pin the historical blob rather than rewrite.
 64a771186801871e191fb913b801b086d9ef3235:tests/contract/tracker-integrations.test.ts:generic-api-key:8
+
+# ---------------------------------------------------------------------------
+# .env.bak-2026-07-28 — a local environment backup committed to master in
+# 925da5e (#160, 2026-07-28) and untracked again later. Unlike the two entries
+# above, these were NOT false positives: the values were real. They are pinned
+# here because `gitleaks detect` scans history, so it reports the original
+# commit no matter what HEAD contains, and rewriting master to drop the blob
+# would force every collaborator to re-clone.
+#
+# These pins are only honest because the credentials have been rotated — once
+# rotated, the recorded values are dead and the finding is genuinely stale.
+# If rotation did not happen, this section is hiding a live exposure.
+#
+# Scoped to that one commit and file, so any NEW leak still fails the scan.
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:gcp-api-key:54
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:101
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:11
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:12
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:15
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:20
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:24
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:27
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:37
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:40
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:56
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:58
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:60
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:62
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:64
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:81
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:83
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:90
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:91
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:generic-api-key:98
+925da5e21bfd6f91b45f9ef0a27b490573fc3615:.env.bak-2026-07-28:private-key:92
