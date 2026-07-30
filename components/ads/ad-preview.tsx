@@ -2,12 +2,42 @@
 
 import type { CSSProperties } from "react";
 import type { AdCreative } from "@/lib/ads/formats";
-import { brandInitial, formatSpec, hexToRgba } from "@/lib/ads/formats";
+import { brandInitial, formatSpec, hexToRgba, TERMINAL_FORMAT_ID } from "@/lib/ads/formats";
+import { renderCreativeText } from "@/lib/ads/terminal";
+
+// Stand-in for the real /a/<impression_id> click URL, so the preview box is the
+// width the served ad will actually be.
+const PREVIEW_CLICK_URL = "https://crawlproof.com/a/00000000-0000-0000-0000-000000000000";
 
 // Live React mirror of renderCreativeHtml (lib/ads/creative.ts). Kept visually
 // in sync with the served HTML so the editor preview matches production.
 export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale?: number }) {
   const { w, h } = formatSpec(creative.format);
+
+  // Terminal ad — render the exact ASCII the MOTD endpoint serves, monospaced.
+  if (creative.format === TERMINAL_FORMAT_ID) {
+    return (
+      <div style={{ width: w * scale, maxWidth: "100%", flex: "0 0 auto" }}>
+        <pre
+          style={{
+            margin: 0,
+            background: creative.bgColor,
+            color: creative.fgColor,
+            border: "1px solid rgba(255,255,255,.08)",
+            borderRadius: 8,
+            padding: "10px 12px",
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+            fontSize: 11,
+            lineHeight: 1.35,
+            whiteSpace: "pre",
+            overflowX: "auto",
+          }}
+        >
+          {renderCreativeText(creative, PREVIEW_CLICK_URL)}
+        </pre>
+      </div>
+    );
+  }
 
   // Native text link — a borderless, full-width single line.
   if (creative.format === "text_link") {

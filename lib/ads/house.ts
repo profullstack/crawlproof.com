@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { env } from "@/lib/env";
 import { formatSpec, type AdCreative, type AdFormatId } from "./creative";
+import { TERMINAL_FORMAT_ID } from "./formats";
+import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import type { Fill } from "./serve";
 
 // Default "house" ad for the CrawlProof Ad Network. Shown when a slot has no
@@ -29,6 +31,12 @@ function esc(s: string): string {
 
 export function renderHouseAdHtml(format: AdFormatId, clickUrl: string): string {
   const { w, h } = formatSpec(format);
+
+  // Terminal ad — same ASCII artwork the /api/ads/motd endpoint serves, in a
+  // <pre> for the web/iframe paths.
+  if (format === TERMINAL_FORMAT_ID) {
+    return renderTerminalHtml(houseCreative(format), clickUrl);
+  }
 
   // Native text link — no artwork, single full-width line.
   if (format === "text_link") {
@@ -106,14 +114,21 @@ function houseCreative(format: AdFormatId): AdCreative {
 
 /** A default house-ad fill promoting the CrawlProof Ad Network. Not metered. */
 export function houseFill(format: AdFormatId): Fill {
-  const clickUrl = `${env.siteUrl}/?utm_source=house-ad&utm_medium=ad&utm_campaign=crawlproof-ads`;
+  // Terminals print the raw URL, so the terminal house ad uses a short one that
+  // fits the ASCII box instead of the full utm_campaign query.
+  const clickUrl =
+    format === TERMINAL_FORMAT_ID
+      ? `${env.siteUrl}/?utm_source=house-ad&utm_medium=motd`
+      : `${env.siteUrl}/?utm_source=house-ad&utm_medium=ad&utm_campaign=crawlproof-ads`;
+  const creative = houseCreative(format);
   return {
     impressionId: crypto.randomUUID(),
     campaignId: "house",
     creativeId: "house",
     refSlug: "house",
-    creative: houseCreative(format),
+    creative,
     clickUrl,
     html: renderHouseAdHtml(format, clickUrl),
+    text: renderCreativeText(creative, clickUrl, { label: "CRAWLPROOF ADS" }),
   };
 }
