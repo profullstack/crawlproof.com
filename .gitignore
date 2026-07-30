@@ -1,11 +1,9 @@
 node_modules
 .next
-.env
-.env.local
-.env.*.local
-.env.development
-.env.production
-.env.test
+# Ignore every env file, then allow the checked-in template back. Deliberately
+# broad: the old list named each variant explicitly, so `.env.bak-2026-07-28`
+# matched none of them and a full production environment landed in git.
+.env*
 !.env.example
 *.log
 *.mmdb
