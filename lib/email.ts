@@ -51,11 +51,15 @@ function emailShell(input: {
             </td>
           </tr>
           ${input.innerHtml}
-          ${input.footerNote ? `<tr>
+          ${
+            input.footerNote
+              ? `<tr>
             <td style="padding:16px 32px 28px;border-top:1px solid #1f2630;">
               <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b;">${input.footerNote}</p>
             </td>
-          </tr>` : ""}
+          </tr>`
+              : ""
+          }
         </table>
         <p style="margin:18px 0 0;font-size:11px;color:#475569;">
           CrawlProof · See your site the way AI crawlers do.<br>
@@ -75,7 +79,11 @@ export function auditReadyEmailHtml(input: {
   pdfAttached?: boolean;
 }): string {
   const host = (() => {
-    try { return new URL(input.targetUrl).hostname; } catch { return input.targetUrl; }
+    try {
+      return new URL(input.targetUrl).hostname;
+    } catch {
+      return input.targetUrl;
+    }
   })();
   const accent = scoreAccent(input.score);
   const attachedLine = input.pdfAttached
@@ -123,7 +131,8 @@ export function auditReadyEmailHtml(input: {
   return emailShell({
     title: `Your CrawlProof audit for ${host} is ready`,
     innerHtml,
-    footerNote: "Want to track this site over time? Sign in and add it as a project to schedule weekly or monthly re-audits.",
+    footerNote:
+      "Want to track this site over time? Sign in and add it as a project to schedule weekly or monthly re-audits.",
   });
 }
 
@@ -151,7 +160,8 @@ export function scanRunSummaryEmailHtml(input: {
       return input.targetUrl;
     }
   })();
-  const accent = input.avgScore !== null ? scoreAccent(input.avgScore) : scoreAccent(0);
+  const accent =
+    input.avgScore !== null ? scoreAccent(input.avgScore) : scoreAccent(0);
   const rows = input.engines
     .map((e) => {
       const scoreCell =
@@ -351,7 +361,12 @@ export async function sendAuditReportPdfEmail(input: {
       reportUrl: input.reportUrl,
       pdfAttached: true,
     }),
-    attachments: [{ filename: `crawlproof-${host}.pdf`, content: input.pdf.toString("base64") }],
+    attachments: [
+      {
+        filename: `crawlproof-${host}.pdf`,
+        content: input.pdf.toString("base64"),
+      },
+    ],
   });
   if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
@@ -596,7 +611,8 @@ export async function sendProjectInviteEmail(input: {
   const html = emailShell({
     title: `Invitation to join ${input.projectName} on CrawlProof`,
     innerHtml,
-    footerNote: "If you weren't expecting this invitation, you can safely ignore this email.",
+    footerNote:
+      "If you weren't expecting this invitation, you can safely ignore this email.",
   });
 
   const res = await c.send({
@@ -645,7 +661,8 @@ export async function sendOrgInviteEmail(input: {
   const html = emailShell({
     title: `Invitation to join ${input.orgName} on CrawlProof`,
     innerHtml,
-    footerNote: "If you weren't expecting this invitation, you can safely ignore this email.",
+    footerNote:
+      "If you weren't expecting this invitation, you can safely ignore this email.",
   });
 
   const res = await c.send({
@@ -899,9 +916,11 @@ export function leadCampaignEmailHtml(input: {
           <tr>
             <td style="padding:22px 32px 0;">
               <p style="margin:0;font-size:14px;line-height:1.6;color:#9aa3b2;">
-                ${input.strong
-                  ? `That's a strong result — most sites we scan don't get there. If you want the remaining gaps closed properly, we do that work directly.`
-                  : `We also fix these directly. Tell us about the site and we'll come back with what it takes to move that number — no obligation.`}
+                ${
+                  input.strong
+                    ? `That's a strong result — most sites we scan don't get there. If you want the remaining gaps closed properly, we do that work directly.`
+                    : `We also fix these directly. Tell us about the site and we'll come back with what it takes to move that number — no obligation.`
+                }
               </p>
             </td>
           </tr>
@@ -1138,7 +1157,12 @@ export async function sendColdOutreachEmail(input: {
    * replies come back to them; omitting it uses the shared Resend sender.
    */
   mailbox?: SenderMailbox | null;
-}): Promise<{ sent: boolean; error?: string; provider?: string; messageId?: string }> {
+}): Promise<{
+  sent: boolean;
+  error?: string;
+  provider?: string;
+  messageId?: string;
+}> {
   const headers = {
     "List-Unsubscribe": `<${input.unsubscribeUrl}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
@@ -1192,4 +1216,34 @@ export async function sendColdOutreachEmail(input: {
   });
   if (!res.sent) return { sent: false, error: res.error, provider: "resend" };
   return { sent: true, provider: "resend" };
+}
+
+/**
+ * Admin broadcast. The body arrives as Markdown (or plain text) from
+ * /admin/email-broadcast and is rendered by lib/emailMarkdown.ts, which escapes the
+ * input and inlines styles matching this shell — see that file for what is supported.
+ */
+export function broadcastEmailHtml(input: {
+  subject: string;
+  bodyHtml: string;
+}): string {
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                ${escapeHtml(input.subject)}
+              </h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px 26px;">
+              ${input.bodyHtml}
+            </td>
+          </tr>`;
+  return emailShell({
+    // emailShell drops `title` straight into <title>, so it is escaped here — the
+    // subject is admin-authored free text.
+    title: escapeHtml(input.subject),
+    innerHtml,
+    footerNote: "You're receiving this because you have a CrawlProof account.",
+  });
 }
