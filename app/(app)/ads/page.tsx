@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { CampaignActions } from "@/components/ads/campaign-actions";
 import { MiniTrend } from "@/components/ads/mini-trend";
 import { getCampaignDailySeries, type CampaignDailyPoint } from "@/lib/ads/series";
+import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 
 export const metadata = { title: "Ad campaigns" };
 
@@ -12,6 +13,9 @@ type CampaignRow = {
   name: string;
   destination_domain: string | null;
   daily_budget_cents: number;
+  bid_credits: number | null;
+  spend_today_cents: number | null;
+  spend_date: string | null;
   status: string;
   created_at: string;
 };
@@ -21,7 +25,6 @@ type StatRow = {
   impressions: number;
   clicks: number;
   spent_cents: number;
-  spend_today_cents: number;
   total_spent_cents: number;
 };
 
@@ -47,11 +50,13 @@ export default async function AdsPage() {
     const [{ data }, { data: stats }] = await Promise.all([
       supabase
         .from("ad_campaigns")
-        .select("id, ref_slug, name, destination_domain, daily_budget_cents, status, created_at")
+        .select(
+          "id, ref_slug, name, destination_domain, daily_budget_cents, bid_credits, spend_today_cents, spend_date, status, created_at",
+        )
         .order("created_at", { ascending: false }),
       supabase
         .from("ad_campaign_stats")
-        .select("campaign_id, impressions, clicks, spent_cents, spend_today_cents, total_spent_cents"),
+        .select("campaign_id, impressions, clicks, spent_cents, total_spent_cents"),
     ]);
     campaigns = (data as CampaignRow[]) ?? [];
     for (const s of (stats as StatRow[]) ?? []) statsById.set(s.campaign_id, s);
@@ -61,6 +66,8 @@ export default async function AdsPage() {
       30,
     );
   }
+
+  const today = utcToday();
 
   const totals = [...statsById.values()].reduce(
     (a, s) => ({
@@ -115,6 +122,7 @@ export default async function AdsPage() {
             const s = statsById.get(c.id);
             const impr = s?.impressions ?? 0;
             const clk = s?.clicks ?? 0;
+            const display = campaignDisplayStatus(c, today);
             return (
               <li key={c.id} className="card p-4">
                 <div className="flex items-center justify-between gap-4">
@@ -131,7 +139,9 @@ export default async function AdsPage() {
                     <Link href={`/ads/${c.id}`} className="hidden sm:block" aria-label="View campaign">
                       <MiniTrend data={seriesById.get(c.id) ?? []} />
                     </Link>
-                    <span className="badge whitespace-nowrap">{c.status}</span>
+                    <span className="badge whitespace-nowrap" title={display.hint}>
+                      {display.label}
+                    </span>
                     <Link href={`/ads/${c.id}/edit`} className="btn text-sm">
                       Edit
                     </Link>
@@ -143,8 +153,14 @@ export default async function AdsPage() {
                   <MiniStat label="Clicks" value={clk.toLocaleString()} />
                   <MiniStat label="CTR" value={ctr(clk, impr)} />
                   <MiniStat label="Spent" value={dollars(s?.total_spent_cents ?? 0)} />
-                  <MiniStat label="Today" value={dollars(s?.spend_today_cents ?? 0)} />
+                  <MiniStat
+                    label="Today"
+                    value={`${dollars(spendTodayCents(c, today))} / ${dollars(c.daily_budget_cents)}`}
+                  />
                 </div>
+                {!display.serving && (
+                  <p className="mt-2 text-sm text-[var(--color-muted)]">{display.hint}</p>
+                )}
               </li>
             );
           })}
