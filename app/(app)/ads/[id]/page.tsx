@@ -6,6 +6,7 @@ import { AdPreview } from "@/components/ads/ad-preview";
 import { CampaignActions, RegenerateButton } from "@/components/ads/campaign-actions";
 import { CampaignTrend } from "@/components/ads/campaign-trend";
 import { getCampaignDailySeries } from "@/lib/ads/series";
+import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 
 export const metadata = { title: "Campaign" };
 
@@ -47,7 +48,7 @@ export default async function CampaignDetailPage({
   const { data: campaign } = await supabase
     .from("ad_campaigns")
     .select(
-      "id, name, destination_url, destination_domain, daily_budget_cents, bid_credits, status, ref_slug, created_at, spend_today_cents, total_spent_cents",
+      "id, name, destination_url, destination_domain, daily_budget_cents, bid_credits, status, ref_slug, created_at, spend_today_cents, spend_date, total_spent_cents",
     )
     .eq("id", id)
     .eq("owner_id", user.id)
@@ -73,6 +74,8 @@ export default async function CampaignDetailPage({
   const impressions = (stats?.impressions as number) ?? 0;
   const clicks = (stats?.clicks as number) ?? 0;
   const daily = series.get(id) ?? [];
+  const today = utcToday();
+  const display = campaignDisplayStatus(campaign, today);
 
   const creatives: (AdCreative & { id: string })[] = ((creativeRows as CreativeRow[]) ?? []).map(
     (r) => ({
@@ -115,7 +118,9 @@ export default async function CampaignDetailPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="badge whitespace-nowrap">{campaign.status}</span>
+          <span className="badge whitespace-nowrap" title={display.hint}>
+            {display.label}
+          </span>
           <Link href={`/ads/${id}/edit`} className="btn text-sm">
             Edit
           </Link>
@@ -124,12 +129,18 @@ export default async function CampaignDetailPage({
         </div>
       </div>
 
+      {!display.serving && (
+        <p className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface,transparent)] p-3 text-sm text-[var(--color-muted)]">
+          {display.hint}
+        </p>
+      )}
+
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Impressions" value={impressions.toLocaleString()} />
         <Stat label="Clicks" value={clicks.toLocaleString()} />
         <Stat label="CTR" value={ctr(clicks, impressions)} />
         <Stat label="Total spend" value={dollars(campaign.total_spent_cents)} />
-        <Stat label="Today" value={dollars(campaign.spend_today_cents)} />
+        <Stat label="Today" value={dollars(spendTodayCents(campaign, today))} />
         <Stat label="Daily budget" value={dollars(campaign.daily_budget_cents)} />
       </div>
 
