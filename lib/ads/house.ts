@@ -130,5 +130,6 @@ export function houseFill(format: AdFormatId): Fill {
     clickUrl,
     html: renderHouseAdHtml(format, clickUrl),
     text: renderCreativeText(creative, clickUrl, { label: "CRAWLPROOF ADS" }),
+    tier: "house",
   };
 }
