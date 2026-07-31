@@ -1,4 +1,151 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { bucketAxis, bucketOf, rangeSince, type RangeDef } from "./ranges";
+
+export type AccountPoint = {
+  /** Bucket start, epoch ms (epoch-aligned, matching SQL date_bin). */
+  t: number;
+  impressions: number;
+  freeImpressions: number;
+  clicks: number;
+  freeClicks: number;
+  spentCents: number;
+};
+
+export type RangeTotals = {
+  impressions: number;
+  freeImpressions: number;
+  clicks: number;
+  freeClicks: number;
+  spentCents: number;
+};
+
+export const EMPTY_TOTALS: RangeTotals = {
+  impressions: 0,
+  freeImpressions: 0,
+  clicks: 0,
+  freeClicks: 0,
+  spentCents: 0,
+};
+
+type AccountSeriesRow = {
+  bucket: string;
+  impressions: number | string;
+  free_impressions: number | string;
+  clicks: number | string;
+  free_clicks: number | string;
+  spent_cents: number | string;
+};
+
+/**
+ * Account-wide bucketed series for a range, zero-filled across the whole window.
+ *
+ * Account-wide on purpose: a per-campaign version would return
+ * (campaigns × buckets) rows and blow PostgREST's 1000-row cap on any wide
+ * range — the same trap documented on getCampaignDailySeries below. Per-campaign
+ * numbers for the same window come from getCampaignRangeTotals, which is
+ * (campaigns) rows because it doesn't bucket.
+ */
+export async function getAccountSeries(
+  supabase: SupabaseClient,
+  range: RangeDef,
+  now: Date = new Date(),
+): Promise<AccountPoint[]> {
+  const { data, error } = await supabase.rpc("ad_account_series", {
+    p_since: rangeSince(range, now),
+    p_bucket_seconds: range.bucketSeconds,
+  });
+
+  const rows = error ? [] : ((data as AccountSeriesRow[]) ?? []);
+
+  // "All time" has no fixed start, so the axis runs from the oldest bucket that
+  // actually has data rather than from a window offset.
+  const axis =
+    range.windowSeconds == null && rows.length > 0
+      ? allTimeAxis(rows, range, now)
+      : bucketAxis(range, now);
+
+  const byBucket = new Map<number, AccountPoint>();
+  for (const t of axis) {
+    byBucket.set(t, {
+      t,
+      impressions: 0,
+      freeImpressions: 0,
+      clicks: 0,
+      freeClicks: 0,
+      spentCents: 0,
+    });
+  }
+
+  for (const row of rows) {
+    const point = byBucket.get(bucketOf(row.bucket, range));
+    if (!point) continue;
+    point.impressions += Number(row.impressions) || 0;
+    point.freeImpressions += Number(row.free_impressions) || 0;
+    point.clicks += Number(row.clicks) || 0;
+    point.freeClicks += Number(row.free_clicks) || 0;
+    point.spentCents += Number(row.spent_cents) || 0;
+  }
+
+  return [...byBucket.values()].sort((a, b) => a.t - b.t);
+}
+
+function allTimeAxis(rows: AccountSeriesRow[], range: RangeDef, now: Date): number[] {
+  const stepMs = range.bucketSeconds * 1000;
+  const first = Math.min(...rows.map((r) => bucketOf(r.bucket, range)));
+  const last = Math.floor(now.getTime() / stepMs) * stepMs;
+  const out: number[] = [];
+  // Guard the loop: a clock skew that puts `first` after `last` would otherwise
+  // spin forever building an axis that runs backwards.
+  for (let t = Math.min(first, last); t <= last; t += stepMs) out.push(t);
+  return out;
+}
+
+/** Sum a series into the headline figures for the range. */
+export function sumSeries(points: AccountPoint[]): RangeTotals {
+  return points.reduce<RangeTotals>(
+    (a, p) => ({
+      impressions: a.impressions + p.impressions,
+      freeImpressions: a.freeImpressions + p.freeImpressions,
+      clicks: a.clicks + p.clicks,
+      freeClicks: a.freeClicks + p.freeClicks,
+      spentCents: a.spentCents + p.spentCents,
+    }),
+    { ...EMPTY_TOTALS },
+  );
+}
+
+type CampaignTotalsRow = {
+  campaign_id: string;
+  impressions: number | string;
+  free_impressions: number | string;
+  clicks: number | string;
+  free_clicks: number | string;
+  spent_cents: number | string;
+};
+
+/** Per-campaign totals for the same window, so the list agrees with the header. */
+export async function getCampaignRangeTotals(
+  supabase: SupabaseClient,
+  range: RangeDef,
+  now: Date = new Date(),
+): Promise<Map<string, RangeTotals>> {
+  const out = new Map<string, RangeTotals>();
+  const { data, error } = await supabase.rpc("ad_campaign_totals", {
+    p_since: rangeSince(range, now),
+  });
+  if (error) return out;
+
+  for (const row of (data as CampaignTotalsRow[]) ?? []) {
+    out.set(row.campaign_id, {
+      impressions: Number(row.impressions) || 0,
+      freeImpressions: Number(row.free_impressions) || 0,
+      clicks: Number(row.clicks) || 0,
+      freeClicks: Number(row.free_clicks) || 0,
+      spentCents: Number(row.spent_cents) || 0,
+    });
+  }
+  return out;
+}
 
 export type CampaignDailyPoint = {
   /** UTC calendar day, YYYY-MM-DD */
