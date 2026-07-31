@@ -21,6 +21,17 @@ import { runAuction } from "./auction";
 // campaign with a ready creative in the requested format is eligible; we pick
 // one at random to spread delivery. Auction + budget pacing are a later phase.
 
+/**
+ * Which inventory this fill came from.
+ *
+ * 'paid'  — won the auction; the click bills the advertiser and pays the publisher.
+ * 'free'  — backfill from a campaign that ran out of credits or daily budget.
+ *           Bills nobody, earns nobody, and only ever fills a request no paying
+ *           campaign wanted. Beats showing a house ad.
+ * 'house' — CrawlProof's own promo. Never metered.
+ */
+export type AdTier = "paid" | "free" | "house";
+
 export type Fill = {
   impressionId: string;
   campaignId: string;
@@ -31,6 +42,7 @@ export type Fill = {
   html: string;
   /** ASCII rendering of the same creative, for terminal/MOTD consumers. */
   text: string;
+  tier: AdTier;
 };
 
 export function isAdFormat(v: string | null | undefined): v is AdFormatId {
@@ -100,8 +112,9 @@ export async function serveAd(
   // clean and avoids exposing paid creatives to crawlers).
   if (isBotDevice(ctx.device)) return houseFill(format);
 
-  // Active campaigns with a ready creative in this format. Join manually:
-  // fetch candidate creatives whose campaign is active.
+  // Campaigns with a ready creative in this format. 'exhausted' is a legacy
+  // status no longer written by ad_charge_click — rows still carrying it are
+  // live campaigns that ran dry, and belong on the free tier rather than dark.
   const { data: creatives } = await sb
     .from("ad_creatives")
     .select(
@@ -109,7 +122,7 @@ export async function serveAd(
     )
     .eq("format", format)
     .eq("status", "ready")
-    .eq("ad_campaigns.status", "active")
+    .in("ad_campaigns.status", ["active", "exhausted"])
     .limit(100);
 
   // No paid creative for this format → default CrawlProof house ad.
@@ -132,34 +145,74 @@ export async function serveAd(
 
   // Budget pacing: keep only campaigns with room for at least one more click at
   // their bid today. spend_today resets implicitly when spend_date is earlier.
-  const eligible = (creatives as unknown as Row[]).filter((row) => {
+  // Never serve someone their own ad on their own slot. ad_charge_click refuses
+  // to bill or accrue on a self-click anyway; filtering here means we don't burn
+  // an impression and a redirect on a click that can't earn.
+  const candidates = (creatives as unknown as Row[]).filter((row) => {
     const c = oneCampaign(row.ad_campaigns);
     if (!c) return false;
-    // Never serve someone their own ad on their own slot. ad_charge_click
-    // refuses to bill or accrue on a self-click anyway; filtering here means we
-    // don't burn an impression and a redirect on a click that can't earn.
-    if (slot.owner_id && c.owner_id === slot.owner_id) return false;
-    const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
-    const bid = c.bid_credits ?? DEFAULT_BID_CREDITS;
-    return spentToday + bid * CREDIT_CENTS <= c.daily_budget_cents;
+    return !(slot.owner_id && c.owner_id === slot.owner_id);
   });
-  // Every candidate is out of budget → fall back to the house ad.
-  if (eligible.length === 0) return houseFill(format);
+  if (candidates.length === 0) return houseFill(format);
 
-  // Rotate the CrawlProof house ad into a slice of otherwise-fillable requests
-  // so the ad network keeps promoting itself even on well-monetized slots.
-  // Unmetered, so no paid impression is spent on these.
-  if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format);
-
-  // Bid-weighted lottery: every eligible campaign can win, with probability
-  // proportional to its bid, so all active ads rotate (higher bids more often).
-  const auction = runAuction(
-    eligible.map((row) => ({
-      bidCredits: oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
-      item: row,
-    })),
+  // A campaign is PAID-eligible only if its owner can actually cover a click at
+  // its bid. Without this a broke campaign would win the auction and displace
+  // one that can pay — the click would go unbilled and the publisher would earn
+  // nothing on inventory a funded advertiser wanted.
+  const ownerIds = [...new Set(candidates.map((r) => oneCampaign(r.ad_campaigns).owner_id))];
+  const { data: owners } = await sb
+    .from("profiles")
+    .select("id, credits_balance, ad_bonus_credits")
+    .in("id", ownerIds);
+  const creditsByOwner = new Map(
+    (owners ?? []).map((o) => [
+      o.id as string,
+      ((o.credits_balance as number) ?? 0) + ((o.ad_bonus_credits as number) ?? 0),
+    ]),
   );
-  const pick = auction?.winner;
+
+  const paid: Row[] = [];
+  const free: Row[] = [];
+  for (const row of candidates) {
+    const c = oneCampaign(row.ad_campaigns);
+    const bid = c.bid_credits ?? DEFAULT_BID_CREDITS;
+    const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
+    const hasBudget = spentToday + bid * CREDIT_CENTS <= c.daily_budget_cents;
+    const hasFunds = (creditsByOwner.get(c.owner_id) ?? 0) >= bid;
+    // Legacy 'exhausted' rows never compete for paid inventory on that status
+    // alone — funds decide, and a top-up puts them straight back in the auction.
+    (hasBudget && hasFunds ? paid : free).push(row);
+  }
+
+  // Paid inventory first, always. Free-tier campaigns only ever fill requests no
+  // paying advertiser wanted, so they can't cannibalise publisher earnings.
+  let pick: Row | undefined;
+  let tier: AdTier = "paid";
+
+  if (paid.length > 0) {
+    // Rotate the CrawlProof house ad into a slice of otherwise-fillable requests
+    // so the ad network keeps promoting itself even on well-monetized slots.
+    // Unmetered, so no paid impression is spent on these.
+    if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format);
+
+    // Bid-weighted lottery: every eligible campaign can win, with probability
+    // proportional to its bid, so all active ads rotate (higher bids more often).
+    pick = runAuction(
+      paid.map((row) => ({
+        bidCredits: oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
+        item: row,
+      })),
+    )?.winner;
+  }
+
+  // Nothing paid to show: backfill with a real advertiser's ad instead of the
+  // house ad. Uniform pick, not bid-weighted — nobody is paying, so a high bid
+  // buys no priority here.
+  if (!pick && free.length > 0) {
+    tier = "free";
+    pick = free[Math.floor(Math.random() * free.length)];
+  }
+
   if (!pick) return houseFill(format);
   const campaign = oneCampaign(pick.ad_campaigns);
   if (!campaign) return null;
@@ -176,6 +229,7 @@ export async function serveAd(
       geo_country: ctx.country ?? null,
       device: ctx.device ?? null,
       billable: false,
+      tier,
     })
     .select("id")
     .single();
@@ -201,6 +255,7 @@ export async function serveAd(
     clickUrl,
     html: renderCreativeHtml(creative, clickUrl),
     text: renderCreativeText(creative, clickUrl),
+    tier,
   };
 }
 

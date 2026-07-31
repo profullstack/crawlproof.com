@@ -46,8 +46,11 @@ export default async function AdsPage() {
   let campaigns: CampaignRow[] = [];
   const statsById = new Map<string, StatRow>();
   let seriesById = new Map<string, CampaignDailyPoint[]>();
+  // Spendable credits decide whether a campaign is on the paid tier or running
+  // as free backfill, so the badge can't be derived from the campaign row alone.
+  let creditsAvailable: number | null = null;
   if (user) {
-    const [{ data }, { data: stats }] = await Promise.all([
+    const [{ data }, { data: stats }, { data: profile }] = await Promise.all([
       supabase
         .from("ad_campaigns")
         .select(
@@ -57,7 +60,13 @@ export default async function AdsPage() {
       supabase
         .from("ad_campaign_stats")
         .select("campaign_id, impressions, clicks, spent_cents, total_spent_cents"),
+      supabase
+        .from("profiles")
+        .select("credits_balance, ad_bonus_credits")
+        .eq("id", user.id)
+        .maybeSingle(),
     ]);
+    creditsAvailable = (profile?.credits_balance ?? 0) + (profile?.ad_bonus_credits ?? 0);
     campaigns = (data as CampaignRow[]) ?? [];
     for (const s of (stats as StatRow[]) ?? []) statsById.set(s.campaign_id, s);
     seriesById = await getCampaignDailySeries(
@@ -122,7 +131,7 @@ export default async function AdsPage() {
             const s = statsById.get(c.id);
             const impr = s?.impressions ?? 0;
             const clk = s?.clicks ?? 0;
-            const display = campaignDisplayStatus(c, today);
+            const display = campaignDisplayStatus(c, today, creditsAvailable);
             return (
               <li key={c.id} className="card p-4">
                 <div className="flex items-center justify-between gap-4">
