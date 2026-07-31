@@ -10,11 +10,69 @@ import type { Fill } from "./serve";
 // AI-generated promo artwork (public/ads/house/*) with an overlaid pitch that
 // links back to CrawlProof. House ads are not metered or billed.
 
-const HOUSE = {
-  headline: "Your ad here",
-  body: "Crypto pay-per-click ads for indie sites — no middlemen.",
-  cta: "Advertise →",
-} as const;
+// Until a slot has paid inventory, *every* fill on it is a house ad. With a
+// single hard-coded creative that made the unit byte-identical on every
+// request — an MOTD or SSH banner would print the same block forever and read
+// as frozen (or cached) rather than live. So the house ad is a pool, and each
+// fill draws from it at random: an unsold slot still rotates.
+//
+// `slug` is only for attribution — it rides the click URL as utm_content so we
+// can tell which pitch actually converts. It is left off the terminal click
+// URL, which is printed as literal text inside the ASCII box and has no room
+// to spare.
+type HouseCopy = {
+  slug: string;
+  headline: string;
+  body: string;
+  cta: string;
+};
+
+// Two audiences, since these render in front of developers who are just as
+// likely to have a site to monetize as a product to sell.
+const HOUSE_VARIANTS: readonly HouseCopy[] = [
+  {
+    slug: "your-ad-here",
+    headline: "Your ad here",
+    body: "Crypto pay-per-click ads for indie sites — no middlemen.",
+    cta: "Advertise →",
+  },
+  {
+    slug: "monetize-terminal",
+    headline: "Monetize your terminal",
+    body: "Plain-ASCII ads for MOTDs, SSH banners, and CLI tools.",
+    cta: "Get a slot →",
+  },
+  {
+    slug: "reach-developers",
+    headline: "Reach developers where they work",
+    body: "Put your product in front of shells, not ad blockers.",
+    cta: "Start a campaign →",
+  },
+  {
+    slug: "paid-in-crypto",
+    headline: "Get paid in crypto",
+    body: "Publishers keep the revenue. No invoices, no net-30.",
+    cta: "Monetize →",
+  },
+  {
+    slug: "no-javascript",
+    headline: "Ads without JavaScript",
+    body: "One HTTP call, plain text back. No iframe, no tracking pixel.",
+    cta: "See the docs →",
+  },
+  {
+    slug: "indie-budget",
+    headline: "Advertise on an indie budget",
+    body: "Pay per click, set a daily cap, stop whenever you want.",
+    cta: "Advertise →",
+  },
+];
+
+// One draw per fill. Callers must pick once and thread the result through, or
+// the metered creative and the rendered HTML would disagree.
+function pickHouse(): HouseCopy {
+  return HOUSE_VARIANTS[Math.floor(Math.random() * HOUSE_VARIANTS.length)];
+}
 
 // Fraction of fills on a slot with eligible paid inventory that are given the
 // CrawlProof house ad instead, to keep promoting the ad network. Not metered.
@@ -29,13 +87,18 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-export function renderHouseAdHtml(format: AdFormatId, clickUrl: string): string {
+export function renderHouseAdHtml(
+  format: AdFormatId,
+  clickUrl: string,
+  copy: HouseCopy = pickHouse(),
+): string {
   const { w, h } = formatSpec(format);
+  const HOUSE = copy;
 
   // Terminal ad — same ASCII artwork the /api/ads/motd endpoint serves, in a
   // <pre> for the web/iframe paths.
   if (format === TERMINAL_FORMAT_ID) {
-    return renderTerminalHtml(houseCreative(format), clickUrl);
+    return renderTerminalHtml(houseCreative(format, copy), clickUrl);
   }
 
   // Native text link — no artwork, single full-width line.
@@ -97,12 +160,12 @@ export function renderHouseAdHtml(format: AdFormatId, clickUrl: string): string 
   </body></html>`;
 }
 
-function houseCreative(format: AdFormatId): AdCreative {
+function houseCreative(format: AdFormatId, copy: HouseCopy): AdCreative {
   return {
     format,
-    headline: HOUSE.headline,
-    body: HOUSE.body,
-    ctaText: HOUSE.cta,
+    headline: copy.headline,
+    body: copy.body,
+    ctaText: copy.cta,
     bgColor: "#070a10",
     fgColor: "#eef3f8",
     accentColor: "#6ee7b7",
@@ -114,13 +177,17 @@ function houseCreative(format: AdFormatId): AdCreative {
 
 /** A default house-ad fill promoting the CrawlProof Ad Network. Not metered. */
 export function houseFill(format: AdFormatId): Fill {
+  // Drawn once here, then threaded through both the creative and the render so
+  // a single fill can't advertise one pitch in its HTML and another in its text.
+  const copy = pickHouse();
   // Terminals print the raw URL, so the terminal house ad uses a short one that
-  // fits the ASCII box instead of the full utm_campaign query.
+  // fits the ASCII box instead of the full utm_campaign query — no utm_content
+  // there either, for the same reason.
   const clickUrl =
     format === TERMINAL_FORMAT_ID
       ? `${env.siteUrl}/?utm_source=house-ad&utm_medium=motd`
-      : `${env.siteUrl}/?utm_source=house-ad&utm_medium=ad&utm_campaign=crawlproof-ads`;
-  const creative = houseCreative(format);
+      : `${env.siteUrl}/?utm_source=house-ad&utm_medium=ad&utm_campaign=crawlproof-ads&utm_content=${copy.slug}`;
+  const creative = houseCreative(format, copy);
   return {
     impressionId: crypto.randomUUID(),
     campaignId: "house",
@@ -128,7 +195,7 @@ export function houseFill(format: AdFormatId): Fill {
     refSlug: "house",
     creative,
     clickUrl,
-    html: renderHouseAdHtml(format, clickUrl),
+    html: renderHouseAdHtml(format, clickUrl, copy),
     text: renderCreativeText(creative, clickUrl, { label: "CRAWLPROOF ADS" }),
     tier: "house",
   };
