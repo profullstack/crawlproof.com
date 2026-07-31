@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   campaignDisplayStatus,
+  campaignTier,
   isDailyBudgetReached,
   spendTodayCents,
   utcToday,
@@ -8,9 +9,11 @@ import {
 } from "@/lib/ads/status";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
 
-// The two ways a campaign stops serving look identical in the raw status
-// column, so these cases pin down which one the dashboard reports — and, more
-// importantly, whether it tells the advertiser to wait or to take action.
+// A campaign must never go dark for want of money — running out of credits or
+// hitting the daily cap drops it to the free tier, where it backfills unsold
+// inventory at no cost to anyone. These cases pin down that it keeps serving,
+// that it returns to paid delivery on its own, and that the dashboard says
+// which of the two reasons put it there.
 
 const TODAY = "2026-07-30";
 
@@ -67,43 +70,90 @@ describe("isDailyBudgetReached", () => {
   });
 });
 
-describe("campaignDisplayStatus", () => {
-  it("reports a live campaign as active and serving", () => {
-    const d = campaignDisplayStatus(campaign(), TODAY);
-    expect(d.label).toBe("active");
-    expect(d.serving).toBe(true);
+describe("campaignTier", () => {
+  it("puts a funded, in-budget campaign on the paid tier", () => {
+    expect(campaignTier(campaign(), TODAY, 100)).toBe("paid");
   });
 
-  it("distinguishes the daily cap as a self-healing pause", () => {
-    const d = campaignDisplayStatus(campaign({ spend_today_cents: 500 }), TODAY);
-    expect(d.label).toBe("daily budget reached");
-    expect(d.serving).toBe(false);
+  it("drops a campaign that can't cover one click to the free tier", () => {
+    expect(campaignTier(campaign(), TODAY, DEFAULT_BID_CREDITS - 1)).toBe("free");
+  });
+
+  it("keeps a campaign paid when it can cover exactly one more click", () => {
+    expect(campaignTier(campaign(), TODAY, DEFAULT_BID_CREDITS)).toBe("paid");
+  });
+
+  it("drops a campaign over its daily cap to the free tier", () => {
+    expect(campaignTier(campaign({ spend_today_cents: 500 }), TODAY, 1000)).toBe("free");
+  });
+
+  it("treats the legacy exhausted status as free tier, not dark", () => {
+    // Rows written before the free tier existed must not stay dark forever.
+    expect(campaignTier(campaign({ status: "exhausted" }), TODAY, 1000)).toBe("free");
+  });
+
+  it("serves nothing for paused and draft", () => {
+    expect(campaignTier(campaign({ status: "paused" }), TODAY, 1000)).toBe("none");
+    expect(campaignTier(campaign({ status: "draft" }), TODAY, 1000)).toBe("none");
+  });
+
+  it("assumes paid when the balance wasn't looked up", () => {
+    // A caller without the balance to hand must not paint a funded campaign
+    // as broke; ad_charge_click still refuses to bill what isn't there.
+    expect(campaignTier(campaign(), TODAY, undefined)).toBe("paid");
+    expect(campaignTier(campaign(), TODAY, null)).toBe("paid");
+  });
+});
+
+describe("campaignDisplayStatus", () => {
+  it("reports a live campaign as active and serving", () => {
+    const d = campaignDisplayStatus(campaign(), TODAY, 1000);
+    expect(d.label).toBe("active");
+    expect(d.serving).toBe(true);
+    expect(d.tier).toBe("paid");
+  });
+
+  it("keeps a capped campaign serving on the free tier", () => {
+    const d = campaignDisplayStatus(campaign({ spend_today_cents: 500 }), TODAY, 1000);
+    expect(d.label).toBe("free tier");
+    expect(d.serving).toBe(true); // still rendering, as backfill
     expect(d.resumesAutomatically).toBe(true);
     expect(d.hint).toMatch(/00:00 UTC/);
   });
 
-  it("reports exhausted credits as needing manual action", () => {
-    const d = campaignDisplayStatus(campaign({ status: "exhausted" }), TODAY);
-    expect(d.label).toBe("out of credits");
-    expect(d.serving).toBe(false);
-    expect(d.resumesAutomatically).toBe(false);
-    expect(d.hint).toMatch(/Activate/);
+  it("keeps a broke campaign serving instead of deactivating it", () => {
+    // The whole point: running dry must never take a campaign dark, and must
+    // never require the advertiser to press Activate again.
+    const d = campaignDisplayStatus(campaign(), TODAY, 0);
+    expect(d.label).toBe("free tier");
+    expect(d.serving).toBe(true);
+    expect(d.resumesAutomatically).toBe(true);
+    expect(d.hint).toMatch(/Top up/);
+    expect(d.hint).not.toMatch(/Activate/);
   });
 
-  it("keeps exhausted distinct from the daily cap even when under budget", () => {
-    // Plenty of budget left — the stop is the empty wallet, not the cap.
-    const d = campaignDisplayStatus(campaign({ status: "exhausted", spend_today_cents: 0 }), TODAY);
-    expect(d.label).toBe("out of credits");
+  it("revives a legacy exhausted campaign", () => {
+    const d = campaignDisplayStatus(campaign({ status: "exhausted" }), TODAY, 1000);
+    expect(d.serving).toBe(true);
+    expect(d.tier).toBe("free");
+    expect(d.resumesAutomatically).toBe(true);
+  });
+
+  it("blames the empty wallet before the daily cap", () => {
+    // Both true at once — the advertiser needs the actionable one.
+    const d = campaignDisplayStatus(campaign({ spend_today_cents: 500 }), TODAY, 0);
+    expect(d.hint).toMatch(/Top up/);
   });
 
   it("passes through paused and draft", () => {
-    expect(campaignDisplayStatus(campaign({ status: "paused" }), TODAY).label).toBe("paused");
-    expect(campaignDisplayStatus(campaign({ status: "draft" }), TODAY).label).toBe("draft");
+    expect(campaignDisplayStatus(campaign({ status: "paused" }), TODAY, 1000).label).toBe("paused");
+    expect(campaignDisplayStatus(campaign({ status: "draft" }), TODAY, 1000).label).toBe("draft");
   });
 
-  it("does not report a budget pause for a campaign that isn't live", () => {
-    const d = campaignDisplayStatus(campaign({ status: "paused", spend_today_cents: 500 }), TODAY);
+  it("does not report free tier for a campaign that isn't live", () => {
+    const d = campaignDisplayStatus(campaign({ status: "paused", spend_today_cents: 500 }), TODAY, 0);
     expect(d.label).toBe("paused");
+    expect(d.serving).toBe(false);
     expect(d.resumesAutomatically).toBe(false);
   });
 });
