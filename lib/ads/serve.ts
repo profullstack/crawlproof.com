@@ -151,16 +151,20 @@ export async function serveAd(
     Array.isArray(c) ? c[0] : c;
   const today = new Date().toISOString().slice(0, 10); // UTC yyyy-mm-dd
 
-  // Budget pacing: keep only campaigns with room for at least one more click at
-  // their bid today. spend_today resets implicitly when spend_date is earlier.
-  // Never serve someone their own ad on their own slot. ad_charge_click refuses
-  // to bill or accrue on a self-click anyway; filtering here means we don't burn
-  // an impression and a redirect on a click that can't earn.
-  const candidates = (creatives as unknown as Row[]).filter((row) => {
-    const c = oneCampaign(row.ad_campaigns);
-    if (!c) return false;
-    return !(slot.owner_id && c.owner_id === slot.owner_id);
-  });
+  // A self-owned campaign (same profile owns the slot and the campaign) can
+  // never earn: ad_charge_click refuses to bill or accrue on a self-click. It
+  // used to be dropped here outright, which is correct on a network with other
+  // advertisers and catastrophic on one without — while every slot and every
+  // campaign belong to the same account, that filter removed 100% of inventory
+  // and every request fell through to the house ad. Serving stopped entirely
+  // and nothing recorded an impression, because house fills aren't metered.
+  //
+  // So self-owned campaigns are demoted rather than discarded, below. Between a
+  // real advertiser's creative and the house ad — neither of which can earn on
+  // this request — the real creative is strictly the better fill.
+  const candidates = (creatives as unknown as Row[]).filter(
+    (row) => !!oneCampaign(row.ad_campaigns),
+  );
   if (candidates.length === 0) return houseFill(format);
 
   // A campaign is PAID-eligible only if its owner can actually cover a click at
@@ -187,9 +191,14 @@ export async function serveAd(
     const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
     const hasBudget = spentToday + bid * CREDIT_CENTS <= c.daily_budget_cents;
     const hasFunds = (creditsByOwner.get(c.owner_id) ?? 0) >= bid;
+    // Same owner on both sides of the transaction: the click can't be billed,
+    // so it must never win paid inventory ahead of an advertiser who would
+    // actually pay. Free tier is exactly the right home for it — same place a
+    // campaign that has run out of funds goes.
+    const isSelfDeal = !!(slot.owner_id && c.owner_id === slot.owner_id);
     // Legacy 'exhausted' rows never compete for paid inventory on that status
     // alone — funds decide, and a top-up puts them straight back in the auction.
-    (hasBudget && hasFunds ? paid : free).push(row);
+    (hasBudget && hasFunds && !isSelfDeal ? paid : free).push(row);
   }
 
   // Paid inventory first, always. Free-tier campaigns only ever fill requests no
