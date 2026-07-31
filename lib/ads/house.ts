@@ -180,12 +180,15 @@ export function houseFill(format: AdFormatId): Fill {
   // Drawn once here, then threaded through both the creative and the render so
   // a single fill can't advertise one pitch in its HTML and another in its text.
   const copy = pickHouse();
-  // Terminals print the raw URL, so the terminal house ad uses a short one that
-  // fits the ASCII box instead of the full utm_campaign query — no utm_content
-  // there either, for the same reason.
+  // Terminals print the raw URL as literal text inside the ASCII box, so the
+  // terminal house ad goes through the /h redirector, which re-applies the utm
+  // params server-side. Spelling them out inline made the URL 59 characters —
+  // wider than the 40 columns a 44-col box has to spend, so it got pushed
+  // outside the frame. /h is 24, and still fits once a publisher's &s=<surface>
+  // tag is appended.
   const clickUrl =
     format === TERMINAL_FORMAT_ID
-      ? `${env.siteUrl}/?utm_source=house-ad&utm_medium=motd`
+      ? `${env.siteUrl}/h`
       : `${env.siteUrl}/?utm_source=house-ad&utm_medium=ad&utm_campaign=crawlproof-ads&utm_content=${copy.slug}`;
   const creative = houseCreative(format, copy);
   return {

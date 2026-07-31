@@ -204,14 +204,28 @@ export function renderCreativeText(
   // "Try it free -> https://..." on one line when it fits, else CTA then URL.
   const oneLine = `${cta} -> ${url}`;
   const overflow: string[] = [];
+
+  // The CTA is advertiser copy of any length, so it wraps exactly like the
+  // headline and body. Emitting it as one unwrapped row let a long CTA run past
+  // the right edge: `row` clamps its padding at zero, so instead of erroring it
+  // silently produced a line wider than the frame. Narrow boxes hit this first
+  // — at 44 cols there are only 40 columns to spend.
+  const ctaRows = () => {
+    for (const l of wrapText(`${cta}:`, inner)) {
+      row(color ? `${accent}${l}${off}` : l, l.length);
+    }
+  };
+
   if (oneLine.length <= inner) {
     row(color ? `${accent}${cta} ->${off} ${body_}${url}${off}` : oneLine, oneLine.length);
   } else if (url.length <= inner) {
-    row(color ? `${accent}${cta}:${off}` : `${cta}:`, cta.length + 1);
+    ctaRows();
     row(color ? `${body_}${url}${off}` : url, url.length);
   } else {
-    // Pathologically long URL: keep it whole, outside the frame.
-    row(color ? `${accent}${cta}:${off}` : `${cta}:`, cta.length + 1);
+    // Pathologically long URL: keep it whole, outside the frame. It stays one
+    // logical line so it survives copy-paste; hard-wrapping it would split a
+    // link the reader can no longer select in one go.
+    ctaRows();
     overflow.push(color ? `${body_}${url}${off}` : url);
   }
   blank();
