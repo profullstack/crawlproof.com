@@ -90,7 +90,7 @@ export async function serveAd(
 
   const { data: slot } = await sb
     .from("ad_slots")
-    .select("id, status, formats")
+    .select("id, status, formats, owner_id")
     .eq("id", slotId)
     .maybeSingle();
   if (!slot || slot.status !== "active") return null;
@@ -105,7 +105,7 @@ export async function serveAd(
   const { data: creatives } = await sb
     .from("ad_creatives")
     .select(
-      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
+      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, owner_id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
     )
     .eq("format", format)
     .eq("status", "ready")
@@ -117,6 +117,7 @@ export async function serveAd(
 
   type CampaignJoin = {
     id: string;
+    owner_id: string;
     ref_slug: string;
     destination_url: string;
     daily_budget_cents: number;
@@ -134,6 +135,10 @@ export async function serveAd(
   const eligible = (creatives as unknown as Row[]).filter((row) => {
     const c = oneCampaign(row.ad_campaigns);
     if (!c) return false;
+    // Never serve someone their own ad on their own slot. ad_charge_click
+    // refuses to bill or accrue on a self-click anyway; filtering here means we
+    // don't burn an impression and a redirect on a click that can't earn.
+    if (slot.owner_id && c.owner_id === slot.owner_id) return false;
     const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
     const bid = c.bid_credits ?? DEFAULT_BID_CREDITS;
     return spentToday + bid * CREDIT_CENTS <= c.daily_budget_cents;
