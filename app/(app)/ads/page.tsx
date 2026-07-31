@@ -1,8 +1,22 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { CampaignActions } from "@/components/ads/campaign-actions";
 import { MiniTrend } from "@/components/ads/mini-trend";
-import { getCampaignDailySeries, type CampaignDailyPoint } from "@/lib/ads/series";
+import { AccountTrend } from "@/components/ads/account-trend";
+import { RangeTabs } from "@/components/ads/range-tabs";
+import { StatSpark } from "@/components/ads/stat-spark";
+import {
+  getAccountSeries,
+  getCampaignDailySeries,
+  getCampaignRangeTotals,
+  sumSeries,
+  EMPTY_TOTALS,
+  type AccountPoint,
+  type CampaignDailyPoint,
+  type RangeTotals,
+} from "@/lib/ads/series";
+import { resolveRange } from "@/lib/ads/ranges";
 import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 
 export const metadata = { title: "Ad campaigns" };
@@ -20,14 +34,6 @@ type CampaignRow = {
   created_at: string;
 };
 
-type StatRow = {
-  campaign_id: string;
-  impressions: number;
-  clicks: number;
-  spent_cents: number;
-  total_spent_cents: number;
-};
-
 function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
@@ -37,20 +43,26 @@ function ctr(clicks: number, impressions: number): string {
   return `${((clicks / impressions) * 100).toFixed(1)}%`;
 }
 
-export default async function AdsPage() {
+export default async function AdsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
+  const range = resolveRange((await searchParams).range);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   let campaigns: CampaignRow[] = [];
-  const statsById = new Map<string, StatRow>();
   let seriesById = new Map<string, CampaignDailyPoint[]>();
+  let series: AccountPoint[] = [];
+  let rangeById = new Map<string, RangeTotals>();
   // Spendable credits decide whether a campaign is on the paid tier or running
   // as free backfill, so the badge can't be derived from the campaign row alone.
   let creditsAvailable: number | null = null;
   if (user) {
-    const [{ data }, { data: stats }, { data: profile }] = await Promise.all([
+    const [{ data }, { data: profile }, accountSeries, campaignTotals] = await Promise.all([
       supabase
         .from("ad_campaigns")
         .select(
@@ -58,17 +70,17 @@ export default async function AdsPage() {
         )
         .order("created_at", { ascending: false }),
       supabase
-        .from("ad_campaign_stats")
-        .select("campaign_id, impressions, clicks, spent_cents, total_spent_cents"),
-      supabase
         .from("profiles")
         .select("credits_balance, ad_bonus_credits")
         .eq("id", user.id)
         .maybeSingle(),
+      getAccountSeries(supabase, range),
+      getCampaignRangeTotals(supabase, range),
     ]);
     creditsAvailable = (profile?.credits_balance ?? 0) + (profile?.ad_bonus_credits ?? 0);
     campaigns = (data as CampaignRow[]) ?? [];
-    for (const s of (stats as StatRow[]) ?? []) statsById.set(s.campaign_id, s);
+    series = accountSeries;
+    rangeById = campaignTotals;
     seriesById = await getCampaignDailySeries(
       supabase,
       campaigns.map((c) => c.id),
@@ -77,15 +89,7 @@ export default async function AdsPage() {
   }
 
   const today = utcToday();
-
-  const totals = [...statsById.values()].reduce(
-    (a, s) => ({
-      impressions: a.impressions + (s.impressions ?? 0),
-      clicks: a.clicks + (s.clicks ?? 0),
-      spent: a.spent + (s.total_spent_cents ?? 0),
-    }),
-    { impressions: 0, clicks: 0, spent: 0 },
-  );
+  const totals = sumSeries(series);
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -109,12 +113,56 @@ export default async function AdsPage() {
       </p>
 
       {campaigns.length > 0 && (
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat label="Impressions" value={totals.impressions.toLocaleString()} />
-          <Stat label="Clicks" value={totals.clicks.toLocaleString()} />
-          <Stat label="CTR" value={ctr(totals.clicks, totals.impressions)} />
-          <Stat label="Total spend" value={dollars(totals.spent)} />
-        </div>
+        <>
+          {/* One filter row, above everything it scopes: the stats, the chart
+              and the per-campaign figures all read the same slice. */}
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <Suspense fallback={null}>
+              <RangeTabs value={range.id} />
+            </Suspense>
+            <span className="text-sm text-[var(--color-muted)]">{range.hint}</span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat
+              label="Impressions"
+              value={totals.impressions.toLocaleString()}
+              spark={<StatSpark data={series} pick={(p) => p.impressions} />}
+            />
+            <Stat
+              label="Clicks"
+              value={totals.clicks.toLocaleString()}
+              spark={<StatSpark data={series} pick={(p) => p.clicks} />}
+            />
+            <Stat label="CTR" value={ctr(totals.clicks, totals.impressions)} />
+            <Stat
+              label="Spend"
+              value={dollars(totals.spentCents)}
+              spark={<StatSpark data={series} pick={(p) => p.spentCents} />}
+            />
+          </div>
+
+          {/* Free backfill is delivery that costs and earns nothing, so it never
+              belongs in the paid figures above — but hiding it entirely would
+              make impressions look like they collapsed when a campaign runs dry. */}
+          {(totals.freeImpressions > 0 || totals.freeClicks > 0) && (
+            <p className="mt-3 text-sm text-[var(--color-muted)]">
+              Plus{" "}
+              <span className="font-mono font-semibold text-[var(--color-fg)]">
+                {totals.freeImpressions.toLocaleString()}
+              </span>{" "}
+              free-tier impressions and{" "}
+              <span className="font-mono font-semibold text-[var(--color-fg)]">
+                {totals.freeClicks.toLocaleString()}
+              </span>{" "}
+              free clicks in this range, at no cost.
+            </p>
+          )}
+
+          <div className="mt-4">
+            <AccountTrend data={series} range={range} />
+          </div>
+        </>
       )}
 
       {campaigns.length === 0 ? (
@@ -128,9 +176,10 @@ export default async function AdsPage() {
       ) : (
         <ul className="mt-4 space-y-2">
           {campaigns.map((c) => {
-            const s = statsById.get(c.id);
-            const impr = s?.impressions ?? 0;
-            const clk = s?.clicks ?? 0;
+            // Range-scoped, so a row never contradicts the header above it.
+            const s = rangeById.get(c.id) ?? EMPTY_TOTALS;
+            const impr = s.impressions;
+            const clk = s.clicks;
             const display = campaignDisplayStatus(c, today, creditsAvailable);
             return (
               <li key={c.id} className="card p-4">
@@ -161,7 +210,10 @@ export default async function AdsPage() {
                   <MiniStat label="Impressions" value={impr.toLocaleString()} />
                   <MiniStat label="Clicks" value={clk.toLocaleString()} />
                   <MiniStat label="CTR" value={ctr(clk, impr)} />
-                  <MiniStat label="Spent" value={dollars(s?.total_spent_cents ?? 0)} />
+                  <MiniStat label="Spent" value={dollars(s.spentCents)} />
+                  {s.freeImpressions > 0 && (
+                    <MiniStat label="Free" value={s.freeImpressions.toLocaleString()} />
+                  )}
                   <MiniStat
                     label="Today"
                     value={`${dollars(spendTodayCents(c, today))} / ${dollars(c.daily_budget_cents)}`}
@@ -179,11 +231,20 @@ export default async function AdsPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  spark,
+}: {
+  label: string;
+  value: string;
+  spark?: React.ReactNode;
+}) {
   return (
     <div className="card p-4">
       <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
-      <div className="mt-1 text-2xl font-bold">{value}</div>
+      <div className="mt-1 text-2xl font-bold tabular-nums">{value}</div>
+      {spark && <div className="mt-2">{spark}</div>}
     </div>
   );
 }
