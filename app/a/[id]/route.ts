@@ -14,6 +14,7 @@ import { resolveClick } from "@/lib/ads/serve";
 import { serviceClient } from "@/lib/supabase/service";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { parseDevice } from "@/lib/tracker/device";
+import { isShortCode } from "@/lib/ads/shortcode";
 import { env } from "@/lib/env";
 
 export const runtime = "nodejs";
@@ -21,18 +22,62 @@ export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+type ImpressionRow = {
+  id: string;
+  slot_id: string;
+  campaign_id: string;
+  creative_id: string;
+  visitor_id: string | null;
+  src?: string | null;
+};
+
+const BASE_COLS = "id, slot_id, campaign_id, creative_id, visitor_id";
+
+/**
+ * Look up the impression by short code or UUID.
+ *
+ * `src` is a newer column and migrations here are applied by hand, so the app
+ * can briefly run ahead of the schema. Ask for it, and if the projection fails
+ * because the column isn't there yet, retry without it rather than dropping the
+ * click — an unresolved click is a payout the publisher never sees. Only the
+ * UUID path is worth retrying: a lookup *by* short code cannot succeed before
+ * the migration anyway.
+ */
+async function findImpression(
+  sb: ReturnType<typeof serviceClient>,
+  id: string,
+  byCode: boolean,
+): Promise<ImpressionRow | null> {
+  const column = byCode ? "short_code" : "id";
+  const { data } = await sb
+    .from("ad_impressions")
+    .select(`${BASE_COLS}, src`)
+    .eq(column, id)
+    .maybeSingle();
+  if (data) return data as ImpressionRow;
+  if (byCode) return null;
+
+  const { data: legacy } = await sb
+    .from("ad_impressions")
+    .select(BASE_COLS)
+    .eq(column, id)
+    .maybeSingle();
+  return (legacy as ImpressionRow) ?? null;
+}
+
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const fallback = env.siteUrl || "https://crawlproof.com";
   try {
     const { id } = await ctx.params;
-    if (!UUID.test(id)) return NextResponse.redirect(fallback, { status: 302 });
+    // Two address forms. New fills use a 12-character short code, which is what
+    // lets the URL fit inside a 44-col ASCII box. UUIDs are still accepted and
+    // must stay that way: click URLs from before the change are sitting in
+    // people's MOTDs, SSH banners and BBS screens, and those are not reissued.
+    const byCode = isShortCode(id);
+    if (!byCode && !UUID.test(id)) return NextResponse.redirect(fallback, { status: 302 });
 
     const sb = serviceClient();
-    const { data: imp } = await sb
-      .from("ad_impressions")
-      .select("id, slot_id, campaign_id, creative_id, visitor_id")
-      .eq("id", id)
-      .maybeSingle();
+    const imp = await findImpression(sb, id, byCode);
     if (!imp) return NextResponse.redirect(fallback, { status: 302 });
 
     const ip = clientIpFromHeaders(request.headers);
@@ -63,8 +108,10 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     // ?ref=<campaign slug>; add utm on top, plus the publisher's own ?src=
     // surface tag when the ad carried one. Never overwrite utm params the
     // advertiser put on their own destination URL.
+    // Prefer the tag recorded on the impression; fall back to the query string
+    // for the older URLs that still carry "&s=<tag>" inline.
     const q = new URL(request.url).searchParams;
-    const src = q.get("s") ?? q.get("src");
+    const src = imp.src ?? q.get("s") ?? q.get("src");
     return NextResponse.redirect(withTerminalUtm(dest, src), { status: 302 });
   } catch {
     return NextResponse.redirect(fallback, { status: 302 });

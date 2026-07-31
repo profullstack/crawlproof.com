@@ -14,6 +14,7 @@ import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import { assessClickValidity, isBotDevice } from "./fraud";
 import { runAuction } from "./auction";
+import { generateShortCode } from "./shortcode";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
@@ -89,6 +90,13 @@ export type ServeContext = {
   ip?: string | null;
   country?: string | null;
   device?: string | null;
+  /**
+   * Publisher's surface tag (?src=bbs, ?src=ssh-banner, …). Recorded on the
+   * impression rather than appended to the printed click URL, where it cost up
+   * to 35 columns of a box that has 40. The click handler reads it back off the
+   * row to build utm_content.
+   */
+  src?: string | null;
 };
 
 // Returns a rendered fill for the slot, or null if the slot is inactive /
@@ -218,32 +226,51 @@ export async function serveAd(
   if (!campaign) return null;
 
   // Record the impression first so we have an id to bind the click to.
-  const { data: imp } = await sb
+  const base = {
+    slot_id: slotId,
+    campaign_id: campaign.id,
+    creative_id: pick.id,
+    visitor_id: ctx.visitorId ?? null,
+    ip_hash: hashIp(ctx.ip ?? null),
+    geo_country: ctx.country ?? null,
+    device: ctx.device ?? null,
+    billable: false,
+    tier,
+  };
+
+  // The short code is what lets a terminal click URL fit inside the box, and
+  // ctx.src records the publisher's surface tag on the row instead of in the
+  // printed URL. Both live behind `add column if not exists`, and migrations
+  // here are applied by hand — so if this deploy lands first, the insert would
+  // fail on the unknown columns and take *all* paid serving down with it.
+  // Retry once without them and fall back to the UUID click URL: a wide URL is
+  // a cosmetic problem, a dropped impression is a lost sale.
+  const shortCode = generateShortCode();
+  let { data: imp } = await sb
     .from("ad_impressions")
-    .insert({
-      slot_id: slotId,
-      campaign_id: campaign.id,
-      creative_id: pick.id,
-      visitor_id: ctx.visitorId ?? null,
-      ip_hash: hashIp(ctx.ip ?? null),
-      geo_country: ctx.country ?? null,
-      device: ctx.device ?? null,
-      billable: false,
-      tier,
-    })
-    .select("id")
+    .insert({ ...base, short_code: shortCode, src: ctx.src ?? null })
+    .select("id, short_code")
     .single();
 
+  if (!imp) {
+    ({ data: imp } = await sb.from("ad_impressions").insert(base).select("id").single());
+  }
+
   const impressionId = imp?.id ?? crypto.randomUUID();
+  // Only address the click by code once we know the code was actually stored —
+  // otherwise /a/<code> would resolve to nothing and the click would go
+  // unmetered and unpaid.
+  const clickRef =
+    imp && "short_code" in imp && imp.short_code ? (imp.short_code as string) : impressionId;
   const creative = rowToCreative(pick);
 
   // Click goes through our redirector so we can meter it, then lands on the
   // destination with ?ref= applied. Terminals print the URL as literal text, so
-  // the terminal format gets the short /a/<impression> form — it resolves the
+  // the terminal format gets the short /a/<code> form — it resolves the
   // slot/campaign/creative from the impression row instead of the query string.
   const clickUrl =
     format === TERMINAL_FORMAT_ID
-      ? `${env.siteUrl}/a/${impressionId}`
+      ? `${env.siteUrl}/a/${clickRef}`
       : `${env.siteUrl}/api/ads/click?i=${impressionId}&s=${slotId}&c=${campaign.id}&cr=${pick.id}`;
 
   return {
