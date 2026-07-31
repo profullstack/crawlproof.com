@@ -95,6 +95,9 @@ export async function GET(request: NextRequest) {
         ip,
         country: geo?.countryCode ?? null,
         device,
+        // Recorded on the impression, so the printed click URL doesn't have to
+        // carry it. /a/<code> reads it back when it builds utm_content.
+        src: src || null,
       });
     }
     // No slot given, or the slot is inactive / has no terminal inventory.
@@ -103,13 +106,18 @@ export async function GET(request: NextRequest) {
     // Re-render at the caller's width/colour from the same creative + click URL
     // the fill was metered with. House fills keep their own border label so an
     // unsold slot doesn't read as a paid placement.
-    // Short key: the click URL is printed as literal text, so every character
-    // spent here is a character of box width.
-    const clickUrl = src ? withParam(fill.clickUrl, "s", src) : fill.clickUrl;
+    //
+    // The click URL is printed as literal text, so every character here is a
+    // character of box width. A paid fill already carries the surface tag on
+    // its impression row, so nothing is appended — that's what keeps /a/<code>
+    // inside a 44-col box. House fills have no impression row, so theirs still
+    // rides the URL, where /h has the room for it.
+    const isHouse = fill.campaignId === "house";
+    const clickUrl = src && isHouse ? withParam(fill.clickUrl, "s", src) : fill.clickUrl;
     const body = renderCreativeText(fill.creative, clickUrl, {
       cols,
       color,
-      label: fill.campaignId === "house" ? "CRAWLPROOF ADS" : undefined,
+      label: isHouse ? "CRAWLPROOF ADS" : undefined,
     });
     return new NextResponse(`${body}\n`, { status: 200, headers: h });
   } catch {
