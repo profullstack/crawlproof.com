@@ -36,7 +36,7 @@ export default async function SignupPage({
       </Link>
       <h1 className="mt-6 text-3xl font-bold">Create your account</h1>
       <p className="mt-2 text-[var(--color-muted)]">
-        Free tier: 10 audits/month, no card required.
+        Free tier: 10 audits/day per IP, no card required.
       </p>
       <SignupForm redirectTo={sp.redirect} defaultEmail={sp.email} />
       <p className="mt-6 text-sm text-[var(--color-muted)]">
