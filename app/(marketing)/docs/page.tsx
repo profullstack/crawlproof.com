@@ -24,7 +24,7 @@ const DOCS: DocCard[] = [
     href: "/docs/statistics",
     title: "Statistics",
     description:
-      "Install the cookieless tracker, collect pageviews and interactions, and send custom events from any frontend stack.",
+      "Install the cookieless tracker, collect pageviews and interactions, and send custom events from any frontend stack. Also reachable at /docs/stats-tracker.",
   },
   {
     href: "/docs/autoblog-webhook",
