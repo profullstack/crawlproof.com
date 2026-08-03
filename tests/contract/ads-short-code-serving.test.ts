@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SHORT_CODE_RE } from "@/lib/ads/shortcode";
+import { HOUSE_AD_ROTATION_RATE } from "@/lib/ads/house";
 
 // serveAd now writes two new columns (short_code, src) that only exist after a
 // migration this repo applies by hand. If the deploy wins that race, an insert
@@ -103,6 +104,23 @@ describe("serveAd short-code click URLs", () => {
     vi.resetModules();
     state.inserts = [];
     state.hasNewColumns = true;
+    // serveAd diverts HOUSE_AD_ROTATION_RATE (~10%) of otherwise-fillable
+    // requests to the house ad, which is unmetered: no impression row, so no
+    // short code and no /a/ click URL. Left to chance, four of the tests below
+    // read `undefined` off a house fill on ~10% of runs each — roughly one CI
+    // run in three failed, on whichever test happened to draw it, and said
+    // nothing about the change under review.
+    //
+    // These tests are about the click URL of a *paid* fill, so the draw is
+    // pinned above the threshold. Fixing Math.random is safe precisely here:
+    // the auction has a single candidate either way, and short codes come from
+    // crypto.randomBytes, so "issues a distinct code per paid fill" still
+    // exercises real entropy. The rotation itself is pinned separately below.
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("addresses the click by short code once the columns exist", async () => {
@@ -144,17 +162,41 @@ describe("serveAd short-code click URLs", () => {
   });
 
   it("issues a distinct code per paid fill", async () => {
-    // HOUSE_AD_ROTATION_RATE puts ~10% of otherwise-fillable requests on the
-    // unmetered house ad, which has no impression and so no /a/ code. Count
-    // only the paid fills.
+    // Every draw takes the paid path (see beforeEach), so all 60 fills carry a
+    // code. The codes come from crypto.randomBytes, which the stub does not
+    // touch — this is still a real uniqueness check, just no longer a partial
+    // one that silently shrank whenever the house ad turned up.
     const codes: string[] = [];
     for (let i = 0; i < 60; i++) {
       const fill = await serve();
-      if (fill!.campaignId === "house") continue;
-      codes.push(fill!.clickUrl.split("/a/")[1]);
+      expect(fill!.campaignId).not.toBe("house");
+      codes.push(fill!.clickUrl.split("/a/")[1]!);
     }
-    expect(codes.length).toBeGreaterThan(20);
+    expect(codes).toHaveLength(60);
     for (const code of codes) expect(code).toMatch(SHORT_CODE_RE);
     expect(new Set(codes).size).toBe(codes.length);
+  });
+
+  // Pinning the draw above would quietly delete the only coverage of the
+  // rotation, so it is asserted directly instead of statistically — the
+  // boundary is the interesting part, and a sampled rate would just be a
+  // slower way to reintroduce a flaky test.
+  it("gives the unmetered house ad the fills that draw under the rate", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(HOUSE_AD_ROTATION_RATE / 2);
+    const fill = await serve();
+    expect(fill!.campaignId).toBe("house");
+    // Unmetered: no impression row, so nothing can be charged for the click.
+    expect(state.inserts).toHaveLength(0);
+    expect(fill!.clickUrl).not.toContain("/a/");
+  });
+
+  it("keeps the fill paid when the draw lands exactly on the rate", async () => {
+    // The comparison is `<`, so the rate itself is not a house fill. Pinning
+    // the boundary means a change to `<=` fails here rather than showing up as
+    // a slightly-off rotation nobody notices.
+    vi.spyOn(Math, "random").mockReturnValue(HOUSE_AD_ROTATION_RATE);
+    const fill = await serve();
+    expect(fill!.campaignId).toBe("camp-1");
+    expect(fill!.clickUrl).toContain("/a/");
   });
 });
