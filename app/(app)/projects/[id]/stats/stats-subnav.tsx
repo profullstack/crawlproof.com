@@ -8,6 +8,7 @@ export function StatsSubnav({ projectId }: { projectId: string }) {
   const tabs = [
     { label: "Overview", href: `/projects/${projectId}/stats` },
     { label: "Integrations", href: `/projects/${projectId}/stats/integrations` },
+    { label: "Careers", href: `/projects/${projectId}/stats/careers` },
   ];
 
   return (

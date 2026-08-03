@@ -130,6 +130,35 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
 </a>`}</pre>
       </section>
 
+      <section id="careers" className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Careers widget</h2>
+        <p className="text-sm leading-relaxed">
+          An optional module of the same snippet. Turn it on under{" "}
+          <span className="font-mono">Stats → Careers</span>, add your roles, and
+          the tracker paints a job board with an inline application form —{" "}
+          name, email, and one portfolio / LinkedIn / GitHub link. No second
+          script tag.
+        </p>
+        <p className="text-sm leading-relaxed">
+          On any page at <span className="font-mono">/careers</span> it mounts
+          automatically. To place it precisely, drop a container anywhere:
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`<div data-cp-careers></div>`}</pre>
+        <p className="text-sm leading-relaxed">
+          Using a different path, or want it off on a site that has the tracker?
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`<script data-site="<project_id>" data-careers-path="/jobs" src="https://crawlproof.com/stats.js" async></script>
+<script data-site="<project_id>" data-careers="off" src="https://crawlproof.com/stats.js" async></script>`}</pre>
+        <p className="text-sm leading-relaxed">
+          A client-rendered job board is invisible to crawlers, so the widget
+          also writes <span className="font-mono">JobPosting</span> schema into
+          your page, and every open role gets a server-rendered canonical page on
+          crawlproof.com. Google for Jobs and answer engines get real HTML to
+          read either way. Pages you don&apos;t enable it on pay nothing — the
+          module is only fetched when the page looks like a careers page.
+        </p>
+      </section>
+
       <section id="server-side" className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Server-side, CLI, and programmatic</h2>
         <p className="text-sm leading-relaxed">

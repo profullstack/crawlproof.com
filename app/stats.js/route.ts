@@ -18,6 +18,38 @@ const snippet = `(function(){
     var siteId = s && s.dataset && s.dataset.site;
     if (!siteId) return;
     var endpoint = ${JSON.stringify(env.siteUrl)} + '/api/track';
+
+    // Careers module. Opt-in per project in the dashboard, but we only pay to
+    // load it on pages that look like a careers page — every other pageview
+    // costs one querySelector and a string compare. /careers.js itself decides
+    // whether the project actually has the module on.
+    // Opt out entirely with data-careers="off"; point it elsewhere with
+    // data-careers-path="/jobs".
+    (function(){
+      try {
+        if (s.dataset.careers === 'off') return;
+        var wanted = s.dataset.careersPath || '/careers';
+        function maybeLoad() {
+          try {
+            var path = location.pathname.replace(/\\/+$/, '') || '/';
+            var target = wanted.replace(/\\/+$/, '') || '/';
+            if (!document.querySelector('[data-cp-careers]') && path !== target) return;
+            if (window.__crawlproofCareers) return;
+            window.__crawlproofCareers = { site: siteId };
+            var cs = document.createElement('script');
+            cs.src = ${JSON.stringify(env.siteUrl)} + '/careers.js';
+            cs.async = true;
+            (document.head || document.documentElement).appendChild(cs);
+          } catch (_) {}
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', maybeLoad);
+        } else {
+          maybeLoad();
+        }
+      } catch (_) {}
+    })();
+
     function pageUrl() { return location.origin + location.pathname + location.search; }
     function uuid(prefix) {
       try {

@@ -13,6 +13,7 @@ import {
 } from "@/components/charts/tracker-analytics";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
+import { CareersToggle } from "./careers-toggle";
 import { AutoInstall } from "./auto-install";
 import { LiveVisitors } from "./live-visitors";
 import { StatsSubnav } from "./stats-subnav";
@@ -210,6 +211,8 @@ export default async function ProjectStatsPage({
 
   const trackerEnabled = !!(project as { tracker_enabled?: boolean })
     .tracker_enabled;
+  const careersEnabled = !!(project as { careers_enabled?: boolean })
+    .careers_enabled;
 
   // GitHub auto-install: best-effort. If env is missing or the user has
   // no connected installations, we just hide the button.
@@ -330,6 +333,32 @@ export default async function ProjectStatsPage({
             <ConnectedRepos projectId={id} repos={boundRepos} />
           )}
         </section>
+
+        {trackerEnabled && (
+          <section className="card p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 className="text-lg font-semibold">Careers widget</h2>
+                <p className="text-sm text-[var(--color-muted)]">
+                  {careersEnabled ? (
+                    <>
+                      Loaded — your snippet paints a job board on /careers.{" "}
+                      <a
+                        href={`/projects/${id}/stats/careers`}
+                        className="underline hover:text-[var(--color-foreground)]"
+                      >
+                        Manage roles and applicants →
+                      </a>
+                    </>
+                  ) : (
+                    "Optional module. Publish job openings through the snippet you already installed — no second script tag."
+                  )}
+                </p>
+              </div>
+              <CareersToggle projectId={id} initialEnabled={careersEnabled} />
+            </div>
+          </section>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Metric label="AI referrals" value={totalAi} tone="pass" />
