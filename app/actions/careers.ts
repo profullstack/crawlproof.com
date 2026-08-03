@@ -2,6 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
+import { createClient } from "@/lib/supabase/server";
+import { serviceClient } from "@/lib/supabase/service";
+import { consumeCredit, refundCredit } from "@/lib/rateLimit";
+import { JOB_POSTING_CREDITS } from "@/lib/credits";
 import {
   APPLICATION_STATUSES,
   JOB_STATUSES,
@@ -107,18 +111,26 @@ export async function saveJobPosting(input: JobInput): Promise<Ok<{ id: string }
     updated_at: new Date().toISOString(),
   };
 
+  const { data: existing } = input.jobId
+    ? await access.supabase
+        .from("job_postings")
+        .select("published_at, credit_charged_at")
+        .eq("id", input.jobId)
+        .eq("project_id", input.projectId)
+        .maybeSingle()
+    : { data: null };
+
   // published_at is the datePosted we hand to schema.org, so it must be set
   // the first time a role goes open and then left alone.
+  let charge: Charge | null = null;
   if (status === "open") {
-    const { data: existing } = input.jobId
-      ? await access.supabase
-          .from("job_postings")
-          .select("published_at")
-          .eq("id", input.jobId)
-          .eq("project_id", input.projectId)
-          .maybeSingle()
-      : { data: null };
     if (!existing?.published_at) row.published_at = new Date().toISOString();
+    if (!existing?.credit_charged_at) {
+      const attempt = await chargeForPublish(access.supabase, input.projectId);
+      if (!attempt.ok) return attempt;
+      charge = attempt;
+      row.credit_charged_at = new Date().toISOString();
+    }
   }
 
   if (input.jobId) {
@@ -127,7 +139,11 @@ export async function saveJobPosting(input: JobInput): Promise<Ok<{ id: string }
       .update(row)
       .eq("id", input.jobId)
       .eq("project_id", input.projectId);
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      await refundCharge(charge);
+      return { ok: false, error: error.message };
+    }
+    await recordCharge(charge, input.projectId, input.jobId);
     revalidateCareers(input.projectId);
     return { ok: true, id: input.jobId };
   }
@@ -143,8 +159,12 @@ export async function saveJobPosting(input: JobInput): Promise<Ok<{ id: string }
     .insert({ ...row, slug: uniqueSlug(title, taken), created_by: access.userId })
     .select("id")
     .single();
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    await refundCharge(charge);
+    return { ok: false, error: error.message };
+  }
 
+  await recordCharge(charge, input.projectId, data.id as string);
   revalidateCareers(input.projectId);
   return { ok: true, id: data.id as string };
 }
@@ -162,14 +182,24 @@ export async function setJobStatus(input: {
     status: input.status,
     updated_at: new Date().toISOString(),
   };
+
+  let charge: Charge | null = null;
   if (input.status === "open") {
     const { data: existing } = await access.supabase
       .from("job_postings")
-      .select("published_at")
+      .select("published_at, credit_charged_at")
       .eq("id", input.jobId)
       .eq("project_id", input.projectId)
       .maybeSingle();
     if (!existing?.published_at) patch.published_at = new Date().toISOString();
+    // Re-opening a role that already paid is free — you buy the posting, not
+    // the month it happens to be live.
+    if (!existing?.credit_charged_at) {
+      const attempt = await chargeForPublish(access.supabase, input.projectId);
+      if (!attempt.ok) return attempt;
+      charge = attempt;
+      patch.credit_charged_at = new Date().toISOString();
+    }
   }
 
   const { error } = await access.supabase
@@ -177,8 +207,12 @@ export async function setJobStatus(input: {
     .update(patch)
     .eq("id", input.jobId)
     .eq("project_id", input.projectId);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    await refundCharge(charge);
+    return { ok: false, error: error.message };
+  }
 
+  await recordCharge(charge, input.projectId, input.jobId);
   revalidateCareers(input.projectId);
   return { ok: true };
 }
@@ -232,4 +266,63 @@ export async function setApplicationStatus(input: {
 
 function revalidateCareers(projectId: string) {
   revalidatePath(`/projects/${projectId}/stats/careers`);
+}
+
+/** A credit spend that has happened but whose posting write hasn't landed yet. */
+type Charge = { ok: true; ownerId: string; cost: number };
+
+/**
+ * Spend JOB_POSTING_CREDITS for a posting about to go open.
+ *
+ * The project owner pays, not whoever clicked Publish — a teammate publishing
+ * a role shouldn't have it come out of their personal balance, and the project
+ * is already the billing entity for the tracker.
+ *
+ * Spend first, write second, refund on write failure. The reverse order would
+ * publish roles for free whenever the charge failed, which is the expensive
+ * direction to be wrong in.
+ */
+async function chargeForPublish(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+): Promise<Charge | Err> {
+  const { data } = await supabase
+    .from("projects")
+    .select("owner_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const ownerId = (data as { owner_id?: string } | null)?.owner_id;
+  if (!ownerId) return { ok: false, error: "Could not find the project owner to bill." };
+
+  const paid = await consumeCredit(ownerId, JOB_POSTING_CREDITS);
+  if (!paid.ok) {
+    return {
+      ok: false,
+      error: `Publishing a role costs ${JOB_POSTING_CREDITS} credit${
+        JOB_POSTING_CREDITS === 1 ? "" : "s"
+      }. Not enough balance — top up in Settings → Billing.`,
+    };
+  }
+  return { ok: true, ownerId, cost: JOB_POSTING_CREDITS };
+}
+
+async function refundCharge(charge: Charge | null) {
+  if (!charge) return;
+  await refundCredit(charge.ownerId, charge.cost);
+}
+
+/** Ledger entry so a spend is explainable later. Best-effort. */
+async function recordCharge(charge: Charge | null, projectId: string, jobId: string) {
+  if (!charge) return;
+  try {
+    await serviceClient()
+      .from("usage_events")
+      .insert({
+        owner_id: charge.ownerId,
+        kind: "job_posting_published",
+        meta: { project_id: projectId, job_id: jobId, credits_spent: charge.cost },
+      });
+  } catch {
+    // A missing ledger row must never undo a successful publish.
+  }
 }

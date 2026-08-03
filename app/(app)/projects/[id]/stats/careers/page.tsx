@@ -22,6 +22,7 @@ type JobRecord = {
   qualifications: string[] | null;
   status: JobStatus;
   sort_order: number;
+  credit_charged_at: string | null;
 };
 
 type ApplicationRecord = {
@@ -53,7 +54,7 @@ export default async function CareersPage({
     supabase
       .from("job_postings")
       .select(
-        "id, slug, title, department, location, employment_type, workplace, compensation, apply_url, overview, responsibilities, qualifications, status, sort_order",
+        "id, slug, title, department, location, employment_type, workplace, compensation, apply_url, overview, responsibilities, qualifications, status, sort_order, credit_charged_at",
       )
       .eq("project_id", id)
       .order("sort_order", { ascending: true })
@@ -77,6 +78,7 @@ export default async function CareersPage({
     ...job,
     responsibilities: job.responsibilities ?? [],
     qualifications: job.qualifications ?? [],
+    credit_charged: Boolean(job.credit_charged_at),
     application_count: countsByJob.get(job.id) ?? 0,
   }));
 
