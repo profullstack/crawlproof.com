@@ -66,6 +66,17 @@ function chain(result: unknown): unknown {
   return c;
 }
 
+// serveAd diverts HOUSE_AD_ROTATION_RATE (10%) of otherwise-fillable requests
+// to the house ad, which is unmetered and so carries no clickUrl. These tests
+// are about the click URL on a *paid* fill, so leaving that coin flip in made
+// three of them fail ~10% of the time each — roughly a 1-in-4 chance of a red
+// run on an untouched branch. Rotation itself is covered by
+// tests/contract/ads-house-rotation.test.ts; here we pin it off.
+vi.mock("@/lib/ads/house", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ads/house")>()),
+  HOUSE_AD_ROTATION_RATE: 0,
+}));
+
 vi.mock("@/lib/supabase/service", () => ({
   serviceClient: () => ({
     from(table: string) {
@@ -144,9 +155,9 @@ describe("serveAd short-code click URLs", () => {
   });
 
   it("issues a distinct code per paid fill", async () => {
-    // HOUSE_AD_ROTATION_RATE puts ~10% of otherwise-fillable requests on the
-    // unmetered house ad, which has no impression and so no /a/ code. Count
-    // only the paid fills.
+    // House rotation is pinned off for this file (see the mock above), so every
+    // fill here should be paid. The guard stays as a belt-and-braces filter:
+    // a house fill has no impression and so no /a/ code to collect.
     const codes: string[] = [];
     for (let i = 0; i < 60; i++) {
       const fill = await serve();
