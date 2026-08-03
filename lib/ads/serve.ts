@@ -14,12 +14,24 @@ import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import { assessClickValidity, isBotDevice } from "./fraud";
 import { runAuction } from "./auction";
+import { generateShortCode } from "./shortcode";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
 // append-write impressions/clicks. v1 is a flat, un-budgeted match: any active
 // campaign with a ready creative in the requested format is eligible; we pick
 // one at random to spread delivery. Auction + budget pacing are a later phase.
+
+/**
+ * Which inventory this fill came from.
+ *
+ * 'paid'  — won the auction; the click bills the advertiser and pays the publisher.
+ * 'free'  — backfill from a campaign that ran out of credits or daily budget.
+ *           Bills nobody, earns nobody, and only ever fills a request no paying
+ *           campaign wanted. Beats showing a house ad.
+ * 'house' — CrawlProof's own promo. Never metered.
+ */
+export type AdTier = "paid" | "free" | "house";
 
 export type Fill = {
   impressionId: string;
@@ -31,6 +43,7 @@ export type Fill = {
   html: string;
   /** ASCII rendering of the same creative, for terminal/MOTD consumers. */
   text: string;
+  tier: AdTier;
 };
 
 export function isAdFormat(v: string | null | undefined): v is AdFormatId {
@@ -77,6 +90,13 @@ export type ServeContext = {
   ip?: string | null;
   country?: string | null;
   device?: string | null;
+  /**
+   * Publisher's surface tag (?src=bbs, ?src=ssh-banner, …). Recorded on the
+   * impression rather than appended to the printed click URL, where it cost up
+   * to 35 columns of a box that has 40. The click handler reads it back off the
+   * row to build utm_content.
+   */
+  src?: string | null;
 };
 
 // Returns a rendered fill for the slot, or null if the slot is inactive /
@@ -90,7 +110,7 @@ export async function serveAd(
 
   const { data: slot } = await sb
     .from("ad_slots")
-    .select("id, status, formats")
+    .select("id, status, formats, owner_id")
     .eq("id", slotId)
     .maybeSingle();
   if (!slot || slot.status !== "active") return null;
@@ -100,16 +120,17 @@ export async function serveAd(
   // clean and avoids exposing paid creatives to crawlers).
   if (isBotDevice(ctx.device)) return houseFill(format);
 
-  // Active campaigns with a ready creative in this format. Join manually:
-  // fetch candidate creatives whose campaign is active.
+  // Campaigns with a ready creative in this format. 'exhausted' is a legacy
+  // status no longer written by ad_charge_click — rows still carrying it are
+  // live campaigns that ran dry, and belong on the free tier rather than dark.
   const { data: creatives } = await sb
     .from("ad_creatives")
     .select(
-      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
+      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, owner_id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
     )
     .eq("format", format)
     .eq("status", "ready")
-    .eq("ad_campaigns.status", "active")
+    .in("ad_campaigns.status", ["active", "exhausted"])
     .limit(100);
 
   // No paid creative for this format → default CrawlProof house ad.
@@ -117,6 +138,7 @@ export async function serveAd(
 
   type CampaignJoin = {
     id: string;
+    owner_id: string;
     ref_slug: string;
     destination_url: string;
     daily_budget_cents: number;
@@ -129,62 +151,135 @@ export async function serveAd(
     Array.isArray(c) ? c[0] : c;
   const today = new Date().toISOString().slice(0, 10); // UTC yyyy-mm-dd
 
-  // Budget pacing: keep only campaigns with room for at least one more click at
-  // their bid today. spend_today resets implicitly when spend_date is earlier.
-  const eligible = (creatives as unknown as Row[]).filter((row) => {
-    const c = oneCampaign(row.ad_campaigns);
-    if (!c) return false;
-    const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
-    const bid = c.bid_credits ?? DEFAULT_BID_CREDITS;
-    return spentToday + bid * CREDIT_CENTS <= c.daily_budget_cents;
-  });
-  // Every candidate is out of budget → fall back to the house ad.
-  if (eligible.length === 0) return houseFill(format);
-
-  // Rotate the CrawlProof house ad into a slice of otherwise-fillable requests
-  // so the ad network keeps promoting itself even on well-monetized slots.
-  // Unmetered, so no paid impression is spent on these.
-  if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format);
-
-  // Bid-weighted lottery: every eligible campaign can win, with probability
-  // proportional to its bid, so all active ads rotate (higher bids more often).
-  const auction = runAuction(
-    eligible.map((row) => ({
-      bidCredits: oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
-      item: row,
-    })),
+  // A self-owned campaign (same profile owns the slot and the campaign) can
+  // never earn: ad_charge_click refuses to bill or accrue on a self-click. It
+  // used to be dropped here outright, which is correct on a network with other
+  // advertisers and catastrophic on one without — while every slot and every
+  // campaign belong to the same account, that filter removed 100% of inventory
+  // and every request fell through to the house ad. Serving stopped entirely
+  // and nothing recorded an impression, because house fills aren't metered.
+  //
+  // So self-owned campaigns are demoted rather than discarded, below. Between a
+  // real advertiser's creative and the house ad — neither of which can earn on
+  // this request — the real creative is strictly the better fill.
+  const candidates = (creatives as unknown as Row[]).filter(
+    (row) => !!oneCampaign(row.ad_campaigns),
   );
-  const pick = auction?.winner;
+  if (candidates.length === 0) return houseFill(format);
+
+  // A campaign is PAID-eligible only if its owner can actually cover a click at
+  // its bid. Without this a broke campaign would win the auction and displace
+  // one that can pay — the click would go unbilled and the publisher would earn
+  // nothing on inventory a funded advertiser wanted.
+  const ownerIds = [...new Set(candidates.map((r) => oneCampaign(r.ad_campaigns).owner_id))];
+  const { data: owners } = await sb
+    .from("profiles")
+    .select("id, credits_balance, ad_bonus_credits")
+    .in("id", ownerIds);
+  const creditsByOwner = new Map(
+    (owners ?? []).map((o) => [
+      o.id as string,
+      ((o.credits_balance as number) ?? 0) + ((o.ad_bonus_credits as number) ?? 0),
+    ]),
+  );
+
+  const paid: Row[] = [];
+  const free: Row[] = [];
+  for (const row of candidates) {
+    const c = oneCampaign(row.ad_campaigns);
+    const bid = c.bid_credits ?? DEFAULT_BID_CREDITS;
+    const spentToday = c.spend_date === today ? c.spend_today_cents : 0;
+    const hasBudget = spentToday + bid * CREDIT_CENTS <= c.daily_budget_cents;
+    const hasFunds = (creditsByOwner.get(c.owner_id) ?? 0) >= bid;
+    // Same owner on both sides of the transaction: the click can't be billed,
+    // so it must never win paid inventory ahead of an advertiser who would
+    // actually pay. Free tier is exactly the right home for it — same place a
+    // campaign that has run out of funds goes.
+    const isSelfDeal = !!(slot.owner_id && c.owner_id === slot.owner_id);
+    // Legacy 'exhausted' rows never compete for paid inventory on that status
+    // alone — funds decide, and a top-up puts them straight back in the auction.
+    (hasBudget && hasFunds && !isSelfDeal ? paid : free).push(row);
+  }
+
+  // Paid inventory first, always. Free-tier campaigns only ever fill requests no
+  // paying advertiser wanted, so they can't cannibalise publisher earnings.
+  let pick: Row | undefined;
+  let tier: AdTier = "paid";
+
+  if (paid.length > 0) {
+    // Rotate the CrawlProof house ad into a slice of otherwise-fillable requests
+    // so the ad network keeps promoting itself even on well-monetized slots.
+    // Unmetered, so no paid impression is spent on these.
+    if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format);
+
+    // Bid-weighted lottery: every eligible campaign can win, with probability
+    // proportional to its bid, so all active ads rotate (higher bids more often).
+    pick = runAuction(
+      paid.map((row) => ({
+        bidCredits: oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
+        item: row,
+      })),
+    )?.winner;
+  }
+
+  // Nothing paid to show: backfill with a real advertiser's ad instead of the
+  // house ad. Uniform pick, not bid-weighted — nobody is paying, so a high bid
+  // buys no priority here.
+  if (!pick && free.length > 0) {
+    tier = "free";
+    pick = free[Math.floor(Math.random() * free.length)];
+  }
+
   if (!pick) return houseFill(format);
   const campaign = oneCampaign(pick.ad_campaigns);
   if (!campaign) return null;
 
   // Record the impression first so we have an id to bind the click to.
-  const { data: imp } = await sb
+  const base = {
+    slot_id: slotId,
+    campaign_id: campaign.id,
+    creative_id: pick.id,
+    visitor_id: ctx.visitorId ?? null,
+    ip_hash: hashIp(ctx.ip ?? null),
+    geo_country: ctx.country ?? null,
+    device: ctx.device ?? null,
+    billable: false,
+    tier,
+  };
+
+  // The short code is what lets a terminal click URL fit inside the box, and
+  // ctx.src records the publisher's surface tag on the row instead of in the
+  // printed URL. Both live behind `add column if not exists`, and migrations
+  // here are applied by hand — so if this deploy lands first, the insert would
+  // fail on the unknown columns and take *all* paid serving down with it.
+  // Retry once without them and fall back to the UUID click URL: a wide URL is
+  // a cosmetic problem, a dropped impression is a lost sale.
+  const shortCode = generateShortCode();
+  let { data: imp } = await sb
     .from("ad_impressions")
-    .insert({
-      slot_id: slotId,
-      campaign_id: campaign.id,
-      creative_id: pick.id,
-      visitor_id: ctx.visitorId ?? null,
-      ip_hash: hashIp(ctx.ip ?? null),
-      geo_country: ctx.country ?? null,
-      device: ctx.device ?? null,
-      billable: false,
-    })
-    .select("id")
+    .insert({ ...base, short_code: shortCode, src: ctx.src ?? null })
+    .select("id, short_code")
     .single();
 
+  if (!imp) {
+    ({ data: imp } = await sb.from("ad_impressions").insert(base).select("id").single());
+  }
+
   const impressionId = imp?.id ?? crypto.randomUUID();
+  // Only address the click by code once we know the code was actually stored —
+  // otherwise /a/<code> would resolve to nothing and the click would go
+  // unmetered and unpaid.
+  const clickRef =
+    imp && "short_code" in imp && imp.short_code ? (imp.short_code as string) : impressionId;
   const creative = rowToCreative(pick);
 
   // Click goes through our redirector so we can meter it, then lands on the
   // destination with ?ref= applied. Terminals print the URL as literal text, so
-  // the terminal format gets the short /a/<impression> form — it resolves the
+  // the terminal format gets the short /a/<code> form — it resolves the
   // slot/campaign/creative from the impression row instead of the query string.
   const clickUrl =
     format === TERMINAL_FORMAT_ID
-      ? `${env.siteUrl}/a/${impressionId}`
+      ? `${env.siteUrl}/a/${clickRef}`
       : `${env.siteUrl}/api/ads/click?i=${impressionId}&s=${slotId}&c=${campaign.id}&cr=${pick.id}`;
 
   return {
@@ -196,6 +291,7 @@ export async function serveAd(
     clickUrl,
     html: renderCreativeHtml(creative, clickUrl),
     text: renderCreativeText(creative, clickUrl),
+    tier,
   };
 }
 

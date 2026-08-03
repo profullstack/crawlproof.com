@@ -55,10 +55,10 @@ export default async function CampaignDetailPage({
     .maybeSingle();
   if (!campaign) notFound();
 
-  const [{ data: stats }, { data: creativeRows }, series] = await Promise.all([
+  const [{ data: stats }, { data: creativeRows }, series, { data: profile }] = await Promise.all([
     supabase
       .from("ad_campaign_stats")
-      .select("impressions, clicks")
+      .select("impressions, free_impressions, clicks, free_clicks")
       .eq("campaign_id", id)
       .maybeSingle(),
     supabase
@@ -69,13 +69,21 @@ export default async function CampaignDetailPage({
       .eq("campaign_id", id)
       .order("format"),
     getCampaignDailySeries(supabase, [id], 30),
+    supabase
+      .from("profiles")
+      .select("credits_balance, ad_bonus_credits")
+      .eq("id", user.id)
+      .maybeSingle(),
   ]);
 
   const impressions = (stats?.impressions as number) ?? 0;
   const clicks = (stats?.clicks as number) ?? 0;
+  const freeImpressions = (stats?.free_impressions as number) ?? 0;
+  const freeClicks = (stats?.free_clicks as number) ?? 0;
   const daily = series.get(id) ?? [];
   const today = utcToday();
-  const display = campaignDisplayStatus(campaign, today);
+  const creditsAvailable = (profile?.credits_balance ?? 0) + (profile?.ad_bonus_credits ?? 0);
+  const display = campaignDisplayStatus(campaign, today, creditsAvailable);
 
   const creatives: (AdCreative & { id: string })[] = ((creativeRows as CreativeRow[]) ?? []).map(
     (r) => ({
@@ -129,7 +137,10 @@ export default async function CampaignDetailPage({
         </div>
       </div>
 
-      {!display.serving && (
+      {/* Free tier still serves, so key this on the tier rather than on
+          `serving` — otherwise a campaign quietly running as backfill would
+          look identical to one winning paid placements. */}
+      {display.tier !== "paid" && (
         <p className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface,transparent)] p-3 text-sm text-[var(--color-muted)]">
           {display.hint}
         </p>
@@ -143,6 +154,16 @@ export default async function CampaignDetailPage({
         <Stat label="Today" value={dollars(spendTodayCents(campaign, today))} />
         <Stat label="Daily budget" value={dollars(campaign.daily_budget_cents)} />
       </div>
+
+      {/* Counted apart from the paid figures above so the CTR and CPC an
+          advertiser reads stay comparable across tiers. */}
+      {(freeImpressions > 0 || freeClicks > 0) && (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <Stat label="Free impressions" value={freeImpressions.toLocaleString()} />
+          <Stat label="Free clicks" value={freeClicks.toLocaleString()} />
+          <Stat label="Free tier cost" value="$0.00" />
+        </div>
+      )}
 
       <div className="mt-4">
         <CampaignTrend data={daily} />

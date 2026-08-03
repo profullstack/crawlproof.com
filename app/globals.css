@@ -12,6 +12,14 @@
   --color-fail: #f87171;
   --color-pass: #34d399;
   --color-unknown: #64748b;
+  /* Categorical chart series. In-hue with --color-accent / --color-warn but
+     stepped darker: the brand tokens sit at OKLCH L ~0.84, well outside the
+     0.48–0.67 band a dark chart surface wants, and validate as FAIL. These two
+     pass all six checks against --color-card (#12161c) — lightness band, chroma
+     floor, CVD separation (ΔE 10.4 deutan), normal-vision separation (ΔE 21.2)
+     and 3:1 contrast. Assigned in fixed order; never cycled. */
+  --color-chart-1: #12a97a;
+  --color-chart-2: #c2740a;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }

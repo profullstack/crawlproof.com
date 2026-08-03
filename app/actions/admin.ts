@@ -71,7 +71,7 @@ export async function grantCredits(input: {
 
   const { data: recipient, error: rErr } = await svc
     .from("profiles")
-    .select("id, email, credits_balance")
+    .select("id, email, credits_balance, promo_credits")
     .ilike("email", email)
     .maybeSingle();
   if (rErr) return { ok: false, error: rErr.message };
@@ -85,9 +85,17 @@ export async function grantCredits(input: {
     };
   }
 
+  // Granted credits are not cash-backed: track them as promo so ad clicks they
+  // fund accrue nothing to publishers. Without this an admin grant could be
+  // spent on ads and withdrawn as real USDC. Clawbacks reduce promo first,
+  // clamped to the new balance so the invariant promo <= balance holds.
+  const promo = recipient.promo_credits ?? 0;
+  const newPromo =
+    credits > 0 ? promo + credits : Math.min(Math.max(0, promo + credits), newBalance);
+
   const { error: upErr } = await svc
     .from("profiles")
-    .update({ credits_balance: newBalance })
+    .update({ credits_balance: newBalance, promo_credits: newPromo })
     .eq("id", recipient.id);
   if (upErr) return { ok: false, error: upErr.message };
 
