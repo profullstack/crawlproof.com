@@ -89,7 +89,8 @@ const snippet = `(function(){
       '.cp-careers-msg{font-size:.85em}',
       '.cp-careers-empty{padding:20px 0;opacity:.7}',
       '.cp-careers-credit{margin-top:14px;font-size:.75em;opacity:.55}',
-      '.cp-careers-credit a{color:inherit}'
+      '.cp-careers-credit a{color:inherit}',
+      '.cp-hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}'
     ].join('');
 
     function injectStyle() {
@@ -167,6 +168,10 @@ const snippet = `(function(){
         html += '<label>Full Name<input name="fullName" type="text" required maxlength="200" placeholder="Jane Doe" autocomplete="name"></label>';
         html += '<label>Email Address<input name="email" type="email" required maxlength="254" placeholder="jane@example.com" autocomplete="email"></label>';
         html += '<label>Portfolio / LinkedIn / GitHub<input name="link" type="url" maxlength="500" placeholder="https://github.com/username" autocomplete="url"></label>';
+        // Honeypot. Positioned off-screen rather than display:none, which some
+        // bots skip; aria-hidden and tabindex=-1 keep it away from screen
+        // readers and the tab order so no real applicant can reach it.
+        html += '<div class="cp-hp" aria-hidden="true"><label>Company<input name="company" type="text" tabindex="-1" autocomplete="off"></label></div>';
         html += '<div class="cp-careers-actions"><button type="submit" class="cp-careers-submit">Submit application</button><span class="cp-careers-msg" role="status"></span></div>';
         html += '</form>';
       }
@@ -262,6 +267,7 @@ const snippet = `(function(){
           fullName: form.fullName.value,
           email: form.email.value,
           link: form.link.value,
+          company: form.company ? form.company.value : '',
           url: location.origin + location.pathname
         };
         if (!payloadBody.fullName.trim()) { msg.textContent = 'Enter your name.'; return; }
