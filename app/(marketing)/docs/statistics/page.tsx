@@ -150,6 +150,11 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
         <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`<script data-site="<project_id>" data-careers-path="/jobs" src="https://crawlproof.com/stats.js" async></script>
 <script data-site="<project_id>" data-careers="off" src="https://crawlproof.com/stats.js" async></script>`}</pre>
         <p className="text-sm leading-relaxed">
+          Publishing a role costs 1 credit, charged once when it first goes
+          live. Closing a posting and re-opening it later is free, and the
+          widget itself costs nothing to switch on.
+        </p>
+        <p className="text-sm leading-relaxed">
           A client-rendered job board is invisible to crawlers, so the widget
           also writes <span className="font-mono">JobPosting</span> schema into
           your page, and every open role gets a server-rendered canonical page on

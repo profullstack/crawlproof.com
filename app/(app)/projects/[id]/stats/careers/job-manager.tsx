@@ -15,6 +15,9 @@ import {
   type Workplace,
   workplaceSummary,
 } from "@/lib/careers/jobs";
+import { JOB_POSTING_CREDITS } from "@/lib/credits";
+
+const CREDITS_LABEL = `${JOB_POSTING_CREDITS} credit${JOB_POSTING_CREDITS === 1 ? "" : "s"}`;
 
 export interface JobRow {
   id: string;
@@ -31,6 +34,7 @@ export interface JobRow {
   qualifications: string[];
   status: JobStatus;
   sort_order: number;
+  credit_charged: boolean;
   application_count: number;
 }
 
@@ -66,7 +70,8 @@ export function JobManager({
             >
               hosted board
             </a>
-            . Drafts stay private.
+            . Drafts stay private. Publishing a role costs {CREDITS_LABEL}, once
+            — closing and re-opening the same posting is free.
           </p>
         </div>
         {editing === null && (
@@ -188,8 +193,13 @@ function JobCard({
             className="btn btn-secondary text-xs"
             onClick={() => changeStatus("open")}
             disabled={pending}
+            title={
+              job.credit_charged
+                ? "Already paid for — re-opening is free"
+                : `Publishing costs ${CREDITS_LABEL}`
+            }
           >
-            Publish
+            {job.credit_charged ? "Re-open" : `Publish (${CREDITS_LABEL})`}
           </button>
         )}
         {job.status === "open" && (
@@ -342,7 +352,11 @@ function JobForm({
         <Field label="Status">
           <select name="status" defaultValue={job?.status ?? "draft"} className="input">
             <option value="draft">Draft — not published</option>
-            <option value="open">Open — live in the widget</option>
+            <option value="open">
+              {job?.credit_charged
+                ? "Open — live in the widget"
+                : `Open — live in the widget (${CREDITS_LABEL})`}
+            </option>
             <option value="closed">Closed — no longer accepting</option>
           </select>
         </Field>

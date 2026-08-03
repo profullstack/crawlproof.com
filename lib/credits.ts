@@ -16,6 +16,19 @@ export const SCAN_CREDITS = 20;
 export const OUTREACH_CREDITS = 1;
 
 /**
+ * Credits charged to publish one job posting on the careers widget.
+ *
+ * Charged once per posting, the first time it goes open — not per month and
+ * not per edit. Closing a role and re-opening it is free, so a seasonal
+ * listing isn't billed twice for the same hire.
+ *
+ * Serving costs us almost nothing (the jobs feed is a cached read), so this is
+ * priced as a listing fee rather than off cost: 5c a posting at rack, against
+ * $200-and-up to list the same role on a real job board.
+ */
+export const JOB_POSTING_CREDITS = 1;
+
+/**
  * One billable lead-generation tick: discovery, contact lookup and drafting.
  *
  * Priced off measured cost rather than a guess. At the per-tick caps the run
