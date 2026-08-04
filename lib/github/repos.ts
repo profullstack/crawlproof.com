@@ -183,6 +183,50 @@ export interface DirectoryEntry {
   size?: number;
 }
 
+export interface RepoTree {
+  /** Every blob path in the repo, repo-relative. */
+  files: string[];
+  /**
+   * GitHub caps the recursive tree response. When true the list is a
+   * prefix of the repo, so callers should treat a miss as "unknown"
+   * rather than "absent" and keep their canonical probes.
+   */
+  truncated: boolean;
+}
+
+/**
+ * List every file in a repo in one request.
+ *
+ * The contents API can only answer "does this exact path exist?", which is
+ * fine when you already know the layout and useless when you don't. The git
+ * trees API returns the whole file list at once, so a picker can offer real
+ * locations instead of asking the customer to guess their own directory
+ * structure. One request also beats N probes on rate limit.
+ */
+export async function listRepoTree(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  ref: string;
+}): Promise<RepoTree | null> {
+  const res = await gh(
+    `/repos/${input.owner}/${input.repo}/git/trees/${encodeURIComponent(input.ref)}?recursive=1`,
+    { token: input.token },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`listRepoTree ${res.status}: ${await res.text()}`);
+  }
+  const body = (await res.json()) as {
+    tree?: Array<{ path: string; type: string }>;
+    truncated?: boolean;
+  };
+  return {
+    files: (body.tree ?? []).filter((e) => e.type === "blob").map((e) => e.path),
+    truncated: Boolean(body.truncated),
+  };
+}
+
 /**
  * List the immediate children of a directory in a repo. Returns null
  * for paths that don't exist (or aren't directories). Use empty string
