@@ -8,7 +8,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { env } from "@/lib/env";
-import { hostedJobUrl, schemaEmploymentType, type PublicJob } from "@/lib/careers/jobs";
+import {
+  hostedJobUrl,
+  jobPostingJsonLd,
+  schemaEmploymentType,
+  type PublicJob,
+} from "@/lib/careers/jobs";
 
 export const runtime = "nodejs";
 
@@ -62,6 +67,16 @@ export async function GET(request: NextRequest) {
     // then have to keep in sync with ours.
     employment_type_schema: schemaEmploymentType(job.employment_type),
     canonical_url: hostedJobUrl(env.siteUrl, site, job.slug),
+    // Same reasoning, one level up: the SSR /careers page we generate for a
+    // customer's repo can't import our schema.org helpers, so it gets the
+    // finished graph rather than a second implementation to drift from.
+    json_ld: jobPostingJsonLd({
+      job,
+      siteUrl: env.siteUrl,
+      projectId: site,
+      projectName: project.name ?? "",
+      projectUrl: project.url ?? "",
+    }),
   }));
 
   return NextResponse.json(
