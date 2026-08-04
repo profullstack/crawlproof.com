@@ -1,8 +1,12 @@
 // POST /api/projects/[id]/github/install-careers
-// Body: { owner, repo, installation_id, root_path?, default_branch?, mode? }
+// Body: { owner, repo, installation_id, root_path?, target_dir?, default_branch?, mode? }
 //
-// mode=detect  → report the framework we'd write for, without touching the repo.
-// mode=submit  → open the PR (default).
+// mode=candidates → scan the repo and rank every place a careers route could
+//                   go. Read-only, no PR, no run row.
+// mode=detect     → report the framework we'd write for at one root, without
+//                   touching the repo.
+// mode=submit     → open the PR (default). Honours target_dir when the user
+//                   picked a location, after re-verifying it server-side.
 //
 // Auth mirrors install-tracker: a signed-in user, with access to the project,
 // using an installation connected to their own account.
@@ -13,7 +17,12 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
-import { detectFramework, installCareersPage } from "@/lib/github/install-careers";
+import {
+  detectFramework,
+  findCareersCandidates,
+  installCareersPage,
+  verifyCareersDir,
+} from "@/lib/github/install-careers";
 import { getRepo } from "@/lib/github/repos";
 
 export const runtime = "nodejs";
@@ -23,8 +32,9 @@ const bodySchema = z.object({
   repo: z.string().min(1),
   installation_id: z.number().int().positive(),
   root_path: z.string().max(500).optional(),
+  target_dir: z.string().max(500).optional(),
   default_branch: z.string().max(200).optional(),
-  mode: z.enum(["detect", "submit"]).optional(),
+  mode: z.enum(["candidates", "detect", "submit"]).optional(),
 });
 
 export async function POST(
@@ -79,6 +89,23 @@ export async function POST(
 
   const mode = body.mode ?? "submit";
 
+  // Read-only scan: no PR, no run row.
+  if (mode === "candidates") {
+    try {
+      const token = await getOrMintInstallationToken(body.installation_id);
+      const { candidates, truncated } = await findCareersCandidates({
+        token,
+        owner: body.owner,
+        repo: body.repo,
+        rootPath: body.root_path,
+      });
+      return NextResponse.json({ data: { candidates, truncated } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+  }
+
   if (mode === "detect") {
     try {
       const token = await getOrMintInstallationToken(body.installation_id);
@@ -123,12 +150,36 @@ export async function POST(
 
   try {
     const token = await getOrMintInstallationToken(body.installation_id);
+
+    // A directory chosen in the browser is never trusted on its own — re-probe
+    // for the framework marker so we still only write where we can see a site.
+    let detected;
+    if (body.target_dir?.trim()) {
+      const repoMeta = await getRepo({ token, owner: body.owner, repo: body.repo });
+      detected =
+        (await verifyCareersDir({
+          token,
+          owner: body.owner,
+          repo: body.repo,
+          ref: repoMeta.default_branch,
+          dir: body.target_dir.trim(),
+        })) ?? undefined;
+      if (!detected) {
+        const msg =
+          `No Next.js App Router or Astro site at ${body.target_dir.trim()}. ` +
+          "Pick one of the scanned locations, or point at the directory holding layout.tsx.";
+        await finalize({ status: "failed", error: msg });
+        return NextResponse.json({ error: msg }, { status: 422 });
+      }
+    }
+
     const result = await installCareersPage({
       token,
       owner: body.owner,
       repo: body.repo,
       projectId,
       rootPath: body.root_path,
+      detected,
     });
     await finalize({
       status: result.status,

@@ -20,6 +20,7 @@ const github = vi.hoisted(() => {
       return { path, sha: `sha-${path}`, content };
     }),
     searchRepoCode: vi.fn(async () => []),
+    listRepoTree: vi.fn(async () => ({ files: [...files.keys()], truncated: false })),
     createBranch: vi.fn(async (_input: { newBranch: string; fromBranch: string }) => ({
       created: true,
     })),
@@ -41,12 +42,19 @@ vi.mock("@/lib/github/repos", () => ({
   getRepo: github.getRepo,
   getFileContent: github.getFileContent,
   searchRepoCode: github.searchRepoCode,
+  listRepoTree: github.listRepoTree,
   createBranch: github.createBranch,
   putFile: github.putFile,
   openPullRequest: github.openPullRequest,
 }));
 
-import { detectFramework, installCareersPage } from "@/lib/github/install-careers";
+import {
+  careersCandidatesFromTree,
+  detectFramework,
+  findCareersCandidates,
+  installCareersPage,
+  verifyCareersDir,
+} from "@/lib/github/install-careers";
 
 const BASE = { token: "token", owner: "owner", repo: "repo" };
 const PROJECT = "af9ab953-caa6-4a2b-a306-42fb4eac4630";
@@ -56,6 +64,7 @@ beforeEach(() => {
   for (const fn of [
     github.getRepo,
     github.getFileContent,
+    github.listRepoTree,
     github.createBranch,
     github.putFile,
     github.openPullRequest,
@@ -201,5 +210,165 @@ describe("installCareersPage", () => {
     expect(branchCall.fromBranch).toBe("trunk");
     const pr = github.openPullRequest.mock.calls[0][0] as unknown as { base: string };
     expect(pr.base).toBe("trunk");
+  });
+});
+
+// The scan is the difference between "we don't support your repo" and "pick
+// one of these". Most of the interesting behaviour is in the pure tree->list
+// step, so that gets tested without any network mocking at all.
+describe("careersCandidatesFromTree", () => {
+  it("finds every app dir in a monorepo, not just the root", () => {
+    const found = careersCandidatesFromTree(
+      [
+        "package.json",
+        "apps/web/src/app/layout.tsx",
+        "apps/admin/app/layout.tsx",
+        "packages/ui/package.json",
+      ],
+      { repoName: "acme" },
+    );
+    expect(found.map((c) => c.dir).sort()).toEqual([
+      "apps/admin/app",
+      "apps/web/src/app",
+    ]);
+  });
+
+  it("ranks the real app above examples and fixtures", () => {
+    const found = careersCandidatesFromTree(
+      ["examples/starter/app/layout.tsx", "apps/web/app/layout.tsx"],
+      { repoName: "acme" },
+    );
+    expect(found[0].dir).toBe("apps/web/app");
+    expect(found[1].dir).toBe("examples/starter/app");
+  });
+
+  it("puts a root-level app dir first in a single-app repo", () => {
+    const found = careersCandidatesFromTree(
+      ["apps/legacy/app/layout.tsx", "app/layout.tsx"],
+      { repoName: "acme" },
+    );
+    expect(found[0].dir).toBe("app");
+  });
+
+  it("maps an Astro config to its pages directory", () => {
+    const found = careersCandidatesFromTree(
+      ["sites/blog/astro.config.mjs", "sites/blog/src/pages/index.astro"],
+      { repoName: "acme" },
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      framework: "astro",
+      dir: "sites/blog/src/pages",
+      evidence: "sites/blog/astro.config.mjs",
+      typescript: true,
+    });
+  });
+
+  it("ignores nested route layouts — only the root layout marks an app dir", () => {
+    const found = careersCandidatesFromTree(
+      ["app/layout.tsx", "app/blog/layout.tsx", "app/(marketing)/layout.tsx"],
+      { repoName: "acme" },
+    );
+    expect(found.map((c) => c.dir)).toEqual(["app"]);
+  });
+
+  it("skips vendored and build output", () => {
+    const found = careersCandidatesFromTree(
+      ["node_modules/pkg/app/layout.tsx", ".next/app/layout.tsx", "dist/app/layout.tsx"],
+      { repoName: "acme" },
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("honours a rootPath filter", () => {
+    const found = careersCandidatesFromTree(
+      ["apps/web/app/layout.tsx", "apps/admin/app/layout.tsx"],
+      { repoName: "acme", rootPath: "apps/admin" },
+    );
+    expect(found.map((c) => c.dir)).toEqual(["apps/admin/app"]);
+  });
+
+  it("surfaces a location that already has a careers page instead of hiding it", () => {
+    const found = careersCandidatesFromTree(
+      ["app/layout.tsx", "app/careers/page.tsx"],
+      { repoName: "acme" },
+    );
+    expect(found[0].existingPath).toBe("app/careers/page.tsx");
+  });
+
+  it("infers JavaScript from a .jsx layout", () => {
+    const found = careersCandidatesFromTree(["app/layout.jsx"], { repoName: "acme" });
+    expect(found[0]).toMatchObject({ typescript: false, framework: "next-app" });
+  });
+});
+
+describe("findCareersCandidates", () => {
+  it("scans the whole repo in one tree call", async () => {
+    github.files.set("apps/web/src/app/layout.tsx", "export default function L() {}");
+    const { candidates, truncated } = await findCareersCandidates({ ...BASE });
+    expect(candidates.map((c) => c.dir)).toEqual(["apps/web/src/app"]);
+    expect(truncated).toBe(false);
+    expect(github.listRepoTree).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the direct probe when the tree is unavailable", async () => {
+    github.listRepoTree.mockRejectedValueOnce(new Error("409 empty repository"));
+    github.files.set("app/layout.tsx", "export default function L() {}");
+    const { candidates } = await findCareersCandidates({ ...BASE });
+    expect(candidates.map((c) => c.dir)).toEqual(["app"]);
+  });
+
+  it("keeps probing when GitHub truncates the tree", async () => {
+    github.files.set("app/layout.tsx", "export default function L() {}");
+    github.listRepoTree.mockResolvedValueOnce({ files: [], truncated: true });
+    const { candidates, truncated } = await findCareersCandidates({ ...BASE });
+    expect(truncated).toBe(true);
+    expect(candidates.map((c) => c.dir)).toEqual(["app"]);
+  });
+
+  it("returns an empty list rather than throwing on a repo with no site", async () => {
+    github.files.set("README.md", "# hi");
+    const { candidates } = await findCareersCandidates({ ...BASE });
+    expect(candidates).toEqual([]);
+  });
+});
+
+// A directory picked in the browser is user input. The installer's promise is
+// that it only writes where it can see a site, so submit re-checks the marker.
+describe("verifyCareersDir", () => {
+  it("accepts a directory that really holds a root layout", async () => {
+    github.files.set("apps/web/app/layout.tsx", "export default function L() {}");
+    const found = await verifyCareersDir({ ...BASE, ref: "main", dir: "apps/web/app" });
+    expect(found).toMatchObject({
+      framework: "next-app",
+      dir: "apps/web/app",
+      typescript: true,
+      evidence: "apps/web/app/layout.tsx",
+    });
+  });
+
+  it("rejects a directory with no framework marker", async () => {
+    github.files.set("apps/web/app/layout.tsx", "export default function L() {}");
+    const found = await verifyCareersDir({ ...BASE, ref: "main", dir: "docs" });
+    expect(found).toBeNull();
+  });
+
+  it("rejects traversal", async () => {
+    const found = await verifyCareersDir({ ...BASE, ref: "main", dir: "../../etc" });
+    expect(found).toBeNull();
+  });
+
+  it("verifies an Astro pages dir against the config above it", async () => {
+    github.files.set("sites/blog/astro.config.ts", "export default {};");
+    const found = await verifyCareersDir({
+      ...BASE,
+      ref: "main",
+      dir: "sites/blog/src/pages",
+    });
+    expect(found).toMatchObject({
+      framework: "astro",
+      dir: "sites/blog/src/pages",
+      evidence: "sites/blog/astro.config.ts",
+    });
   });
 });

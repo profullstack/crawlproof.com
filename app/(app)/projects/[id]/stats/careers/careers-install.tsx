@@ -3,9 +3,14 @@
 // "Add a real /careers page to my repo" — the crawlable counterpart to the
 // drop-in widget.
 //
-// Two steps on purpose. Detection is read-only and tells the user what we
-// found before anything is written; only the second button opens a PR. People
-// are reasonably wary of a button that commits to their repo sight unseen.
+// Two steps on purpose. Scanning is read-only and shows what we found before
+// anything is written; only the second button opens a PR. People are reasonably
+// wary of a button that commits to their repo sight unseen.
+//
+// The scan lists every place the route could go, ranked, the way the stats
+// tracker installer does. Asking someone to type their own monorepo path and
+// answering a miss with "not supported" was the wrong shape: in a monorepo the
+// site is rarely at the root, and a wrong guess looked like a missing feature.
 
 import { useState } from "react";
 import type { RepoOption } from "@/lib/github/repo-options";
@@ -15,6 +20,11 @@ interface Detected {
   dir: string;
   typescript: boolean;
   evidence: string;
+}
+
+interface Candidate extends Detected {
+  score: number;
+  existingPath?: string;
 }
 
 interface InstallResult {
@@ -45,12 +55,25 @@ export function CareersInstall({
   const [rootPath, setRootPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [detected, setDetected] = useState<Detected | null | undefined>(undefined);
+  const [candidates, setCandidates] = useState<Candidate[] | undefined>(undefined);
+  const [truncated, setTruncated] = useState(false);
+  const [chosenDir, setChosenDir] = useState("");
+  const [manualDir, setManualDir] = useState("");
   const [result, setResult] = useState<InstallResult | null>(null);
 
   const selected = repos.find((r) => r.full_name === repo);
+  const chosen = candidates?.find((c) => c.dir === chosenDir);
+  const targetDir = chosenDir || manualDir.trim();
 
-  async function call(mode: "detect" | "submit") {
+  /** Any change to repo or root invalidates a scan taken against the old one. */
+  function resetScan() {
+    setCandidates(undefined);
+    setChosenDir("");
+    setResult(null);
+    setError(null);
+  }
+
+  async function call(mode: "candidates" | "submit") {
     if (!selected) return;
     const [owner, name] = selected.full_name.split("/");
     setBusy(true);
@@ -65,6 +88,7 @@ export function CareersInstall({
           installation_id: selected.installation_id,
           default_branch: selected.default_branch ?? undefined,
           root_path: rootPath.trim() || undefined,
+          target_dir: mode === "submit" ? targetDir || undefined : undefined,
           mode,
         }),
       });
@@ -73,8 +97,16 @@ export function CareersInstall({
         setError(payload?.error ?? "Something went wrong.");
         return;
       }
-      if (mode === "detect") setDetected(payload.data.detected);
-      else setResult(payload.data);
+      if (mode === "candidates") {
+        const found: Candidate[] = payload.data.candidates ?? [];
+        setCandidates(found);
+        setTruncated(Boolean(payload.data.truncated));
+        // Preselect the best match; it is right in the common case and the
+        // list is there when it isn't.
+        setChosenDir(found[0]?.dir ?? "");
+      } else {
+        setResult(payload.data);
+      }
     } catch {
       setError("Could not reach GitHub. Try again.");
     } finally {
@@ -119,8 +151,7 @@ export function CareersInstall({
               value={repo}
               onChange={(e) => {
                 setRepo(e.target.value);
-                setDetected(undefined);
-                setResult(null);
+                resetScan();
               }}
               className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
             >
@@ -135,34 +166,102 @@ export function CareersInstall({
 
           <div className="space-y-1">
             <label className="text-xs text-[var(--color-muted)]">
-              Site subdirectory (optional, for monorepos)
+              Limit the scan to a subdirectory (optional)
             </label>
             <input
               type="text"
               value={rootPath}
               onChange={(e) => {
                 setRootPath(e.target.value);
-                setDetected(undefined);
+                resetScan();
               }}
-              placeholder="apps/web — leave blank for the repo root"
+              placeholder="apps/web — leave blank to scan the whole repo"
               className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
             />
           </div>
 
           {error && <p className="text-sm text-[var(--color-danger,#dc2626)]">{error}</p>}
 
-          {detected === null && (
+          {candidates?.length === 0 && (
             <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-muted)]">
-              No Next.js App Router or Astro site found there. Nothing was changed — your
-              board still works through the tracker snippet, it just renders client-side.
+              No Next.js App Router or Astro site found in this repo. Nothing was changed —
+              your board still works through the tracker snippet, it just renders
+              client-side. If the site lives somewhere unusual, enter the directory holding{" "}
+              <code className="font-mono">layout.tsx</code> below.
             </p>
           )}
 
-          {detected && (
+          {!!candidates?.length && (
+            <div className="space-y-1">
+              <p className="text-xs text-[var(--color-muted)]">
+                {candidates.length === 1
+                  ? "Found one place the page can go:"
+                  : `Found ${candidates.length} places the page can go, best match first:`}
+              </p>
+              <ul className="max-h-60 divide-y divide-[var(--color-border)] overflow-y-auto rounded-md border border-[var(--color-border)]">
+                {candidates.map((c) => (
+                  <li key={c.dir}>
+                    <label className="flex cursor-pointer items-start gap-3 p-2">
+                      <input
+                        type="radio"
+                        name="careers-dir"
+                        className="mt-1"
+                        checked={chosenDir === c.dir}
+                        onChange={() => {
+                          setChosenDir(c.dir);
+                          setManualDir("");
+                          setResult(null);
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate font-mono text-sm">{c.dir}</span>
+                        <span className="block text-xs text-[var(--color-muted)]">
+                          {FRAMEWORK_LABEL[c.framework]} · from{" "}
+                          <code className="font-mono">{c.evidence}</code>
+                        </span>
+                        {c.existingPath && (
+                          <span className="block text-xs text-[var(--color-muted)]">
+                            Already has <code className="font-mono">{c.existingPath}</code> —
+                            CrawlProof will leave it alone.
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              {truncated && (
+                <p className="text-xs text-[var(--color-muted)]">
+                  This repo is large enough that GitHub truncated the file listing, so the
+                  scan may have missed a location. Enter it below if it isn&apos;t here.
+                </p>
+              )}
+            </div>
+          )}
+
+          {candidates !== undefined && (
+            <div className="space-y-1">
+              <label className="text-xs text-[var(--color-muted)]">
+                Or enter the route directory yourself
+              </label>
+              <input
+                type="text"
+                value={manualDir}
+                onChange={(e) => {
+                  setManualDir(e.target.value);
+                  setChosenDir("");
+                  setResult(null);
+                }}
+                placeholder="apps/web/src/app — the directory containing layout.tsx"
+                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
+              />
+            </div>
+          )}
+
+          {chosen && (
             <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-muted)]">
-              Found <strong>{FRAMEWORK_LABEL[detected.framework]}</strong> from{" "}
-              <code className="font-mono">{detected.evidence}</code>. The PR will add the
-              page under <code className="font-mono">{detected.dir}</code>.
+              The PR will add the page under <code className="font-mono">{chosen.dir}</code>{" "}
+              as {FRAMEWORK_LABEL[chosen.framework]}.
             </p>
           )}
 
@@ -185,16 +284,16 @@ export function CareersInstall({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => call("detect")}
+              onClick={() => call("candidates")}
               disabled={busy || !selected}
               className="btn btn-secondary text-sm"
             >
-              {busy ? "Checking…" : "Check repo"}
+              {busy ? "Scanning…" : candidates === undefined ? "Scan repo" : "Rescan"}
             </button>
             <button
               type="button"
               onClick={() => call("submit")}
-              disabled={busy || !selected || detected === null || !!result}
+              disabled={busy || !selected || !targetDir || !!result}
               className="btn btn-primary text-sm"
             >
               {busy ? "Working…" : "Open pull request"}
