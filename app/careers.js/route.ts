@@ -179,7 +179,7 @@ const snippet = `(function(){
       return html;
     }
 
-    function render(root, payload) {
+    function render(root, payload, seeded) {
       var jobs = payload.jobs;
       var departments = [];
       for (var i = 0; i < jobs.length; i++) {
@@ -294,6 +294,10 @@ const snippet = `(function(){
           });
       });
 
+      // A server-rendered board (the /careers page our GitHub installer writes)
+      // seeds the container with the same roles as HTML. Replace it rather than
+      // appending, or the visitor sees every job twice.
+      if (seeded) root.innerHTML = '';
       root.appendChild(wrap);
       paint();
       window.addEventListener('hashchange', openFromHash);
@@ -304,11 +308,15 @@ const snippet = `(function(){
         .then(function(r){ return r.json(); })
         .then(function(payload){
           if (!payload || !payload.jobs) return;
-          injectJsonLd(payload);
+          var root = mountPoint();
+          // When the page was server-rendered by our installer it already
+          // carries the JobPosting graph in the HTML source. A second copy
+          // would show crawlers every role twice, so let the markup win.
+          var seeded = !!(root && root.hasAttribute && root.hasAttribute('data-cp-careers-ssr'));
+          if (!seeded) injectJsonLd(payload);
           if (!payload.jobs.length) return;
           injectStyle();
-          var root = mountPoint();
-          if (root) render(root, payload);
+          if (root) render(root, payload, seeded);
         })
         .catch(function(){});
     }

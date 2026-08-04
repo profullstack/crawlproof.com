@@ -2,8 +2,10 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import type { ApplicationStatus, JobStatus, Workplace } from "@/lib/careers/jobs";
+import { loadRepoOptions } from "@/lib/github/repo-options";
 import { StatsSubnav } from "../stats-subnav";
 import { CareersToggle } from "../careers-toggle";
+import { CareersInstall } from "./careers-install";
 import { JobManager, type JobRow } from "./job-manager";
 import { Applications, type ApplicationRow } from "./applications";
 
@@ -91,6 +93,7 @@ export default async function CareersPage({
   const trackerEnabled = Boolean(project.tracker_enabled);
   const careersEnabled = Boolean(project.careers_enabled);
   const hostedBoardUrl = `${env.siteUrl.replace(/\/+$/, "")}/c/${id}`;
+  const repoOptions = await loadRepoOptions(id);
 
   return (
     <div className="space-y-6">
@@ -151,6 +154,13 @@ export default async function CareersPage({
             </p>
           </div>
         )}
+
+        <CareersInstall
+          projectId={id}
+          repos={repoOptions.repos}
+          configured={repoOptions.configured}
+          enabled={careersEnabled}
+        />
       </section>
 
       <JobManager projectId={id} jobs={jobs} hostedBoardUrl={hostedBoardUrl} />
