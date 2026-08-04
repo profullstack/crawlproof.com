@@ -1247,3 +1247,69 @@ export function broadcastEmailHtml(input: {
     footerNote: "You're receiving this because you have a CrawlProof account.",
   });
 }
+
+// New job application landed in a project's careers inbox.
+//
+// Every field here is applicant-controlled and arrives from an unauthenticated
+// public form, so all of it goes through escapeHtml. The portfolio link is
+// rendered as text rather than an anchor: it has been normalized to http(s)
+// server-side, but there is no reason to make a stranger's URL one click away
+// inside the owner's mail client.
+export async function sendCareersApplicationEmail(input: {
+  to: string;
+  projectName: string;
+  jobTitle: string;
+  applicantName: string;
+  applicantEmail: string;
+  link: string | null;
+  inboxUrl: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+
+  const linkRow = input.link
+    ? `<p style="margin:6px 0 0;font-size:14px;color:#94a3b8;">
+         Portfolio / LinkedIn / GitHub:
+         <span style="color:#e7e9ee;">${escapeHtml(input.link)}</span>
+       </p>`
+    : "";
+
+  const innerHtml = `
+    <tr>
+      <td style="padding:28px 32px 8px;">
+        <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#e7e9ee;">New application</h1>
+        <p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#94a3b8;">
+          <strong style="color:#e7e9ee;">${escapeHtml(input.applicantName)}</strong> applied for
+          <strong style="color:#e7e9ee;">${escapeHtml(input.jobTitle)}</strong>
+          at ${escapeHtml(input.projectName)}.
+        </p>
+        <p style="margin:0;font-size:14px;color:#94a3b8;">
+          Email: <span style="color:#e7e9ee;">${escapeHtml(input.applicantEmail)}</span>
+        </p>
+        ${linkRow}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:16px 32px 32px;">
+        <a href="${input.inboxUrl}"
+           style="display:inline-block;background:#6ee7b7;color:#042f1a;font-weight:700;font-size:15px;
+                  text-decoration:none;padding:12px 28px;border-radius:8px;">
+          Review applicant
+        </a>
+      </td>
+    </tr>
+  `;
+
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: `New application: ${escapeHtml(input.jobTitle)}`,
+    html: emailShell({
+      title: `New application for ${input.jobTitle}`,
+      innerHtml,
+      footerNote: "You're receiving this because you own this CrawlProof project.",
+    }),
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}

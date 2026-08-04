@@ -65,5 +65,56 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Don't 500 the sitemap if Supabase is briefly unreachable.
   }
 
-  return [...staticEntries, ...reportEntries];
+  // Hosted job boards and the individual postings under them. These exist so
+  // that a client-rendered careers widget still has crawlable HTML behind it —
+  // which only pays off if crawlers can find the pages, so they belong here.
+  let careerEntries: MetadataRoute.Sitemap = [];
+  try {
+    const svc = serviceClient();
+    // Two queries rather than an embedded join: the serving RPC gates on both
+    // flags, so the sitemap has to gate on them too or it advertises boards
+    // that 404 — and resolving the enabled set first says that plainly.
+    const { data: enabled } = await svc
+      .from("projects")
+      .select("id")
+      .eq("careers_enabled", true)
+      .eq("tracker_enabled", true);
+    const enabledIds = ((enabled ?? []) as Array<{ id: string }>).map((p) => p.id);
+
+    if (enabledIds.length > 0) {
+      const { data } = await svc
+        .from("job_postings")
+        .select("slug, project_id, published_at, updated_at")
+        .eq("status", "open")
+        .in("project_id", enabledIds)
+        .order("published_at", { ascending: false })
+        .limit(500);
+
+      const rows = (data ?? []) as Array<{
+        slug: string;
+        project_id: string;
+        published_at: string | null;
+        updated_at: string | null;
+      }>;
+
+      const boards = new Set(rows.map((r) => r.project_id));
+      careerEntries = [
+        ...Array.from(boards).map((projectId) => ({
+          url: `${base}/c/${projectId}`,
+          changeFrequency: "daily" as const,
+          priority: 0.7,
+        })),
+        ...rows.map((row) => ({
+          url: `${base}/c/${row.project_id}/${row.slug}`,
+          lastModified: new Date(row.updated_at ?? row.published_at ?? Date.now()),
+          changeFrequency: "weekly" as const,
+          priority: 0.6,
+        })),
+      ];
+    }
+  } catch {
+    // Same rule as above — a sitemap missing job pages beats a 500.
+  }
+
+  return [...staticEntries, ...reportEntries, ...careerEntries];
 }

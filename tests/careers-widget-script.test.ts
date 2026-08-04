@@ -45,6 +45,18 @@ describe("/careers.js", () => {
     expect(text).toContain("esc(j.title)");
   });
 
+  // The honeypot only works if the widget actually renders it and posts it
+  // back, and only stays invisible if it is off-screen rather than removed.
+  it("renders the honeypot off-screen and submits it", async () => {
+    const { text } = await body(careersScript);
+    expect(text).toContain('name="company"');
+    expect(text).toContain("cp-hp");
+    expect(text).toContain("left:-9999px");
+    expect(text).toContain("aria-hidden");
+    expect(text).toContain('tabindex="-1"');
+    expect(text).toContain("company: form.company");
+  });
+
   it("guards against mounting twice", async () => {
     const { text } = await body(careersScript);
     expect(text).toContain("__crawlproofCareersMounted");
