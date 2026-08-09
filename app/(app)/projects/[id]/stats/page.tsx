@@ -8,9 +8,9 @@ import { DEFAULT_PROJECT_ENGINES, type Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 import {
   TrackerAnalytics,
-  type TrackerDailyPoint,
   type TrackerListItem,
 } from "@/components/charts/tracker-analytics";
+import { buildDailyAxis, toSeriesRow } from "@/lib/tracker/series";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { CareersToggle } from "./careers-toggle";
@@ -21,15 +21,8 @@ import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
 // Shape returned by the tracker_daily_series RPC. bigint columns arrive as
-// strings over PostgREST, so we coerce with Number() at the call site.
-type SeriesRow = {
-  day: string;
-  pageviews: number | string;
-  interactions: number | string;
-  ai: number | string;
-  bots: number | string;
-  events: number | string;
-};
+// strings over PostgREST; toSeriesRow() coerces them.
+type SeriesRow = Parameters<typeof toSeriesRow>[0];
 type BoundRepo = {
   id: string;
   full_name: string;
@@ -91,15 +84,8 @@ export default async function ProjectStatsPage({
     supabase.rpc("tracker_device_totals", { p_project: id, days }),
   ]);
 
-  const series = ((seriesRes.data ?? []) as SeriesRow[]).map((r) => ({
-    day: r.day,
-    pageviews: Number(r.pageviews),
-    interactions: Number(r.interactions),
-    ai: Number(r.ai),
-    bots: Number(r.bots),
-    events: Number(r.events),
-  }));
-  const daily = buildDaily(series);
+  const series = ((seriesRes.data ?? []) as SeriesRow[]).map(toSeriesRow);
+  const daily = buildDailyAxis(series, WINDOW_DAYS);
 
   // Headline metrics come straight from the series so they stay exact even
   // though Top sources below is truncated to the top 10 buckets. "Other visits"
@@ -441,55 +427,6 @@ function ConnectedRepos({
       )}
     </div>
   );
-}
-
-// Map the per-day series onto a zero-filled WINDOW_DAYS axis (UTC) so gaps
-// render as flat spans rather than being skipped. Days beyond the RPC's own
-// window (should be none) are ignored.
-function buildDaily(
-  series: Array<{
-    day: string;
-    pageviews: number;
-    interactions: number;
-    ai: number;
-    bots: number;
-    events: number;
-  }>,
-): TrackerDailyPoint[] {
-  const start = new Date();
-  start.setUTCHours(0, 0, 0, 0);
-  start.setUTCDate(start.getUTCDate() - WINDOW_DAYS + 1);
-
-  const byDay = new Map<string, TrackerDailyPoint>();
-  for (let i = 0; i < WINDOW_DAYS; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const date = d.toISOString().slice(0, 10);
-    byDay.set(date, {
-      date,
-      events: 0,
-      pageviews: 0,
-      interactions: 0,
-      ai: 0,
-      bots: 0,
-    });
-  }
-
-  for (const row of series) {
-    const point = byDay.get(row.day);
-    if (!point) continue;
-    point.pageviews += row.pageviews;
-    point.interactions += row.interactions;
-    point.ai += row.ai;
-    point.bots += row.bots;
-    point.events += row.events;
-  }
-
-  for (const point of byDay.values()) {
-    if (point.events === 0) point.events = point.pageviews + point.interactions;
-  }
-
-  return Array.from(byDay.values());
 }
 
 function topDeviceItems(
