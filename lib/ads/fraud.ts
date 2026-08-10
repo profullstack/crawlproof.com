@@ -21,6 +21,22 @@ function safeId(v: string | null | undefined): string | null {
   return /^[\w-]{1,128}$/.test(s) ? s : null;
 }
 
+// Impressions get a much shorter window than clicks, and are keyed on the slot
+// rather than the campaign.
+//
+// Both choices come from what the inflation actually looks like. A scheduled
+// pool refresher fetches one slot N times back to back to fill N cache entries;
+// each fetch picks a *different* campaign at random, so campaign-keyed dedupe
+// (the shape used for clicks) collapses none of it. Slot-keyed dedupe collapses
+// the whole burst to one counted impression.
+//
+// 60s rather than the click path's 6h because a repeat view is a real thing: a
+// human reloading an article an hour later genuinely saw the ad twice, and an
+// hours-long window would erase legitimate delivery. 60s is long enough to
+// swallow a machine-driven burst (the observed one fires 12 fetches in ~3s) and
+// short enough that no human pattern lands inside it twice by accident.
+export const IMPRESSION_DEDUPE_WINDOW_MS = 60 * 1000;
+
 export type ClickValidity = { valid: boolean; reason?: string };
 
 export async function assessClickValidity(input: {
@@ -82,4 +98,59 @@ export async function assessClickValidity(input: {
   if (dupe && dupe.length > 0) return { valid: false, reason: "duplicate" };
 
   return { valid: true };
+}
+
+/**
+ * Has this viewer already been counted on this slot inside the dedupe window?
+ *
+ * Deliberately does NOT stop the ad being served or the row being written — the
+ * caller still inserts an impression, just flagged. Two reasons the row has to
+ * exist either way:
+ *
+ *   1. Click attribution. A terminal click URL is /a/<short_code>, which
+ *      resolves the campaign and creative back off the impression row. Skipping
+ *      the insert would serve a real advertiser's creative with a click link
+ *      that resolves to nothing — the click would go unbilled and the publisher
+ *      unpaid, which is strictly worse than an inflated count.
+ *   2. Each fetch in a burst renders a *different* campaign, so there is no one
+ *      earlier row that could stand in for the rest without misattributing
+ *      every later click to the first campaign.
+ *
+ * Best-effort: a failed lookup returns false (count it) rather than throwing.
+ * Losing an impression is worse than counting one twice.
+ */
+export async function isDuplicateImpression(input: {
+  slotId: string;
+  visitorId?: string | null;
+  ipHashes?: string[] | null;
+}): Promise<boolean> {
+  const visitor = safeId(input.visitorId);
+  const ipHashes = (input.ipHashes ?? [])
+    .map((h) => safeId(h))
+    .filter((h): h is string => h !== null);
+  if (!visitor && ipHashes.length === 0) return false; // nothing to dedupe on
+
+  const terms = [
+    ...(visitor ? [`visitor_id.eq.${visitor}`] : []),
+    ...ipHashes.map((h) => `ip_hash.eq.${h}`),
+  ];
+
+  const since = new Date(Date.now() - IMPRESSION_DEDUPE_WINDOW_MS).toISOString();
+  try {
+    const { data, error } = await serviceClient()
+      .from("ad_impressions")
+      .select("id")
+      .eq("slot_id", input.slotId)
+      .gte("ts", since)
+      .limit(1)
+      .or(terms.join(","));
+
+    if (error) return false;
+    return !!data && data.length > 0;
+  } catch {
+    // Never let the dedupe probe take serving down with it. This runs on the
+    // hot path of every fill; if it throws, the right answer is "count it" and
+    // carry on, not to lose the impression and the click that may follow.
+    return false;
+  }
 }

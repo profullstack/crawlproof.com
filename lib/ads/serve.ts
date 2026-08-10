@@ -12,7 +12,13 @@ import {
 import { TERMINAL_FORMAT_ID } from "./formats";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
-import { assessClickValidity, isBotDevice, CLICK_DEDUPE_WINDOW_MS } from "./fraud";
+import {
+  assessClickValidity,
+  isBotDevice,
+  isDuplicateImpression,
+  CLICK_DEDUPE_WINDOW_MS,
+  IMPRESSION_DEDUPE_WINDOW_MS,
+} from "./fraud";
 import { hashIpRotating, rotatingIpHashCandidates } from "@/lib/ipHash";
 import { runAuction } from "./auction";
 import { generateShortCode } from "./shortcode";
@@ -235,17 +241,26 @@ export async function serveAd(
   if (!campaign) return null;
 
   // Record the impression first so we have an id to bind the click to.
+  const ipHash = hashIpRotating(ctx.ip ?? null);
   const base = {
     slot_id: slotId,
     campaign_id: campaign.id,
     creative_id: pick.id,
     visitor_id: ctx.visitorId ?? null,
-    ip_hash: hashIpRotating(ctx.ip ?? null),
+    ip_hash: ipHash,
     geo_country: ctx.country ?? null,
     device: ctx.device ?? null,
     billable: false,
     tier,
   };
+
+  // Flag — never skip. The row still has to exist so /a/<short_code> can resolve
+  // this exact campaign and creative; reporting excludes flagged rows instead.
+  const duplicate = await isDuplicateImpression({
+    slotId,
+    visitorId: ctx.visitorId,
+    ipHashes: rotatingIpHashCandidates(ctx.ip ?? null, IMPRESSION_DEDUPE_WINDOW_MS),
+  });
 
   // The short code is what lets a terminal click URL fit inside the box, and
   // ctx.src records the publisher's surface tag on the row instead of in the
@@ -257,7 +272,7 @@ export async function serveAd(
   const shortCode = generateShortCode();
   let { data: imp } = await sb
     .from("ad_impressions")
-    .insert({ ...base, short_code: shortCode, src: ctx.src ?? null })
+    .insert({ ...base, short_code: shortCode, src: ctx.src ?? null, duplicate })
     .select("id, short_code")
     .single();
 
