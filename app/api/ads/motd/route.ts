@@ -2,6 +2,14 @@
 //
 //   curl -s "https://crawlproof.com/api/ads/motd?slot=<slot_id>"
 //   curl -s "https://crawlproof.com/api/ads/motd?slot=<slot_id>&cols=64&color=1"
+//   curl -s "https://crawlproof.com/api/ads/motd?slot=<slot_id>&v=<visitor_id>"
+//
+// `v` is the visitor id. On the web, /ad.js mints and persists one in
+// localStorage; a terminal has neither cookies nor localStorage, so the caller
+// has to supply it or every fetch counts as a new person — which is exactly why
+// a scheduled curl loop shows up as a spike of unique visitors. Publishers
+// should generate one opaque random id per machine at install time and pass it
+// on every request. See the snippet in the slot manager.
 //
 // Returns an ASCII box (text/plain), sized to `cols`, with optional ANSI
 // colour. Meant for shell MOTDs, SSH login banners, BBS screens, and CLI tools

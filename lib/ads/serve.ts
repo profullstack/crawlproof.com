@@ -12,7 +12,8 @@ import {
 import { TERMINAL_FORMAT_ID } from "./formats";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
-import { assessClickValidity, isBotDevice } from "./fraud";
+import { assessClickValidity, isBotDevice, CLICK_DEDUPE_WINDOW_MS } from "./fraud";
+import { hashIpRotating, rotatingIpHashCandidates } from "@/lib/ipHash";
 import { runAuction } from "./auction";
 import { generateShortCode } from "./shortcode";
 
@@ -50,10 +51,9 @@ export function isAdFormat(v: string | null | undefined): v is AdFormatId {
   return !!v && (AD_FORMAT_IDS as string[]).includes(v);
 }
 
-export function hashIp(ip: string | null): string | null {
-  if (!ip) return null;
-  return crypto.createHash("sha256").update(ip).digest("hex").slice(0, 32);
-}
+// hashIp used to live here as a bare sha256(ip). It now comes from lib/ipHash,
+// salted and rotating daily — see that module for why the ad path wants the
+// rotating variant and the abuse caps want the stable one.
 
 type CreativeRow = {
   id: string;
@@ -240,7 +240,7 @@ export async function serveAd(
     campaign_id: campaign.id,
     creative_id: pick.id,
     visitor_id: ctx.visitorId ?? null,
-    ip_hash: hashIp(ctx.ip ?? null),
+    ip_hash: hashIpRotating(ctx.ip ?? null),
     geo_country: ctx.country ?? null,
     device: ctx.device ?? null,
     billable: false,
@@ -316,13 +316,16 @@ export async function resolveClick(input: {
 
   // slot_id must be present (ad_clicks.slot_id NOT NULL) to record a click.
   if (input.slotId) {
-    const ipHash = hashIp(input.ctx?.ip ?? null);
+    // The row is stored under today's salt; the dedupe lookup has to consider
+    // yesterday's too, or every check silently misses for the first hours after
+    // the salt rotates.
+    const ipHash = hashIpRotating(input.ctx?.ip ?? null);
     const validity = await assessClickValidity({
       campaignId: campaign.id,
       slotId: input.slotId,
       impressionId: input.impressionId,
       visitorId: input.ctx?.visitorId,
-      ipHash,
+      ipHashes: rotatingIpHashCandidates(input.ctx?.ip ?? null, CLICK_DEDUPE_WINDOW_MS),
       device: input.ctx?.device,
     });
 

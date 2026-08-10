@@ -4,8 +4,10 @@ import { serviceClient } from "@/lib/supabase/service";
 // accrues to the publisher. Cheap, best-effort, and conservative: when in
 // doubt we still redirect the user, we just don't charge for the click.
 
-// A visitor is counted at most once per campaign within this window.
-const DEDUPE_WINDOW_MS = 6 * 60 * 60 * 1000; // 6h
+// A visitor is counted at most once per campaign within this window. Exported
+// so callers can ask lib/ipHash for every rotating hash an IP could have been
+// stored under across the same span.
+export const CLICK_DEDUPE_WINDOW_MS = 6 * 60 * 60 * 1000; // 6h
 
 export function isBotDevice(device?: string | null): boolean {
   return device === "bot";
@@ -26,7 +28,12 @@ export async function assessClickValidity(input: {
   slotId?: string | null;
   impressionId?: string | null;
   visitorId?: string | null;
-  ipHash?: string | null;
+  /**
+   * Every rotating IP hash to match against — today's plus any earlier salt
+   * window still inside CLICK_DEDUPE_WINDOW_MS. A single hash would stop
+   * matching yesterday's rows the moment the salt rotates.
+   */
+  ipHashes?: string[] | null;
   device?: string | null;
 }): Promise<ClickValidity> {
   // 1. Bots never bill.
@@ -49,11 +56,13 @@ export async function assessClickValidity(input: {
 
   // 3. Dedupe on this campaign by visitor id or ip hash within the window.
   const visitor = safeId(input.visitorId);
-  const ipHash = safeId(input.ipHash);
-  if (!visitor && !ipHash) return { valid: true }; // nothing to dedupe on
+  const ipHashes = (input.ipHashes ?? [])
+    .map((h) => safeId(h))
+    .filter((h): h is string => h !== null);
+  if (!visitor && ipHashes.length === 0) return { valid: true }; // nothing to dedupe on
 
-  const since = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
-  let q = sb
+  const since = new Date(Date.now() - CLICK_DEDUPE_WINDOW_MS).toISOString();
+  const q = sb
     .from("ad_clicks")
     .select("id")
     .eq("campaign_id", input.campaignId)
@@ -61,11 +70,15 @@ export async function assessClickValidity(input: {
     .gte("ts", since)
     .limit(1);
 
-  if (visitor && ipHash) q = q.or(`visitor_id.eq.${visitor},ip_hash.eq.${ipHash}`);
-  else if (visitor) q = q.eq("visitor_id", visitor);
-  else q = q.eq("ip_hash", ipHash!);
+  // One .or() covering every identifier: the visitor id plus each salt window's
+  // hash. Every term has been through safeId, so nothing unescaped reaches
+  // PostgREST's filter syntax.
+  const terms = [
+    ...(visitor ? [`visitor_id.eq.${visitor}`] : []),
+    ...ipHashes.map((h) => `ip_hash.eq.${h}`),
+  ];
 
-  const { data: dupe } = await q;
+  const { data: dupe } = await q.or(terms.join(","));
   if (dupe && dupe.length > 0) return { valid: false, reason: "duplicate" };
 
   return { valid: true };
