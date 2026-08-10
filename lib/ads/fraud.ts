@@ -30,12 +30,31 @@ function safeId(v: string | null | undefined): string | null {
 // (the shape used for clicks) collapses none of it. Slot-keyed dedupe collapses
 // the whole burst to one counted impression.
 //
-// 60s rather than the click path's 6h because a repeat view is a real thing: a
-// human reloading an article an hour later genuinely saw the ad twice, and an
-// hours-long window would erase legitimate delivery. 60s is long enough to
-// swallow a machine-driven burst (the observed one fires 12 fetches in ~3s) and
-// short enough that no human pattern lands inside it twice by accident.
-export const IMPRESSION_DEDUPE_WINDOW_MS = 60 * 1000;
+// 5s rather than the click path's 6h, because a repeat view is a real thing: a
+// human reloading an article genuinely saw the ad twice, and a long window
+// erases legitimate delivery.
+//
+// This shipped at 60s, chosen by reasoning about human behaviour. Backtesting
+// the rule against 7 days of real impressions showed that was wrong — the
+// machine bursts are compressed into seconds, so a wide window costs a great
+// deal of real delivery to catch almost nothing extra:
+//
+//   window   terminal flagged (target)   web flagged (cost)
+//    3s              84.5%                     12.2%
+//    5s              84.6%                     14.2%
+//   10s              84.7%                     17.5%
+//   60s              85.4%                     36.6%
+//
+// 60s bought +0.9pp on the target and cost 22pp of real web impressions. 5s
+// keeps essentially all of the burst suppression — the observed burst spans
+// ~2.5s — with a little margin for a slower run, since each fetch in the loop
+// can take up to its own timeout.
+//
+// The ~12-14% web floor that remains at short windows is not noise: it is the
+// same visitor re-fetching the same slot sub-second, which is /ad.js clearing
+// data-cp-filled in its .catch() path and SPA callers re-firing scan(). That is
+// a real double-count bug and dedupe only masks it.
+export const IMPRESSION_DEDUPE_WINDOW_MS = 5 * 1000;
 
 export type ClickValidity = { valid: boolean; reason?: string };
 
