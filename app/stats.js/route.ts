@@ -5,6 +5,7 @@
 // must never break the host page.
 
 import { env } from "@/lib/env";
+import { VISITOR_SNIPPET } from "@/lib/tracker/visitorSnippet";
 
 const snippet = `(function(){
   try {
@@ -51,31 +52,10 @@ const snippet = `(function(){
     })();
 
     function pageUrl() { return location.origin + location.pathname + location.search; }
-    function uuid(prefix) {
-      try {
-        if (crypto && crypto.randomUUID) return prefix + crypto.randomUUID();
-      } catch (_) {}
-      return prefix + Math.random().toString(16).slice(2) + '-' + Date.now().toString(16);
-    }
-    function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
-    function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
-    // In-memory fallbacks for when localStorage is blocked (private mode, etc.)
-    // so a single page load still reports one stable visitor/session.
-    var memVisitor = null, memSession = null, memSessionTs = 0;
-    // Persistent visitor id — stored in localStorage so it survives tab close,
-    // reload, and browser restart. localStorage is partitioned per site origin,
-    // making this a stable per-site visitor identifier (not per-tab, which would
-    // count every new tab as a new visitor).
-    function getVisitorId() {
-      var k = 'crawlproof.visitor';
-      var id = lsGet(k);
-      if (id) return id;
-      if (memVisitor) return memVisitor;
-      id = uuid('v');
-      lsSet(k, id);
-      memVisitor = id;
-      return id;
-    }
+${VISITOR_SNIPPET}
+    // Session-only companion state. The visitor equivalents live in the shared
+    // snippet above, which /ad.js also inlines so both agree on the same id.
+    var memSession = null, memSessionTs = 0;
     // Session id with a 30-minute inactivity window, shared across tabs. The
     // window slides on every event, so an active visit stays one session and
     // reopening within 30 min reuses it instead of minting a new one.

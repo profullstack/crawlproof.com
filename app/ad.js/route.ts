@@ -6,6 +6,7 @@
 // leaves the container empty and never breaks the host page.
 
 import { env } from "@/lib/env";
+import { VISITOR_SNIPPET } from "@/lib/tracker/visitorSnippet";
 
 const FORMATS = {
   banner_300x250: [300, 250],
@@ -18,13 +19,7 @@ const snippet = `(function(){
   try {
     var ORIGIN = ${JSON.stringify(env.siteUrl)};
     var SIZES = ${JSON.stringify(FORMATS)};
-    function visitorId() {
-      try {
-        var v = localStorage.getItem('crawlproof.visitor');
-        if (v) return v;
-      } catch (_) {}
-      return '';
-    }
+${VISITOR_SNIPPET}
     function pickFormat(el, w) {
       var f = el.getAttribute('data-format');
       if (f && SIZES[f]) return f;
@@ -41,7 +36,10 @@ const snippet = `(function(){
       var format = pickFormat(el, w);
       var dims = SIZES[format] || SIZES.banner_300x250;
       var q = '?slot=' + encodeURIComponent(slot) + '&format=' + encodeURIComponent(format);
-      var v = visitorId();
+      // Mints the id if this is the first CrawlProof script on the page. It
+      // used to only read one stats.js had already written, so an ad-tag-only
+      // publisher reported every impression as an anonymous visitor.
+      var v = getVisitorId();
       if (v) q += '&v=' + encodeURIComponent(v);
       el.setAttribute('data-cp-filled', '1');
       fetch(ORIGIN + '/api/ads/serve' + q, { mode: 'cors', credentials: 'omit', cache: 'no-store' })

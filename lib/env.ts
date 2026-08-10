@@ -21,6 +21,12 @@ export const env = {
   // network's own publisher slot: anonymous terminal traffic is CrawlProof's
   // own inventory, so its impressions/clicks accrue there.
   adsDefaultSlotId: process.env.ADS_DEFAULT_SLOT_ID ?? "",
+  // Server-side secret salting every client-IP hash (ad metering + abuse caps).
+  // Unset falls back to the legacy unsalted digest, which is brute-forceable
+  // across the whole IPv4 space in minutes — set it in production. Generate
+  // with `openssl rand -base64 32`. Changing it resets abuse counters once and
+  // breaks in-flight ad click dedupe for up to 6h; both self-heal.
+  ipHashSalt: process.env.IP_HASH_SALT ?? "",
   // CoinPay — crypto credit purchases.
   coinpayMerchantId: process.env.COINPAY_MERCHANT_ID ?? "",
   coinpayApiKey: process.env.COINPAY_API_KEY ?? "",
