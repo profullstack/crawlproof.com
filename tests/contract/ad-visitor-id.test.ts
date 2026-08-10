@@ -42,6 +42,16 @@ describe("shared visitor snippet", () => {
     expect(stats).toContain(VISITOR_SNIPPET.trim());
   });
 
+  it("produces syntactically valid JavaScript in both tags", async () => {
+    // These are string-templated into third-party pages, so a stray brace or a
+    // bad interpolation ships a script that throws on every publisher site.
+    // Containment assertions can't catch that; parsing can.
+    const ad = await (await adJs()).text();
+    const stats = await (await statsJs()).text();
+    expect(() => new Function(ad)).not.toThrow();
+    expect(() => new Function(stats)).not.toThrow();
+  });
+
   it("keeps stats.js session handling working alongside the shared helpers", async () => {
     const stats = await (await statsJs()).text();
     // getSessionId builds on lsGet/lsSet/uuid from the shared snippet; make sure
