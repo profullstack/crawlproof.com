@@ -28,6 +28,7 @@ import { leadRunBilling, outOfCreditsNote } from "./billing";
 import { recordDiscoveredPeople } from "./contacts";
 import { sweepIntent } from "./intentSources";
 import { describeIntent } from "./intent";
+import { serpCreditsExhausted } from "@/lib/alerts/valueserp";
 import { LEAD_RUN_CREDITS } from "@/lib/credits";
 import { sendIntentAlertEmail } from "@/lib/email";
 import { siteBase } from "./pipeline";
@@ -447,7 +448,15 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
   // about whether the queries still work, and letting it reset the streak
   // would put a tapped-out campaign straight back to a search every fifteen
   // minutes the moment its pipeline drained.
-  if (discoveryRan) {
+  // A pass that came back empty because the plan is out of credits says
+  // nothing about the queries — they never ran. Counting it would rest a
+  // perfectly good campaign for up to a day, and since the plan is a monthly
+  // bucket every campaign would be resting by the time it refilled, delaying
+  // recovery well past the reset. Leave the streak where it is and let the
+  // first pass with credits behind it be the one that votes.
+  if (discoveryRan && serpCreditsExhausted()) {
+    result.skipped.push("discovery: no credits, not counting this pass against the queries");
+  } else if (discoveryRan) {
     // People and intent signals count. A run against a people-directory names
     // humans without adding a prospect, and a query surfacing fresh buying
     // intent is working even when it yields no new domain — backing either
