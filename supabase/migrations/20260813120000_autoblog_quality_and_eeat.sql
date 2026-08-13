@@ -13,13 +13,12 @@
 --    the autoblog was delivering posts with author: null. These columns let
 --    the webhook payload carry a real byline so receivers can render one.
 
+-- lx_article.updated_at already exists (20260514120000_lx_updated_at.sql) and
+-- is maintained by the lx_article_set_updated_at trigger, so the delivery
+-- payload can use it as dateModified without adding anything here.
 alter table public.lx_article
   add column if not exists slop_score smallint,
-  add column if not exists slop_issues jsonb not null default '[]'::jsonb,
-  -- dateModified for Article/BlogPosting markup on the receiver. Distinct
-  -- from created_at: a regenerated or edited post keeps its original
-  -- published_at while updated_at moves.
-  add column if not exists updated_at timestamptz not null default now();
+  add column if not exists slop_issues jsonb not null default '[]'::jsonb;
 
 comment on column public.lx_article.slop_score is
   'Slop score 0-100 from the pre-publish quality gate. Lower is better; see lib/lx/qualityGate.ts.';
