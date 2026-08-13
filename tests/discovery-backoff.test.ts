@@ -84,6 +84,37 @@ describe("ValueSERP out-of-credit cooldown", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  // The back-off asks "did these queries produce anything?". An empty plan
+  // means they never ran, so it must be able to tell the two apart — otherwise
+  // a month-end 402 rests every campaign for a day and recovery lands well
+  // after the credits do.
+  it("reports the exhausted state so the back-off can discount the pass", async () => {
+    globalThis.fetch = vi.fn(async () => new Response("", { status: 402 })) as unknown as typeof fetch;
+    const { searchSerp, serpCreditsExhausted, resetSerpCreditCooldown } = await import(
+      "@/lib/alerts/valueserp"
+    );
+    resetSerpCreditCooldown();
+
+    expect(serpCreditsExhausted()).toBe(false);
+    await searchSerp({ query: "web development agencies", recency: "any" });
+    expect(serpCreditsExhausted()).toBe(true);
+
+    resetSerpCreditCooldown();
+    expect(serpCreditsExhausted()).toBe(false);
+  });
+
+  it("does not report exhaustion for an ordinary failure", async () => {
+    globalThis.fetch = vi.fn(async () => new Response("", { status: 400 })) as unknown as typeof fetch;
+    const { searchSerp, serpCreditsExhausted, resetSerpCreditCooldown } = await import(
+      "@/lib/alerts/valueserp"
+    );
+    resetSerpCreditCooldown();
+
+    const res = await searchSerp({ query: "bad query", recency: "any" });
+    expect(res.ok).toBe(false);
+    expect(serpCreditsExhausted()).toBe(false);
+  });
+
   it("never bills a call it did not make", async () => {
     globalThis.fetch = vi.fn(async () => new Response("", { status: 402 })) as unknown as typeof fetch;
     const { searchSerp, resetSerpCreditCooldown } = await import("@/lib/alerts/valueserp");
