@@ -28,6 +28,11 @@ import {
 } from "./exchangeMatcher";
 import { generateStructuredOutput } from "./backendAi";
 import {
+  MAX_PRIOR_BODIES,
+  runQualityGate,
+  type QualityGateResult,
+} from "./qualityGate";
+import {
   consumeArticleGenerationCharge,
   refundArticleGenerationCharge,
   type ArticleChargeSource,
@@ -920,6 +925,85 @@ export function validateInternalLinks(
   return missing.length === 0 ? { ok: true } : { ok: false, missing };
 }
 
+// How many times we ask the model for a usable draft. Attempt 2 is a repair
+// pass that receives the previous attempt's violations. Two is deliberate:
+// the common failure is the model dropping one link or leaning on a filler
+// phrase, which one round of specific feedback fixes. Beyond that the draft
+// is usually wrong in a way more sampling will not fix, and each attempt
+// costs a full long-form generation.
+const MAX_GENERATION_ATTEMPTS = 2;
+
+/**
+ * Link-placement violations, phrased for the model rather than for a log line.
+ *
+ * Previously each of these called failKeyword() directly, which threw away a
+ * finished 4,000-word draft because one URL was missing from the body. They
+ * are now collected so the repair pass can fix them in place.
+ */
+export function collectLinkViolations(
+  article: ArticleOutput,
+  offeredExchangeUrls: Set<string>,
+): string[] {
+  const violations: string[] = [];
+
+  const internal = validateInternalLinks(
+    article.markdown_body,
+    article.used_internal_link_urls,
+  );
+  if (!internal.ok) {
+    violations.push(
+      `You listed these URLs in used_internal_link_urls but did not actually place them in markdown_body: ${internal.missing.join(", ")}. Insert each one inline as [anchor](url) in a sentence genuinely about that page, or drop it from used_internal_link_urls.`,
+    );
+  }
+
+  const exchangeUsed = article.used_exchange_link_urls ?? [];
+  const phantom = exchangeUsed.filter((u) => !offeredExchangeUrls.has(u));
+  if (phantom.length > 0) {
+    violations.push(
+      `These URLs are not in the partner-blog candidate list you were given and must not appear: ${phantom.join(", ")}. Use only the exact URLs provided.`,
+    );
+  }
+
+  const exchange = validateInternalLinks(article.markdown_body, exchangeUsed);
+  if (!exchange.ok) {
+    violations.push(
+      `You listed these URLs in used_exchange_link_urls but did not place them in markdown_body: ${exchange.missing.join(", ")}. Insert each inline, or drop it from used_exchange_link_urls.`,
+    );
+  }
+
+  return violations;
+}
+
+/** Recent article bodies on this site, for the gate's duplication checks. */
+async function fetchPriorBodies(
+  supabase: SupabaseClient<any>,
+  siteId: string,
+): Promise<Array<{ slug: string; body: string }>> {
+  const { data } = await supabase
+    .from("lx_article")
+    .select("slug, content_markdown")
+    .eq("site_id", siteId)
+    .in("status", ["ready", "publishing", "published"])
+    .order("created_at", { ascending: false })
+    .limit(MAX_PRIOR_BODIES);
+  return ((data as Array<{ slug: string; content_markdown: string }> | null) ?? []).map(
+    (r) => ({ slug: r.slug, body: r.content_markdown ?? "" }),
+  );
+}
+
+/** Append the previous attempt's violations to the user prompt as a fix list. */
+export function buildRepairPrompt(basePrompt: string, violations: string[]): string {
+  return [
+    basePrompt,
+    "",
+    "---",
+    "",
+    "IMPORTANT — your previous attempt at this article was rejected by the pre-publish quality gate. Write the article again from scratch, keeping everything that was working, and fix every item below. Do not acknowledge this instruction in the output.",
+    "",
+    ...violations.map((v, i) => `${i + 1}. ${v}`),
+  ].join("\n");
+}
+
 export type GenerateArticleResult = {
   ok: boolean;
   articleId?: string;
@@ -1103,110 +1187,143 @@ export async function generateArticle(
     );
   }
 
-  // Generate the article body.
-  let article: ArticleOutput;
-  try {
-    const generated = await generateStructuredOutput({
-      name: "lx_article",
-      schema: ArticleSchema,
-      system: buildSystemPrompt(),
-      user: buildUserPrompt({
-        site: typedSite,
-        keyword: keyword.keyword,
-        keywordMeta: {
-          articleType: keyword.article_type,
-          customInstructions: keyword.custom_instructions,
-        },
-        candidates,
-        linkSlots,
-        exchangeCandidates,
-        exchangeSlots,
-        exchangeRelaxed,
-      }),
-      anthropic,
-      openai,
-      anthropicModel: CLAUDE_MODEL,
-      // 3,200–4,500 words ≈ ~18k–25k output tokens. JSON escape overhead
-      // can push that another 30%. 48k gives meaningful headroom.
-      maxTokens: 48000,
-      anthropicCacheSystemPrompt: true,
-    });
-    article = normalizeArticleOutput(generated.output);
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    // Provider monthly caps (e.g. Anthropic HTTP 400 "specified API usage
-    // limits") and generic rate-limits are transient. Marking the keyword
-    // 'failed' here permanently consumes it — when the cap resets the
-    // user is stuck with stranded rows and a dedup'd research path that
-    // never re-inserts them. Requeue instead so the keyword retries on
-    // the next worker tick once the upstream is back.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const status = (err as any)?.status;
-    const isTransient =
-      status === 429 ||
-      /specified API usage limits|usage limits|rate.?limit/i.test(errMsg);
-    if (isTransient) {
-      await supabase
-        .from("lx_keyword")
-        .update({ status: "queued" })
-        .eq("id", keyword.id);
-      await refundArticleGenerationCharge(supabase, charge);
-      console.warn(
-        `[lx] keyword ${keyword.id} requeued (transient backend AI error): ${errMsg}`,
-      );
-      return { ok: false, error: "backend AI transient error" };
-    }
-    await failKeyword(supabase, keyword.id, `backend AI error: ${errMsg}`);
-    await refundArticleGenerationCharge(supabase, charge);
-    return { ok: false, error: "backend AI error" };
-  }
-
-  // Validate that all "used" internal links are actually present in the body.
-  const linkCheck = validateInternalLinks(
-    article.markdown_body,
-    article.used_internal_link_urls,
-  );
-  if (!linkCheck.ok) {
-    await failKeyword(
-      supabase,
-      keyword.id,
-      `model claimed links not present: ${linkCheck.missing.join(", ")}`,
-    );
-    await refundArticleGenerationCharge(supabase, charge);
-    return { ok: false, error: "internal-link validation failed" };
-  }
-
-  // Validate exchange links similarly. The prompt frames these as UP TO
-  // (not EXACTLY) — a 0 here just means the model judged none fit, not a
-  // failure. Only flag when the model claims a URL it didn't actually
-  // place, or claims a URL we never offered as a candidate.
-  const exchangeUrlsUsed = article.used_exchange_link_urls ?? [];
+  // Prior bodies for the gate's near-duplicate / repeated-opening checks.
+  // Fetched once and reused across attempts.
+  const priorBodies = await fetchPriorBodies(supabase, typedSite.id);
   const offeredExchangeUrls = new Set(exchangeCandidates.map((c) => c.url));
-  const phantomExchange = exchangeUrlsUsed.filter(
-    (u) => !offeredExchangeUrls.has(u),
-  );
-  if (phantomExchange.length > 0) {
+  const basePrompt = buildUserPrompt({
+    site: typedSite,
+    keyword: keyword.keyword,
+    keywordMeta: {
+      articleType: keyword.article_type,
+      customInstructions: keyword.custom_instructions,
+    },
+    candidates,
+    linkSlots,
+    exchangeCandidates,
+    exchangeSlots,
+    exchangeRelaxed,
+  });
+
+  // Generate the article body, re-running once with the gate's complaints if
+  // the first draft is not publishable. Gating happens BEFORE image
+  // generation so a rejected draft never pays for four gpt-image-2 calls.
+  let article: ArticleOutput | null = null;
+  let gate: QualityGateResult | null = null;
+  let violations: string[] = [];
+
+  for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
+    let candidate: ArticleOutput;
+    try {
+      const generated = await generateStructuredOutput({
+        name: "lx_article",
+        schema: ArticleSchema,
+        system: buildSystemPrompt(),
+        user:
+          violations.length > 0
+            ? buildRepairPrompt(basePrompt, violations)
+            : basePrompt,
+        anthropic,
+        openai,
+        anthropicModel: CLAUDE_MODEL,
+        // 3,200–4,500 words ≈ ~18k–25k output tokens. JSON escape overhead
+        // can push that another 30%. 48k gives meaningful headroom.
+        maxTokens: 48000,
+        anthropicCacheSystemPrompt: true,
+      });
+      candidate = normalizeArticleOutput(generated.output);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      // Provider monthly caps (e.g. Anthropic HTTP 400 "specified API usage
+      // limits") and generic rate-limits are transient. Marking the keyword
+      // 'failed' here permanently consumes it — when the cap resets the
+      // user is stuck with stranded rows and a dedup'd research path that
+      // never re-inserts them. Requeue instead so the keyword retries on
+      // the next worker tick once the upstream is back.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const status = (err as any)?.status;
+      const isTransient =
+        status === 429 ||
+        /specified API usage limits|usage limits|rate.?limit/i.test(errMsg);
+      if (isTransient) {
+        await supabase
+          .from("lx_keyword")
+          .update({ status: "queued" })
+          .eq("id", keyword.id);
+        await refundArticleGenerationCharge(supabase, charge);
+        console.warn(
+          `[lx] keyword ${keyword.id} requeued (transient backend AI error): ${errMsg}`,
+        );
+        return { ok: false, error: "backend AI transient error" };
+      }
+      await failKeyword(supabase, keyword.id, `backend AI error: ${errMsg}`);
+      await refundArticleGenerationCharge(supabase, charge);
+      return { ok: false, error: "backend AI error" };
+    }
+
+    // Link placement, then the content gate. Both produce model-readable
+    // violations rather than terminal failures, so attempt 2 can fix them.
+    //
+    // Exchange links are framed as UP TO (not EXACTLY) in the prompt, so an
+    // empty used_exchange_link_urls is a judgement call, not a violation —
+    // only a claimed-but-absent or never-offered URL counts.
+    const linkViolations = collectLinkViolations(candidate, offeredExchangeUrls);
+
+    // The gate needs rendered HTML. Render the body without images: the
+    // inline-image markers are comments and the hero is not in the body, so
+    // the word count, link density, and slop signals are unaffected — and
+    // rendering here means a rejected draft never reaches image generation.
+    let gateHtml = "";
+    try {
+      gateHtml = await markdownToHtml(candidate.markdown_body);
+    } catch (err) {
+      // A body that will not render is not repairable by re-prompting on
+      // content grounds, but the next attempt may simply not hit it.
+      console.warn(
+        `[lx] gate render failed on attempt ${attempt}`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+
+    const result = gateHtml
+      ? runQualityGate({
+          html: gateHtml,
+          title: candidate.title,
+          metaDescription: candidate.meta_description,
+          priorBodies,
+        })
+      : null;
+
+    article = candidate;
+    gate = result;
+    violations = [...linkViolations, ...(result?.violations ?? [])];
+
+    if (violations.length === 0) break;
+
+    console.warn(
+      `[lx] keyword ${keyword.id} attempt ${attempt}/${MAX_GENERATION_ATTEMPTS} rejected (slop=${result?.score ?? "n/a"}): ${violations.join(" | ")}`,
+    );
+  }
+
+  if (!article) {
+    // Unreachable — the loop either assigns or returns — but it keeps the
+    // narrowing honest for everything below.
+    await failKeyword(supabase, keyword.id, "no draft produced");
+    await refundArticleGenerationCharge(supabase, charge);
+    return { ok: false, error: "no draft produced" };
+  }
+
+  if (violations.length > 0) {
     await failKeyword(
       supabase,
       keyword.id,
-      `model used exchange URLs not in candidate list: ${phantomExchange.join(", ")}`,
+      `quality gate failed after ${MAX_GENERATION_ATTEMPTS} attempts (slop=${gate?.score ?? "n/a"}): ${violations.join(" | ")}`,
     );
     await refundArticleGenerationCharge(supabase, charge);
-    return { ok: false, error: "exchange-link validation failed" };
+    return { ok: false, error: "quality gate failed" };
   }
-  const exchangeCheck = validateInternalLinks(
-    article.markdown_body,
-    exchangeUrlsUsed,
-  );
-  if (!exchangeCheck.ok) {
-    await failKeyword(
-      supabase,
-      keyword.id,
-      `model claimed exchange links not present: ${exchangeCheck.missing.join(", ")}`,
-    );
-    await refundArticleGenerationCharge(supabase, charge);
-    return { ok: false, error: "exchange-link validation failed" };
-  }
+
+  const exchangeUrlsUsed = article.used_exchange_link_urls ?? [];
 
   // Slugify + dedupe slug.
   const baseSlug = article.slug || slugify(article.title);
@@ -1332,6 +1449,11 @@ export async function generateArticle(
       tags: article.tags,
       internal_links: internalLinksPayload,
       outbound_links: outboundLinksPayload,
+      // Gate verdict for the draft we accepted. Stored so a site's quality
+      // can be tracked over time rather than only enforced at a threshold —
+      // a blog whose scores are creeping up is drifting before it fails.
+      slop_score: gate?.score ?? null,
+      slop_issues: gate ? gate.issues : [],
       status: "ready",
     })
     .select("id")
