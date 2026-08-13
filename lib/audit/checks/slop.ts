@@ -717,8 +717,15 @@ function safeHost(url: string): string | null {
 // Cross-page analysis
 // ---------------------------------------------------------------------------
 
-/** 5-word shingle set, capped so a huge page can't blow up memory. */
-function shingles(text: string): Set<string> {
+/**
+ * 5-word shingle set, capped so a huge page can't blow up memory.
+ *
+ * Exported so the autoblog pre-publish gate (lib/lx/qualityGate.ts) can run
+ * the same near-duplicate comparison against previously generated articles.
+ * Keeping one implementation means a draft we accept is scored by exactly the
+ * measure the site audit would later use against it.
+ */
+export function shingles(text: string): Set<string> {
   const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
   const out = new Set<string>();
   for (let i = 0; i + 5 <= words.length && out.size < 4000; i++) {
@@ -727,7 +734,8 @@ function shingles(text: string): Set<string> {
   return out;
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
+/** Shingle-set overlap, 0–1. Exported alongside `shingles` for the autoblog gate. */
+export function jaccard(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
   let shared = 0;
