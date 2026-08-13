@@ -47,6 +47,10 @@ export type CampaignRow = {
   max_score: number;
   daily_send_limit: number;
   target_pipeline: number;
+  /** When discovery may next run. Null means now. See discoveryBackoffMinutes. */
+  discovery_backoff_until: string | null;
+  /** Consecutive discovery passes that produced nothing. Drives the back-off. */
+  discovery_dry_streak: number;
   auto_send: boolean;
   follow_ups: boolean;
   angle: string | null;
@@ -69,7 +73,7 @@ export type CampaignRow = {
 };
 
 export const CAMPAIGN_COLUMNS =
-  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, intent_sources, intent_recency, sells_description, alert_email, alerts_enabled";
+  "id, project_id, owner_id, name, channel, active, queries, seed_urls, keywords, subreddits, negative_keywords, max_score, daily_send_limit, target_pipeline, discovery_backoff_until, discovery_dry_streak, auto_send, follow_ups, angle, sender_name, reply_to, last_run_at, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, intent_sources, intent_recency, sells_description, alert_email, alerts_enabled";
 
 export type TickResult = {
   campaign: string;
@@ -111,6 +115,30 @@ const MAX_CONTACT_SEARCHES_PER_TICK = 10;
 // it runs every fifteen minutes and the window it looks at is days wide — the
 // same request does not need finding four times an hour.
 const MAX_INTENT_SEARCHES_PER_TICK = 6;
+
+// Back-off for a campaign whose queries have stopped producing.
+//
+// The funnel gate below counts only prospects still in flight, so a campaign
+// that has contacted everyone it found reads as empty forever and re-runs its
+// identical query list every fifteen minutes — paying full search price for
+// hosts it already has. Left alone, three campaigns at five queries a tick
+// spend ~43k searches a month against a 25k plan, and the whole quota is gone
+// in a week.
+//
+// Counting contacted prospects toward the target would stop it, but it would
+// also cap a campaign at target_pipeline leads for its entire life, which
+// turns an autopilot into a one-shot. So the gate stays as it is and an
+// unproductive pass simply waits longer before trying again: doubling from
+// half an hour up to a day. Nothing is capped — a tapped-out query set is
+// still retried daily, and one new result resets the campaign to full speed.
+const DISCOVERY_BACKOFF_BASE_MIN = 30;
+const DISCOVERY_BACKOFF_MAX_MIN = 24 * 60;
+
+/** How long a campaign should wait after `streak` consecutive empty passes. */
+export function discoveryBackoffMinutes(streak: number): number {
+  if (streak < 1) return 0;
+  return Math.min(DISCOVERY_BACKOFF_BASE_MIN * 2 ** (streak - 1), DISCOVERY_BACKOFF_MAX_MIN);
+}
 
 export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickResult> {
   const sb = serviceClient();
@@ -266,9 +294,23 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
 
   // ---- 4. Top the funnel up.
   const liveCount = prospects.filter((p) => ["new", "researched", "drafted"].includes(p.status)).length;
+  // Whether the queries have earned another run yet. Checked before canSpend
+  // so a backed-off campaign costs nothing at all — not a search, not a
+  // billing round-trip.
+  const backoffUntil = campaign.discovery_backoff_until
+    ? new Date(campaign.discovery_backoff_until)
+    : null;
+  const backedOff = backoffUntil !== null && backoffUntil.getTime() > Date.now();
+  if (backedOff && backoffUntil) {
+    result.skipped.push(
+      `discovery: resting until ${backoffUntil.toISOString()} after ${campaign.discovery_dry_streak} empty pass(es)`,
+    );
+  }
   // Discovery is the most expensive stage — several search calls before a
   // single prospect exists — so it is gated like the rest.
-  if (liveCount < campaign.target_pipeline && (await canSpend())) {
+  let discoveryRan = false;
+  if (liveCount < campaign.target_pipeline && !backedOff && (await canSpend())) {
+    discoveryRan = true;
     const want = Math.min(campaign.target_pipeline - liveCount, MAX_DISCOVER_PER_TICK);
     const { data: projectRow } = await sb
       .from("projects")
@@ -397,6 +439,33 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
         result.errors.push(`${candidate.host}: ${res.message}`);
       }
     }
+  }
+
+  // Record whether the searches earned their keep, so the next tick knows
+  // whether to run them again. Only a pass that actually searched votes: a
+  // tick that skipped discovery because the funnel was full says nothing
+  // about whether the queries still work, and letting it reset the streak
+  // would put a tapped-out campaign straight back to a search every fifteen
+  // minutes the moment its pipeline drained.
+  if (discoveryRan) {
+    // People and intent signals count. A run against a people-directory names
+    // humans without adding a prospect, and a query surfacing fresh buying
+    // intent is working even when it yields no new domain — backing either
+    // off as "empty" would rest the queries that are doing their job.
+    const discoveryProduced =
+      result.discovered || result.peopleRecorded || result.intentFound;
+    const dryStreak = discoveryProduced ? 0 : (campaign.discovery_dry_streak ?? 0) + 1;
+    const restMinutes = discoveryBackoffMinutes(dryStreak);
+    await sb
+      .from("outreach_campaigns")
+      .update({
+        discovery_dry_streak: dryStreak,
+        discovery_backoff_until: restMinutes
+          ? new Date(Date.now() + restMinutes * 60_000).toISOString()
+          : null,
+      })
+      .eq("id", campaign.id);
+    if (restMinutes) result.skipped.push(`discovery: resting ${restMinutes}m (${dryStreak} empty)`);
   }
 
   // A run that was charged and produced nothing gives the money back. Some of

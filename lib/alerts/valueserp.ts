@@ -51,6 +51,28 @@ export function hasValueSerpKey(): boolean {
 }
 
 /**
+ * When the account is out of credits, stop asking until this passes.
+ *
+ * ValueSERP answers an exhausted plan with HTTP 402, and the plan is a monthly
+ * bucket — once it is empty every later call in the cycle gets the same
+ * answer. Without this, a single campaign tick fires twenty-odd searches that
+ * are all guaranteed to fail, each paying a network round-trip and filing its
+ * own error, and the run summary reads as twenty distinct problems rather than
+ * one. Nothing is billed either way (a 402 consumes no credit), so this buys
+ * latency and legible errors, not money.
+ *
+ * Deliberately short. The reset time is not in the search response, so this
+ * guesses low rather than parking a working key for hours.
+ */
+const OUT_OF_CREDITS_COOLDOWN_MS = 10 * 60_000;
+let outOfCreditsUntil = 0;
+
+/** Exposed so tests can reset the module-level cooldown between cases. */
+export function resetSerpCreditCooldown(): void {
+  outOfCreditsUntil = 0;
+}
+
+/**
  * Run one ValueSERP search. Returns billable `calls` even on an empty result
  * set so the caller can debit the budget accurately. Retries once on a
  * network/5xx error before giving up.
@@ -62,6 +84,14 @@ export async function searchSerp(input: {
 }): Promise<SerpResponse> {
   if (!env.valueSerpApiKey) {
     return { ok: false, calls: 0, results: [], error: "VALUESERP_API_KEY not set" };
+  }
+  if (Date.now() < outOfCreditsUntil) {
+    return {
+      ok: false,
+      calls: 0,
+      results: [],
+      error: "ValueSERP is out of monthly credits (HTTP 402) — not retrying until the cooldown passes",
+    };
   }
   const num = Math.min(input.num ?? RESULTS_PER_CHECK, 100);
   const params = new URLSearchParams({
@@ -91,6 +121,12 @@ export async function searchSerp(input: {
       clearTimeout(timer);
       if (!res.ok) {
         lastErr = `ValueSERP HTTP ${res.status}`;
+        // 402 is an empty monthly plan, which no later call in this cycle can
+        // change. Park every caller rather than letting each one rediscover it.
+        if (res.status === 402) {
+          outOfCreditsUntil = Date.now() + OUT_OF_CREDITS_COOLDOWN_MS;
+          lastErr = "ValueSERP HTTP 402 — monthly credit plan is exhausted";
+        }
         // 4xx (bad query, out of quota) won't fix on retry.
         if (res.status < 500) return { ok: false, calls: 0, results: [], error: lastErr };
         continue;
