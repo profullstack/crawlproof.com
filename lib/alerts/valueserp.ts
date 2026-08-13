@@ -73,6 +73,18 @@ export function resetSerpCreditCooldown(): void {
 }
 
 /**
+ * Is the account known to be out of credits right now?
+ *
+ * Callers that judge their own searches by what came back need this to tell
+ * "these queries are tapped out" from "we could not run them at all". Without
+ * it, a month-end 402 looks identical to an exhausted query list, and the
+ * back-off punishes queries that were never given a chance.
+ */
+export function serpCreditsExhausted(): boolean {
+  return Date.now() < outOfCreditsUntil;
+}
+
+/**
  * Run one ValueSERP search. Returns billable `calls` even on an empty result
  * set so the caller can debit the budget accurately. Retries once on a
  * network/5xx error before giving up.
