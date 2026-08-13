@@ -19,10 +19,20 @@ export const MAX_ACTIVE_ALERTS: Record<Plan, number> = {
 // Monthly SERP-call budget by plan — the hard cost backstop. Free is set so a
 // typical user never touches it, while a cap-abuser is bounded to well under
 // a dollar. Paid budgets assume hourly checks (24× the call volume).
+//
+// These are per-account and must stay under VALUESERP_MONTHLY_PLAN, which is
+// the whole shared bucket: the old pro budget of 200k authorised one account
+// to spend eight times everything CrawlProof buys in a month, so the backstop
+// could not actually stop anything. A pro account running 250 hourly alerts
+// needs 250 × 24 × 30 = 180k to never touch its cap, which the 25k plan cannot
+// fund — the cap is the honest number, and the plan is what to raise if a real
+// customer starts hitting it.
+export const VALUESERP_MONTHLY_PLAN = 25_000;
+
 export const SERP_CALLS_PER_MONTH: Record<Plan, number> = {
   free: 400,
-  pro: 200_000,
-  team: 1_000_000,
+  pro: 8_000,
+  team: 15_000,
 };
 
 // Hourly is currently free for everyone (no paywall on frequency yet — the
