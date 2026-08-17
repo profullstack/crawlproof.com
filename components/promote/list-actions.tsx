@@ -63,7 +63,7 @@ export function PromoteListActions({
         {pending ? "Posting…" : "Post now"}
       </button>
       {showEdit && (
-        <Link href={`/promote/${id}`} className="btn text-sm">
+        <Link href={`/dashboard/promote/${id}`} className="btn text-sm">
           Edit
         </Link>
       )}

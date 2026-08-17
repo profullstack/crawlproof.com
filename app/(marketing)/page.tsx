@@ -285,7 +285,7 @@ export default function HomePage() {
               bots and duplicate clicks never bill.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
-              <Link href="/ads/new" className="btn btn-primary">
+              <Link href="/dashboard/ads/new" className="btn btn-primary">
                 Create an ad
               </Link>
             </div>
@@ -299,7 +299,7 @@ export default function HomePage() {
               your wallet — one-click connect on tronbrowser.dev.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
-              <Link href="/ads/slots" className="btn btn-primary">
+              <Link href="/dashboard/ads/slots" className="btn btn-primary">
                 Monetize a site
               </Link>
             </div>

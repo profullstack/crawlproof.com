@@ -16,85 +16,85 @@ const TABS: ProjectTab[] = [
   {
     id: "getting-started",
     label: "Getting Started",
-    href: (id) => `/projects/${id}/getting-started`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/getting-started`),
+    href: (id) => `/dashboard/projects/${id}/getting-started`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/getting-started`),
   },
   {
     id: "overview",
     label: "Overview",
-    href: (id) => `/projects/${id}`,
+    href: (id) => `/dashboard/projects/${id}`,
     // Exact match — every other tab is a sub-route, but Overview is the bare project URL.
-    matches: (p, id) => p === `/projects/${id}` || p === `/projects/${id}/`,
+    matches: (p, id) => p === `/dashboard/projects/${id}` || p === `/dashboard/projects/${id}/`,
   },
   {
     id: "performance",
     label: "Performance",
-    href: (id) => `/projects/${id}/performance`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/performance`),
+    href: (id) => `/dashboard/projects/${id}/performance`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/performance`),
   },
   {
     id: "scans",
     label: "Scans",
-    href: (id) => `/projects/${id}/scans`,
+    href: (id) => `/dashboard/projects/${id}/scans`,
     matches: (p, id) =>
-      p.startsWith(`/projects/${id}/scans`) ||
+      p.startsWith(`/dashboard/projects/${id}/scans`) ||
       // Run-detail pages live under /projects/[id]/runs/[runId] but
       // visually belong with the Scans tab.
-      p.startsWith(`/projects/${id}/runs`),
+      p.startsWith(`/dashboard/projects/${id}/runs`),
   },
   {
     id: "stats",
     label: "Stats",
-    href: (id) => `/projects/${id}/stats`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/stats`),
+    href: (id) => `/dashboard/projects/${id}/stats`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/stats`),
   },
   {
     id: "security",
     label: "Security",
-    href: (id) => `/projects/${id}/security`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/security`),
+    href: (id) => `/dashboard/projects/${id}/security`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/security`),
   },
   {
     id: "uptime",
     label: "Uptime",
-    href: (id) => `/projects/${id}/uptime`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/uptime`),
+    href: (id) => `/dashboard/projects/${id}/uptime`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/uptime`),
   },
   {
     id: "leads",
     label: "Leads",
-    href: (id) => `/projects/${id}/leads`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/leads`),
+    href: (id) => `/dashboard/projects/${id}/leads`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/leads`),
   },
   {
     id: "autoblog",
     label: "Autoblog",
-    href: (id) => `/projects/${id}/autoblog`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/autoblog`),
+    href: (id) => `/dashboard/projects/${id}/autoblog`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/autoblog`),
   },
   {
     id: "social",
     label: "Social",
-    href: (id) => `/projects/${id}/social`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/social`),
+    href: (id) => `/dashboard/projects/${id}/social`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/social`),
   },
   {
     id: "repos",
     label: "Repos",
-    href: (id) => `/projects/${id}/repos`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/repos`),
+    href: (id) => `/dashboard/projects/${id}/repos`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/repos`),
   },
   {
     id: "members",
     label: "Members",
-    href: (id) => `/projects/${id}/members`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/members`),
+    href: (id) => `/dashboard/projects/${id}/members`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/members`),
   },
   {
     id: "settings",
     label: "Settings",
-    href: (id) => `/projects/${id}/settings`,
-    matches: (p, id) => p.startsWith(`/projects/${id}/settings`),
+    href: (id) => `/dashboard/projects/${id}/settings`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/settings`),
   },
 ];
 

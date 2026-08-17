@@ -211,7 +211,7 @@ export async function connectMailboxAction(input: {
   const { error } = await svc.from("organization_outreach_configs").insert(patch);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/leads`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/leads`);
   return { ok: true, imapNote };
 }
 
@@ -230,6 +230,6 @@ export async function disconnectMailboxAction(input: {
     .eq("organization_id", access.organizationId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/leads`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/leads`);
   return { ok: true };
 }

@@ -65,8 +65,8 @@ export async function POST(req: Request) {
       ownerId: user.id,
       ownerEmail: user.email ?? null,
       currency: currency.toLowerCase(),
-      successUrl: `${env.siteUrl}/settings/billing?purchase=success`,
-      cancelUrl: `${env.siteUrl}/settings/billing?purchase=cancel`,
+      successUrl: `${env.siteUrl}/dashboard/settings/billing?purchase=success`,
+      cancelUrl: `${env.siteUrl}/dashboard/settings/billing?purchase=cancel`,
       webhookUrl: `${env.siteUrl}/api/coinpay/webhook`,
       metadata: { purchase_id: purchase.id },
     });

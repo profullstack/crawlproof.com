@@ -227,7 +227,7 @@ function EngineCard({ audit, now }: { audit: RunAudit; now: number }) {
       <div className="mt-3 flex items-center gap-3 text-xs">
         {audit.status === "complete" && (
           <Link
-            href={`/audits/${audit.id}`}
+            href={`/dashboard/audits/${audit.id}`}
             className="text-[var(--color-accent)] hover:underline"
           >
             View report →

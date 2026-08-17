@@ -139,7 +139,7 @@ export default async function DashboardPage({
     <div className="space-y-10">
       <section className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Dashboard</h1>
-        <Link href="/projects/new" className="btn btn-primary">
+        <Link href="/dashboard/projects/new" className="btn btn-primary">
           New project
         </Link>
       </section>
@@ -191,7 +191,7 @@ export default async function DashboardPage({
           <ul className="grid gap-3 md:grid-cols-2">
             {projects.map((p) => (
               <li key={p.id} className="card p-4">
-                <Link href={`/projects/${p.id}`} className="block">
+                <Link href={`/dashboard/projects/${p.id}`} className="block">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-3">
                       <ProjectLogo
@@ -279,7 +279,7 @@ export default async function DashboardPage({
             {status === "active" ? (
               <>
                 No projects yet.{" "}
-                <Link href="/projects/new" className="underline">
+                <Link href="/dashboard/projects/new" className="underline">
                   Create one
                 </Link>
                 .
@@ -298,7 +298,7 @@ export default async function DashboardPage({
             {audits.map((a) => (
               <li key={a.id} className="card flex items-center justify-between p-3">
                 <div>
-                  <Link href={`/audits/${a.id}`} className="font-medium hover:underline">
+                  <Link href={`/dashboard/audits/${a.id}`} className="font-medium hover:underline">
                     {a.target_url}
                   </Link>
                   <div className="text-xs text-[var(--color-muted)]">

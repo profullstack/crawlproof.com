@@ -92,7 +92,7 @@ export async function saveSeedCredentialAction(input: {
     }
   }
 
-  revalidatePath(`/projects/${input.projectId}/leads`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/leads`);
   return {
     ok: true,
     note: `Saved a login for ${host}. The next campaign tick will try it and report whether it worked.`,
@@ -128,7 +128,7 @@ export async function submitSeedVerificationCodeAction(input: {
     .eq("host", normalizeHost(input.host));
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/leads`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/leads`);
   return { ok: true };
 }
 
@@ -146,6 +146,6 @@ export async function deleteSeedCredentialAction(input: {
     .eq("host", normalizeHost(input.host));
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/leads`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/leads`);
   return { ok: true };
 }

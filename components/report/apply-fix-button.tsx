@@ -290,7 +290,7 @@ export function ApplyFixButton({
               <p className="mt-4 text-sm">
                 You haven&apos;t connected a GitHub installation yet.{" "}
                 <a
-                  href="/settings/integrations/github"
+                  href="/dashboard/settings/integrations/github"
                   className="underline"
                 >
                   Connect on the GitHub settings page

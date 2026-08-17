@@ -5,7 +5,7 @@ const password = process.env.PLAYWRIGHT_AUTH_PASSWORD;
 const projectId = process.env.PLAYWRIGHT_AUTOBLOG_PROJECT_ID;
 
 test("autoblog content plan requires authentication", async ({ page }) => {
-  await page.goto("/projects/example-project/autoblog/plan");
+  await page.goto("/dashboard/projects/example-project/autoblog/plan");
   await expect(page).toHaveURL(/\/login/);
 });
 
@@ -24,7 +24,7 @@ test("authenticated owner can open the autoblog content plan", async ({ page }) 
   await expect(page.getByRole("heading", { name: "30-day queue" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
     "href",
-    `/projects/${projectId}/autoblog`,
+    `/dashboard/projects/${projectId}/autoblog`,
   );
 });
 

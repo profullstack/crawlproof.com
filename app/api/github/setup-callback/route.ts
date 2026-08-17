@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const code = new URL(request.url).searchParams.get("code");
   if (!code) {
     return NextResponse.redirect(
-      publicUrl(request.headers, "/admin/github/setup?error=missing_code"),
+      publicUrl(request.headers, "/dashboard/admin/github/setup?error=missing_code"),
     );
   }
   try {
@@ -33,14 +33,14 @@ export async function GET(request: NextRequest) {
       owner: result.owner.login,
     });
     return NextResponse.redirect(
-      publicUrl(request.headers, `/admin/github/setup/done#${params.toString()}`),
+      publicUrl(request.headers, `/dashboard/admin/github/setup/done#${params.toString()}`),
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
     return NextResponse.redirect(
       publicUrl(
         request.headers,
-        `/admin/github/setup?error=${encodeURIComponent(msg)}`,
+        `/dashboard/admin/github/setup?error=${encodeURIComponent(msg)}`,
       ),
     );
   }

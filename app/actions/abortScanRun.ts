@@ -56,7 +56,7 @@ export async function abortScanRun(input: {
     await refundCredit(userId, refundedCredits);
   }
 
-  revalidatePath(`/projects/${input.projectId}/runs/${input.runId}`);
-  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/runs/${input.runId}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}`);
   return { ok: true, abortedCount: rows.length, refundedCredits };
 }

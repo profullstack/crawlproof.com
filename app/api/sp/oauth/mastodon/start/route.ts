@@ -23,7 +23,7 @@ const STATE_COOKIE = "sp_mastodon_state";
 const STATE_TTL_S = 600;
 
 function backWithError(message: string): NextResponse {
-  const u = new URL("/social/setup", env.siteUrl);
+  const u = new URL("/dashboard/social/setup", env.siteUrl);
   u.searchParams.set("error", message);
   return NextResponse.redirect(u);
 }

@@ -37,7 +37,7 @@ export function RunNowButton({
         setConfirming(false);
         return;
       }
-      router.push(`/projects/${projectId}/runs/${res.scanRunId}`);
+      router.push(`/dashboard/projects/${projectId}/runs/${res.scanRunId}`);
     });
   }
 

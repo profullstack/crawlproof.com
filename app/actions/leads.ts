@@ -55,7 +55,7 @@ async function projectProspect(projectId: string, host: string): Promise<Prospec
 }
 
 function leadsPath(projectId: string): string {
-  return `/projects/${projectId}/leads`;
+  return `/dashboard/projects/${projectId}/leads`;
 }
 
 /** Find businesses and queue a free scan for each — the "add leads" button. */

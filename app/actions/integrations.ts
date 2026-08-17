@@ -63,7 +63,7 @@ export async function createIntegration(input: {
   });
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/admin");
+  revalidatePath("/dashboard/admin");
   return { ok: true, accessToken };
 }
 
@@ -80,6 +80,6 @@ export async function revokeIntegration(input: {
     .eq("id", input.id);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/admin");
+  revalidatePath("/dashboard/admin");
   return { ok: true };
 }

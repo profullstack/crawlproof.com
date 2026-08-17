@@ -32,7 +32,7 @@ suite("lx_article PostgREST embeds (live schema)", () => {
   // whether rows come back — only that PostgREST parses the embed without
   // PGRST201 (multiple-relationships) or PGRST200 (no-relationship).
 
-  it("article preview page — app/(app)/projects/[id]/autoblog/articles/[articleId]/page.tsx", async () => {
+  it("article preview page — app/(app)/dashboard/projects/[id]/autoblog/articles/[articleId]/page.tsx", async () => {
     const { error } = await sb
       .from("lx_article")
       .select(

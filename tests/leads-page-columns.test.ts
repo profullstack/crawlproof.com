@@ -12,7 +12,7 @@ import path from "node:path";
 // go on to read. It is a source-level check, which is unusual, but it is the
 // only thing that catches a mismatch the type system is being told to ignore.
 
-const PAGE = path.join(process.cwd(), "app/(app)/projects/[id]/leads/page.tsx");
+const PAGE = path.join(process.cwd(), "app/(app)/dashboard/projects/[id]/leads/page.tsx");
 
 /** Fields the page maps or the panel renders. */
 const REQUIRED_COLUMNS = [

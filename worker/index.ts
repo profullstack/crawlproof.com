@@ -779,7 +779,7 @@ async function sendSummaryEmail(input: {
       passes: r.summary?.pass ?? 0,
       warns: r.summary?.warn ?? 0,
       fails: r.summary?.fail ?? 0,
-      reportUrl: `${siteUrl}/audits/${r.id}`,
+      reportUrl: `${siteUrl}/dashboard/audits/${r.id}`,
     };
   });
   const completed = engines.filter((e) => e.status === "complete" && e.score !== null);
@@ -791,8 +791,8 @@ async function sendSummaryEmail(input: {
       : null;
 
   const runUrl = projectId
-    ? `${siteUrl}/projects/${projectId}/runs/${scanRunId}`
-    : `${siteUrl}/audits/${rows[0].id}`;
+    ? `${siteUrl}/dashboard/projects/${projectId}/runs/${scanRunId}`
+    : `${siteUrl}/dashboard/audits/${rows[0].id}`;
   const host = (() => {
     try { return new URL(targetUrl).hostname; } catch { return targetUrl; }
   })();
@@ -1127,7 +1127,7 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
-  if (req.method === "POST" && req.url === "/promote/sweep") {
+  if (req.method === "POST" && req.url === "/dashboard/promote/sweep") {
     // Immediate "Post now": run the promote sweep out-of-band so a manually
     // triggered list (its next_run_at set to now by the server action) posts
     // right away instead of waiting up to 60s for the periodic tick.

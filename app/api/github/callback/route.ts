@@ -15,7 +15,7 @@ import { publicUrl } from "@/lib/request-url";
 
 export const runtime = "nodejs";
 
-const SETTINGS_URL = "/settings/integrations/github";
+const SETTINGS_URL = "/dashboard/settings/integrations/github";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);

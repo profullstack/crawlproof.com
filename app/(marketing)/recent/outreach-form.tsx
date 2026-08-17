@@ -286,7 +286,7 @@ export function RecentOutreachForm({
 
         <div className="flex flex-wrap items-center gap-3">
           {insufficient ? (
-            <Link href="/settings/billing" className="btn btn-primary text-xs">
+            <Link href="/dashboard/settings/billing" className="btn btn-primary text-xs">
               Buy credits to send
             </Link>
           ) : (

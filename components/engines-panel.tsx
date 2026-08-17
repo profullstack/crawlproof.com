@@ -60,7 +60,7 @@ export function EnginesPanel({
       }
       // Route to the scan-run page so the user sees every engine's progress
       // side-by-side, not just one of them.
-      router.push(`/projects/${projectId}/runs/${res.scanRunId}`);
+      router.push(`/dashboard/projects/${projectId}/runs/${res.scanRunId}`);
     });
   }
 

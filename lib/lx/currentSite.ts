@@ -156,7 +156,7 @@ export async function getCurrentSite<T extends string = "*">(
 // Fetch a specific project (and its autoblog config) by id, scoped to
 // the signed-in user. Mirrors getCurrentProject's shape so the same
 // normalize logic applies. Use this from project sub-tab pages
-// (/projects/[id]/autoblog, /projects/[id]/social, …) where the id
+// (/dashboard/projects/[id]/autoblog, /projects/[id]/social, …) where the id
 // comes from the URL rather than the picker cookie.
 export async function getProjectById(
   projectId: string,

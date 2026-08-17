@@ -25,6 +25,6 @@ export async function switchSite(
   if (!data) return { ok: false, error: "Site not found." };
 
   await setCurrentSite(siteId);
-  revalidatePath("/autoblog");
+  revalidatePath("/dashboard/autoblog");
   return { ok: true };
 }

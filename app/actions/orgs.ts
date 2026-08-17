@@ -133,7 +133,7 @@ export async function moveProjectToOrganization(input: {
   if (error) return { ok: false, error: error.message };
 
   revalidatePath("/dashboard");
-  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}`);
   return { ok: true };
 }
 

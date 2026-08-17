@@ -115,7 +115,7 @@ export async function grantCredits(input: {
     };
   }
 
-  revalidatePath("/admin");
+  revalidatePath("/dashboard/admin");
   return { ok: true, recipientId: recipient.id, newBalance };
 }
 
@@ -143,7 +143,7 @@ export async function saveVu1nzIntegration(input: {
     };
   }
 
-  revalidatePath("/admin");
+  revalidatePath("/dashboard/admin");
   return { ok: true };
 }
 

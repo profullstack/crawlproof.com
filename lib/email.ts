@@ -295,7 +295,7 @@ export function purchaseReceiptEmailHtml(input: {
           </tr>
           <tr>
             <td style="padding:22px 32px 8px;">
-              <a href="${env.siteUrl}/settings/billing"
+              <a href="${env.siteUrl}/dashboard/settings/billing"
                  style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
                 View billing →
               </a>
