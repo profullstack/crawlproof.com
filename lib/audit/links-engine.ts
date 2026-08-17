@@ -2,101 +2,159 @@
 // linkinator (the same crawler as `npx linkinator <url> --recurse`) and turns
 // the broken-link report into structured findings. Free; no LLM required.
 //
-// linkinator has no built-in page cap or AbortSignal, so we bound the crawl
-// with its `linksToSkip` extension point: once we exceed a page / link / wall-
-// clock budget the predicate returns true for every remaining link, which
-// stops both checking and recursion. This keeps a runaway crawl well under the
-// worker's 7-minute stuck-audit cutoff.
+// The crawl itself runs in a forked child process (links-crawl-child.ts) because
+// linkinator can hard-exit the process it runs in; see links-crawl.ts for the
+// mechanism. Everything here — scoring, findings, markdown — runs in the worker
+// off the child's JSON report.
 
-import { LinkChecker, LinkState, type LinkResult } from "linkinator";
+import { fork } from "node:child_process";
+import { extname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { LinkState } from "linkinator";
 import { scoreFindings } from "./score";
 import type { AuditResult, Finding } from "./types";
+import {
+  DEADLINE_MS,
+  MAX_LINKS,
+  MAX_PAGES,
+  checkedCount,
+  rootOf,
+  type Capped,
+  type CrawlAccumulator,
+  type CrawlLink,
+} from "./links-crawl";
+import type { ChildReport } from "./links-crawl-child";
 
 type LinksAuditResult = AuditResult & { markdown: string };
-
-const UA = "CrawlProofBot/1.0 (+https://crawlproof.com/bot)";
-
-// Budgets — generous enough for a typical CrawlProof property, hard-capped so
-// the worker can't blow past the 7-minute stuck-sweep cutoff.
-const MAX_PAGES = 250; // distinct internal pages we recurse into
-const MAX_LINKS = 5000; // total links checked (internal + external)
-const DEADLINE_MS = 4 * 60 * 1000; // wall-clock crawl budget
-const PER_LINK_TIMEOUT_MS = 10_000;
-const CONCURRENCY = 25;
 
 // How many broken links to enumerate in findings / markdown before truncating.
 const MAX_BROKEN_LISTED = 50;
 
-function rootOf(targetUrl: string): string {
-  // Crawl from the root domain, not the submitted deep link — the user asked
-  // the bot to sweep the whole property, not just one page.
-  const u = new URL(targetUrl);
-  return `${u.protocol}//${u.host}/`;
+// The child bounds itself at DEADLINE_MS; this is the backstop for a child that
+// wedges instead of finishing, kept under the 7-minute stuck-audit cutoff.
+const CHILD_KILL_AFTER_MS = DEADLINE_MS + 60_000;
+
+/** Resolve the child entry next to this module, matching its extension so the
+ * same code works under tsx (.ts, as start.sh runs it) and compiled (.js). */
+function childEntryPath(): string {
+  const self = new URL(import.meta.url);
+  return fileURLToPath(new URL(`./links-crawl-child${extname(self.pathname)}`, self));
 }
 
-export async function linksAudit(targetUrl: string): Promise<LinksAuditResult> {
+/**
+ * fork() inherits execArgv, so under the worker's `tsx worker/index.ts` the
+ * child already gets tsx's loader. Add it explicitly when the parent runtime
+ * transforms TypeScript some other way (vitest) and the child would otherwise
+ * hit a plain `node` that can't read .ts.
+ */
+function childExecArgv(entry: string): string[] {
+  const inherited = process.execArgv;
+  if (!entry.endsWith(".ts")) return inherited;
+  if (inherited.some((a) => a.includes("tsx"))) return inherited;
+  return [...inherited, "--import", "tsx"];
+}
+
+type ChildOutcome =
+  | { ok: true; acc: CrawlAccumulator; crashed: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Run the crawl in a child process. Never throws: a child that dies, times out
+ * or emits garbage becomes { ok: false } for the caller to report.
+ */
+async function runCrawlChild(
+  targetUrl: string,
+  perLinkTimeoutMs?: number,
+): Promise<ChildOutcome> {
+  return new Promise<ChildOutcome>((resolve) => {
+    let child: ReturnType<typeof fork>;
+    try {
+      const entry = childEntryPath();
+      const args = [targetUrl];
+      if (perLinkTimeoutMs) args.push(String(perLinkTimeoutMs));
+      child = fork(entry, args, {
+        execArgv: childExecArgv(entry),
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+      });
+    } catch (err) {
+      resolve({ ok: false, error: `could not start crawl process: ${messageOf(err)}` });
+      return;
+    }
+
+    let stdout = "";
+    let settled = false;
+    const done = (outcome: ChildOutcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      resolve(outcome);
+    };
+
+    const killTimer = setTimeout(() => {
+      child.kill("SIGKILL");
+      done({
+        ok: false,
+        error: `crawl process exceeded ${Math.round(CHILD_KILL_AFTER_MS / 60_000)} minutes and was killed`,
+      });
+    }, CHILD_KILL_AFTER_MS);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    // Surface the child's diagnostics in the worker log rather than dropping them.
+    child.stderr?.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+    });
+    child.on("error", (err) => {
+      done({ ok: false, error: `crawl process error: ${messageOf(err)}` });
+    });
+    child.on("close", (code, signal) => {
+      if (!stdout.trim()) {
+        done({
+          ok: false,
+          error: `crawl process exited without a report (code=${code ?? "null"}, signal=${signal ?? "none"})`,
+        });
+        return;
+      }
+      try {
+        const report = JSON.parse(stdout) as ChildReport;
+        done({ ok: true, acc: report.acc, crashed: report.crashed ?? null });
+      } catch (err) {
+        done({ ok: false, error: `unreadable crawl report: ${messageOf(err)}` });
+      }
+    });
+  });
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export async function linksAudit(
+  targetUrl: string,
+  // Test seam: shortens the per-link abort so the mid-body race is deterministic.
+  opts: { perLinkTimeoutMs?: number } = {},
+): Promise<LinksAuditResult> {
   const started = Date.now();
   const root = rootOf(targetUrl);
 
-  const checker = new LinkChecker();
-  let pagesCrawled = 0;
-  let linksChecked = 0;
-  let capped: null | "pages" | "links" | "time" = null;
+  const outcome = await runCrawlChild(targetUrl, opts.perLinkTimeoutMs);
 
-  checker.on("pagestart", () => {
-    pagesCrawled++;
-  });
-
-  // Doubles as the crawl's kill-switch: returning true marks a link SKIPPED,
-  // which also prevents linkinator from recursing into it.
-  const linksToSkip = async (link: string): Promise<boolean> => {
-    // linkinator already skips non-http(s) schemes, but guard anyway.
-    if (!/^https?:\/\//i.test(link)) return true;
-    if (Date.now() - started > DEADLINE_MS) {
-      capped ??= "time";
-      return true;
-    }
-    if (pagesCrawled >= MAX_PAGES) {
-      capped ??= "pages";
-      return true;
-    }
-    if (linksChecked >= MAX_LINKS) {
-      capped ??= "links";
-      return true;
-    }
-    return false;
-  };
-
-  let result: { links: LinkResult[]; passed: boolean };
-  try {
-    result = await checker.check({
-      path: root,
-      recurse: true,
-      concurrency: CONCURRENCY,
-      timeout: PER_LINK_TIMEOUT_MS,
-      userAgent: UA,
-      retry: true,
-      linksToSkip,
-    });
-  } catch (err) {
+  if (!outcome.ok) {
     const findings: Finding[] = [
       {
         section: "Links & Images",
         check_key: "links.crawl_error",
         status: "fail",
-        title: "Link crawl could not start",
-        detail: `linkinator failed to crawl ${root}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        title: "Link crawl could not complete",
+        detail: `linkinator failed to crawl ${root}: ${outcome.error}`,
         priority: 1,
       },
     ];
     return {
       score: scoreFindings(findings),
       findings,
-      markdown: `# Link Checker — ${root}\n\nThe crawl could not be started: ${
-        err instanceof Error ? err.message : String(err)
-      }\n`,
+      markdown: `# Link Checker — ${root}\n\nThe crawl could not be completed: ${outcome.error}\n`,
       summary: {
         pagesCrawled: 0,
         pass: 0,
@@ -109,34 +167,33 @@ export async function linksAudit(targetUrl: string): Promise<LinksAuditResult> {
     };
   }
 
-  const checked = result.links.filter((l) => l.state !== LinkState.SKIPPED);
-  linksChecked = checked.length;
-  const broken = result.links.filter((l) => l.state === LinkState.BROKEN);
-  const skipped = result.links.filter((l) => l.state === LinkState.SKIPPED);
+  const acc: CrawlAccumulator = {
+    pagesCrawled: outcome.acc?.pagesCrawled ?? 0,
+    capped: outcome.acc?.capped ?? null,
+    links: outcome.acc?.links ?? [],
+  };
+  const checked = checkedCount(acc);
+  const broken = acc.links.filter((l) => l.state === LinkState.BROKEN);
+  const skippedCount = acc.links.filter((l) => l.state === LinkState.SKIPPED).length;
 
-  const findings = buildFindings({
+  const agg: Agg = {
     root,
-    pagesCrawled,
-    checked: checked.length,
+    pagesCrawled: acc.pagesCrawled,
+    checked,
     broken,
-    skippedCount: skipped.length,
-    capped,
-  });
+    skippedCount,
+    capped: acc.capped,
+    crashed: outcome.crashed,
+  };
+
+  const findings = buildFindings(agg);
 
   return {
     score: scoreFindings(findings),
     findings,
-    markdown: buildMarkdown({
-      root,
-      pagesCrawled,
-      checked: checked.length,
-      broken,
-      skippedCount: skipped.length,
-      capped,
-      durationMs: Date.now() - started,
-    }),
+    markdown: buildMarkdown({ ...agg, durationMs: Date.now() - started }),
     summary: {
-      pagesCrawled,
+      pagesCrawled: acc.pagesCrawled,
       pass: findings.filter((f) => f.status === "pass").length,
       warn: findings.filter((f) => f.status === "warn").length,
       fail: findings.filter((f) => f.status === "fail").length,
@@ -147,7 +204,7 @@ export async function linksAudit(targetUrl: string): Promise<LinksAuditResult> {
   };
 }
 
-function statusLabel(l: LinkResult): string {
+function statusLabel(l: CrawlLink): string {
   if (l.status && l.status > 0) return String(l.status);
   return "no response";
 }
@@ -156,13 +213,14 @@ type Agg = {
   root: string;
   pagesCrawled: number;
   checked: number;
-  broken: LinkResult[];
+  broken: CrawlLink[];
   skippedCount: number;
-  capped: null | "pages" | "links" | "time";
+  capped: Capped;
+  crashed: string | null;
 };
 
 function buildFindings(agg: Agg): Finding[] {
-  const { root, pagesCrawled, checked, broken, skippedCount, capped } = agg;
+  const { root, pagesCrawled, checked, broken, skippedCount, capped, crashed } = agg;
   const out: Finding[] = [];
 
   // Broken-link finding — the headline of a link checker.
@@ -208,19 +266,44 @@ function buildFindings(agg: Agg): Finding[] {
   // Coverage summary — gives the reader confidence in the broken-link number
   // and flags when the crawl was budget-capped (so "0 broken" isn't read as a
   // clean bill of health for a site we only partially swept).
+  const partial = capped !== null || crashed !== null;
   out.push({
     section: "Links & Images",
     check_key: "links.crawl_coverage",
-    status: capped ? "warn" : "pass",
+    status: partial ? "warn" : "pass",
     title: capped
       ? `Crawl capped at ${pagesCrawled} pages (${cappedReason(capped)})`
-      : `Crawled ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"}, ${checked} link${checked === 1 ? "" : "s"}`,
+      : crashed
+        ? `Partial crawl — ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"} before the crawler stopped`
+        : `Crawled ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"}, ${checked} link${checked === 1 ? "" : "s"}`,
     detail: capped
       ? `The recursive crawl hit the ${cappedReason(capped)} budget and stopped early, so links beyond that point were not checked. Re-run on a narrower section, or treat this as a partial sweep.`
-      : `Full recursive sweep of ${root}: ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"} crawled, ${checked} link${checked === 1 ? "" : "s"} checked${skippedCount ? `, ${skippedCount} skipped` : ""}.`,
-    evidence: { capped: capped ?? false, pagesCrawled, linksChecked: checked, skipped: skippedCount },
+      : crashed
+        ? `The crawl of ${root} ended before completing, so this covers only ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"} and ${checked} link${checked === 1 ? "" : "s"}. Treat it as a partial sweep.`
+        : `Full recursive sweep of ${root}: ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"} crawled, ${checked} link${checked === 1 ? "" : "s"} checked${skippedCount ? `, ${skippedCount} skipped` : ""}.`,
+    evidence: {
+      capped: capped ?? false,
+      incomplete: crashed !== null,
+      pagesCrawled,
+      linksChecked: checked,
+      skipped: skippedCount,
+    },
     priority: 5,
   });
+
+  // The crawler died partway through. We still report what it found, but the
+  // reader needs to know the sweep is incomplete.
+  if (crashed) {
+    out.push({
+      section: "Links & Images",
+      check_key: "links.crawl_incomplete",
+      status: "warn",
+      title: "Link crawl ended early",
+      detail: `The crawler stopped before finishing (${crashed}). The ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"} and ${checked} link${checked === 1 ? "" : "s"} below were checked; anything past that point was not. Re-run to sweep the rest.`,
+      evidence: { reason: crashed, pagesCrawled, linksChecked: checked },
+      priority: 3,
+    });
+  }
 
   return out;
 }
@@ -234,7 +317,7 @@ function cappedReason(capped: "pages" | "links" | "time"): string {
 }
 
 function buildMarkdown(agg: Agg & { durationMs: number }): string {
-  const { root, pagesCrawled, checked, broken, skippedCount, capped, durationMs } = agg;
+  const { root, pagesCrawled, checked, broken, skippedCount, capped, crashed, durationMs } = agg;
   const lines: string[] = [];
   lines.push(`# Link Checker — ${root}`);
   lines.push("");
@@ -249,8 +332,15 @@ function buildMarkdown(agg: Agg & { durationMs: number }): string {
   lines.push(`| Broken links | ${broken.length} |`);
   if (skippedCount) lines.push(`| Skipped | ${skippedCount} |`);
   lines.push(`| Duration | ${(durationMs / 1000).toFixed(1)}s |`);
-  lines.push(`| Coverage | ${capped ? `partial (${cappedReason(capped)} cap)` : "full sweep"} |`);
+  lines.push(
+    `| Coverage | ${crashed ? "partial (crawl ended early)" : capped ? `partial (${cappedReason(capped)} cap)` : "full sweep"} |`,
+  );
   lines.push("");
+
+  if (crashed) {
+    lines.push(`> ⚠️ The crawl ended early (${crashed}), so this is a partial sweep.`);
+    lines.push("");
+  }
 
   if (broken.length === 0) {
     lines.push(`✅ No broken links found.`);
