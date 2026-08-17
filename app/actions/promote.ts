@@ -83,7 +83,7 @@ export async function createPromoteList(input: {
   // Best-effort title fetching (non-blocking)
   fetchTitlesForList(list.id, urls).catch(() => {});
 
-  revalidatePath("/promote");
+  revalidatePath("/dashboard/promote");
   return { ok: true, listId: list.id as string };
 }
 
@@ -132,8 +132,8 @@ export async function updatePromoteList(input: {
     .eq("user_id", auth.userId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/promote");
-  revalidatePath(`/promote/${input.listId}`);
+  revalidatePath("/dashboard/promote");
+  revalidatePath(`/dashboard/promote/${input.listId}`);
   return { ok: true };
 }
 
@@ -175,7 +175,7 @@ export async function addLinksToList(input: {
   // Best-effort title fetching
   fetchTitlesForList(input.listId, urls).catch(() => {});
 
-  revalidatePath(`/promote/${input.listId}`);
+  revalidatePath(`/dashboard/promote/${input.listId}`);
   return { ok: true, added: count ?? urls.length };
 }
 
@@ -198,7 +198,7 @@ export async function removeLink(linkId: string): Promise<Ok | Err> {
   const { error } = await svc.from("promo_link").delete().eq("id", linkId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/promote/${link.list_id}`);
+  revalidatePath(`/dashboard/promote/${link.list_id}`);
   return { ok: true };
 }
 
@@ -223,7 +223,7 @@ export async function toggleLink(linkId: string, enabled: boolean): Promise<Ok |
     .eq("id", linkId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/promote/${link.list_id}`);
+  revalidatePath(`/dashboard/promote/${link.list_id}`);
   return { ok: true };
 }
 
@@ -238,7 +238,7 @@ export async function pausePromoteList(listId: string): Promise<Ok | Err> {
     .eq("id", listId)
     .eq("user_id", auth.userId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/promote");
+  revalidatePath("/dashboard/promote");
   return { ok: true };
 }
 
@@ -256,7 +256,7 @@ export async function resumePromoteList(listId: string): Promise<Ok | Err> {
     .eq("id", listId)
     .eq("user_id", auth.userId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/promote");
+  revalidatePath("/dashboard/promote");
   return { ok: true };
 }
 
@@ -270,7 +270,7 @@ export async function deletePromoteList(listId: string): Promise<Ok | Err> {
     .eq("id", listId)
     .eq("user_id", auth.userId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/promote");
+  revalidatePath("/dashboard/promote");
   return { ok: true };
 }
 
@@ -308,7 +308,7 @@ export async function postNow(listId: string): Promise<Ok | Err> {
     }
   }
 
-  revalidatePath("/promote");
-  revalidatePath(`/promote/${listId}`);
+  revalidatePath("/dashboard/promote");
+  revalidatePath(`/dashboard/promote/${listId}`);
   return { ok: true };
 }

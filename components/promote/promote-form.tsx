@@ -37,7 +37,7 @@ export function PromoteForm({ accounts }: { accounts: Account[] }) {
         setError(result.error);
         return;
       }
-      router.push(`/promote/${result.listId}`);
+      router.push(`/dashboard/promote/${result.listId}`);
     });
   };
 
@@ -144,7 +144,7 @@ export function PromoteForm({ accounts }: { accounts: Account[] }) {
         {accounts.length === 0 ? (
           <p className="mt-1 text-sm text-[var(--color-muted)]">
             No connected accounts.{" "}
-            <Link href="/promote/accounts" className="text-[var(--color-accent)]">
+            <Link href="/dashboard/promote/accounts" className="text-[var(--color-accent)]">
               Connect one first
             </Link>
             .

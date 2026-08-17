@@ -51,7 +51,7 @@ export async function createMonitor(
   });
   if (error) return { ok: false, error: `Could not create monitor: ${error.message}` };
 
-  revalidatePath(`/projects/${input.projectId}/uptime`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/uptime`);
   return { ok: true };
 }
 
@@ -66,7 +66,7 @@ export async function setMonitorEnabled(
     .update({ enabled })
     .eq("id", monitorId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/projects/${projectId}/uptime`);
+  revalidatePath(`/dashboard/projects/${projectId}/uptime`);
   return { ok: true };
 }
 
@@ -77,6 +77,6 @@ export async function deleteMonitor(
   const supabase = await createClient();
   const { error } = await supabase.from("monitors").delete().eq("id", monitorId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/projects/${projectId}/uptime`);
+  revalidatePath(`/dashboard/projects/${projectId}/uptime`);
   return { ok: true };
 }

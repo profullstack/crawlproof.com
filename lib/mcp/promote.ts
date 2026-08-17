@@ -69,7 +69,7 @@ export function registerPromoteTools(server: McpServer): void {
       const accts = await activeAccounts(userId);
       if (!accts.length)
         return textResult(
-          "No active social accounts connected. Connect some at https://crawlproof.com/promote/accounts",
+          "No active social accounts connected. Connect some at https://crawlproof.com/dashboard/promote/accounts",
         );
       return textResult(accts.map((a) => `- ${a.platform}: ${a.handle} (id: ${a.id})`).join("\n"));
     },
@@ -161,7 +161,7 @@ export function registerPromoteTools(server: McpServer): void {
       const accts = await activeAccounts(userId, args.account_ids);
       if (!accts.length)
         return errorResult(
-          "No matching active accounts. Connect some at https://crawlproof.com/promote/accounts",
+          "No matching active accounts. Connect some at https://crawlproof.com/dashboard/promote/accounts",
         );
       const { anthropic, openai } = aiClients();
       if (!anthropic && !openai) return errorResult("No AI provider configured on the server.");

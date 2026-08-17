@@ -18,7 +18,7 @@ import {
 const STATE_COOKIE = "sp_facebook_state";
 
 function backWithError(message: string): NextResponse {
-  const u = new URL("/social/setup", env.siteUrl);
+  const u = new URL("/dashboard/social/setup", env.siteUrl);
   u.searchParams.set("error", message);
   const res = NextResponse.redirect(u);
   res.cookies.delete(STATE_COOKIE);
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     return backWithError(`Could not save Pages: ${upsertErr.message}`);
   }
 
-  const ok = new URL("/social/setup", env.siteUrl);
+  const ok = new URL("/dashboard/social/setup", env.siteUrl);
   ok.searchParams.set("connected", `facebook (${pages.length} page${pages.length === 1 ? "" : "s"})`);
   const res = NextResponse.redirect(ok);
   res.cookies.delete(STATE_COOKIE);

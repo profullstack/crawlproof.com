@@ -22,6 +22,7 @@ export async function SiteHeader() {
             Hire us
           </Link>
           <Link href="/pricing">Pricing</Link>
+          <Link href="/ads">Ads</Link>
           <Link href="/get-guide">Guide</Link>
           <Link href="/recent">Recent</Link>
           <Link href="/about" className="hidden sm:inline">

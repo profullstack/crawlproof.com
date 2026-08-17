@@ -59,8 +59,8 @@ export async function abortAudit(input: {
   const refund = ENGINES[audit.engine as Engine]?.cost ?? 0;
   if (refund > 0) await refundCredit(userId, refund);
 
-  revalidatePath(`/projects/${input.projectId}/runs/${audit.scan_run_id}`);
-  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/runs/${audit.scan_run_id}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}`);
   return { ok: true };
 }
 
@@ -150,7 +150,7 @@ export async function retryAudit(input: {
     }
   }
 
-  revalidatePath(`/projects/${input.projectId}/runs/${audit.scan_run_id}`);
-  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/runs/${audit.scan_run_id}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}`);
   return { ok: true };
 }

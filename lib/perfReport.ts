@@ -284,7 +284,7 @@ export function renderPerfReportEmail(r: PerfReport): {
           </tr>`;
         })
         .join("")
-    : `<tr><td style="padding:12px 0;color:#64748b;font-size:13px;">No projects yet. <a href="${env.siteUrl}/projects/new" style="color:#6ee7b7;">Add one</a>.</td></tr>`;
+    : `<tr><td style="padding:12px 0;color:#64748b;font-size:13px;">No projects yet. <a href="${env.siteUrl}/dashboard/projects/new" style="color:#6ee7b7;">Add one</a>.</td></tr>`;
 
   const autoblogBlock = r.autoblog
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;">
@@ -321,7 +321,7 @@ export function renderPerfReportEmail(r: PerfReport): {
       <p style="margin:24px 0 0;font-size:12px;color:#64748b;">
         <a href="${env.siteUrl}/dashboard" style="color:#6ee7b7;">Open dashboard</a>
         &nbsp;·&nbsp;
-        <a href="${env.siteUrl}/settings" style="color:#6ee7b7;">Change cadence or unsubscribe</a>
+        <a href="${env.siteUrl}/dashboard/settings" style="color:#6ee7b7;">Change cadence or unsubscribe</a>
       </p>
     </td>
   </tr>`;

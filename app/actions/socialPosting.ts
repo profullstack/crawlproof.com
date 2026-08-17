@@ -103,7 +103,7 @@ export async function connectBluesky(input: {
     return { ok: false, error: error?.message ?? "Could not save account." };
   }
 
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true, accountId: data.id };
 }
 
@@ -157,7 +157,7 @@ export async function connectDiscord(input: {
     return { ok: false, error: error?.message ?? "Could not save account." };
   }
 
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true, accountId: data.id };
 }
 
@@ -232,7 +232,7 @@ export async function connectTelegram(input: {
     return { ok: false, error: error?.message ?? "Could not save account." };
   }
 
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true, accountId: data.id };
 }
 
@@ -294,7 +294,7 @@ export async function connectViaCookies(input: {
     return { ok: false, error: error?.message ?? "Could not save account." };
   }
 
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true, accountId: data.id };
 }
 
@@ -316,7 +316,7 @@ export async function disconnectAccount(
     .eq("id", accountId)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true };
 }
 
@@ -363,7 +363,7 @@ export async function createApiToken(input: {
     return { ok: false, error: error?.message ?? "Could not save token." };
   }
 
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true, id: data.id, token: minted.plaintext, prefix: minted.prefix };
 }
 
@@ -384,7 +384,7 @@ export async function revokeApiToken(tokenId: string): Promise<Ok | Err> {
     .eq("id", tokenId)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true };
 }
 
@@ -412,7 +412,7 @@ export async function postNow(
     source: "manual",
   });
   if (!result.ok) return { ok: false, error: result.error };
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true, postId: result.postId, webUrl: result.webUrl };
 }
 
@@ -508,8 +508,8 @@ export async function saveFeedAutopostSettings(
     if (bindErr) return { ok: false, error: bindErr.message };
   }
 
-  revalidatePath(`/projects/${projectId}/social`);
-  revalidatePath("/projects", "layout");
+  revalidatePath(`/dashboard/projects/${projectId}/social`);
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true };
 }
 
@@ -591,7 +591,7 @@ export async function saveSocialProfile(
       { onConflict: "project_id" },
     );
   if (upErr) return { ok: false, error: upErr.message };
-  revalidatePath(`/projects/${projectId}/social`);
+  revalidatePath(`/dashboard/projects/${projectId}/social`);
   return { ok: true };
 }
 
@@ -677,7 +677,7 @@ export async function checkSocialFeedNow(
   const result = await processProjectSocialFeed(serviceClient(), projectId, {
     clients: { anthropic: anthropicSdk, openai: openaiSdk },
   });
-  revalidatePath(`/projects/${projectId}/social`);
+  revalidatePath(`/dashboard/projects/${projectId}/social`);
   if (!result.ok) return { ok: false, error: result.error ?? "Feed check failed." };
   return {
     ok: true,
@@ -837,7 +837,7 @@ export async function postNowFromUrl(input: {
     }
   }
 
-  revalidatePath(`/projects/${projectId}/social`);
+  revalidatePath(`/dashboard/projects/${projectId}/social`);
   if (posted === 0) {
     return { ok: false, error: errors.join("; ") || "Nothing was posted." };
   }
@@ -881,7 +881,7 @@ export async function retryPost(input: {
     projectId: p.project_id ?? undefined,
   });
   if (!result.ok) return { ok: false, error: result.error };
-  if (p.project_id) revalidatePath(`/projects/${p.project_id}/social`);
+  if (p.project_id) revalidatePath(`/dashboard/projects/${p.project_id}/social`);
   return { ok: true, webUrl: result.webUrl };
 }
 
@@ -915,7 +915,7 @@ export async function retryFeedItem(input: {
   if (error) return { ok: false, error: error.message };
 
   const projectId = (item as { project_id?: string }).project_id;
-  if (projectId) revalidatePath(`/projects/${projectId}/social`);
+  if (projectId) revalidatePath(`/dashboard/projects/${projectId}/social`);
   return { ok: true };
 }
 
@@ -961,7 +961,7 @@ export async function submitVerificationCode(input: {
   if (error) return { ok: false, error: error.message };
 
   const projectId = (post as { project_id?: string | null }).project_id;
-  if (projectId) revalidatePath(`/projects/${projectId}/social`);
+  if (projectId) revalidatePath(`/dashboard/projects/${projectId}/social`);
   revalidatePath("/recent");
   return { ok: true };
 }

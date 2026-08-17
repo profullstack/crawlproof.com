@@ -35,18 +35,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Link>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
             <Link href="/dashboard">Dashboard</Link>
-            <Link href="/analytics">Analytics</Link>
+            <Link href="/dashboard/analytics">Analytics</Link>
             <Link href="/alerts">Alerts</Link>
             <Link href="/recent">Recent</Link>
-            <Link href="/projects/new">New</Link>
-            <Link href="/ads">Ads</Link>
-            <Link href="/promote">Promote</Link>
-            <Link href="/settings/integrations/github">GitHub</Link>
+            <Link href="/dashboard/projects/new">New</Link>
+            <Link href="/dashboard/ads">Ads</Link>
+            <Link href="/dashboard/promote">Promote</Link>
+            <Link href="/dashboard/settings/integrations/github">GitHub</Link>
             <a href="/blog" target="_blank" rel="noreferrer">Blog ↗</a>
-            {profile?.is_admin && <Link href="/admin">Admin</Link>}
-            <Link href="/settings">Settings</Link>
+            {profile?.is_admin && <Link href="/dashboard/admin">Admin</Link>}
+            <Link href="/dashboard/settings">Settings</Link>
             <Link
-              href="/settings/billing"
+              href="/dashboard/settings/billing"
               className="badge badge-pass font-mono"
               title="Scan credits — click to buy more"
             >

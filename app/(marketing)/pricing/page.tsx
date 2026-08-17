@@ -135,7 +135,7 @@ export default function PricingPage() {
                 </span>
               </div>
               <Link
-                href="/settings/billing"
+                href="/dashboard/settings/billing"
                 className={`btn mt-6 w-full ${p.popular ? "btn-primary" : ""}`}
               >
                 Buy

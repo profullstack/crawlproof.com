@@ -95,7 +95,7 @@ export async function inviteProjectMember(
     return { ok: false, error: `Email failed: ${emailResult.error}` };
   }
 
-  revalidatePath(`/projects/${projectId}/members`);
+  revalidatePath(`/dashboard/projects/${projectId}/members`);
   return { ok: true };
 }
 
@@ -113,7 +113,7 @@ export async function revokeProjectInvitation(
     .eq("project_id", projectId);
 
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/projects/${projectId}/members`);
+  revalidatePath(`/dashboard/projects/${projectId}/members`);
   return { ok: true };
 }
 
@@ -156,7 +156,7 @@ export async function removeProjectMember(
     }
   }
 
-  revalidatePath(`/projects/${projectId}/members`);
+  revalidatePath(`/dashboard/projects/${projectId}/members`);
   return { ok: true };
 }
 
@@ -176,7 +176,7 @@ export async function setProjectMemberRole(
     .eq("user_id", userId);
 
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/projects/${projectId}/members`);
+  revalidatePath(`/dashboard/projects/${projectId}/members`);
   return { ok: true };
 }
 

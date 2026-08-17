@@ -455,8 +455,8 @@ export async function createOrUpdateSite(
     if (error) return { ok: false, error: error.message };
     await enqueueSitemapCrawl(existingByProject.id as string);
     await setCurrentSite(proj.id);
-    revalidatePath("/autoblog");
-    revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
+    revalidatePath("/dashboard/autoblog");
+    revalidatePath(`/dashboard/projects/${proj.id}/autoblog`, "layout");
     return { ok: true, siteId: existingByProject.id as string };
   }
 
@@ -511,8 +511,8 @@ export async function createOrUpdateSite(
       if (raceErr) return { ok: false, error: raceErr.message };
       await enqueueSitemapCrawl(domainConflict.id as string);
       await setCurrentSite(proj.id);
-      revalidatePath("/autoblog");
-      revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
+      revalidatePath("/dashboard/autoblog");
+      revalidatePath(`/dashboard/projects/${proj.id}/autoblog`, "layout");
       return { ok: true, siteId: domainConflict.id as string };
     }
     return {
@@ -572,8 +572,8 @@ export async function createOrUpdateSite(
         if (!raceErr) {
           await enqueueSitemapCrawl(raceRow.id as string);
           await setCurrentSite(proj.id);
-          revalidatePath("/autoblog");
-          revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
+          revalidatePath("/dashboard/autoblog");
+          revalidatePath(`/dashboard/projects/${proj.id}/autoblog`, "layout");
           return { ok: true, siteId: raceRow.id as string };
         }
       }
@@ -584,8 +584,8 @@ export async function createOrUpdateSite(
 
   await enqueueSitemapCrawl(inserted.id);
   await setCurrentSite(proj.id);
-  revalidatePath("/autoblog");
-  revalidatePath(`/projects/${proj.id}/autoblog`, "layout");
+  revalidatePath("/dashboard/autoblog");
+  revalidatePath(`/dashboard/projects/${proj.id}/autoblog`, "layout");
   return { ok: true, siteId: inserted.id };
 }
 
@@ -803,7 +803,7 @@ export async function deleteAutoblog(input: {
     .eq("project_id", input.projectId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true };
 }
 
@@ -838,7 +838,7 @@ export async function deleteProject(input: {
   if (error) return { ok: false, error: error.message };
 
   revalidatePath("/dashboard");
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true };
 }
 
@@ -874,8 +874,8 @@ export async function setSitePaused(
     .eq("id", lxSiteId)
     .eq("user_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/autoblog");
-  if (projectId) revalidatePath(`/projects/${projectId}/autoblog`);
+  revalidatePath("/dashboard/autoblog");
+  if (projectId) revalidatePath(`/dashboard/projects/${projectId}/autoblog`);
   return { ok: true };
 }
 
@@ -1017,7 +1017,7 @@ export async function generateSchedule(input: {
     })
     .eq("id", site.id);
 
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true, scheduled: insertRows.length };
 }
 
@@ -1060,7 +1060,7 @@ export async function previewNow(input: {
     manual: true,
   });
   if (!queued.ok) return { ok: false, error: queued.error };
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true };
 }
 
@@ -1097,6 +1097,6 @@ export async function publishArticle(input: {
 
   const queued = await enqueueArticleDeliver(input.articleId);
   if (!queued.ok) return { ok: false, error: queued.error };
-  revalidatePath("/projects", "layout");
+  revalidatePath("/dashboard/projects", "layout");
   return { ok: true };
 }

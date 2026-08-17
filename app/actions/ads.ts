@@ -165,7 +165,7 @@ export async function saveCampaign(input: {
   const { error: cErr } = await supabase.from("ad_creatives").insert(rows);
   if (cErr) return { ok: false, error: cErr.message };
 
-  revalidatePath("/ads");
+  revalidatePath("/dashboard/ads");
   return { ok: true, id: campaign.data.id, refSlug: campaign.data.ref_slug };
 }
 
@@ -208,8 +208,8 @@ export async function updateCampaign(input: {
     .eq("id", input.id)
     .eq("owner_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/ads");
-  revalidatePath(`/ads/${input.id}`);
+  revalidatePath("/dashboard/ads");
+  revalidatePath(`/dashboard/ads/${input.id}`);
   return { ok: true };
 }
 
@@ -242,7 +242,7 @@ export async function updateCreatives(input: {
       .eq("owner_id", user.id);
     if (error) return { ok: false, error: error.message };
   }
-  revalidatePath(`/ads/${input.campaignId}`);
+  revalidatePath(`/dashboard/ads/${input.campaignId}`);
   return { ok: true };
 }
 
@@ -317,8 +317,8 @@ export async function regenerateCampaign(input: {
     }
   }
 
-  revalidatePath("/ads");
-  revalidatePath(`/ads/${input.id}`);
+  revalidatePath("/dashboard/ads");
+  revalidatePath(`/dashboard/ads/${input.id}`);
   return { ok: true };
 }
 
@@ -353,7 +353,7 @@ export async function setCampaignStatus(input: {
     .eq("id", input.id)
     .eq("owner_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/ads");
+  revalidatePath("/dashboard/ads");
   return { ok: true };
 }
 
@@ -391,7 +391,7 @@ export async function createSlot(input: {
     .select("id")
     .single();
   if (error || !data) return { ok: false, error: error?.message ?? "Failed to create slot." };
-  revalidatePath("/ads/slots");
+  revalidatePath("/dashboard/ads/slots");
   return { ok: true, id: data.id };
 }
 
@@ -410,7 +410,7 @@ export async function setSlotStatus(input: {
     .eq("id", input.id)
     .eq("owner_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/ads/slots");
+  revalidatePath("/dashboard/ads/slots");
   return { ok: true };
 }
 
@@ -431,7 +431,7 @@ export async function saveSlotPayout(input: {
     .eq("id", input.id)
     .eq("owner_id", user.id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/ads/slots");
+  revalidatePath("/dashboard/ads/slots");
   return { ok: true };
 }
 
@@ -534,18 +534,18 @@ export async function requestPayout(input: {
       coinpay_payment_id: result.payoutId,
       tx_hash: result.txHash,
     });
-    revalidatePath("/ads/slots");
+    revalidatePath("/dashboard/ads/slots");
     return { ok: true, amountCents: available };
   }
 
   if (!result.retryable) {
     await supabase.from("ad_payouts").update({ status: "failed" }).eq("id", payout.id);
-    revalidatePath("/ads/slots");
+    revalidatePath("/dashboard/ads/slots");
     return { ok: false, error: result.error };
   }
 
   // Transient: keep the request queued (counts against the balance) and report.
-  revalidatePath("/ads/slots");
+  revalidatePath("/dashboard/ads/slots");
   return { ok: true, amountCents: available };
 }
 

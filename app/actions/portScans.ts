@@ -44,6 +44,6 @@ export async function requestPortScan(
     return { ok: false, error: `Could not queue scan: ${error.message}` };
   }
 
-  revalidatePath(`/projects/${projectId}/security`);
+  revalidatePath(`/dashboard/projects/${projectId}/security`);
   return { ok: true, scanId: inserted.id };
 }

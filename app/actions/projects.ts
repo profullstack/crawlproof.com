@@ -46,7 +46,7 @@ export async function updateProjectUrl(input: {
     .update({ url: check.url, domain })
     .eq("project_id", input.projectId);
 
-  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}`);
   revalidatePath("/dashboard");
   return { ok: true, url: check.url, domain };
 }
@@ -77,7 +77,7 @@ export async function updateProjectEngines(input: {
     .eq("id", input.projectId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath(`/dashboard/projects/${input.projectId}`);
   return { ok: true, engines: cleaned };
 }
 
@@ -102,7 +102,7 @@ async function setProjectStatus(
     .eq("id", projectId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/dashboard/projects/${projectId}`);
   revalidatePath("/dashboard");
   return { ok: true, status: next };
 }
@@ -140,6 +140,6 @@ export async function setTrackerEnabled(input: {
     .eq("id", input.projectId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/stats`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/stats`);
   return { ok: true, enabled: input.enabled };
 }

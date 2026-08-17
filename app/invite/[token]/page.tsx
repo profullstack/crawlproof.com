@@ -38,7 +38,7 @@ export default async function InvitePage({
           This invitation has already been used.
         </p>
         <Link
-          href={`/projects/${inv.project_id}`}
+          href={`/dashboard/projects/${inv.project_id}`}
           className="btn mt-6 inline-block"
         >
           Go to project
@@ -149,7 +149,7 @@ export default async function InvitePage({
     .update({ accepted_at: new Date().toISOString() })
     .eq("id", inv.id);
 
-  redirect(`/projects/${inv.project_id}`);
+  redirect(`/dashboard/projects/${inv.project_id}`);
 }
 
 function InviteShell({ children }: { children: React.ReactNode }) {

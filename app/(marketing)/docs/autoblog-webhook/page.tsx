@@ -46,7 +46,7 @@ export default function AutoblogWebhookDocsPage() {
           </li>
           <li>
             URL: whatever you saved on{" "}
-            <a className="underline" href="/autoblog/setup">
+            <a className="underline" href="/dashboard/autoblog/setup">
               /autoblog/setup
             </a>
             .
@@ -317,7 +317,7 @@ export async function POST(req: Request) {
           <code className="font-mono">CRAWLPROOF_WEBHOOK_SECRET</code>, run{" "}
           <code>node server.mjs</code>, expose it via ngrok or Cloudflare
           Tunnel, and paste the public URL into{" "}
-          <a className="underline" href="/autoblog/setup">
+          <a className="underline" href="/dashboard/autoblog/setup">
             /autoblog/setup
           </a>
           . Hit <em>Generate article now</em> on the dashboard to fire an

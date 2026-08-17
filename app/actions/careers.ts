@@ -61,8 +61,8 @@ export async function setCareersEnabled(input: {
     .eq("id", input.projectId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/stats`);
-  revalidatePath(`/projects/${input.projectId}/stats/careers`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/stats`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/stats/careers`);
   return { ok: true, enabled: input.enabled };
 }
 
@@ -265,7 +265,7 @@ export async function setApplicationStatus(input: {
 }
 
 function revalidateCareers(projectId: string) {
-  revalidatePath(`/projects/${projectId}/stats/careers`);
+  revalidatePath(`/dashboard/projects/${projectId}/stats/careers`);
 }
 
 /** A credit spend that has happened but whose posting write hasn't landed yet. */

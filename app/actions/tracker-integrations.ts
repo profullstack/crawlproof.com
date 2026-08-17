@@ -81,7 +81,7 @@ export async function analyzeTrackerIntegration(input: {
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/stats/integrations`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/stats/integrations`);
   return { ok: true, id: data.id as string };
 }
 
@@ -99,7 +99,7 @@ export async function deleteTrackerIntegration(input: {
     .eq("project_id", input.projectId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/projects/${input.projectId}/stats/integrations`);
+  revalidatePath(`/dashboard/projects/${input.projectId}/stats/integrations`);
   return { ok: true };
 }
 

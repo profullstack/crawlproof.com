@@ -40,11 +40,13 @@ export async function proxy(request: NextRequest) {
   const user = error ? null : data.user;
 
   const path = request.nextUrl.pathname;
-  const isApp =
-    path.startsWith("/dashboard") ||
-    path.startsWith("/projects") ||
-    path.startsWith("/audits") ||
-    path.startsWith("/settings");
+  // Every signed-in resource lives under /dashboard, so that one prefix is the
+  // whole gate. The old top-level paths (/projects, /audits, /settings, …) are
+  // 307'd here by next.config redirects, which run BEFORE middleware — so a
+  // signed-out visitor on an old bookmark lands on /dashboard/... and is
+  // caught by this check anyway, with the redirect param pointing at the new
+  // path rather than the dead one.
+  const isApp = path.startsWith("/dashboard");
 
   if (isApp && !user) {
     const url = request.nextUrl.clone();
