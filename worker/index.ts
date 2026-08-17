@@ -1186,6 +1186,64 @@ async function sweep() {
   for (const row of data) await processJob({ auditId: row.id });
 }
 
+// Boot-time crash recovery. A worker crash (or any restart) strands every
+// in-flight audit in 'running': sweep() only looks at 'queued', so nothing
+// retries them and auditStuckSweep() fails + refunds them minutes later. That
+// is how one crashing engine turns a 15-engine run into 13 audits all reporting
+// "Engine timed out" — they never ran at all.
+//
+// On boot nothing is genuinely in flight, so re-dispatch anything still inside
+// its stuck-timeout budget. Rows past their budget are left to auditStuckSweep,
+// which also bounds a crash loop: its cutoff is measured from created_at, so a
+// repeatedly-crashing audit stops being retried once its original window closes.
+async function recoverOrphanedAudits() {
+  const widestBudgetMs = Math.max(
+    auditStuckAfterMs(null),
+    auditStuckAfterMs("claude"),
+    auditStuckAfterMs("perplexity"),
+  );
+  const { data, error } = await supabase
+    .from("audits")
+    .select("id, engine, pdf_email, created_at")
+    .eq("status", "running")
+    .is("aborted_at", null)
+    .gt("created_at", new Date(Date.now() - widestBudgetMs).toISOString());
+  if (error) {
+    console.warn("[worker] orphan recovery", error.message);
+    return;
+  }
+  const rows = (data ?? []).filter(
+    (row) =>
+      Date.now() - new Date(row.created_at as string).getTime() <
+      auditStuckAfterMs(row.engine as string | null),
+  );
+  if (rows.length === 0) return;
+  console.log(`[worker] recovering ${rows.length} audit(s) orphaned by a restart`);
+
+  for (const row of rows) {
+    // Back to queued first, so a concurrent sweep can't double-process it.
+    const { data: requeued } = await supabase
+      .from("audits")
+      .update({ status: "queued" })
+      .eq("id", row.id)
+      .eq("status", "running")
+      .is("aborted_at", null)
+      .select("id")
+      .maybeSingle();
+    if (!requeued) continue;
+    // A run that died between the findings insert and the status write would
+    // otherwise duplicate its findings on retry.
+    await supabase.from("audit_findings").delete().eq("audit_id", row.id);
+    // Re-dispatch now rather than waiting for sweep(), which is serial and
+    // capped at 5 — a full multi-engine batch would not be reached before the
+    // very budget we're racing runs out.
+    processJob({
+      auditId: row.id as string,
+      pdfEmail: (row.pdf_email as string | null) ?? undefined,
+    }).catch((e) => console.error("[worker] orphan recovery", row.id, e));
+  }
+}
+
 // Recover audits orphaned by a worker crash or by an upstream engine that
 // opened a connection then never delivered. Keep the default short for local
 // and OpenAI-compatible engines, but give Claude room to finish legitimate
@@ -1386,6 +1444,7 @@ setInterval(
 const bindHost = process.env.WORKER_BIND ?? "127.0.0.1";
 server.listen(port, bindHost, () => {
   console.log(`[worker] listening on ${bindHost}:${port}`);
+  recoverOrphanedAudits().catch((e) => console.error("[worker] orphan recovery", e));
   sweep().catch(() => {});
   socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e));
   promoteSweep().catch((e) => console.error("[worker] promote sweep", e));
