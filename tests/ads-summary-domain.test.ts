@@ -55,3 +55,59 @@ describe("cleanSummary", () => {
     expect(summaryParagraphs(cleanSummary("a\r\n\r\nb", 400))).toEqual(["a", "b"]);
   });
 });
+
+describe("summaries that describe the page instead of the product", () => {
+  // A model told never to invent will, handed an empty or unreadable page,
+  // write something true about the *document*. Accurate, useless, and the last
+  // thing that should be published inside somebody's blog post as though the
+  // advertiser wrote it. Caught on the very first dry run against real data:
+  // a .onion campaign produced "a Tor .onion address; the fetched page contains
+  // no readable text".
+  const meta = [
+    "A Tor .onion address; the fetched page contains no readable text and provides no information.",
+    "The page could not be accessed, so no description is possible.",
+    "This appears to be a placeholder page with no content found.",
+    "Unable to determine what this product does from the page.",
+    "There is not enough information on the page to describe the service.",
+  ];
+
+  const real = [
+    "Widgets is a deployment tool for small teams that do not run a platform group.",
+    "CoinPay is an open-source, non-custodial crypto payment gateway with escrow and web wallets.",
+    "The rollback path is the same one used to deploy, so it is exercised on every release.",
+    // Must not trip on ordinary copy that merely mentions pages or content.
+    "A page builder for marketing sites, with content blocks you can reorder.",
+  ];
+
+  it("recognises prose about the fetch", async () => {
+    const { __test_describesTheFetch: fn } = await import("@/lib/ads/creative");
+    for (const t of meta) expect(fn(t), t).toBe(true);
+  });
+
+  it("leaves real product copy alone", async () => {
+    const { __test_describesTheFetch: fn } = await import("@/lib/ads/creative");
+    for (const t of real) expect(fn(t), t).toBe(false);
+  });
+});
+
+describe("truncation", () => {
+  // The schema caps are deliberately generous because the SDK validates
+  // maxLength client-side and throws the whole generation on an overrun; the
+  // real limit is applied here, where going over is a trim rather than an error.
+  it("cuts on a sentence boundary when there is one", () => {
+    const text = "First sentence here. Second sentence runs past the limit and keeps going.";
+    const out = cleanSummary(text, 40);
+    expect(out).toBe("First sentence here.");
+  });
+
+  it("falls back to a word boundary rather than cutting mid-word", () => {
+    const out = cleanSummary("a deployment tool for small teams everywhere", 20);
+    expect(out.endsWith("te")).toBe(false);
+    expect(out.length).toBeLessThanOrEqual(20);
+    expect(/\s$/.test(out)).toBe(false);
+  });
+
+  it("leaves text under the cap untouched", () => {
+    expect(cleanSummary("short enough", 400)).toBe("short enough");
+  });
+});
