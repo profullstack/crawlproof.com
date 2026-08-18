@@ -9,7 +9,7 @@ import {
   type AdCreative,
   type AdFormatId,
 } from "./creative";
-import { TERMINAL_FORMAT_ID } from "./formats";
+import { FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import {
@@ -292,10 +292,18 @@ export async function serveAd(
   // destination with ?ref= applied. Terminals print the URL as literal text, so
   // the terminal format gets the short /a/<code> form — it resolves the
   // slot/campaign/creative from the impression row instead of the query string.
-  const clickUrl =
-    format === TERMINAL_FORMAT_ID
-      ? `${env.siteUrl}/a/${clickRef}`
-      : `${env.siteUrl}/api/ads/click?i=${impressionId}&s=${slotId}&c=${campaign.id}&cr=${pick.id}`;
+  //
+  // Feed ads take the short form too, for two reasons. The soft one is that a
+  // click URL in a feed is *seen*: readers show the destination on hover, and a
+  // 70-character tracking URL beside a headline reads as spam next to
+  // crawlproof.com/a/<code>. The hard one is that several feed shapes print it
+  // as literal text rather than putting it in an href — as=text, as=markdown,
+  // and the terminal body style, which renders the same fixed-width ASCII box
+  // the MOTD endpoint serves and has exactly as little room to spare.
+  const shortClick = format === TERMINAL_FORMAT_ID || format === FEED_FORMAT_ID;
+  const clickUrl = shortClick
+    ? `${env.siteUrl}/a/${clickRef}`
+    : `${env.siteUrl}/api/ads/click?i=${impressionId}&s=${slotId}&c=${campaign.id}&cr=${pick.id}`;
 
   return {
     impressionId,

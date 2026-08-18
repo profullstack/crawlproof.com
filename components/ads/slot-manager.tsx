@@ -4,6 +4,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createSlot, setSlotStatus, saveSlotPayout, requestPayout } from "@/app/actions/ads";
 import {
+  FEED_FORMAT_ID,
+  FEED_ITEM_LABEL,
+  PUBLISHER_FEED_FORMAT_IDS,
   PUBLISHER_FORMAT_IDS,
   PUBLISHER_TEXT_FORMAT_IDS,
   TERMINAL_COLS_LABEL,
@@ -11,51 +14,23 @@ import {
   formatSpec,
   type AdFormatId,
 } from "@/lib/ads/formats";
+import { formatBlurb, snippetsFor } from "@/lib/ads/snippets";
 
 // Every unit a publisher can install: HTML embeds first, then the fetch-based
-// text formats (terminal/MOTD).
+// formats — the terminal box (printed by a shell), then the feed item (spliced
+// into a document the publisher generates).
 const INSTALLABLE_FORMAT_IDS: AdFormatId[] = [
   ...PUBLISHER_FORMAT_IDS,
   ...PUBLISHER_TEXT_FORMAT_IDS,
+  ...PUBLISHER_FEED_FORMAT_IDS,
 ];
 
-// The paste-once embed for a given size. data-format tells /ad.js which creative
-// to request; the medium rectangle stays the default the auto-installer uses.
-// The terminal format isn't embedded at all — it's curled, so it gets a shell
-// snippet instead of markup.
-function embedFor(slotId: string, format: AdFormatId, origin: string): string {
-  if (format === TERMINAL_FORMAT_ID) {
-    return [
-      "# Terminal ad — plain ASCII over HTTP. No JavaScript, no HTML, no iframe.",
-      "# Drop in ~/.zshrc, /etc/profile.d/, /etc/update-motd.d, or any CLI banner.",
-      `curl -fsS --max-time 3 "${origin}/api/ads/motd?slot=${slotId}&cols=72"`,
-      "",
-      "# Options: &color=1 for ANSI colour, &cols=44..120 for width,",
-      "# &src=<tag> to tell surfaces apart (rides through to the click URL).",
-      "",
-      "# Repeat visitors: &v=<id>. A terminal has no cookies and no localStorage,",
-      "# so unlike the web tag we can't mint this for you — without it every",
-      "# fetch looks like a brand new person. Generate one stable random id per",
-      "# machine at install time and pass it every time:",
-      "#   id=$(cat /etc/crawlproof-visitor 2>/dev/null) || {",
-      "#     id=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \\n')",
-      "#     printf '%s' \"$id\" >/etc/crawlproof-visitor",
-      "#   }",
-      `#   curl -fsS "${origin}/api/ads/motd?slot=${slotId}&cols=72&v=$id"`,
-      "# Use an opaque random value — never a hostname, username, or IP.",
-      "",
-      "# Rendering a template server-side? Leave a token where the ad goes —",
-      "#   {{ads}}  {{ads:64}}  {{ads:terminal:64}}",
-      "# — and swap it for the fetched text before you send the response.",
-    ].join("\n");
-  }
-  return `<div data-cp-ad data-slot="${slotId}" data-format="${format}"></div>\n<script src="${origin}/ad.js" async></script>`;
-}
-
-// Button caption: pixel sizes for banners, columns for the terminal box.
+// Button caption: pixel sizes for banners, columns for the terminal box, and
+// "1 item" for the feed unit — which has neither.
 function formatButtonLabel(id: AdFormatId): string {
   const spec = formatSpec(id);
   if (id === TERMINAL_FORMAT_ID) return `${spec.label} · ${TERMINAL_COLS_LABEL}`;
+  if (id === FEED_FORMAT_ID) return `${spec.label} · ${FEED_ITEM_LABEL}`;
   return `${spec.label} · ${spec.w}×${spec.h}`;
 }
 
@@ -131,13 +106,22 @@ export function SlotManager({
   // Which size's embed is currently revealed, and whether the code block is open.
   const [fmt, setFmt] = useState<AdFormatId>(PUBLISHER_FORMAT_IDS[0]);
   const [showCode, setShowCode] = useState(true);
+  // Which recipe within that size. Keyed by id rather than index so that
+  // switching formats and coming back does not land on an unrelated language
+  // just because it happened to sit at the same position.
+  const [snippetId, setSnippetId] = useState<string | null>(null);
   const [prBusy, setPrBusy] = useState(false);
   const [prMsg, setPrMsg] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
   const [repoChoices, setRepoChoices] = useState<
     { owner: string; repo: string; installation_id: number }[] | null
   >(null);
 
-  const embed = slot ? embedFor(slot.id, fmt, origin) : null;
+  const snippets = slot ? snippetsFor(fmt, slot.id, origin) : [];
+  // The first recipe is the canonical one for each unit, so an unset selection
+  // (or one left over from another format) falls back to it rather than to
+  // nothing.
+  const snippet = snippets.find((sn) => sn.id === snippetId) ?? snippets[0] ?? null;
+  const embed = snippet?.code ?? null;
 
   function enable() {
     start(async () => {
@@ -285,7 +269,7 @@ export function SlotManager({
           )}
           <div>
             <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-              Embed — pick a unit, paste on your page (or in your shell)
+              Install — pick a unit, then the stack you build with
             </div>
             {/* One button per available size. Clicking reveals that size's code;
                 clicking the open size again collapses it. */}
@@ -302,6 +286,9 @@ export function SlotManager({
                         setShowCode((s) => !s);
                       } else {
                         setFmt(id);
+                        // Formats do not share recipes, so a selection made for
+                        // the last one cannot carry over.
+                        setSnippetId(null);
                         setShowCode(true);
                       }
                     }}
@@ -311,14 +298,34 @@ export function SlotManager({
                 );
               })}
             </div>
-            {showCode && embed && (
+            {showCode && snippet && (
               <>
+                <p className="mt-2 text-xs text-[var(--color-muted)]">{formatBlurb(fmt)}</p>
+                {/* One button per stack. The banners need this least — a script
+                    tag is a script tag — and the feed unit needs it most, since
+                    the snippet has to be written in whatever language builds
+                    the publisher's feed. */}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {snippets.map((sn) => (
+                    <button
+                      key={sn.id}
+                      className={`btn px-2 py-1 text-[11px] ${sn.id === snippet.id ? "btn-primary" : ""}`}
+                      aria-pressed={sn.id === snippet.id}
+                      onClick={() => setSnippetId(sn.id)}
+                    >
+                      {sn.label}
+                    </button>
+                  ))}
+                </div>
                 <pre className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-black/30 p-3 text-xs">
-                  {embed}
+                  {snippet.code}
                 </pre>
+                {snippet.note && (
+                  <p className="mt-1 text-xs text-[var(--color-muted)]">{snippet.note}</p>
+                )}
                 <div className="mt-2">
                   <button className="btn text-xs" onClick={copy}>
-                    {copied ? "Copied!" : "Copy embed"}
+                    {copied ? "Copied!" : `Copy ${snippet.label} snippet`}
                   </button>
                 </div>
               </>

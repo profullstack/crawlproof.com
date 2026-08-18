@@ -15,6 +15,11 @@ export const AD_FORMATS = [
   // preview when the same creative is rendered in a <pre>. The real dimension
   // is TERMINAL_COLS (see ./terminal).
   { id: "terminal_ascii", label: "Terminal (ASCII)", w: 600, h: 148 },
+  // Syndication item — an RSS <item> / Atom <entry> / JSON Feed item, spliced
+  // into somebody else's feed document. Like the terminal format there is no
+  // pixel box: w/h is only the nominal size the web preview uses when the same
+  // creative is rendered as HTML. The real dimension is "one item".
+  { id: "feed_item", label: "Feed (RSS/Atom/JSON)", w: 600, h: 120 },
 ] as const;
 
 export type AdFormatId = (typeof AD_FORMATS)[number]["id"];
@@ -39,13 +44,28 @@ export const PUBLISHER_FORMAT_IDS: AdFormatId[] = [
 // (serving, the MOTD endpoint, the publisher snippet) branch on it.
 export const TERMINAL_FORMAT_ID = "terminal_ascii" as const;
 
+// The feed format id. Same reasoning as above — serving, /api/ads/feed and the
+// publisher snippets all branch on it. Declared here rather than imported from
+// ./feeditem so that this module stays the one place a format id is named, and
+// so ./feeditem can import ./formats without a cycle.
+export const FEED_FORMAT_ID = "feed_item" as const;
+
 // Caption for the terminal unit's real dimension — it has columns, not pixels.
 export const TERMINAL_COLS_LABEL = "76 cols";
+
+// Same for the feed unit, whose dimension is an item in a river.
+export const FEED_ITEM_LABEL = "1 item";
 
 // Formats a publisher consumes over plain HTTP as text rather than embedding —
 // `curl https://crawlproof.com/api/ads/motd?slot=<id>` in a login banner, MOTD,
 // or CLI. Shown as their own group on the Monetize page.
 export const PUBLISHER_TEXT_FORMAT_IDS: AdFormatId[] = [TERMINAL_FORMAT_ID];
+
+// Formats a publisher splices into a document they generate themselves — an
+// RSS/Atom/JSON feed, a newsletter, a static-site build. Fetched at build time
+// and pasted into the output, so like the text formats they are never embedded
+// and never rendered by /ad.js.
+export const PUBLISHER_FEED_FORMAT_IDS: AdFormatId[] = [FEED_FORMAT_ID];
 
 export function formatSpec(id: AdFormatId) {
   return AD_FORMATS.find((f) => f.id === id) ?? AD_FORMATS[0];

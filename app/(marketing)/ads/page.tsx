@@ -14,6 +14,8 @@ import {
   PUBLISHER_FORMAT_IDS,
   TERMINAL_FORMAT_ID,
   TERMINAL_COLS_LABEL,
+  FEED_FORMAT_ID,
+  FEED_ITEM_LABEL,
   formatSpec,
 } from "@/lib/ads/formats";
 
@@ -54,6 +56,7 @@ export default async function AdsMarketingPage() {
   const perClickPayout = creditsToPayoutCents(CPC_CREDITS);
   const publisherFormats = PUBLISHER_FORMAT_IDS.map((id) => formatSpec(id));
   const terminal = AD_FORMATS.find((f) => f.id === TERMINAL_FORMAT_ID);
+  const feed = AD_FORMATS.find((f) => f.id === FEED_FORMAT_ID);
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-16 sm:px-6">
@@ -99,7 +102,7 @@ export default async function AdsMarketingPage() {
           />
           <Card
             title="Every size at once"
-            body={`${AD_FORMATS.length} formats from one campaign: the standard display sizes, a borderless text link that reads as part of the page, and an ASCII unit for terminals.`}
+            body={`${AD_FORMATS.length} formats from one campaign: the standard display sizes, a borderless text link that reads as part of the page, an ASCII unit for terminals, and a syndication item for RSS and Atom feeds.`}
           />
           <Card
             title="A budget that actually stops"
@@ -230,12 +233,29 @@ export default async function AdsMarketingPage() {
               </span>
             </span>
           )}
+          {feed && (
+            <span className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-sm">
+              {feed.label}{" "}
+              <span className="font-mono text-xs text-[var(--color-muted)]">{FEED_ITEM_LABEL}</span>
+            </span>
+          )}
         </div>
         <p className="mt-4 max-w-3xl text-sm text-[var(--color-muted)]">
           The terminal unit is the odd one out and the point of it is that nobody else sells it:
           a plain-text ASCII box you can <span className="font-mono">curl</span>{" "}
           into an SSH login banner, a shell MOTD, a BBS screen or a CLI tool&apos;s output. It is fetched
           over HTTP rather than embedded, so it works in places a browser never reaches.
+        </p>
+        <p className="mt-3 max-w-3xl text-sm text-[var(--color-muted)]">
+          The feed unit is the other one. Ask{" "}
+          <span className="font-mono">/api/ads/feed</span> for an RSS{" "}
+          <span className="font-mono">&lt;item&gt;</span>, an Atom{" "}
+          <span className="font-mono">&lt;entry&gt;</span>, a JSON Feed item, or a bare
+          HTML, Markdown or plain-text body, and splice it into a feed you already publish —
+          typically one sponsored item every ten posts. There are copy-and-paste
+          recipes for Node, Next.js, Hugo, Eleventy, Jekyll, Astro, WordPress, PHP, Python,
+          Django, Ruby, Go and Cloudflare Workers. Your subscribers see it in the reader they
+          already use, and nothing on your site has to load a script.
         </p>
       </section>
 
