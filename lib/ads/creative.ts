@@ -85,6 +85,39 @@ const CopySchema = z.object({
 });
 type AdCopy = z.infer<typeof CopySchema>;
 
+/**
+ * The summary half of CopySchema on its own, derived from it rather than
+ * retyped so the two can never disagree about lengths or descriptions.
+ */
+export const SummarySchema = CopySchema.pick({ summaryShort: true, summaryLong: true });
+
+/**
+ * How the editorial summaries must be written.
+ *
+ * Split out because two callers need exactly these words: the full creative
+ * generation above, and `generateAdSummary` below, which the backfill script
+ * uses to fill in campaigns that predate the feature. If the two prompts
+ * drifted, a backfilled campaign would read differently from a freshly
+ * generated one and nobody would know why.
+ *
+ * The register instruction is doing real work. Without it the model returns
+ * three restatements of the headline, which is useless: these run inside other
+ * people's writing, next to their prose, and ad voice is exactly what makes
+ * them read as an intrusion and get skipped.
+ */
+export const SUMMARY_RULES: readonly string[] = [
+  "Write two editorial summaries of the advertiser, in a different register from",
+  "display ad copy: third person, calm, factual, the way a journalist would",
+  "describe the product in one line of a round-up. No slogans, no second person, no",
+  "calls to action, no exclamation marks, no hype adjectives ('revolutionary',",
+  "'game-changing', 'seamless'). summaryShort is one or two sentences. summaryLong",
+  "is two or three short paragraphs separated by blank lines.",
+  "Never invent anything, and note this binds harder here than for a headline:",
+  "these are longer, so there is more room to fabricate. Every fact must come from",
+  "the page content. If the page does not say who it is for, or what it costs, or",
+  "how it works, then neither do you — write less rather than filling the space.",
+];
+
 const SYSTEM_PROMPT = [
   "You are a senior performance-marketing copywriter and brand designer.",
   "Given a company's website content and detected brand colours, write a single",
@@ -94,20 +127,7 @@ const SYSTEM_PROMPT = [
   "invent features, prices, or claims. Keep it concrete and specific to this product.",
   "Colours must be readable: high contrast between background and foreground.",
   "Prefer the site's real brand/accent colour when the palette makes it obvious.",
-  // The summaries are a different register from the display copy, and saying so
-  // explicitly is what stops the model returning three restatements of the
-  // headline. They run inside other people's writing, next to their prose, so
-  // ad voice is exactly what makes them read as an intrusion and get skipped.
-  "ALSO write two editorial summaries of the advertiser, in a different register",
-  "from the ad copy above: third person, calm, factual, the way a journalist would",
-  "describe the product in one line of a round-up. No slogans, no second person, no",
-  "calls to action, no exclamation marks, no hype adjectives ('revolutionary',",
-  "'game-changing', 'seamless'). summaryShort is one or two sentences. summaryLong",
-  "is two or three short paragraphs separated by blank lines.",
-  "The same no-invention rule binds them, and binds them harder: these are longer,",
-  "so there is more room to fabricate. Every fact must come from the page content.",
-  "If the page does not say who it is for, or what it costs, or how it works, then",
-  "neither do you — write less rather than filling the space.",
+  ...SUMMARY_RULES,
 ].join(" ");
 
 function buildUserPrompt(brand: SiteBrand): string {
@@ -201,6 +221,112 @@ export function cleanSummary(v: unknown, maxLen: number): string {
     .join("\n")
     .trim();
   return text.slice(0, maxLen);
+}
+
+/**
+ * Just the two summaries, for a campaign that already has creatives.
+ *
+ * Deliberately not `generateAdCreatives`. That regenerates the whole concept —
+ * colours, four creatives, and a hero image through gpt-image when a Supabase
+ * client is passed — which for a backfill would be both far more expensive and
+ * actively destructive: it would replace copy an advertiser may have edited by
+ * hand. This reads the page, writes the prose, and touches nothing else.
+ *
+ * The prompt is the same SUMMARY_RULES the full generator uses, so a backfilled
+ * campaign reads like a freshly generated one.
+ */
+export async function generateAdSummary(
+  rawUrl: string,
+  opts: { anthropic?: Anthropic | null; openai?: OpenAI | null } = {},
+): Promise<{ summary: AdSummary; provider: string; title: string }> {
+  const brand = await extractSiteBrand(rawUrl);
+
+  // Nothing readable came back, so there is nothing to summarise. Asked anyway,
+  // a model that has been told not to invent does the honest thing and
+  // describes *the fetch* — "a Tor .onion address; the page contains no
+  // readable text" — which is accurate, useless, and would be published inside
+  // somebody's blog post as though it were ad copy. An empty summary is the
+  // correct answer and every caller already treats it as "no prose".
+  if (readableTextLength(brand.text) < MIN_SUMMARY_SOURCE_CHARS) {
+    return {
+      summary: { short: "", long: "", domain: summaryDomain(brand.url || rawUrl) },
+      provider: "skipped:no-content",
+      title: brand.title ?? "",
+    };
+  }
+
+  const anthropic =
+    opts.anthropic ?? (env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null);
+  const openai =
+    opts.openai ?? (env.openaiApiKey ? new OpenAI({ apiKey: env.openaiApiKey }) : null);
+
+  const { provider, output } = await generateStructuredOutput<{
+    summaryShort: string;
+    summaryLong: string;
+  }>({
+    name: "ad_summary",
+    schema: SummarySchema,
+    system: ["You are a technology journalist writing a neutral product note.", ...SUMMARY_RULES].join(
+      " ",
+    ),
+    user: buildUserPrompt(brand),
+    maxTokens: 3000,
+    anthropicModel: CLAUDE_MODEL,
+    openaiModel: OPENAI_MODEL,
+    anthropic,
+    openai,
+    anthropicEffort: "low",
+  });
+
+  const short = cleanSummary(output.summaryShort, 400);
+  const long = cleanSummary(output.summaryLong, 1600);
+
+  // Second line of defence. The input guard catches an empty page; this catches
+  // the page that had *some* text but not enough to describe, where the model
+  // writes about the document instead of the product. Either way the prose is
+  // discarded rather than published.
+  const usable = !describesTheFetch(short) && !describesTheFetch(long);
+
+  return {
+    summary: {
+      short: usable ? short : "",
+      long: usable ? long : "",
+      domain: summaryDomain(brand.url || rawUrl),
+    },
+    provider: usable ? provider : `rejected:meta:${provider}`,
+    title: brand.title ?? "",
+  };
+}
+
+/** Minimum readable characters on a page before it is worth summarising. */
+const MIN_SUMMARY_SOURCE_CHARS = 200;
+
+/** Words-worth of text, ignoring the whitespace a stripped page is mostly made of. */
+function readableTextLength(text: string | null | undefined): number {
+  return String(text ?? "").replace(/\s+/g, " ").trim().length;
+}
+
+/**
+ * Does this summary describe the page we fetched rather than the product?
+ *
+ * A model told never to invent will, given an empty or unreadable page, write
+ * something true about the *document* — that it has no readable text, that it
+ * could not be accessed, that it appears to be a placeholder. True, and exactly
+ * what must never be rendered as an advertiser's description of themselves.
+ *
+ * Matching on phrases is crude, but the failure it guards is loud and narrow:
+ * real product copy does not talk about fetching, page content, or what could
+ * not be determined.
+ */
+export function __test_describesTheFetch(text: string): boolean {
+  return describesTheFetch(text);
+}
+
+function describesTheFetch(text: string): boolean {
+  if (!text) return false;
+  return /\b(no readable (text|content)|the (fetched |retrieved )?page (contains|provides|has)\b|could not (be )?(access|retriev|fetch|determin|load)|unable to (access|determine|retrieve|load)|no information (about|is)|appears to be (empty|a placeholder|blank)|not enough information|no content (was )?(found|available)|placeholder page|under construction)/i.test(
+    text,
+  );
 }
 
 export async function generateAdCreatives(
