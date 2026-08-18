@@ -114,6 +114,43 @@ export function sumSeries(points: AccountPoint[]): RangeTotals {
   );
 }
 
+/**
+ * Everything actually shown in the range: paid inventory plus free backfill.
+ *
+ * The headline tiles report this rather than the paid figure alone. Paid-only
+ * was fine while some delivery was paid, and read as a dead dashboard the
+ * moment none of it was — a network whose slots and campaigns belong to the
+ * same account books every fill as free tier (serveAd demotes a self-deal),
+ * so every tile showed 0 while the chart underneath showed thousands of
+ * impressions. A free-tier impression is still an impression; what it isn't is
+ * revenue, and Spend is the tile that says so.
+ */
+export function deliveredImpressions(t: RangeTotals): number {
+  return t.impressions + t.freeImpressions;
+}
+
+/** Clicks actually taken in the range: billed plus unbillable-but-real. */
+export function deliveredClicks(t: RangeTotals): number {
+  return t.clicks + t.freeClicks;
+}
+
+/**
+ * Sub-line for a delivery tile: how its headline total divides into paid and
+ * free. Silent when there is nothing to divide — a tile reading 0 needs no
+ * footnote saying it was 0 paid and 0 free, and an all-paid tile is already
+ * fully described by its own number.
+ */
+export function deliverySplitNote(paid: number, free: number): string | undefined {
+  if (free === 0) return undefined;
+  if (paid === 0) return "all free backfill";
+  return `${paid.toLocaleString()} paid · ${free.toLocaleString()} free`;
+}
+
+/** Sparkline accessors, so a tile's shape plots the number above it. */
+export const pickDeliveredImpressions = (p: AccountPoint): number =>
+  p.impressions + p.freeImpressions;
+export const pickDeliveredClicks = (p: AccountPoint): number => p.clicks + p.freeClicks;
+
 type CampaignTotalsRow = {
   campaign_id: string;
   impressions: number | string;
