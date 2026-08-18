@@ -332,13 +332,20 @@ export function labelText(v: string | null | undefined): string {
 /**
  * The item title.
  *
- * The disclosure is in the title rather than only in the body because a great
- * many readers show titles in a list and bodies only on click — a sponsored
- * item whose sponsorship is disclosed exclusively in the body is, for those
- * readers, an undisclosed one.
+ * The disclosure stays in the title, because a great many readers show titles
+ * in a list and bodies only on click — an item whose sponsorship is disclosed
+ * exclusively in the body is, for those readers, an undisclosed one.
+ *
+ * But it goes at the *end*. A leading "[Sponsored]" is the first thing the eye
+ * lands on in a list of headlines, and it reads as a subject-line prefix on
+ * spam, so the item is skipped before the offer is ever read. Trailing, the
+ * headline gets to say what it is and the label still travels everywhere the
+ * title travels. Nothing is hidden: this is the same word, in the same field,
+ * and `<category>` carries it machine-readably besides.
  */
 export function feedTitle(creative: AdCreative, label = DEFAULT_LABEL): string {
-  return `[${labelText(label)}] ${oneLine(creative.headline) || "A message from our sponsor"}`;
+  const headline = oneLine(creative.headline) || "A message from our sponsor";
+  return `${headline} (${labelText(label)})`;
 }
 
 /**
@@ -376,19 +383,41 @@ export function renderFeedHtml(
   }
 
   if (style === "card") {
-    const parts = [`<hr />`, `<p><strong>${esc(label)}</strong></p>`];
-    // Dimensions are attributes rather than CSS for the same reason as
-    // everything else here, and are capped small: this is a feed item, not a
-    // banner, and an oversized logo is what makes an ad feel like an intrusion.
-    if (creative.logoUrl) {
+    // The substantial one. A feed item sits between real blog posts, each of
+    // which has a title, a picture and a few paragraphs — so a bare line of
+    // text does not read as restrained next to them, it reads as broken, and
+    // gets skipped. This carries the artwork the advertiser already has.
+    //
+    // Every field here is one the advertiser supplied. Nothing is padded out
+    // with invented copy: an ad that describes a product in words its owner
+    // never wrote is a fabricated claim, however good it looks.
+    const parts: string[] = [];
+
+    // Lead with the picture, the way the posts around it do. width is set and
+    // height deliberately is not: readers scale to their own column width, and
+    // a fixed height would distort every image that is not exactly 2:1.
+    if (creative.imageUrl) {
       parts.push(
-        `<p>${link(`<img src="${esc(creative.logoUrl)}" alt="" width="120" height="32" />`)}</p>`,
+        `<p>${link(`<img src="${esc(creative.imageUrl)}" alt="${headline}" width="600" />`)}</p>`,
       );
     }
-    parts.push(`<p>${link(`<strong>${headline}</strong>`)}</p>`);
+
+    parts.push(`<h3>${link(headline)}</h3>`);
     if (body) parts.push(`<p>${body}</p>`);
     parts.push(`<p>${link(`<strong>${cta} &#8594;</strong>`)}</p>`);
-    parts.push(`<p><small>${credit}</small></p>`, `<hr />`);
+
+    // The brand line: the logo where there is one, and always the destination
+    // host. Naming who is paying is the single most useful thing a disclosure
+    // can do — "Sponsored" tells a reader an ad is an ad, and the domain tells
+    // them whose it is, which is what they actually decide on.
+    const host = destinationHost(clickUrl, creative);
+    const mark = creative.logoUrl
+      ? `<img src="${esc(creative.logoUrl)}" alt="" height="20" /> `
+      : "";
+    parts.push(
+      `<p><small>${mark}${esc(label)}${host ? ` &#183; ${esc(host)}` : ""} &#183; ${credit}</small></p>`,
+    );
+
     return parts.join("\n");
   }
 
@@ -431,11 +460,15 @@ export function renderFeedMarkdown(
   }
 
   if (style === "card") {
-    const lines = ["---", "", `**${label}**`, ""];
-    if (creative.logoUrl) lines.push(`[![](${mdUrl(creative.logoUrl)})](${url})`, "");
+    // Mirrors the HTML card: artwork first, then the headline, the body, the
+    // call to action, and a brand line naming who is paying.
+    const lines: string[] = [];
+    if (creative.imageUrl) lines.push(`[![${headline}](${mdUrl(creative.imageUrl)})](${url})`, "");
     lines.push(`### [${headline}](${url})`, "");
     if (body) lines.push(body, "");
-    lines.push(`[**${cta} →**](${url})`, "", credit, "", "---");
+    lines.push(`[**${cta} →**](${url})`, "");
+    const host = destinationHost(clickUrl, creative);
+    lines.push(`*${label}${host ? ` · ${mdEsc(host)}` : ""} · ${mdEsc(ATTRIBUTION)}*`);
     return lines.join("\n");
   }
 
@@ -462,6 +495,30 @@ export function renderFeedText(
   return [`[${label}] ${headline}`, body, `${cta}: ${clickUrl}`, `-- ${ATTRIBUTION} (${ATTRIBUTION_URL})`]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * The host a reader will end up on, for the brand line.
+ *
+ * Our click URL is a redirector, so its host is always crawlproof.com and is
+ * useless here — the advertiser's own domain is what the reader wants to see.
+ * It is not on the creative, so this falls back to the logo's host, which for
+ * essentially every campaign is the advertiser's own CDN or site. Returns ""
+ * rather than guessing when there is nothing trustworthy to show.
+ */
+export function destinationHost(clickUrl: string, creative: AdCreative): string {
+  for (const candidate of [creative.logoUrl, creative.imageUrl]) {
+    if (!candidate) continue;
+    try {
+      const host = new URL(candidate).hostname.replace(/^www\./, "");
+      // Our own storage tells the reader nothing about who is advertising.
+      if (/crawlproof\.com$|supabase\.(co|in)$/i.test(host)) continue;
+      return host;
+    } catch {
+      // Not a URL we can read a host out of; try the next one.
+    }
+  }
+  return "";
 }
 
 /** Escape the Markdown punctuation that would otherwise reformat ad copy. */
