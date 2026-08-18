@@ -23,6 +23,10 @@ describe("crawlproof MCP · promote module", () => {
       "generate_promo_post",
       "list_accounts",
       "post_to_socials",
+      "promote_add_feed_source",
+      "promote_add_keyword_source",
+      "promote_list_campaigns",
+      "promote_list_sources",
       "promote_url",
     ]);
 
@@ -32,6 +36,15 @@ describe("crawlproof MCP · promote module", () => {
     const props = (promote?.inputSchema as { properties?: Record<string, unknown> })?.properties;
     expect(props?.url).toBeDefined();
     expect(props?.account_ids).toBeDefined();
+
+    // Content sources are reachable over MCP too, so an agent can build the
+    // same campaign a user would build in the dashboard.
+    const keywords = tools.find((t) => t.name === "promote_add_keyword_source");
+    const keywordProps = (keywords?.inputSchema as { properties?: Record<string, unknown> })
+      ?.properties;
+    expect(keywordProps?.campaign_id).toBeDefined();
+    expect(keywordProps?.keywords).toBeDefined();
+    expect(keywords?.description).toMatch(/one .*source per keyword/i);
 
     await client.close();
     await server.close();

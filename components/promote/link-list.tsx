@@ -13,6 +13,8 @@ type LinkRow = {
   times_promoted: number;
   last_promoted_at: string | null;
   created_at: string;
+  ownership?: string | null;
+  source_name?: string | null;
 };
 
 export function LinkList({ links }: { links: LinkRow[] }) {
@@ -60,6 +62,14 @@ function LinkItem({ link }: { link: LinkRow }) {
         </a>
         {link.title && (
           <div className="truncate text-[var(--color-muted)]">{link.title}</div>
+        )}
+        {/* Where this link came from: a link imported from somebody else's feed
+            reads very differently from one the user pasted. */}
+        {link.ownership && link.ownership !== "owned" && (
+          <div className="truncate text-xs text-[var(--color-muted)]">
+            {link.ownership === "shared" ? "Industry" : "Partner"} content
+            {link.source_name ? ` · ${link.source_name}` : ""}
+          </div>
         )}
         {link.angle && (
           <div className="truncate text-xs text-[var(--color-muted)]">

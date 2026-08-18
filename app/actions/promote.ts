@@ -4,6 +4,16 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { parseLinks, fetchLinkTitle } from "@/lib/promote/generatePitch";
+import { parseKeywords } from "@/lib/promote/keywords";
+import {
+  addKeywordSources as addKeywordSourcesToList,
+  ensureFeed,
+  normalizeFeedUrl,
+  validateFeedUrl,
+  type KeywordSourceOutcome,
+} from "@/lib/promote/sources";
+import { fanOutToSubscribers, ingestFeedNow } from "@/lib/promote/ingest";
+import { parseFallback, parseMix, type Ownership } from "@/lib/promote/blend";
 import { env } from "@/lib/env";
 
 type Ok<T = Record<string, unknown>> = { ok: true } & T;
@@ -177,6 +187,200 @@ export async function addLinksToList(input: {
 
   revalidatePath(`/dashboard/promote/${input.listId}`);
   return { ok: true, added: count ?? urls.length };
+}
+
+// ============================================================
+// Content sources
+// ============================================================
+
+async function ownedList(listId: string, userId: string): Promise<boolean> {
+  const svc = serviceClient();
+  const { data } = await svc
+    .from("promo_list")
+    .select("id")
+    .eq("id", listId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+/**
+ * Add one source per keyword. "bitcoin, blockchain" becomes two RSS Amplifier
+ * topic sources, never one combined feed.
+ */
+export async function addKeywordSources(input: {
+  listId: string;
+  keywords: string;
+  ownership?: Ownership;
+}): Promise<Ok<{ results: KeywordSourceOutcome[]; added: number }> | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  if (!(await ownedList(input.listId, auth.userId))) {
+    return { ok: false, error: "List not found." };
+  }
+
+  const keywords = parseKeywords(input.keywords);
+  if (keywords.length === 0) return { ok: false, error: "Enter at least one keyword." };
+  if (keywords.length > 25) {
+    return { ok: false, error: "Add at most 25 keywords at a time." };
+  }
+
+  const svc = serviceClient();
+  const results = await addKeywordSourcesToList(svc, {
+    listId: input.listId,
+    keywords,
+    // Keyword sources are other people's writing by default.
+    ownership: input.ownership ?? "shared",
+  });
+
+  // Backfill each new source now, so the campaign has something to post
+  // without waiting for the next ingestion tick.
+  for (const result of results) {
+    if (!result.ok || !result.feedId) continue;
+    try {
+      await ingestFeedNow(svc, result.feedId);
+      await fanOutToSubscribers(svc, result.feedId, new Date(), result.sourceId);
+    } catch {
+      // The worker retries on its own schedule; a slow feed is not a failure
+      // to add the source.
+    }
+  }
+
+  revalidatePath(`/dashboard/promote/${input.listId}`);
+  return { ok: true, results, added: results.filter((r) => r.ok).length };
+}
+
+/** Add a single RSS or Atom feed the user owns or follows. */
+export async function addFeedSource(input: {
+  listId: string;
+  feedUrl: string;
+  ownership?: Ownership;
+  label?: string;
+}): Promise<Ok<{ sourceId: string; title: string | null }> | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  if (!(await ownedList(input.listId, auth.userId))) {
+    return { ok: false, error: "List not found." };
+  }
+
+  const normalized = normalizeFeedUrl(input.feedUrl);
+  if (!normalized.ok) return { ok: false, error: normalized.error };
+
+  const validation = await validateFeedUrl(normalized.url);
+  if (!validation.ok) return { ok: false, error: validation.error };
+
+  const svc = serviceClient();
+  const feed = await ensureFeed(svc, {
+    feedUrl: validation.feedUrl,
+    kind: "custom_feed",
+    title: validation.title,
+  });
+  if (!feed) return { ok: false, error: "Could not register that feed." };
+
+  const { data: source, error } = await svc
+    .from("promo_source")
+    .insert({
+      list_id: input.listId,
+      feed_id: feed.id,
+      type: "custom_feed",
+      // A feed the user went out of their way to add is usually their own.
+      ownership: input.ownership ?? "owned",
+      label: (input.label ?? "").trim() || validation.title || validation.feedUrl,
+    })
+    .select("id")
+    .single();
+
+  if (error || !source) {
+    return { ok: false, error: "This campaign already tracks that feed." };
+  }
+
+  try {
+    await ingestFeedNow(svc, feed.id);
+    await fanOutToSubscribers(svc, feed.id, new Date(), source.id as string);
+  } catch {
+    // Ingestion retries on the worker's schedule.
+  }
+
+  revalidatePath(`/dashboard/promote/${input.listId}`);
+  return { ok: true, sourceId: source.id as string, title: validation.title };
+}
+
+/** Turn a source off without losing the links it has already contributed. */
+export async function toggleSource(sourceId: string, enabled: boolean): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  const svc = serviceClient();
+
+  const { data: source } = await svc
+    .from("promo_source")
+    .select("id, list_id, promo_list!inner(user_id)")
+    .eq("id", sourceId)
+    .maybeSingle();
+  if (!source) return { ok: false, error: "Source not found." };
+  if ((source as any).promo_list?.user_id !== auth.userId) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const { error } = await svc.from("promo_source").update({ enabled }).eq("id", sourceId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/promote/${source.list_id}`);
+  return { ok: true };
+}
+
+/**
+ * Remove a source. Links it already imported stay: they are in the rotation,
+ * and silently deleting posts a user has seen queued would be a surprise.
+ * promo_link.source_id is ON DELETE SET NULL for exactly this reason.
+ */
+export async function removeSource(sourceId: string): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  const svc = serviceClient();
+
+  const { data: source } = await svc
+    .from("promo_source")
+    .select("id, list_id, promo_list!inner(user_id)")
+    .eq("id", sourceId)
+    .maybeSingle();
+  if (!source) return { ok: false, error: "Source not found." };
+  if ((source as any).promo_list?.user_id !== auth.userId) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const { error } = await svc.from("promo_source").delete().eq("id", sourceId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/promote/${source.list_id}`);
+  return { ok: true };
+}
+
+/** Set the owned/partner/shared publishing ratio and the fallback policy. */
+export async function updateBlend(input: {
+  listId: string;
+  mix: Partial<Record<Ownership, number>>;
+  fallback?: Record<string, unknown>;
+}): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
+  const mix = parseMix(input.mix);
+  const total = mix.owned + mix.partner + mix.shared;
+  if (total <= 0) return { ok: false, error: "At least one source group needs a weight." };
+
+  const svc = serviceClient();
+  const { error } = await svc
+    .from("promo_list")
+    .update({
+      source_mix: mix,
+      ...(input.fallback ? { fallback_policy: parseFallback(input.fallback) } : {}),
+    })
+    .eq("id", input.listId)
+    .eq("user_id", auth.userId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/promote/${input.listId}`);
+  return { ok: true };
 }
 
 // -------- Remove a link --------

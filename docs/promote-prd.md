@@ -1,5 +1,13 @@
 # Crawlproof Promote — PRD
 
+> **Superseded in part.** This PRD describes the link-drip engine that shipped in
+> July 2026, and is still accurate about it. The target architecture — content
+> sources, campaigns with blend ratios, the provider adapter contract and the Reddit
+> provider — lives in [promote-engine-architecture.md](./promote-engine-architecture.md).
+> Where the two disagree, that document wins. Content sources (§3 there) are built;
+> the paste-a-list-of-links flow below still works unchanged alongside them.
+
+
 > Goal: a new **global, top-level** feature (peer of Ads and Alerts, *not* scoped to a single project) where the customer pastes a list of links, and AI writes a fresh, custom marketing pitch for **each link × each platform**, then drip-publishes them across **all connected social accounts on a recurring cadence** (default every 30 minutes). Every send is uniquely generated — never the same copy twice — using OpenAI and/or Anthropic.
 >
 > Topnav label: **Promote**. Route: `/promote`.

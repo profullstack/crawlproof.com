@@ -42,6 +42,7 @@ import { processUserAlerts } from "../lib/alerts/worker";
 import { processDuePortScans } from "../lib/prober-queue";
 import { processDueMonitors } from "../lib/uptime";
 import { processDuePromoteLists } from "../lib/promote/sweep";
+import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -1385,6 +1386,23 @@ setInterval(
   60_000,
 );
 
+// Promote content sources: refresh each subscribed feed once and fan its new
+// items out to every list that subscribes to it. Runs on its own timer rather
+// than inside the sweep because the feed registry is shared across users —
+// polling is per feed, not per list.
+async function promoteIngestSweep() {
+  const r = await ingestDueFeeds(supabase);
+  if (r.feedsChecked > 0) {
+    console.log(
+      `[worker] promote ingest feeds=${r.feedsChecked} unchanged=${r.feedsUnchanged} failed=${r.feedsFailed} items=${r.itemsStored} links=${r.linksCreated}`,
+    );
+  }
+}
+setInterval(
+  () => promoteIngestSweep().catch((e) => console.error("[worker] promote ingest", e)),
+  5 * 60_000,
+);
+
 // Port-drift scans: bridge queued rows to the "prober" BullMQ queue and
 // reconcile results (uptime-monitoring-prd.md §12). Short interval so the
 // Security tab's SSE stream gets snappy queued→running→done feedback.
@@ -1448,5 +1466,6 @@ server.listen(port, bindHost, () => {
   sweep().catch(() => {});
   socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e));
   promoteSweep().catch((e) => console.error("[worker] promote sweep", e));
+  promoteIngestSweep().catch((e) => console.error("[worker] promote ingest", e));
   sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
 });

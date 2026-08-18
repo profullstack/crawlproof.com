@@ -7,6 +7,9 @@ import { PromoteRealtime } from "@/components/promote/promote-realtime";
 import { PromoteEditForm } from "@/components/promote/promote-edit-form";
 import { AddLinksForm } from "@/components/promote/add-links-form";
 import { LinkList } from "@/components/promote/link-list";
+import { SourceList, type PromoteSourceRow } from "@/components/promote/source-list";
+import { BlendForm } from "@/components/promote/blend-form";
+import { parseMix } from "@/lib/promote/blend";
 
 export const metadata = { title: "Promote list" };
 
@@ -28,10 +31,13 @@ export default async function PromoteDetailPage({ params }: Props) {
     .maybeSingle();
   if (!list) notFound();
 
-  const [{ data: links }, { data: posts }, { data: accounts }] = await Promise.all([
+  const [{ data: links }, { data: posts }, { data: accounts }, { data: sources }] =
+    await Promise.all([
     supabase
       .from("promo_link")
-      .select("id, url, title, angle, enabled, times_promoted, last_promoted_at, created_at")
+      .select(
+        "id, url, title, angle, enabled, times_promoted, last_promoted_at, created_at, ownership, source_name",
+      )
       .eq("list_id", id)
       .order("created_at", { ascending: true }),
     supabase
@@ -46,6 +52,13 @@ export default async function PromoteDetailPage({ params }: Props) {
       .eq("user_id", user.id)
       .eq("status", "active")
       .order("platform"),
+    supabase
+      .from("promo_source")
+      .select(
+        "id, type, ownership, label, keyword, enabled, items_imported, last_ingested_at, promo_feed(feed_url, topic_slug, consecutive_failures, last_error)",
+      )
+      .eq("list_id", id)
+      .order("created_at", { ascending: true }),
   ]);
 
   const linkRows = (links ?? []) as Array<{
@@ -57,6 +70,8 @@ export default async function PromoteDetailPage({ params }: Props) {
     times_promoted: number;
     last_promoted_at: string | null;
     created_at: string;
+    ownership: string | null;
+    source_name: string | null;
   }>;
 
   const postRows = (posts ?? []) as Array<{
@@ -78,6 +93,27 @@ export default async function PromoteDetailPage({ params }: Props) {
     platform: string;
     handle: string;
   }>;
+
+  // The embedded promo_feed comes back as an object (or null) per row; flatten
+  // it so the client component gets one shape.
+  const sourceRows: PromoteSourceRow[] = (
+    (sources ?? []) as Array<Record<string, any>>
+  ).map((s) => ({
+    id: s.id,
+    type: s.type,
+    ownership: s.ownership,
+    label: s.label,
+    keyword: s.keyword ?? null,
+    enabled: s.enabled,
+    items_imported: s.items_imported ?? 0,
+    last_ingested_at: s.last_ingested_at ?? null,
+    feed_url: s.promo_feed?.feed_url ?? null,
+    topic_slug: s.promo_feed?.topic_slug ?? null,
+    consecutive_failures: s.promo_feed?.consecutive_failures ?? 0,
+    last_error: s.promo_feed?.last_error ?? null,
+  }));
+
+  const mix = parseMix(list.source_mix);
 
   const totalPosts = postRows.filter((p) => p.status === "posted").length;
   const totalCredits = postRows.reduce((sum, p) => sum + (p.credits_spent ?? 0), 0);
@@ -133,6 +169,27 @@ export default async function PromoteDetailPage({ params }: Props) {
           accounts={accountRows}
         />
       </section>
+
+      {/* Content sources */}
+      <section className="card mt-6 p-4">
+        <h2 className="text-lg font-semibold">Content sources</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Standing subscriptions that keep this campaign supplied with fresh links.
+        </p>
+        <div className="mt-3">
+          <SourceList listId={list.id} sources={sourceRows} />
+        </div>
+      </section>
+
+      {/* Content mix */}
+      {sourceRows.length > 0 && (
+        <section className="card mt-6 p-4">
+          <h2 className="text-lg font-semibold">Content mix</h2>
+          <div className="mt-3">
+            <BlendForm listId={list.id} mix={mix} />
+          </div>
+        </section>
+      )}
 
       {/* Links */}
       <section className="mt-6">
