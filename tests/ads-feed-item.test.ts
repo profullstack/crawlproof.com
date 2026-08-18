@@ -3,6 +3,7 @@ import { XMLParser, XMLValidator } from "fast-xml-parser";
 import {
   ATTRIBUTION,
   adGuid,
+  destinationHost,
   cdata,
   ctaLabel,
   feedDeviceType,
@@ -233,11 +234,20 @@ describe("identity", () => {
 
 describe("disclosure", () => {
   it("is in the title, where a reader listing titles will see it", () => {
-    expect(feedTitle(creative)).toBe("[Sponsored] Ship faster with Widgets");
+    expect(feedTitle(creative)).toBe("Ship faster with Widgets (Sponsored)");
+  });
+
+  // Leading "[Sponsored]" is the first thing the eye meets in a list of
+  // headlines and reads as a spam subject-line prefix, so the item is skipped
+  // before the offer is read. The label travels just as far at the end.
+  it("does not lead with the label", () => {
+    expect(feedTitle(creative).startsWith("[")).toBe(false);
+    expect(feedTitle(creative).startsWith("Sponsored")).toBe(false);
+    expect(feedTitle(creative)).toContain("Sponsored");
   });
 
   it("can be reworded but not removed", () => {
-    expect(feedTitle(creative, "Ad")).toBe("[Ad] Ship faster with Widgets");
+    expect(feedTitle(creative, "Ad")).toBe("Ship faster with Widgets (Ad)");
     expect(labelText("")).toBe("Sponsored");
     expect(labelText("   ")).toBe("Sponsored");
     expect(labelText(null)).toBe("Sponsored");
@@ -300,6 +310,54 @@ describe("bodies", () => {
     );
   });
 
+  // The card sits between real blog posts that each have a picture and a few
+  // paragraphs; a bare line next to them reads as broken rather than restrained.
+  it("leads the card with the advertiser's artwork", () => {
+    const withArt = { ...creative, imageUrl: "https://widgets.example/hero.png" };
+    const html = renderFeedHtml(withArt, input.clickUrl, { style: "card" });
+
+    expect(html).toContain('src="https://widgets.example/hero.png"');
+    // Width only: readers scale to their own column, and a fixed height would
+    // distort every image that is not exactly the ratio we guessed.
+    expect(html).toContain('width="600"');
+    expect(html).not.toMatch(/<img[^>]*hero\.png[^>]*height=/);
+    // The picture comes before the headline, the way the posts around it do.
+    expect(html.indexOf("hero.png")).toBeLessThan(html.indexOf("<h3>"));
+  });
+
+  it("renders a card without artwork rather than a broken image", () => {
+    const noArt = { ...creative, imageUrl: null };
+    const html = renderFeedHtml(noArt, input.clickUrl, { style: "card" });
+    expect(html).not.toContain("<img src=\"\"");
+    expect(html).toContain("<h3>");
+    expect(html).toContain(ATTRIBUTION);
+  });
+
+  it("names who is paying, which is what a reader actually decides on", () => {
+    const html = renderFeedHtml(creative, input.clickUrl, { style: "card" });
+    expect(html).toContain("widgets.example");
+  });
+
+  it("never offers our own redirector as the advertiser's identity", () => {
+    // The click URL is always crawlproof.com, so it can never be the brand
+    // line, and neither can artwork we host on the advertiser's behalf.
+    const ours = {
+      ...creative,
+      logoUrl: "https://crawlproof.com/ads/house/promo.webp",
+      imageUrl: null,
+    };
+    expect(destinationHost(input.clickUrl, ours)).toBe("");
+    expect(destinationHost(input.clickUrl, creative)).toBe("widgets.example");
+  });
+
+  it("puts the same artwork in the markdown card", () => {
+    const withArt = { ...creative, imageUrl: "https://widgets.example/hero.png" };
+    const md = renderFeedMarkdown(withArt, input.clickUrl, { style: "card" });
+    expect(md).toContain("![");
+    expect(md).toContain("https://widgets.example/hero.png");
+    expect(md).toContain("widgets.example");
+  });
+
   it("does not double the arrow on copy that already has one", () => {
     expect(ctaLabel("Try it free →")).toBe("Try it free");
     expect(ctaLabel("Learn more ->")).toBe("Learn more");
@@ -347,7 +405,7 @@ describe("json shapes", () => {
     // The raw headline, without the disclosure prefix baked in, so a consumer
     // that discloses its own way is not forced to string-strip ours.
     expect(f.headline).toBe("Ship faster with Widgets");
-    expect(f.title).toBe("[Sponsored] Ship faster with Widgets");
+    expect(f.title).toBe("Ship faster with Widgets (Sponsored)");
     expect(f.tier).toBe("paid");
   });
 });
