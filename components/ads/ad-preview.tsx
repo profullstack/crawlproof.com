@@ -2,8 +2,15 @@
 
 import type { CSSProperties } from "react";
 import type { AdCreative } from "@/lib/ads/formats";
-import { brandInitial, formatSpec, hexToRgba, TERMINAL_FORMAT_ID } from "@/lib/ads/formats";
+import {
+  brandInitial,
+  formatSpec,
+  hexToRgba,
+  FEED_FORMAT_ID,
+  TERMINAL_FORMAT_ID,
+} from "@/lib/ads/formats";
 import { renderCreativeText } from "@/lib/ads/terminal";
+import { ATTRIBUTION, ctaLabel, DEFAULT_LABEL, oneLine } from "@/lib/ads/feeditem";
 
 // Stand-in for the real /a/<impression_id> click URL, so the preview box is the
 // width the served ad will actually be.
@@ -35,6 +42,49 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
         >
           {renderCreativeText(creative, PREVIEW_CLICK_URL)}
         </pre>
+      </div>
+    );
+  }
+
+  // Feed ad — the sponsored line as a reader will actually show it.
+  //
+  // Deliberately *not* styled to match the other units. The served body carries
+  // no CSS at all (readers strip it), so its appearance comes entirely from the
+  // subscriber's own stylesheet — and a preview painted in the advertiser's
+  // brand colours would promise a look we have no way to deliver. What this
+  // shows instead is the structure the reader will get: the disclosure, the
+  // headline as a link, the body, the call to action, the attribution.
+  if (creative.format === FEED_FORMAT_ID) {
+    return (
+      <div style={{ width: w * scale, maxWidth: "100%", flex: "0 0 auto" }}>
+        <div
+          style={{
+            background: "#ffffff",
+            color: "#1a1a1a",
+            border: "1px solid rgba(255,255,255,.08)",
+            borderRadius: 8,
+            padding: "12px 14px",
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontSize: 14,
+            lineHeight: 1.5,
+          }}
+        >
+          <p style={{ margin: 0 }}>
+            <strong>{DEFAULT_LABEL}</strong>
+            {" \u00b7 "}
+            <a style={{ color: "#0645ad", textDecoration: "underline" }}>
+              <strong>{oneLine(creative.headline) || "Your headline"}</strong>
+            </a>
+            {creative.body ? ` \u2014 ${oneLine(creative.body)}` : ""}{" "}
+            <a style={{ color: "#0645ad", textDecoration: "underline" }}>
+              {ctaLabel(creative.ctaText)} {"\u2192"}
+            </a>{" "}
+            <small style={{ color: "#666" }}>({ATTRIBUTION})</small>
+          </p>
+        </div>
+        <p style={{ margin: "6px 0 0", fontSize: 11, color: "var(--color-muted)" }}>
+          Shown in the subscriber&apos;s reader, which supplies its own styling.
+        </p>
       </div>
     );
   }
