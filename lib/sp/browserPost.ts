@@ -36,6 +36,8 @@ import { reconcilePromo } from "@/lib/promote/reconcilePromo";
 import { pickDefaultSubreddit } from "@/lib/sp/redditSubreddit";
 import { makeCodeWaiter } from "@/lib/sp/verificationChallenge";
 
+import { shouldDisableAccount } from "@/lib/sp/accountHealth";
+
 export async function processBrowserPost(args: {
   postId: string;
   supabase: SupabaseClient<any>;
@@ -219,11 +221,14 @@ async function fail(
     // token_expired so the UI prompts a reconnect (re-export cookies) and stops
     // posting to it until then.
     const sessionExpired = message.startsWith(LOGIN_WALL_PREFIX);
+    const failures = ((acct?.consecutive_failures ?? 0) as number) + 1;
     await supabase
       .from("sp_account")
       .update({
-        consecutive_failures: ((acct?.consecutive_failures ?? 0) as number) + 1,
-        ...(sessionExpired ? { status: "token_expired" } : {}),
+        consecutive_failures: failures,
+        ...(shouldDisableAccount({ consecutiveFailures: failures, sessionExpired })
+          ? { status: "token_expired" }
+          : {}),
       })
       .eq("id", accountId);
   }
