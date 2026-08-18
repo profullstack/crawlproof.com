@@ -66,16 +66,23 @@ const CopySchema = z.object({
   // The two prose lengths. Everything above is display copy sized for a box;
   // these are for placements that sit *inside* somebody's writing, where the ad
   // is read rather than glanced at.
+  // Generous hard caps, for the reason spelled out above `body`: the SDK strips
+  // maxLength from the schema it sends and validates client-side instead, so a
+  // cap set to the length we actually want makes the *whole generation throw*
+  // when the model runs a few characters over. It did — one campaign failed
+  // with `too_big` on a 400-char ceiling. The real limits are applied by
+  // cleanSummary after the fact, where going over is a trim rather than an
+  // error. Length guidance stays in the description, which is advisory.
   summaryShort: z
     .string()
-    .max(400)
+    .max(1200)
     .describe(
       "One or two plain sentences saying what this is and who it is for, in third person. " +
         "Reads as an editorial note, not a slogan — no exclamation marks, no second person, no CTA.",
     ),
   summaryLong: z
     .string()
-    .max(1600)
+    .max(6000)
     .describe(
       "Two or three short paragraphs, separated by a blank line, for a sponsored section of a " +
         "blog post. Third person, factual, specific to this product. Describe what it does, who " +
@@ -220,7 +227,21 @@ export function cleanSummary(v: unknown, maxLen: number): string {
     .map((line) => line.trim())
     .join("\n")
     .trim();
-  return text.slice(0, maxLen);
+
+  if (text.length <= maxLen) return text;
+
+  // Cut on a boundary. A hard slice lands mid-word about as often as not, and
+  // this prose is published as an advertiser's own description — "a deployment
+  // tool for small te" is worse than a sentence less.
+  const cut = text.slice(0, maxLen);
+  // Prefer a sentence break, and prefer it fairly eagerly: a clean sentence
+  // that loses a clause beats a fragment that ends mid-thought. The fraction
+  // only guards the pathological case where the sole break sits right at the
+  // start, which would throw away almost the whole budget.
+  const sentence = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(".\n"));
+  if (sentence > maxLen * 0.4) return cut.slice(0, sentence + 1).trim();
+  const space = cut.lastIndexOf(" ");
+  return (space > 0 ? cut.slice(0, space) : cut).trim();
 }
 
 /**

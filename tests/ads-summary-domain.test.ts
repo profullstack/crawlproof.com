@@ -89,3 +89,25 @@ describe("summaries that describe the page instead of the product", () => {
     for (const t of real) expect(fn(t), t).toBe(false);
   });
 });
+
+describe("truncation", () => {
+  // The schema caps are deliberately generous because the SDK validates
+  // maxLength client-side and throws the whole generation on an overrun; the
+  // real limit is applied here, where going over is a trim rather than an error.
+  it("cuts on a sentence boundary when there is one", () => {
+    const text = "First sentence here. Second sentence runs past the limit and keeps going.";
+    const out = cleanSummary(text, 40);
+    expect(out).toBe("First sentence here.");
+  });
+
+  it("falls back to a word boundary rather than cutting mid-word", () => {
+    const out = cleanSummary("a deployment tool for small teams everywhere", 20);
+    expect(out.endsWith("te")).toBe(false);
+    expect(out.length).toBeLessThanOrEqual(20);
+    expect(/\s$/.test(out)).toBe(false);
+  });
+
+  it("leaves text under the cap untouched", () => {
+    expect(cleanSummary("short enough", 400)).toBe("short enough");
+  });
+});
