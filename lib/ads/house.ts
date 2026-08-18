@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import { env } from "@/lib/env";
 import { formatSpec, type AdCreative, type AdFormatId } from "./creative";
-import { TERMINAL_FORMAT_ID } from "./formats";
+import { FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
+import { renderFeedHtml } from "./feeditem";
 import type { Fill } from "./serve";
 
 // Default "house" ad for the CrawlProof Ad Network. Shown when a slot has no
@@ -83,6 +84,20 @@ function imageUrlFor(format: AdFormatId): string {
   return `${env.siteUrl}/ads/house/${rect ? "promo-rect" : "promo-wide"}.webp`;
 }
 
+/**
+ * Artwork the house ad carries, per format.
+ *
+ * The feed unit gets none. Its body is `text` style — a single sponsored line
+ * — so an `imageUrl` would never be rendered, and leaving one on the creative
+ * would put a promo banner into the `imageUrl` field of every `as=fields`
+ * payload, where a consumer templating its own item would reasonably render it.
+ */
+function houseImageFor(format: AdFormatId): string | null {
+  return format === FEED_FORMAT_ID || format === TERMINAL_FORMAT_ID
+    ? null
+    : imageUrlFor(format);
+}
+
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -99,6 +114,12 @@ export function renderHouseAdHtml(
   // <pre> for the web/iframe paths.
   if (format === TERMINAL_FORMAT_ID) {
     return renderTerminalHtml(houseCreative(format, copy), clickUrl);
+  }
+
+  // Feed ad — the same sponsored line the /api/ads/feed body carries, so an
+  // unsold feed slot previews as what it would actually syndicate.
+  if (format === FEED_FORMAT_ID) {
+    return renderFeedHtml(houseCreative(format, copy), clickUrl, { label: "Sponsored" });
   }
 
   // Native text link — no artwork, single full-width line.
@@ -171,7 +192,7 @@ function houseCreative(format: AdFormatId, copy: HouseCopy): AdCreative {
     accentColor: "#6ee7b7",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     logoUrl: null,
-    imageUrl: imageUrlFor(format),
+    imageUrl: houseImageFor(format),
   };
 }
 
@@ -186,8 +207,12 @@ export function houseFill(format: AdFormatId): Fill {
   // wider than the 40 columns a 44-col box has to spend, so it got pushed
   // outside the frame. /h is 24, and still fits once a publisher's &s=<surface>
   // tag is appended.
+  //
+  // The feed unit takes the same short form, and for the same reason: as=text,
+  // as=markdown and the terminal body style all print the URL as literal text.
+  // /h re-applies the utm params server-side, so attribution is unchanged.
   const clickUrl =
-    format === TERMINAL_FORMAT_ID
+    format === TERMINAL_FORMAT_ID || format === FEED_FORMAT_ID
       ? `${env.siteUrl}/h`
       : `${env.siteUrl}/?utm_source=house-ad&utm_medium=ad&utm_campaign=crawlproof-ads&utm_content=${copy.slug}`;
   const creative = houseCreative(format, copy);

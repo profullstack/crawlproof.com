@@ -8,6 +8,7 @@ import { generateStructuredOutput } from "@/lib/lx/backendAi";
 import { extractSiteBrand, type SiteBrand } from "./brand";
 import { resolveAdHeroImage } from "./heroImage";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
+import { renderFeedHtml } from "./feeditem";
 import {
   AD_FORMATS,
   AD_FORMAT_IDS,
@@ -192,6 +193,22 @@ export function renderCreativeHtml(creative: AdCreative, clickUrl: string): stri
   // fill a web slot. The canonical delivery is /api/ads/motd (text/plain).
   if (creative.format === "terminal_ascii") {
     return renderTerminalHtml(creative, clickUrl);
+  }
+
+  // Feed ad — the sponsored line as it will appear inside somebody's reader.
+  // Canonically delivered as a syndication item by /api/ads/feed; this path is
+  // what makes the same creative previewable in the browser, so it deliberately
+  // adds no styling the feed body would not survive. The wrapper only supplies
+  // a readable page background, since a feed body is rendered by the reader's
+  // own stylesheet rather than by ours.
+  if (creative.format === "feed_item") {
+    return `<!doctype html><html><head><meta charset="utf-8"><style>
+      body{margin:0;padding:12px;background:${creative.bgColor};color:${creative.fgColor};
+        font-family:${creative.fontFamily};font-size:14px;line-height:1.45}
+      a{color:${creative.accentColor}}
+      pre{overflow:auto;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      hr{border:0;border-top:1px solid rgba(255,255,255,.14)}
+    </style></head><body>${renderFeedHtml(creative, clickUrl)}</body></html>`;
   }
 
   // Native text link — a borderless, full-width single line. No image/box.
