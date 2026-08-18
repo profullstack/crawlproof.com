@@ -9,6 +9,9 @@ import { extractSiteBrand, type SiteBrand } from "./brand";
 import { resolveAdHeroImage } from "./heroImage";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import { renderFeedHtml } from "./feeditem";
+// One implementation, next to the renderers that consume it. Re-exported so a
+// server-side caller working with summaries has a single import.
+export { summaryParagraphs } from "./feeditem";
 import {
   AD_FORMATS,
   AD_FORMAT_IDS,
@@ -60,6 +63,25 @@ const CopySchema = z.object({
   bgColor: z.string().describe("Background hex like #0b0d10 — on-brand, good contrast with fg."),
   fgColor: z.string().describe("Text hex with strong contrast against bg."),
   accentColor: z.string().describe("Accent/CTA hex — the brand's signature colour if visible."),
+  // The two prose lengths. Everything above is display copy sized for a box;
+  // these are for placements that sit *inside* somebody's writing, where the ad
+  // is read rather than glanced at.
+  summaryShort: z
+    .string()
+    .max(400)
+    .describe(
+      "One or two plain sentences saying what this is and who it is for, in third person. " +
+        "Reads as an editorial note, not a slogan — no exclamation marks, no second person, no CTA.",
+    ),
+  summaryLong: z
+    .string()
+    .max(1600)
+    .describe(
+      "Two or three short paragraphs, separated by a blank line, for a sponsored section of a " +
+        "blog post. Third person, factual, specific to this product. Describe what it does, who " +
+        "it is for, and what is distinctive — only from the page content. No headings, no lists, " +
+        "no markdown, no links, no invented metrics or prices.",
+    ),
 });
 type AdCopy = z.infer<typeof CopySchema>;
 
@@ -72,6 +94,20 @@ const SYSTEM_PROMPT = [
   "invent features, prices, or claims. Keep it concrete and specific to this product.",
   "Colours must be readable: high contrast between background and foreground.",
   "Prefer the site's real brand/accent colour when the palette makes it obvious.",
+  // The summaries are a different register from the display copy, and saying so
+  // explicitly is what stops the model returning three restatements of the
+  // headline. They run inside other people's writing, next to their prose, so
+  // ad voice is exactly what makes them read as an intrusion and get skipped.
+  "ALSO write two editorial summaries of the advertiser, in a different register",
+  "from the ad copy above: third person, calm, factual, the way a journalist would",
+  "describe the product in one line of a round-up. No slogans, no second person, no",
+  "calls to action, no exclamation marks, no hype adjectives ('revolutionary',",
+  "'game-changing', 'seamless'). summaryShort is one or two sentences. summaryLong",
+  "is two or three short paragraphs separated by blank lines.",
+  "The same no-invention rule binds them, and binds them harder: these are longer,",
+  "so there is more room to fabricate. Every fact must come from the page content.",
+  "If the page does not say who it is for, or what it costs, or how it works, then",
+  "neither do you — write less rather than filling the space.",
 ].join(" ");
 
 function buildUserPrompt(brand: SiteBrand): string {
@@ -111,10 +147,71 @@ function copyToCreatives(brand: SiteBrand, copy: AdCopy, heroUrl: string | null)
   }));
 }
 
+/**
+ * Editorial prose about the advertiser, in two lengths, plus the domain it was
+ * written from.
+ *
+ * `domain` is what makes the pair trustworthy later: a campaign's destination
+ * can be edited after generation, and prose describing a site the campaign no
+ * longer points at is worse than no prose at all. Serving compares this against
+ * the campaign's current domain and treats a mismatch as absent.
+ */
+export type AdSummary = {
+  short: string;
+  long: string;
+  domain: string;
+};
+
+/** The host a summary describes, normalised the way ad_campaigns stores it. */
+export function summaryDomain(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Tidy a generated summary.
+ *
+ * Collapses the runs of blank lines a model likes to emit into single paragraph
+ * breaks, strips any markdown it reached for despite being told not to, and
+ * caps the length. Returns "" when there is nothing usable, which every caller
+ * treats as "no summary" rather than rendering an empty paragraph.
+ */
+export function cleanSummary(v: unknown, maxLen: number): string {
+  const text = String(v ?? "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    // Markdown emphasis/heading/list marks: the summaries are rendered as HTML
+    // and as plain text, and neither wants a stray asterisk.
+    // [ \t] rather than \s: with the m flag, \s also matches the newline
+    // *before* the anchor, so stripping a heading or a bullet swallowed the
+    // blank line that separated it from the previous paragraph and silently
+    // merged the two.
+    .replace(/^[ \t]*#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*[-*+][ \t]+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/(^|\s)[*_](\S[^*_]*?)[*_](?=\s|$)/g, "$1$2")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .trim();
+  return text.slice(0, maxLen);
+}
+
 export async function generateAdCreatives(
   rawUrl: string,
   opts: { supabase?: SupabaseClient } = {},
-): Promise<{ brand: SiteBrand; creatives: AdCreative[]; provider: string }> {
+): Promise<{
+  brand: SiteBrand;
+  creatives: AdCreative[];
+  provider: string;
+  summary: AdSummary;
+}> {
   const brand = await extractSiteBrand(rawUrl);
 
   const anthropic = env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
@@ -149,7 +246,16 @@ export async function generateAdCreatives(
     heroUrl = hero?.url ?? null;
   }
 
-  return { brand, creatives: copyToCreatives(brand, output, heroUrl), provider };
+  // The summaries are written from the page we just read, so the domain they
+  // describe is that page's — not whatever the campaign's destination is edited
+  // to later. Recording it here is what lets serving decide the prose is stale.
+  const summary: AdSummary = {
+    short: cleanSummary(output.summaryShort, 400),
+    long: cleanSummary(output.summaryLong, 1600),
+    domain: summaryDomain(brand.url || rawUrl),
+  };
+
+  return { brand, creatives: copyToCreatives(brand, output, heroUrl), provider, summary };
 }
 
 // Append the campaign ref for click attribution, preserving any existing query.

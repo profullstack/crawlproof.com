@@ -8,8 +8,11 @@ import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import {
   generateAdCreatives,
   AD_FORMAT_IDS,
+  cleanSummary,
+  summaryDomain,
   type AdCreative,
   type AdFormatId,
+  type AdSummary,
 } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
 import { MIN_PAYOUT_CENTS, DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
@@ -26,10 +29,55 @@ function domainOf(url: string): string {
   }
 }
 
+/**
+ * The summary columns to write, or {} when there is nothing trustworthy.
+ *
+ * Two guards, and the second is the point of the whole feature. Prose is only
+ * stored when it is non-empty *and* when the domain it was written from is the
+ * domain the campaign now points at — the user can paste one URL, get a
+ * preview, then edit the URL before saving, and a summary describing the first
+ * site would be a confident description of the wrong product.
+ *
+ * The lengths are re-clamped here rather than trusted from the client: this is
+ * a server action and its input crosses the network.
+ *
+ * @param summary what the generator produced (or the client sent back)
+ * @param domain the campaign's destination domain, normalised
+ */
+function summaryPayload(
+  summary: Partial<AdSummary> | null | undefined,
+  domain: string,
+): Record<string, unknown> {
+  if (!summary) return {};
+
+  const short = cleanSummary(summary.short, 400);
+  const long = cleanSummary(summary.long, 1600);
+  if (!short && !long) return {};
+
+  // summaryDomain() normalises a URL; the value here is already a bare host, so
+  // compare it directly and case-insensitively.
+  const wrote = String(summary.domain ?? "").toLowerCase();
+  if (!wrote || wrote !== domain.toLowerCase()) return {};
+
+  return {
+    summary_short: short || null,
+    summary_long: long || null,
+    summary_domain: domain.toLowerCase(),
+    summary_generated_at: new Date().toISOString(),
+  };
+}
+
 // Auto-generate ad creatives from a destination URL. No DB write — the client
 // holds the result, lets the user edit/replace, then calls saveCampaign.
 export async function previewAds(input: { url: string }): Promise<
-  | { ok: true; brand: SiteBrand; creatives: AdCreative[]; provider: string; suggestedName: string }
+  | {
+      ok: true;
+      brand: SiteBrand;
+      creatives: AdCreative[];
+      provider: string;
+      suggestedName: string;
+      summary: AdSummary;
+    }
   | { ok: false; error: string }
 > {
   const supabase = await createClient();
@@ -42,13 +90,16 @@ export async function previewAds(input: { url: string }): Promise<
   if (!check.ok) return { ok: false, error: check.reason };
 
   try {
-    const { brand, creatives, provider } = await generateAdCreatives(check.url, { supabase });
+    const { brand, creatives, provider, summary } = await generateAdCreatives(check.url, {
+      supabase,
+    });
     return {
       ok: true,
       brand,
       creatives,
       provider,
       suggestedName: brand.title?.slice(0, 60) || domainOf(check.url),
+      summary,
     };
   } catch (err) {
     return {
@@ -89,6 +140,7 @@ export async function saveCampaign(input: {
   bidCredits?: number;
   brand?: SiteBrand | null;
   creatives: Partial<AdCreative>[];
+  summary?: Partial<AdSummary> | null;
 }): Promise<{ ok: true; id: string; refSlug: string } | { ok: false; error: string }> {
   const supabase = await createClient();
   const {
@@ -126,6 +178,13 @@ export async function saveCampaign(input: {
   };
   if (org.id) payload.organization_id = org.id;
 
+  // Editorial prose for placements that live inside content. Only stored when
+  // it actually describes where the campaign points: the user can edit the URL
+  // between preview and save, and prose about a different site is worse than
+  // none. Same reason serving re-checks it (see summaryFor in lib/ads/serve).
+  const summaryFields = summaryPayload(input.summary, domainOf(check.url));
+  Object.assign(payload, summaryFields);
+
   let campaign = await supabase
     .from("ad_campaigns")
     .insert(payload)
@@ -138,6 +197,20 @@ export async function saveCampaign(input: {
     /organization_id|schema cache|column/i.test(campaign.error.message ?? "")
   ) {
     delete payload.organization_id;
+    campaign = await supabase
+      .from("ad_campaigns")
+      .insert(payload)
+      .select("id, ref_slug")
+      .single();
+  }
+
+  // The summary columns live behind an `add column if not exists` and
+  // migrations here are applied by hand, so this deploy can briefly run ahead
+  // of the schema. Retry without them rather than refusing to create the
+  // campaign: prose is an enhancement, a campaign that cannot be saved is the
+  // whole product failing. Same trade the impression short_code makes.
+  if (campaign.error && /summary_|schema cache|column/i.test(campaign.error.message ?? "")) {
+    for (const key of Object.keys(summaryFields)) delete payload[key];
     campaign = await supabase
       .from("ad_campaigns")
       .insert(payload)
@@ -276,6 +349,26 @@ export async function regenerateCampaign(input: {
       ok: false,
       error: err instanceof Error ? err.message : "Could not regenerate ads.",
     };
+  }
+
+  // Refresh the editorial prose alongside the creatives. Regenerating is
+  // exactly when a stale summary gets fixed — the destination may well be what
+  // changed — so the domain is re-derived from the campaign's current URL
+  // rather than from whatever the summary previously claimed.
+  const summaryFields = summaryPayload(
+    generated.summary,
+    summaryDomain(campaign.destination_url),
+  );
+  if (Object.keys(summaryFields).length > 0) {
+    const { error: sErr } = await supabase
+      .from("ad_campaigns")
+      .update(summaryFields)
+      .eq("id", input.id);
+    // A missing column (deploy ahead of the hand-applied migration) must not
+    // fail a regeneration whose creatives are fine.
+    if (sErr && !/summary_|schema cache|column/i.test(sErr.message ?? "")) {
+      return { ok: false, error: sErr.message };
+    }
   }
 
   const { data: existing } = await supabase

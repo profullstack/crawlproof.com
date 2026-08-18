@@ -318,6 +318,51 @@ export async function serveAd(
   };
 }
 
+/**
+ * A campaign's editorial prose, when it still describes where the campaign points.
+ *
+ * Deliberately a separate query rather than two more columns on the creative
+ * join in serveAd. That join is *the* serving query — if it fails, every unit
+ * on every slot goes dark — and these columns sit behind an `add column if not
+ * exists` in a migration applied by hand, so a deploy can briefly run ahead of
+ * the schema. One extra round trip on the feed path is a cheap price for not
+ * being able to take banner and terminal serving down with it. Feed fills are
+ * rare anyway: one per publisher build, not one per reader.
+ *
+ * Returns null when the columns are missing, the row is gone, the prose is
+ * empty, or `summary_domain` disagrees with `destination_domain` — a campaign's
+ * destination can be edited after generation, and prose confidently describing
+ * a site the campaign no longer points at is worse than no prose.
+ */
+export async function campaignSummary(
+  campaignId: string,
+): Promise<{ short: string | null; long: string | null } | null> {
+  if (!campaignId || campaignId === "house") return null;
+  try {
+    const sb = serviceClient();
+    const { data, error } = await sb
+      .from("ad_campaigns")
+      .select("summary_short, summary_long, summary_domain, destination_domain")
+      .eq("id", campaignId)
+      .maybeSingle();
+    if (error || !data) return null;
+
+    const short = (data.summary_short as string | null) ?? null;
+    const long = (data.summary_long as string | null) ?? null;
+    if (!short && !long) return null;
+
+    const wrote = String(data.summary_domain ?? "").toLowerCase();
+    const points = String(data.destination_domain ?? "").toLowerCase();
+    // No recorded domain means we cannot show it is still accurate.
+    if (!wrote || (points && wrote !== points)) return null;
+
+    return { short, long };
+  } catch {
+    // Unknown column, network, anything — the ad renders from its short body.
+    return null;
+  }
+}
+
 // Resolve a click: record it, return the destination URL (with ?ref=) to
 // redirect to. Returns null if the campaign/creative can't be resolved.
 export async function resolveClick(input: {
