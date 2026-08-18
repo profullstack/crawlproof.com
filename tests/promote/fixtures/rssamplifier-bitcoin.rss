@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:atom="http://www.w3.org/2005/Atom"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:media="http://search.yahoo.com/mrss/"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>bitcoin — RSS Amplifier</title>
+    <link>https://rssamplifier.com/topics/bitcoin</link>
+    <description>Recent posts from the 345 feeds in the RSS Amplifier directory that cover bitcoin.</description>
+    <language>en</language>
+    <generator>RSS Amplifier</generator>
+    <lastBuildDate>Mon, 17 Aug 2026 22:27:24 GMT</lastBuildDate>
+    <atom:link href="https://rssamplifier.com/topics/bitcoin.rss" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Bitcoin catches a bid after weekly loss, on track for best day in over a month</title>
+      <guid isPermaLink="false">https://www.investing.com/news/cryptocurrency-news/bitcoin-steadies-at-635k-iran-tensions-us-regulations-in-focus-4862213</guid>
+      <link>https://www.investing.com/news/cryptocurrency-news/bitcoin-steadies-at-635k-iran-tensions-us-regulations-in-focus-4862213</link>
+      <pubDate>Mon, 17 Aug 2026 22:27:24 GMT</pubDate>
+      <dc:creator>Investing.com</dc:creator>
+      <source url="https://www.investing.com/rss/news_301.rss">Cryptocurrency News</source>
+      <media:thumbnail url="https://content-media.investing.com/news/moved_LYNXMPEKA01G9_L.jpg" />
+    </item>
+<item>
+      <title>Bitcoin tests $65,600 resistance with weak trend: Live levels</title>
+      <guid isPermaLink="false">https://www.investing.com/news/cryptocurrency-news/bitcoin-coiled-at-63591-with-volatility-at-6month-lows-live-levels-93CH-4862234</guid>
+      <link>https://www.investing.com/news/cryptocurrency-news/bitcoin-coiled-at-63591-with-volatility-at-6month-lows-live-levels-93CH-4862234</link>
+      <pubDate>Mon, 17 Aug 2026 19:19:17 GMT</pubDate>
+      <dc:creator>Investing.com</dc:creator>
+      <source url="https://www.investing.com/rss/news_301.rss">Cryptocurrency News</source>
+      <media:thumbnail url="https://content-media.investing.com/news/Bitcoin_800x533_L_1610388554.jpg" />
+    </item>
+<item>
+      <title>🟠 O Bradesco vai vender Bitcoin</title>
+      <guid isPermaLink="false">https://ascencriptonewsletter.substack.com/p/o-bradesco-vai-vender-bitcoin</guid>
+      <link>https://ascencriptonewsletter.substack.com/p/o-bradesco-vai-vender-bitcoin</link>
+      <pubDate>Mon, 17 Aug 2026 17:33:00 GMT</pubDate>
+      <description>MAIS: Vazamento expõe 678 mil contribuintes na França | Setor quer supervisão do BC sobre stablecoins | Trezor alerta 13.689 clientes sobre phishing | Semana em Cripto</description>
+      <source url="https://ascencriptonewsletter.substack.com/feed">Ascen Cripto Newsletter</source>
+      <media:thumbnail url="https://substackcdn.com/image/fetch/$s_!gEtf!,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F86fd9e16-7eb4-43f8-8d11-cb8386e4ab80_1890x945.png" />
+    </item>
+<item>
+      <title>Bitcoin hits $64K as gold gains while oil shakes off Trump Oman threat</title>
+      <guid isPermaLink="false">https://cointelegraph.com/markets/bitcoin-hits-64k-as-gold-gains-while-oil-shakes-off-trump-oman-threat</guid>
+      <link>https://cointelegraph.com/markets/bitcoin-hits-64k-as-gold-gains-while-oil-shakes-off-trump-oman-threat?utm_source=rss_feed&amp;utm_medium=rss&amp;utm_campaign=rss_partner_inbound</link>
+      <pubDate>Mon, 17 Aug 2026 16:16:40 GMT</pubDate>
+      <description>Bitcoin price strength saw BTC/USD pass $64,000 on 2% daily gains as gold pushed higher while US stocks wobbled on fresh US-Iran rhetoric.</description>
+      <dc:creator>Cointelegraph by William Suberg</dc:creator>
+      <source url="https://cointelegraph.com/rss">Cointelegraph.com News</source>
+      <media:thumbnail url="https://s3-images.ctmedia.io/media/article-covers/hi-us-bitcoin-reserve-vs-gold-and-oil-reserves-how-do-they-compare.jpg" />
+    </item>
+  </channel>
+</rss>

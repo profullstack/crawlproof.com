@@ -115,6 +115,15 @@ export type GeneratePitchArgs = {
   recentBodies: string[];
   anthropic: Anthropic | null;
   openai: OpenAI | null;
+  /** Feed summary, when the link came from a content source. */
+  summary?: string | null;
+  /** The originating publication, for attributing shared content. */
+  sourceName?: string | null;
+  /**
+   * Whose content this is. Shared content is written about rather than as —
+   * "here's a good piece by X", not "we just shipped".
+   */
+  ownership?: "owned" | "partner" | "shared" | null;
 };
 
 export type PitchResult = {
@@ -124,6 +133,25 @@ export type PitchResult = {
   provider: string;
   model: string;
 };
+
+/**
+ * Shared content has to be written *about*, not *as*. Without this the model
+ * happily announces somebody else's blog post as though the account shipped
+ * it, which is both misleading and the fastest way to get an account banned.
+ */
+export function ownershipGuidance(
+  ownership: GeneratePitchArgs["ownership"],
+  sourceName: string | null | undefined,
+): string {
+  if (ownership !== "shared" && ownership !== "partner") return "";
+  const credit = sourceName ? ` Credit the source by name: ${sourceName}.` : "";
+  return (
+    "This link is somebody else's content, not ours. Share it the way a reader " +
+    "recommends a good article — never imply we wrote, built or launched it, and " +
+    "never use first-person product language like \"we just shipped\"." +
+    credit
+  );
+}
 
 export async function generatePitch(
   args: GeneratePitchArgs,
@@ -162,7 +190,9 @@ export async function generatePitch(
     `${HASHTAG_GUIDANCE[profile.usesHashtags]}`,
     brandVoice ? `Brand voice / instructions: ${brandVoice}` : "",
     angle ? `Marketing angle to emphasize: ${angle}` : "",
+    ownershipGuidance(args.ownership, args.sourceName),
     `Page title: ${title ?? "(no title — derive from URL)"}`,
+    args.summary ? `What the page says: ${args.summary}` : "",
     `URL to promote (do NOT include in the text field; the renderer appends it): ${url}`,
     avoidSection,
   ]

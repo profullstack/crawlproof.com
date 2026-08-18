@@ -6,6 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { generatePitch } from "@/lib/promote/generatePitch";
+import { selectNextLink } from "@/lib/promote/selectLink";
+import type { Ownership } from "@/lib/promote/blend";
 import { postViaAccount, type PostResult } from "@/lib/sp/post";
 
 export type PromoteSweepClients = {
@@ -35,6 +37,8 @@ type PromoList = {
   quiet_start: number | null;
   quiet_end: number | null;
   timezone: string | null;
+  source_mix?: unknown;
+  fallback_policy?: unknown;
 };
 
 type PromoLink = {
@@ -42,6 +46,10 @@ type PromoLink = {
   url: string;
   title: string | null;
   angle: string | null;
+  summary?: string | null;
+  source_name?: string | null;
+  ownership?: Ownership | null;
+  times_promoted?: number | null;
 };
 
 type SpAccount = {
@@ -73,7 +81,7 @@ export async function processDuePromoteLists(
   const { data: lists, error } = await supabase
     .from("promo_list")
     .select(
-      "id, user_id, name, cadence_seconds, post_mode, target_account_ids, brand_voice, quiet_start, quiet_end, timezone",
+      "id, user_id, name, cadence_seconds, post_mode, target_account_ids, brand_voice, quiet_start, quiet_end, timezone, source_mix, fallback_policy",
     )
     .eq("status", "running")
     .lte("next_run_at", new Date().toISOString())
@@ -139,21 +147,26 @@ async function processOneList(
     return out;
   }
 
-  // Pick the next link(s) using round-robin (least-recently-promoted first)
-  const { data: links } = await supabase
-    .from("promo_link")
-    .select("id, url, title, angle")
-    .eq("list_id", list.id)
-    .eq("enabled", true)
-    .order("last_promoted_at", { ascending: true, nullsFirst: true })
-    .limit(1);
-
-  if (!links || links.length === 0) {
+  // Pick the next link. Within an ownership class this is still
+  // least-recently-promoted-first round-robin; which class to draw from is the
+  // list's blend decision (70% our content, 30% industry content, and so on).
+  const selection = await selectNextLink(supabase, list);
+  if (!selection.link) {
+    // Nothing eligible: an empty list, or a blend whose target class is starved
+    // and whose fallback policy says not to cover for it. Either way this is a
+    // quiet no-op, not a failure — the next tick tries again.
+    if (selection.decision.reason !== "no_inventory") {
+      console.log(
+        `[promote] list ${list.id} skipped a tick: ${selection.decision.reason}`,
+      );
+    }
     await advanceScheduler(supabase, list);
     return out;
   }
 
-  const link = links[0] as PromoLink;
+  const link = selection.link as PromoLink;
+  const ownership: Ownership = (link.ownership ?? "owned") as Ownership;
+  const viaFallback = selection.decision.viaFallback;
 
   // Determine which (link, account) pairs to post this tick
   const postTargets: Array<{ link: PromoLink; account: SpAccount }> = [];
@@ -229,6 +242,9 @@ async function processOneList(
         recentBodies,
         anthropic: clients.anthropic,
         openai: clients.openai,
+        summary: targetLink.summary ?? null,
+        sourceName: targetLink.source_name ?? null,
+        ownership,
       });
 
       // Publish via the existing sp platform layer
@@ -254,6 +270,9 @@ async function processOneList(
         link_id: targetLink.id,
         account_id: account.id,
         platform: account.platform,
+        ownership,
+        source_id: (targetLink as { source_id?: string | null }).source_id ?? null,
+        via_fallback: viaFallback,
         body: pitch.body,
         provider: pitch.provider,
         model: pitch.model,
@@ -289,6 +308,9 @@ async function processOneList(
         link_id: targetLink.id,
         account_id: account.id,
         platform: account.platform,
+        ownership,
+        source_id: (targetLink as { source_id?: string | null }).source_id ?? null,
+        via_fallback: viaFallback,
         body: `[generation failed: ${message}]`,
         status: "failed",
         error: message,
@@ -303,14 +325,14 @@ async function processOneList(
     }
   }
 
-  // Update the link's round-robin cursor
+  // Update the link's round-robin cursor. times_promoted is a real counter now
+  // that selection reads it back — it used to be re-stamped to 1 every tick,
+  // because the old query never selected the column it was incrementing.
   await supabase
     .from("promo_link")
     .update({
       last_promoted_at: new Date().toISOString(),
-      times_promoted: (link as any).times_promoted
-        ? (link as any).times_promoted + 1
-        : 1,
+      times_promoted: (link.times_promoted ?? 0) + 1,
     })
     .eq("id", link.id);
 

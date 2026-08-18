@@ -12,6 +12,14 @@ import { env } from "@/lib/env";
 import { serviceClient } from "@/lib/supabase/service";
 import { generatePitch, fetchLinkTitle } from "@/lib/promote/generatePitch";
 import { postViaAccount, type PostResult } from "@/lib/sp/post";
+import { parseKeywords, topicPageUrl } from "@/lib/promote/keywords";
+import {
+  addKeywordSources,
+  ensureFeed,
+  normalizeFeedUrl,
+  validateFeedUrl,
+} from "@/lib/promote/sources";
+import { fanOutToSubscribers, ingestFeedNow } from "@/lib/promote/ingest";
 
 type Account = { id: string; platform: string; handle: string; status: string };
 
@@ -194,4 +202,204 @@ export function registerPromoteTools(server: McpServer): void {
       return textResult(lines.join("\n"));
     },
   );
+
+  // ---- Content sources -------------------------------------------------
+  // Same service layer the dashboard uses, so a campaign built by an agent is
+  // indistinguishable from one built in the UI.
+
+  server.registerTool(
+    "promote_list_campaigns",
+    {
+      description:
+        "List the caller's Promote campaigns with their ids, status and content mix. Use an id with the source tools.",
+      inputSchema: {},
+    },
+    async (_args, extra) => {
+      const userId = getUserId(extra);
+      const sb = serviceClient();
+      const { data } = await sb
+        .from("promo_list")
+        .select("id, name, status, cadence_seconds, source_mix")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      const rows = (data ?? []) as Array<Record<string, any>>;
+      if (!rows.length) return textResult("No Promote campaigns yet.");
+      return textResult(
+        rows
+          .map((r) => {
+            const mix = r.source_mix ?? {};
+            return `${r.id}  ${r.name} [${r.status}] every ${Math.round((r.cadence_seconds ?? 0) / 60)}m  mix owned=${mix.owned ?? 0}/partner=${mix.partner ?? 0}/shared=${mix.shared ?? 0}`;
+          })
+          .join("\n"),
+      );
+    },
+  );
+
+  server.registerTool(
+    "promote_add_keyword_source",
+    {
+      description:
+        "Add one RSS Amplifier topic source per keyword to a Promote campaign. 'bitcoin, ethereum' creates two independent sources, never one combined feed. Reports each keyword individually.",
+      inputSchema: {
+        campaign_id: z.string().describe("Promote campaign id (from promote_list_campaigns)."),
+        keywords: z
+          .string()
+          .describe("One keyword, or several separated by commas. Phrases are one keyword."),
+        ownership: z
+          .enum(["owned", "partner", "shared"])
+          .optional()
+          .describe("Defaults to 'shared' — topic feeds are other people's writing."),
+      },
+    },
+    async (args, extra) => {
+      const userId = getUserId(extra);
+      const sb = serviceClient();
+      const { data: list } = await sb
+        .from("promo_list")
+        .select("id")
+        .eq("id", args.campaign_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!list) return errorResult("Campaign not found.");
+
+      const keywords = parseKeywords(args.keywords);
+      if (!keywords.length) return errorResult("No usable keywords in that input.");
+
+      const results = await addKeywordSources(sb, {
+        listId: args.campaign_id,
+        keywords,
+        ownership: args.ownership ?? "shared",
+      });
+
+      for (const r of results) {
+        if (!r.ok || !r.feedId) continue;
+        try {
+          await ingestFeedNow(sb, r.feedId);
+          await fanOutToSubscribers(sb, r.feedId, new Date(), r.sourceId);
+        } catch {
+          // The worker retries; adding the source still succeeded.
+        }
+      }
+
+      return textResult(
+        results
+          .map((r) =>
+            r.ok
+              ? `✓ ${r.keyword} → ${topicPageUrl(r.slug)}`
+              : `✗ ${r.keyword}: ${r.error}`,
+          )
+          .join("\n"),
+      );
+    },
+  );
+
+  server.registerTool(
+    "promote_add_feed_source",
+    {
+      description:
+        "Add an RSS or Atom feed as a content source for a Promote campaign. The feed is fetched and validated before it is saved.",
+      inputSchema: {
+        campaign_id: z.string().describe("Promote campaign id."),
+        feed_url: z.string().describe("The RSS or Atom feed URL."),
+        ownership: z
+          .enum(["owned", "partner", "shared"])
+          .optional()
+          .describe("Defaults to 'owned' — a feed you added deliberately is usually yours."),
+        label: z.string().optional().describe("Display name; defaults to the feed's own title."),
+      },
+    },
+    async (args, extra) => {
+      const userId = getUserId(extra);
+      const sb = serviceClient();
+      const { data: list } = await sb
+        .from("promo_list")
+        .select("id")
+        .eq("id", args.campaign_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!list) return errorResult("Campaign not found.");
+
+      const normalized = normalizeFeedUrl(args.feed_url);
+      if (!normalized.ok) return errorResult(normalized.error);
+      const validation = await validateFeedUrl(normalized.url);
+      if (!validation.ok) return errorResult(validation.error);
+
+      const feed = await ensureFeed(sb, {
+        feedUrl: validation.feedUrl,
+        kind: "custom_feed",
+        title: validation.title,
+      });
+      if (!feed) return errorResult("Could not register that feed.");
+
+      const { data: source, error } = await sb
+        .from("promo_source")
+        .insert({
+          list_id: args.campaign_id,
+          feed_id: feed.id,
+          type: "custom_feed",
+          ownership: args.ownership ?? "owned",
+          label: (args.label ?? "").trim() || validation.title || validation.feedUrl,
+        })
+        .select("id")
+        .single();
+      if (error || !source)
+        return errorResult("This campaign already tracks that feed.");
+
+      try {
+        await ingestFeedNow(sb, feed.id);
+        await fanOutToSubscribers(sb, feed.id, new Date(), source.id as string);
+      } catch {
+        // Ingestion retries on the worker's schedule.
+      }
+
+      return textResult(
+        `✓ Added ${validation.title ?? validation.feedUrl} (${validation.itemCount} entries) as a ${args.ownership ?? "owned"} source.`,
+      );
+    },
+  );
+
+  server.registerTool(
+    "promote_list_sources",
+    {
+      description:
+        "List the content sources of a Promote campaign, with ownership, health and how many links each has contributed.",
+      inputSchema: { campaign_id: z.string().describe("Promote campaign id.") },
+    },
+    async (args, extra) => {
+      const userId = getUserId(extra);
+      const sb = serviceClient();
+      const { data: list } = await sb
+        .from("promo_list")
+        .select("id")
+        .eq("id", args.campaign_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!list) return errorResult("Campaign not found.");
+
+      const { data } = await sb
+        .from("promo_source")
+        .select(
+          "id, type, ownership, label, enabled, items_imported, last_ingested_at, promo_feed(feed_url, last_success_at, consecutive_failures, last_error)",
+        )
+        .eq("list_id", args.campaign_id)
+        .order("created_at", { ascending: true });
+
+      const rows = (data ?? []) as Array<Record<string, any>>;
+      if (!rows.length) return textResult("This campaign has no content sources yet.");
+
+      return textResult(
+        rows
+          .map((r) => {
+            const feed = r.promo_feed ?? {};
+            const health =
+              (feed.consecutive_failures ?? 0) > 0
+                ? `failing (${feed.last_error ?? "unknown error"})`
+                : "ok";
+            return `${r.id}  ${r.label} [${r.type}/${r.ownership}]${r.enabled ? "" : " (paused)"}  imported=${r.items_imported ?? 0}  ${health}`;
+          })
+          .join("\n"),
+      );
+    },
+  );
+
 }
