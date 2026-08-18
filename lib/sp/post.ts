@@ -11,6 +11,7 @@ import { graphemeLength } from "./blueskyFacets";
 import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
 import { enqueueBrowserPost } from "@/lib/lx/workerClient";
 import { resolveSubreddit } from "@/lib/sp/redditSubreddit";
+import { shouldDisableAccount } from "@/lib/sp/accountHealth";
 import {
   createBlueskyPost,
   createBlueskySession,
@@ -424,10 +425,17 @@ export async function postViaAccount(args: {
       .from("sp_post")
       .update({ status: "failed", last_error: message })
       .eq("id", row.id);
+    // Same ceiling the browser path applies: an account that has failed this
+    // many times in a row is not going to start working on the next tick, and
+    // retrying it forever just burns quota and hides the real problem.
+    const failures = (account.consecutive_failures ?? 0) + 1;
     await supabase
       .from("sp_account")
       .update({
-        consecutive_failures: (account.consecutive_failures ?? 0) + 1,
+        consecutive_failures: failures,
+        ...(shouldDisableAccount({ consecutiveFailures: failures })
+          ? { status: "token_expired" }
+          : {}),
       })
       .eq("id", account.id);
     await supabase.from("sp_publish_attempt").insert({
