@@ -69,9 +69,17 @@ export function bucketAxis(range: RangeDef, now: Date = new Date()): number[] {
   const stepMs = range.bucketSeconds * 1000;
   const endMs = Math.floor(now.getTime() / stepMs) * stepMs;
   if (range.windowSeconds == null) return [endMs];
-  const count = Math.ceil(range.windowSeconds / range.bucketSeconds);
+  // Start at the bucket the window's first instant falls into, not at
+  // `endMs - window`. Those differ whenever the window start lands mid-bucket,
+  // which it does for every range coarser than a minute: the RPC filters rows
+  // on `ts >= p_since` and then date_bins them, so it emits a partial leading
+  // bucket. An axis one bucket short dropped it — getAccountSeries skips any
+  // row with no matching point — and up to a full bucket of real delivery
+  // vanished from the chart and the headline totals alike. The leading bucket
+  // is partial by construction, exactly as the trailing one already is.
+  const startMs = Math.floor((now.getTime() - range.windowSeconds * 1000) / stepMs) * stepMs;
   const out: number[] = [];
-  for (let i = count - 1; i >= 0; i--) out.push(endMs - i * stepMs);
+  for (let t = startMs; t <= endMs; t += stepMs) out.push(t);
   return out;
 }
 

@@ -7,9 +7,14 @@ import { AccountTrend } from "@/components/ads/account-trend";
 import { RangeTabs } from "@/components/ads/range-tabs";
 import { StatSpark } from "@/components/ads/stat-spark";
 import {
+  deliveredClicks,
+  deliveredImpressions,
+  deliverySplitNote,
   getAccountSeries,
   getCampaignDailySeries,
   getCampaignRangeTotals,
+  pickDeliveredClicks,
+  pickDeliveredImpressions,
   sumSeries,
   EMPTY_TOTALS,
   type AccountPoint,
@@ -123,39 +128,50 @@ export default async function AdsPage({
             <span className="text-sm text-[var(--color-muted)]">{range.hint}</span>
           </div>
 
+          {/* Delivery first, revenue second. The tiles count every ad actually
+              shown — paid inventory plus free backfill — and name the split
+              underneath, so a range in which nothing was billable reports the
+              traffic it really carried instead of four zeros. Spend stays
+              strictly paid: it is money, and free backfill costs none. */}
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat
               label="Impressions"
-              value={totals.impressions.toLocaleString()}
-              spark={<StatSpark data={series} pick={(p) => p.impressions} />}
+              value={deliveredImpressions(totals).toLocaleString()}
+              note={deliverySplitNote(totals.impressions, totals.freeImpressions)}
+              spark={<StatSpark data={series} pick={pickDeliveredImpressions} />}
             />
             <Stat
               label="Clicks"
-              value={totals.clicks.toLocaleString()}
-              spark={<StatSpark data={series} pick={(p) => p.clicks} />}
+              value={deliveredClicks(totals).toLocaleString()}
+              note={deliverySplitNote(totals.clicks, totals.freeClicks)}
+              spark={<StatSpark data={series} pick={pickDeliveredClicks} />}
             />
-            <Stat label="CTR" value={ctr(totals.clicks, totals.impressions)} />
+            <Stat
+              label="CTR"
+              value={ctr(deliveredClicks(totals), deliveredImpressions(totals))}
+            />
             <Stat
               label="Spend"
               value={dollars(totals.spentCents)}
+              // Only worth saying when there was delivery to bill for; on a
+              // silent range the $0.00 needs no explaining.
+              note={
+                totals.spentCents === 0 && deliveredImpressions(totals) > 0
+                  ? "nothing billable"
+                  : undefined
+              }
               spark={<StatSpark data={series} pick={(p) => p.spentCents} />}
             />
           </div>
 
-          {/* Free backfill is delivery that costs and earns nothing, so it never
-              belongs in the paid figures above — but hiding it entirely would
-              make impressions look like they collapsed when a campaign runs dry. */}
+          {/* Free backfill costs and earns nobody anything, so the reason it is
+              free is worth one line — otherwise a dashboard full of traffic and
+              an empty Spend tile reads as a billing fault. */}
           {(totals.freeImpressions > 0 || totals.freeClicks > 0) && (
             <p className="mt-3 text-sm text-[var(--color-muted)]">
-              Plus{" "}
-              <span className="font-mono font-semibold text-[var(--color-fg)]">
-                {totals.freeImpressions.toLocaleString()}
-              </span>{" "}
-              free-tier impressions and{" "}
-              <span className="font-mono font-semibold text-[var(--color-fg)]">
-                {totals.freeClicks.toLocaleString()}
-              </span>{" "}
-              free clicks in this range, at no cost.
+              Free-tier delivery is backfill: a campaign out of credits or daily
+              budget, or one running on a slot its own account owns. It fills
+              requests no paying advertiser wanted, bills nobody and earns nobody.
             </p>
           )}
 
@@ -178,8 +194,10 @@ export default async function AdsPage({
           {campaigns.map((c) => {
             // Range-scoped, so a row never contradicts the header above it.
             const s = rangeById.get(c.id) ?? EMPTY_TOTALS;
-            const impr = s.impressions;
-            const clk = s.clicks;
+            // Same measure as the header tiles, or a campaign delivering only
+            // free backfill would read as a dead row under a live chart.
+            const impr = deliveredImpressions(s);
+            const clk = deliveredClicks(s);
             const display = campaignDisplayStatus(c, today, creditsAvailable);
             return (
               <li key={c.id} className="card p-4">
@@ -212,7 +230,10 @@ export default async function AdsPage({
                   <MiniStat label="CTR" value={ctr(clk, impr)} />
                   <MiniStat label="Spent" value={dollars(s.spentCents)} />
                   {s.freeImpressions > 0 && (
-                    <MiniStat label="Free" value={s.freeImpressions.toLocaleString()} />
+                    <MiniStat
+                      label="Of which free"
+                      value={s.freeImpressions.toLocaleString()}
+                    />
                   )}
                   <MiniStat
                     label="Today"
@@ -234,16 +255,19 @@ export default async function AdsPage({
 function Stat({
   label,
   value,
+  note,
   spark,
 }: {
   label: string;
   value: string;
+  note?: string;
   spark?: React.ReactNode;
 }) {
   return (
     <div className="card p-4">
       <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
       <div className="mt-1 text-2xl font-bold tabular-nums">{value}</div>
+      {note && <div className="mt-0.5 text-xs text-[var(--color-muted)]">{note}</div>}
       {spark && <div className="mt-2">{spark}</div>}
     </div>
   );
