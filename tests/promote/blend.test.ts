@@ -4,6 +4,7 @@ import {
   parseFallback,
   parseMix,
   rankByDeficit,
+  effectiveMix,
   DEFAULT_MIX,
   type BlendMix,
   type FallbackPolicy,
@@ -102,9 +103,19 @@ describe("chooseOwnership", () => {
 
   describe("when the owned queue is empty", () => {
     const available = { owned: false, shared: true };
+    // The campaign has an owned source; it just has nothing to post from it
+    // right now. That is what makes owned genuinely starved, rather than
+    // simply not part of this campaign's mix.
+    const hasSource = { owned: true, shared: true };
 
     it("uses shared content by default, flagged as a fallback", () => {
-      const decision = chooseOwnership({ mix, posted: {}, available, fallback: permissive });
+      const decision = chooseOwnership({
+        mix,
+        posted: {},
+        available,
+        hasSource,
+        fallback: permissive,
+      });
       expect(decision.ownership).toBe("shared");
       expect(decision.viaFallback).toBe(true);
       expect(decision.reason).toBe("fallback");
@@ -115,6 +126,7 @@ describe("chooseOwnership", () => {
         mix,
         posted: {},
         available,
+        hasSource,
         fallback: { ...permissive, whenOwnedQueueEmpty: "pause" },
       });
       expect(decision.ownership).toBeNull();
@@ -124,13 +136,14 @@ describe("chooseOwnership", () => {
     it("stops once the daily fallback cap is reached", () => {
       const fallback = { ...permissive, maxFallbackItemsPerDay: 3 };
       expect(
-        chooseOwnership({ mix, posted: {}, available, fallback, fallbackUsedToday: 2 })
+        chooseOwnership({ mix, posted: {}, available, hasSource, fallback, fallbackUsedToday: 2 })
           .ownership,
       ).toBe("shared");
       const capped = chooseOwnership({
         mix,
         posted: {},
         available,
+        hasSource,
         fallback,
         fallbackUsedToday: 3,
       });
@@ -156,6 +169,7 @@ describe("chooseOwnership", () => {
       mix,
       posted: { owned: 9, shared: 0 },
       available: { owned: true, shared: false },
+      hasSource: { shared: true },
       fallback: permissive,
     });
     expect(decision.ownership).toBe("owned");
@@ -164,15 +178,22 @@ describe("chooseOwnership", () => {
 
   it("reaches an unweighted class only under use_any_available", () => {
     const onlyPartner = { owned: false, shared: false, partner: true };
+    const hasSource = { owned: true, shared: true };
     expect(
-      chooseOwnership({ mix, posted: {}, available: onlyPartner, fallback: permissive })
-        .ownership,
+      chooseOwnership({
+        mix,
+        posted: {},
+        available: onlyPartner,
+        hasSource,
+        fallback: permissive,
+      }).ownership,
     ).toBeNull();
     expect(
       chooseOwnership({
         mix,
         posted: {},
         available: onlyPartner,
+        hasSource,
         fallback: { ...permissive, whenOwnedQueueEmpty: "use_any_available" },
       }).ownership,
     ).toBe("partner");
@@ -187,6 +208,95 @@ describe("chooseOwnership", () => {
     });
     expect(decision.ownership).toBeNull();
     expect(decision.reason).toBe("no_inventory");
+  });
+});
+
+describe("a campaign that only has its own content", () => {
+  // Regression, found in production on 2026-08-18. A list of 39 hand-pasted
+  // owned links carried the 70/30 default mix. The blend read it as "30% short
+  // on shared content", found none, and posted the user's own links as
+  // *fallbacks* — six in one tick. maxFallbackItemsPerDay is 3, so the next
+  // tick would have posted nothing and the campaign would have looked dead.
+  const mix: BlendMix = { owned: 70, partner: 0, shared: 30 };
+  const onlyOwned = { owned: true };
+
+  it("posts its own content on target, not as a fallback", () => {
+    const decision = chooseOwnership({
+      mix,
+      posted: { owned: 50 },
+      available: onlyOwned,
+      fallback: { ...permissive, maxFallbackItemsPerDay: 3 },
+    });
+    expect(decision.ownership).toBe("owned");
+    expect(decision.viaFallback).toBe(false);
+    expect(decision.reason).toBe("on_target");
+  });
+
+  it("keeps posting indefinitely, never tripping the fallback cap", () => {
+    const posted: Partial<Record<Ownership, number>> = {};
+    for (let i = 0; i < 40; i++) {
+      const decision = chooseOwnership({
+        mix,
+        posted,
+        available: onlyOwned,
+        fallback: { ...permissive, maxFallbackItemsPerDay: 3 },
+        // Every previous post was on-target, so nothing accumulates here.
+        fallbackUsedToday: 0,
+      });
+      expect(decision.ownership).toBe("owned");
+      expect(decision.viaFallback).toBe(false);
+      posted.owned = (posted.owned ?? 0) + 1;
+    }
+  });
+
+  it("does start honouring the ratio once a shared source exists", () => {
+    // Same campaign, now subscribed to a keyword source. Shared is genuinely
+    // starved, so covering for it IS a fallback and the cap should apply.
+    const decision = chooseOwnership({
+      mix,
+      posted: { owned: 50 },
+      available: onlyOwned,
+      hasSource: { shared: true },
+      fallback: { ...permissive, maxFallbackItemsPerDay: 3 },
+    });
+    expect(decision.ownership).toBe("owned");
+    expect(decision.viaFallback).toBe(true);
+  });
+
+  it("prefers the shared source's content as soon as it has any", () => {
+    const decision = chooseOwnership({
+      mix,
+      posted: { owned: 50 },
+      available: { owned: true, shared: true },
+      hasSource: { shared: true },
+      fallback: permissive,
+    });
+    expect(decision.ownership).toBe("shared");
+    expect(decision.viaFallback).toBe(false);
+  });
+});
+
+describe("effectiveMix", () => {
+  const mix: BlendMix = { owned: 70, partner: 0, shared: 30 };
+
+  it("drops a class the campaign can neither stock nor fetch", () => {
+    expect(effectiveMix(mix, { owned: true }, {})).toEqual({
+      owned: 70,
+      partner: 0,
+      shared: 0,
+    });
+  });
+
+  it("keeps a class that has a source but no inventory right now", () => {
+    expect(effectiveMix(mix, { owned: true }, { shared: true })).toEqual(mix);
+  });
+
+  it("keeps a class that has inventory but no source", () => {
+    expect(effectiveMix(mix, { owned: true, shared: true }, {})).toEqual(mix);
+  });
+
+  it("returns the original mix when nothing qualifies", () => {
+    expect(effectiveMix(mix, {}, {})).toEqual(mix);
   });
 });
 

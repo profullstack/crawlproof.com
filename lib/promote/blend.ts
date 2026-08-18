@@ -95,10 +95,44 @@ export type BlendInput = {
   posted: Partial<Record<Ownership, number>>;
   /** Which classes have a link ready to post right now. */
   available: Partial<Record<Ownership, boolean>>;
+  /**
+   * Which classes the campaign has an enabled source feeding. A class with no
+   * inventory *and* no source is not starved — the campaign simply does not
+   * publish that kind of content.
+   */
+  hasSource?: Partial<Record<Ownership, boolean>>;
   fallback: FallbackPolicy;
   /** Fallback posts already made today, against maxFallbackItemsPerDay. */
   fallbackUsedToday?: number;
 };
+
+/**
+ * Narrow a mix to the classes this campaign can actually supply.
+ *
+ * Without this, a campaign of nothing but the user's own pasted links reads its
+ * 70/30 default as "30% short on shared content", finds none, and posts its own
+ * links as *fallbacks* — every tick, until maxFallbackItemsPerDay stops the
+ * campaign dead. A class the campaign has no inventory and no source for is not
+ * a starved class; it is not part of this campaign's mix at all.
+ *
+ * Returns the original mix when nothing qualifies, so the caller still gets a
+ * ranking to reason about rather than an empty one.
+ */
+export function effectiveMix(
+  mix: BlendMix,
+  available: Partial<Record<Ownership, boolean>>,
+  hasSource: Partial<Record<Ownership, boolean>> = {},
+): BlendMix {
+  const restricted: BlendMix = { owned: 0, partner: 0, shared: 0 };
+  let total = 0;
+  for (const key of OWNERSHIPS) {
+    if (mix[key] <= 0) continue;
+    if (!available[key] && !hasSource[key]) continue;
+    restricted[key] = mix[key];
+    total += mix[key];
+  }
+  return total > 0 ? restricted : mix;
+}
 
 /**
  * Rank the ownership classes by how far each is below its target share.
@@ -124,7 +158,8 @@ export function rankByDeficit(mix: BlendMix, posted: Partial<Record<Ownership, n
  * Choose which ownership class the next post draws from.
  */
 export function chooseOwnership(input: BlendInput): BlendDecision {
-  const { mix, posted, available, fallback } = input;
+  const { posted, available, fallback } = input;
+  const mix = effectiveMix(input.mix, available, input.hasSource);
   const ranked = rankByDeficit(mix, posted);
 
   // The class that is furthest behind and actually has something to post.
