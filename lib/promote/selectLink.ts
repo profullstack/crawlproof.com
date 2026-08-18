@@ -94,12 +94,28 @@ export async function selectNextLink(
     }),
   );
 
+  // Which classes this campaign has an enabled source feeding. A class with no
+  // source and no links is not starved — it is simply not part of the mix, and
+  // treating it as starved turns every ordinary post into a fallback.
+  const { data: sourceRows } = await supabase
+    .from("promo_source")
+    .select("ownership")
+    .eq("list_id", list.id)
+    .eq("enabled", true);
+
+  const hasSource: Partial<Record<Ownership, boolean>> = {};
+  for (const row of (sourceRows ?? []) as Array<{ ownership: string }>) {
+    const key = row.ownership as Ownership;
+    if (OWNERSHIPS.includes(key)) hasSource[key] = true;
+  }
+
   const fallbackUsedToday = await countFallbackToday(supabase, list.id, now);
 
   const decision = chooseOwnership({
     mix,
     posted,
     available,
+    hasSource,
     fallback,
     fallbackUsedToday,
   });

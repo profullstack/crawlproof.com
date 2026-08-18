@@ -23,8 +23,15 @@ function link(over: Record<string, unknown> = {}) {
 }
 
 function db(over: Partial<FakeDb> = {}): FakeDb {
-  return { promo_link: [], promo_post: [], ...over };
+  return { promo_link: [], promo_post: [], promo_source: [], ...over };
 }
+
+// A campaign only treats a class as *starved* if something is meant to be
+// feeding it. Without a source, an empty class is simply not part of the mix —
+// which is what stops an all-owned campaign posting its own links as fallbacks.
+const sourceFor = (ownership: string) => [
+  { id: `src-${ownership}`, list_id: "list-a", ownership, enabled: true },
+];
 
 const list = {
   id: "list-a",
@@ -102,6 +109,7 @@ describe("selectNextLink", () => {
           link({ id: "off", ownership: "owned", enabled: false }),
           link({ id: "on", ownership: "shared" }),
         ],
+        promo_source: sourceFor("owned"),
       }),
     );
     const selection = await selectNextLink(client, list, NOW);
@@ -111,7 +119,10 @@ describe("selectNextLink", () => {
 
   it("falls back to shared when the owned queue is empty", async () => {
     const { client } = makeFakeSupabase(
-      db({ promo_link: [link({ id: "shared-1", ownership: "shared" })] }),
+      db({
+        promo_link: [link({ id: "shared-1", ownership: "shared" })],
+        promo_source: sourceFor("owned"),
+      }),
     );
     const selection = await selectNextLink(client, list, NOW);
     expect(selection.link?.id).toBe("shared-1");
@@ -123,6 +134,7 @@ describe("selectNextLink", () => {
     const { client } = makeFakeSupabase(
       db({
         promo_link: [link({ id: "shared-1", ownership: "shared" })],
+        promo_source: sourceFor("owned"),
         promo_post: Array.from({ length: 3 }, (_, i) => ({
           id: `fb-${i}`,
           list_id: "list-a",
@@ -142,6 +154,7 @@ describe("selectNextLink", () => {
     const { client } = makeFakeSupabase(
       db({
         promo_link: [link({ id: "shared-1", ownership: "shared" })],
+        promo_source: sourceFor("owned"),
         promo_post: Array.from({ length: 3 }, (_, i) => ({
           id: `fb-${i}`,
           list_id: "list-a",
@@ -199,6 +212,31 @@ describe("selectNextLink", () => {
       }),
     );
     expect((await selectNextLink(client, list, NOW)).link?.id).toBe("shared-1");
+  });
+
+  it("does not treat an all-owned campaign's posts as fallbacks", async () => {
+    // Production regression, 2026-08-18. The "lives" campaign: 39 hand-pasted
+    // owned links, no sources, carrying the 70/30 default. Every post came out
+    // flagged via_fallback, and maxFallbackItemsPerDay=3 would have stopped the
+    // campaign entirely on the following tick.
+    const { client } = makeFakeSupabase(
+      db({
+        promo_link: [link({ id: "owned-1", ownership: "owned" })],
+        promo_source: [],
+        promo_post: Array.from({ length: 50 }, (_, i) => ({
+          id: `legacy-${i}`,
+          list_id: "list-a",
+          ownership: "owned",
+          status: "posted",
+          via_fallback: false,
+          created_at: "2026-08-18T10:00:00.000Z",
+        })),
+      }),
+    );
+    const selection = await selectNextLink(client, list, NOW);
+    expect(selection.link?.id).toBe("owned-1");
+    expect(selection.decision.viaFallback).toBe(false);
+    expect(selection.decision.reason).toBe("on_target");
   });
 
   it("ignores another list's history", async () => {
