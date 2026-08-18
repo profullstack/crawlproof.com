@@ -56,11 +56,18 @@ export type FeedShape = (typeof FEED_SHAPES)[number];
  * How much of the ad the body carries.
  *
  * `text` is the long thin one — a single sponsored line that reads as a line of
- * the feed rather than an interruption of it. `card` adds the logo and puts the
- * call to action on its own line. `terminal` is the ASCII box, for feeds whose
- * readers are developers.
+ * the feed rather than an interruption of it. `card` adds the artwork and puts
+ * the call to action on its own line. `terminal` is the ASCII box, for feeds
+ * whose readers are developers.
+ *
+ * `article` is the long form: the campaign's editorial summary rendered as real
+ * paragraphs, for a placement that sits inside somebody's writing — a sponsored
+ * section of a blog post, or a feed whose items are read rather than scanned.
+ * It is the only style that needs data beyond the creative (see
+ * `FeedItemInput.summary`), and it degrades to `card` when a campaign has no
+ * prose, because an "article" with one line in it is just a worse card.
  */
-export const FEED_STYLES = ["text", "card", "terminal"] as const;
+export const FEED_STYLES = ["text", "card", "terminal", "article"] as const;
 export type FeedStyle = (typeof FEED_STYLES)[number];
 
 /** How the item's identity rotates. See `adGuid`. */
@@ -319,9 +326,24 @@ export type FeedRenderOpts = {
   guidMode?: GuidMode;
   /** Box width for the terminal style. */
   cols?: number;
+  /**
+   * The campaign's editorial prose. `card` prefers the short form over the
+   * creative's one-line body; `article` is built from the long form. Threaded
+   * through opts rather than the creative because it belongs to the campaign,
+   * not to a format — every creative of a campaign shares one.
+   */
+  summary?: { short: string | null; long: string | null } | null;
   /** Clock injection, for tests. */
   now?: Date;
 };
+
+/** Paragraphs of a long summary, cleaned. Empty when there is no prose. */
+export function summaryParagraphs(long: string | null | undefined): string[] {
+  return String(long ?? "")
+    .split(/\n\s*\n/)
+    .map((p) => oneLine(p))
+    .filter(Boolean);
+}
 
 /** Disclosure wording, sanitised. Empty input falls back rather than removing it. */
 export function labelText(v: string | null | undefined): string {
@@ -382,7 +404,43 @@ export function renderFeedHtml(
     ].join("\n");
   }
 
-  if (style === "card") {
+  // The long form. Real paragraphs of editorial prose, for a placement that
+  // sits inside somebody's writing. Falls through to the card when a campaign
+  // has no long summary: an "article" carrying a single line is just a worse
+  // card, and every campaign generated before this feature has none.
+  if (style === "article") {
+    const paragraphs = summaryParagraphs(opts.summary?.long);
+    if (paragraphs.length > 0) {
+      const parts: string[] = [];
+
+      if (creative.imageUrl) {
+        parts.push(
+          `<p>${link(`<img src="${esc(creative.imageUrl)}" alt="${headline}" width="600" />`)}</p>`,
+        );
+      }
+      parts.push(`<h3>${link(headline)}</h3>`);
+      // The prose is the body here, not the one-line creative copy. It is
+      // third-person editorial written from the advertiser's own site, which is
+      // what lets it sit next to a blog post without reading as an intrusion.
+      for (const paragraph of paragraphs) parts.push(`<p>${esc(paragraph)}</p>`);
+      parts.push(`<p>${link(`<strong>${cta} &#8594;</strong>`)}</p>`);
+
+      const host = destinationHost(clickUrl, creative);
+      const mark = creative.logoUrl
+        ? `<img src="${esc(creative.logoUrl)}" alt="" height="20" /> `
+        : "";
+      // Disclosure matters more here than anywhere else in this file: the whole
+      // point of the long form is that it reads like editorial, so the line
+      // saying it is paid for is the only thing distinguishing it from the
+      // post above it.
+      parts.push(
+        `<p><small>${mark}${esc(label)}${host ? ` &#183; ${esc(host)}` : ""} &#183; ${credit}</small></p>`,
+      );
+      return parts.join("\n");
+    }
+  }
+
+  if (style === "card" || style === "article") {
     // The substantial one. A feed item sits between real blog posts, each of
     // which has a title, a picture and a few paragraphs — so a bare line of
     // text does not read as restrained next to them, it reads as broken, and
@@ -403,7 +461,11 @@ export function renderFeedHtml(
     }
 
     parts.push(`<h3>${link(headline)}</h3>`);
-    if (body) parts.push(`<p>${body}</p>`);
+    // The short summary when the campaign has one: it is a written sentence
+    // rather than a 76-character banner line, which is what the item needs when
+    // it sits between real posts. The creative body is the fallback.
+    const prose = esc(oneLine(opts.summary?.short)) || body;
+    if (prose) parts.push(`<p>${prose}</p>`);
     parts.push(`<p>${link(`<strong>${cta} &#8594;</strong>`)}</p>`);
 
     // The brand line: the logo where there is one, and always the destination
@@ -459,13 +521,29 @@ export function renderFeedMarkdown(
     return [`**${label}**`, "", "```", art, "```", "", credit].join("\n");
   }
 
-  if (style === "card") {
+  // Long form, for a Markdown-templated blog post or newsletter.
+  if (style === "article") {
+    const paragraphs = summaryParagraphs(opts.summary?.long);
+    if (paragraphs.length > 0) {
+      const lines: string[] = [];
+      if (creative.imageUrl) lines.push(`[![${headline}](${mdUrl(creative.imageUrl)})](${url})`, "");
+      lines.push(`### [${headline}](${url})`, "");
+      for (const paragraph of paragraphs) lines.push(mdEsc(paragraph), "");
+      lines.push(`[**${cta} →**](${url})`, "");
+      const host = destinationHost(clickUrl, creative);
+      lines.push(`*${label}${host ? ` · ${mdEsc(host)}` : ""} · ${mdEsc(ATTRIBUTION)}*`);
+      return lines.join("\n");
+    }
+  }
+
+  if (style === "card" || style === "article") {
     // Mirrors the HTML card: artwork first, then the headline, the body, the
     // call to action, and a brand line naming who is paying.
     const lines: string[] = [];
     if (creative.imageUrl) lines.push(`[![${headline}](${mdUrl(creative.imageUrl)})](${url})`, "");
     lines.push(`### [${headline}](${url})`, "");
-    if (body) lines.push(body, "");
+    const prose = mdEsc(oneLine(opts.summary?.short)) || body;
+    if (prose) lines.push(prose, "");
     lines.push(`[**${cta} →**](${url})`, "");
     const host = destinationHost(clickUrl, creative);
     lines.push(`*${label}${host ? ` · ${mdEsc(host)}` : ""} · ${mdEsc(ATTRIBUTION)}*`);
@@ -490,8 +568,25 @@ export function renderFeedText(
     return renderCreativeText(creative, clickUrl, { cols: opts.cols, color: false });
   }
   const headline = oneLine(creative.headline);
-  const body = oneLine(creative.body);
   const cta = ctaLabel(creative.ctaText);
+
+  // The long form as plain prose, paragraphs separated by blank lines.
+  const paragraphs = (opts.style ?? "text") === "article"
+    ? summaryParagraphs(opts.summary?.long)
+    : [];
+  if (paragraphs.length > 0) {
+    return [
+      `[${label}] ${headline}`,
+      "",
+      paragraphs.join("\n\n"),
+      "",
+      `${cta}: ${clickUrl}`,
+      `-- ${ATTRIBUTION} (${ATTRIBUTION_URL})`,
+    ].join("\n");
+  }
+
+  // Short summary where there is one, else the creative's own line.
+  const body = oneLine(opts.summary?.short) || oneLine(creative.body);
   return [`[${label}] ${headline}`, body, `${cta}: ${clickUrl}`, `-- ${ATTRIBUTION} (${ATTRIBUTION_URL})`]
     .filter(Boolean)
     .join("\n");
@@ -557,10 +652,20 @@ export type FeedItemInput = {
   tier?: string;
   /** 0-based place in a multi-ad request. Namespaces the guid — see `adGuid`. */
   position?: number;
+  /**
+   * The campaign's editorial prose, when it still describes the destination.
+   * `card` prefers the short form over the creative's one-line body, and
+   * `article` is built from the long form. Absent is ordinary, not an error.
+   */
+  summary?: { short: string | null; long: string | null } | null;
 };
 
 /** Everything the shapes below are rendered from, computed once. */
 function assemble(input: FeedItemInput, opts: FeedRenderOpts) {
+  // The prose belongs to the campaign and arrives on the input; the body
+  // renderers read it off opts, so merge it in once here rather than at each
+  // of the three call sites below.
+  if (input.summary && !opts.summary) opts = { ...opts, summary: input.summary };
   const { guid, published } = adGuid(opts.guidMode ?? "daily", {
     slotId: input.slotId,
     impressionId: input.impressionId,
@@ -694,6 +799,13 @@ export function feedFields(
     logoUrl: c.logoUrl,
     imageUrl: c.imageUrl,
     colors: { bg: c.bgColor, fg: c.fgColor, accent: c.accentColor },
+    // Editorial prose about the advertiser, for a publisher writing the ad into
+    // their own content rather than rendering ours. Both are null for campaigns
+    // that predate the feature or whose destination has since been edited, so a
+    // consumer must treat them as optional and fall back to `body`.
+    summaryShort: oneLine(input.summary?.short) || null,
+    summaryLong: input.summary?.long || null,
+    summaryParagraphs: summaryParagraphs(input.summary?.long),
     html: a.html,
     markdown: a.markdown,
     text: a.text,

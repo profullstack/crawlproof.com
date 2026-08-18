@@ -310,7 +310,7 @@ function feedSnippets(slotId: string, origin: string): Snippet[] {
       // No &v= here on purpose: the caller of this endpoint is a build, not a
       // reader, so a visitor id would identify the publisher's CI box rather
       // than a person and would make every impression look like one visitor.
-      note: "as=rss|atom|json|html|markdown|text|fields · style=text|card|terminal · guid=daily|weekly|fill|static · n=1..5",
+      note: "as=rss|atom|json|html|markdown|text|fields · style=text|card|terminal|article · guid=daily|weekly|fill|static · n=1..5",
       code: [
         "# One RSS <item>, ready to paste inside your <channel>:",
         `curl -fsS "${rssUrl}"`,
@@ -750,6 +750,52 @@ function feedSnippets(slotId: string, origin: string): Snippet[] {
       ].join("\n"),
     },
     {
+      id: "blogpost",
+      label: "Blog post",
+      lang: "bash",
+      note: "summaryShort/summaryLong are written from the advertiser's own site; both are null on older campaigns, so fall back to `body`.",
+      code: [
+        "# The long form: the advertiser's editorial summary as real paragraphs,",
+        "# for a sponsored section inside a post rather than a unit beside it.",
+        `curl -fsS "${feedAdUrl(origin, slotId, { as: "html", style: "article" })}"`,
+        "",
+        "# Writing the section yourself? Take the prose and template it:",
+        `curl -fsS "${fieldsUrl}" | jq -r '.items[0] | {summaryShort, summaryLong, url, label}'`,
+        "",
+        "# Markdown, for a static-site build:",
+        `curl -fsS "${feedAdUrl(origin, slotId, { as: "markdown", style: "article" })}"`,
+        "",
+        "# Disclose it. The long form reads like editorial on purpose, so the",
+        "# line saying it is paid for is the only thing telling it apart from",
+        "# the post above it -- keep the label the payload gives you.",
+      ].join("\n"),
+    },
+    {
+      id: "sponsor-line",
+      label: "Sponsor line",
+      lang: "javascript",
+      note: "The one-sentence form, for a 'this post is sponsored by' note at the top or bottom of an article.",
+      code: [
+        "// Pulls the short summary and renders a single disclosed sentence.",
+        "async function sponsorLine() {",
+        "  try {",
+        `    const r = await fetch('${fieldsUrl}', { signal: AbortSignal.timeout(2000) });`,
+        "    if (!r.ok) return '';",
+        "    const ad = (await r.json()).items[0];",
+        "    if (!ad) return '';",
+        "",
+        "    // summaryShort is editorial prose about the advertiser; body is the",
+        "    // 76-character banner line. Prefer the first, fall back to the second.",
+        "    const prose = ad.summaryShort || ad.body;",
+        "    return `<p><em>${ad.label}:</em> <a href=\"${ad.url}\" rel=\"sponsored nofollow noopener\">' +",
+        "      `${ad.headline}</a> — ${prose}</p>`;",
+        "  } catch {",
+        "    return '';",
+        "  }",
+        "}",
+      ].join("\n"),
+    },
+    {
       id: "markdown",
       label: "Markdown",
       lang: "bash",
@@ -794,7 +840,11 @@ export function formatBlurb(format: AdFormatId): string {
     return "Fetched as plain text and printed by a shell — MOTDs, SSH banners, CLI tools.";
   }
   if (format === FEED_FORMAT_ID) {
-    return "Fetched at build time and spliced into a feed you generate — RSS, Atom, JSON Feed, newsletters.";
+    return (
+      "Fetched at build time and spliced into a feed you generate — RSS, Atom, JSON Feed, " +
+      "newsletters. style=article renders the advertiser's editorial summary as paragraphs, " +
+      "for an ad inside a blog post."
+    );
   }
   return "Rendered in the browser by ad.js inside an isolated iframe.";
 }

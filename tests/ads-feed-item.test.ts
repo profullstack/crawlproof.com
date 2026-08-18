@@ -4,6 +4,7 @@ import {
   ATTRIBUTION,
   adGuid,
   destinationHost,
+  summaryParagraphs,
   cdata,
   ctaLabel,
   feedDeviceType,
@@ -449,5 +450,100 @@ describe("client classification", () => {
 describe("rfc822", () => {
   it("formats a pubDate the way RSS specifies", () => {
     expect(rfc822(new Date("2026-08-18T00:00:00.000Z"))).toBe("Tue, 18 Aug 2026 00:00:00 GMT");
+  });
+});
+
+describe("editorial summaries", () => {
+  const summary = {
+    short: "Widgets is a deployment tool for small teams that do not run a platform group.",
+    long:
+      "Widgets deploys applications from a single command, and rolls them back with another.\n\n" +
+      "It is aimed at teams without a dedicated platform group, where the person shipping is " +
+      "also the person on call.\n\n" +
+      "The rollback path is the same one used to deploy, so it is exercised on every release.",
+  };
+  const withProse: FeedItemInput = { ...input, summary };
+
+  it("splits the long form into paragraphs", () => {
+    expect(summaryParagraphs(summary.long)).toHaveLength(3);
+    expect(summaryParagraphs(null)).toEqual([]);
+    expect(summaryParagraphs("   ")).toEqual([]);
+    // Blank-line runs are one break, not several empty paragraphs.
+    expect(summaryParagraphs("a\n\n\n\nb")).toEqual(["a", "b"]);
+  });
+
+  it("renders the long form as real paragraphs in an article", () => {
+    const html = renderFeedHtml(creative, input.clickUrl, { style: "article", summary });
+    const paras = html.match(/<p>(?!<a|<small|<img)/g) ?? [];
+    expect(paras.length).toBeGreaterThanOrEqual(3);
+    expect(html).toContain("also the person on call");
+    // A heading, so it reads as a section of the post rather than a caption.
+    expect(html).toContain("<h3>");
+  });
+
+  it("falls back to the card when a campaign has no long form", () => {
+    // Every campaign generated before this feature has none, and an "article"
+    // carrying one line is just a worse card.
+    const html = renderFeedHtml(creative, input.clickUrl, { style: "article", summary: null });
+    expect(html).toContain("<h3>");
+    expect(html).toContain(creative.body);
+  });
+
+  it("prefers the short form over the banner line in a card", () => {
+    const html = renderFeedHtml(creative, input.clickUrl, { style: "card", summary });
+    expect(html).toContain("do not run a platform group");
+    expect(html).not.toContain(creative.body);
+  });
+
+  it("still discloses in the long form, where it matters most", () => {
+    // The whole point of the article style is that it reads like editorial, so
+    // the disclosure is the only thing telling it apart from the post above it.
+    const html = renderFeedHtml(creative, input.clickUrl, { style: "article", summary });
+    expect(html).toContain("Sponsored");
+    expect(html).toContain(ATTRIBUTION);
+    for (const rel of html.matchAll(/rel="([^"]*)"/g)) {
+      expect(rel[1]).toContain("sponsored");
+      expect(rel[1]).toContain("nofollow");
+    }
+  });
+
+  it("carries the long form through markdown and plain text", () => {
+    const md = renderFeedMarkdown(creative, input.clickUrl, { style: "article", summary });
+    expect(md).toContain("### [");
+    expect(md).toContain("also the person on call");
+
+    const text = renderFeedText(creative, input.clickUrl, { style: "article", summary });
+    expect(text).toContain("also the person on call");
+    expect(text).not.toMatch(/<[a-z]/i);
+  });
+
+  it("keeps an article well-formed inside a host channel", () => {
+    const doc = inRssChannel(renderRssItem(withProse, { style: "article", now: NOW }));
+    expect(XMLValidator.validate(doc)).toBe(true);
+  });
+
+  it("survives prose that is itself markup", () => {
+    const hostile: FeedItemInput = {
+      ...input,
+      summary: { short: "a > b", long: "Ends a section </description></item><item>\n\nand ]]> too" },
+    };
+    const doc = inRssChannel(renderRssItem(hostile, { style: "article", now: NOW }));
+    expect(XMLValidator.validate(doc)).toBe(true);
+    const parsed = parser.parse(doc);
+    expect(Array.isArray(parsed.rss.channel.item)).toBe(false);
+  });
+
+  it("hands a consumer both lengths, and null when there are none", () => {
+    const f = feedFields(withProse, { now: NOW }) as Record<string, unknown>;
+    expect(f.summaryShort).toContain("deployment tool");
+    expect(String(f.summaryLong)).toContain("also the person on call");
+    expect(f.summaryParagraphs).toHaveLength(3);
+
+    const bare = feedFields(input, { now: NOW }) as Record<string, unknown>;
+    expect(bare.summaryShort).toBeNull();
+    expect(bare.summaryLong).toBeNull();
+    expect(bare.summaryParagraphs).toEqual([]);
+    // The one-line creative copy is still there as the fallback.
+    expect(bare.body).toBe(creative.body);
   });
 });

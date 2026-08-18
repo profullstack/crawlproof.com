@@ -16,7 +16,10 @@
 //          bare curl still rotates real campaigns.
 //   as     wire shape: rss | atom | json | html | markdown | text | fields.
 //          Default rss. See lib/ads/feeditem for what each one is for.
-//   style  body style: text | card | terminal. Default text — the long thin one.
+//   style  body style: text | card | terminal | article. Default text — the long
+//          thin one. `article` renders the campaign's editorial summary as real
+//          paragraphs, for an ad that lives inside a blog post; it falls back to
+//          `card` for campaigns with no prose.
 //   guid   identity rotation: daily | weekly | fill | static. Default daily.
 //   n      how many ads to return, 1..5. Each is an independent fill with its
 //          own impression and its own identity.
@@ -33,7 +36,7 @@
 // go through the ordinary redirector and are metered per click.
 
 import { NextRequest, NextResponse } from "next/server";
-import { serveAd } from "@/lib/ads/serve";
+import { campaignSummary, serveAd } from "@/lib/ads/serve";
 import { houseFill } from "@/lib/ads/house";
 import { FEED_FORMAT_ID } from "@/lib/ads/formats";
 import {
@@ -187,9 +190,16 @@ export async function GET(request: NextRequest) {
       const isHouse = fill.campaignId === "house";
       const clickUrl = src && isHouse ? withParam(fill.clickUrl, "s", src) : fill.clickUrl;
 
+      // Editorial prose, when the campaign has any that still describes where
+      // it points. Its own query, deliberately not part of the serving join —
+      // see campaignSummary. Best-effort: a null here just renders the short
+      // creative body, which is what every campaign did before this existed.
+      const summary = await campaignSummary(fill.campaignId);
+
       inputs.push({
         creative: fill.creative,
         clickUrl,
+        summary,
         slotId: slotId || "default",
         impressionId: fill.impressionId,
         tier: fill.tier,
