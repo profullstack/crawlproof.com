@@ -129,7 +129,7 @@ export function renderHouseAdHtml(
       a{text-decoration:none;display:block}
       .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;background:#070a10;
         font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;padding:0 12px;
-        overflow:hidden;border-radius:8px;border:1px solid rgba(255,255,255,.08);border-left:3px solid #6ee7b7}
+        overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.08);border-left:3px solid #6ee7b7}
     </style></head><body>
       <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
         <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#6ee7b7;flex:0 0 auto">CrawlProof Ads</span>
@@ -169,7 +169,7 @@ export function renderHouseAdHtml(
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
-    .cp-ad{position:relative;width:${w}px;height:${h}px;overflow:hidden;border-radius:8px;
+    .cp-ad{position:relative;width:${w}px;height:${h}px;overflow:hidden;border-radius:0;
       border:1px solid rgba(255,255,255,.08);background:#070a10;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
     .cp-ad .bg{position:absolute;inset:0;z-index:0;background:url("${esc(img)}") center/cover no-repeat}
