@@ -98,22 +98,32 @@ export async function processDuePromoteLists(
     listsPaused: 0,
   };
 
+  const dueBy = new Date().toISOString();
+
   const { data: lists, error } = await supabase
     .from("promo_list")
     .select(
       "id, user_id, name, cadence_seconds, post_mode, target_account_ids, brand_voice, quiet_start, quiet_end, timezone, next_run_at, source_mix, fallback_policy",
     )
     .eq("status", "running")
-    .lte("next_run_at", new Date().toISOString())
+    .lte("next_run_at", dueBy)
     .order("next_run_at", { ascending: true })
     .limit(limit);
 
   if (error || !lists || lists.length === 0) return result;
 
-  // Claim each due list by pushing next_run_at forward, conditional on it not
-  // having moved since we read it. The predicate is the point: without it this
-  // is a read-then-write and an overlapping sweep wins the same list. Only the
-  // lists whose update matched a row are ours to process.
+  // Claim each due list by pushing next_run_at forward, conditional on it still
+  // being due. The predicate is the point: without it this is a read-then-write
+  // and an overlapping sweep wins the same list. Only the lists whose update
+  // matched a row are ours to process.
+  //
+  // "Still due" rather than "unchanged since we read it": the minimum cadence is
+  // 300s, so a claim always pushes next_run_at well into the future and the
+  // loser's predicate cannot match. Re-asserting the same condition the select
+  // used avoids depending on a timestamptz round-tripping to a byte-identical
+  // string — and a claim that silently never matched would stop every campaign
+  // posting with nothing in the logs, which is the failure mode this codebase
+  // has already paid for once.
   //
   // This is an optimization, not the safety property — it saves duplicated
   // work. The guarantee that nothing publishes twice lives in the job's
@@ -126,7 +136,7 @@ export async function processDuePromoteLists(
           next_run_at: new Date(Date.now() + l.cadence_seconds * 1000).toISOString(),
         })
         .eq("id", l.id)
-        .eq("next_run_at", l.next_run_at)
+        .lte("next_run_at", dueBy)
         .select("id");
       return (data ?? []).length > 0 ? l : null;
     }),
