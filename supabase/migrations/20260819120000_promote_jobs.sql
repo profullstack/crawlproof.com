@@ -53,8 +53,10 @@ create table if not exists public.promo_job (
   id uuid primary key default gen_random_uuid(),
 
   -- Denormalized owner, so the worker can bill and the user can read their own
-  -- jobs without a join through promo_list.
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- jobs without a join through promo_list. References profiles, matching
+  -- promo_list.user_id -- not auth.users, which would let a job outlive the
+  -- profile row every other promote table is keyed to.
+  user_id uuid not null references public.profiles(id) on delete cascade,
 
   list_id uuid not null references public.promo_list(id) on delete cascade,
   link_id uuid not null references public.promo_link(id) on delete cascade,
