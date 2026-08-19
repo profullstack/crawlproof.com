@@ -21,6 +21,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { findGuestPostOpportunities } from "./guestPostMatcher";
+import { subjectFromTopicFeeds } from "./feedTopics";
 
 /**
  * One in every this many published posts is a guest post.
@@ -157,8 +158,37 @@ export async function planGuestPost(
     };
   }
 
-  // Every partner is either cooling off or has had all its crossed topics
-  // used. That is a healthy network doing its job, not an error — the caller
-  // publishes to the author's own blog instead.
+  // Every partner is either cooling off or has had all its crossed topics used.
+  //
+  // The crossings are finite — they are combinations of two fixed keyword
+  // lists — so a partner written for a few times exhausts them and the slot
+  // falls back to the author's own blog for ever after. Before giving up, take
+  // a subject from what the small web is actually publishing: a real post from
+  // an RSS Amplifier topic feed, picked at random, which the generator then
+  // writes a full article about. Nothing is copied; what the feed contributes
+  // is a subject somebody genuinely cared about this week rather than one
+  // assembled from two keyword lists.
+  for (const opportunity of opportunities) {
+    if (cooling.has(opportunity.partner_site_id)) continue;
+
+    const found = await subjectFromTopicFeeds(
+      // The partner's own suggested topics are the best guide to what their
+      // readers came for, and they are already crossed against ours.
+      opportunity.suggested_topics ?? [],
+    );
+    if (!found) continue;
+
+    const key = `${opportunity.partner_site_id}::${found.subject.trim().toLowerCase()}`;
+    if (taken.has(key)) continue;
+
+    return {
+      targetSiteId: opportunity.partner_site_id,
+      targetDomain: opportunity.partner_domain,
+      topic: found.subject,
+    };
+  }
+
+  // Nothing anywhere. A healthy network doing its job rather than an error —
+  // the caller publishes to the author's own blog instead.
   return null;
 }
