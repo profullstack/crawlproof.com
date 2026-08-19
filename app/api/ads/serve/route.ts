@@ -33,6 +33,9 @@ export async function GET(request: NextRequest) {
     const slotId = url.searchParams.get("slot");
     const format = url.searchParams.get("format");
     const visitorId = url.searchParams.get("v");
+    // What the tag measured on the publisher's page. Anything other than
+    // light/dark (including absent) defers to the slot's stored default.
+    const theme = url.searchParams.get("theme");
     if (!slotId || !isAdFormat(format)) {
       return NextResponse.json({ ok: false }, { status: 200, headers });
     }
@@ -46,6 +49,7 @@ export async function GET(request: NextRequest) {
       ip,
       country: geo?.countryCode ?? null,
       device,
+      theme,
     });
 
     if (!fill) return NextResponse.json({ ok: false }, { status: 200, headers });

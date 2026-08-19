@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { env } from "@/lib/env";
 import { formatSpec, type AdCreative, type AdFormatId } from "./creative";
+import { hexToRgba } from "./formats";
+import { hairline, overImageInk, overlayInk, solid, type AdPalette, type AdTheme } from "./theme";
 import { FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import { renderFeedHtml } from "./feeditem";
@@ -106,14 +108,22 @@ export function renderHouseAdHtml(
   format: AdFormatId,
   clickUrl: string,
   copy: HouseCopy = pickHouse(),
+  theme: AdTheme = "dark",
 ): string {
   const { w, h } = formatSpec(format);
   const HOUSE = copy;
+  const p = housePalette(theme);
+  const edge = hairline(theme);
+  // Muted ink for the small-print label and the body line, derived from the
+  // theme's foreground rather than hard-coded — the old #9fb0c3 / #c7d2de pair
+  // were mid-greys tuned for near-black and vanished on a light card.
+  const muted = hexToRgba(p.fgColor, 0.68);
+  const bodyInk = hexToRgba(p.fgColor, 0.82);
 
   // Terminal ad — same ASCII artwork the /api/ads/motd endpoint serves, in a
   // <pre> for the web/iframe paths.
   if (format === TERMINAL_FORMAT_ID) {
-    return renderTerminalHtml(houseCreative(format, copy), clickUrl);
+    return renderTerminalHtml(houseCreative(format, copy), clickUrl, { theme });
   }
 
   // Feed ad — the same sponsored line the /api/ads/feed body carries, so an
@@ -127,15 +137,15 @@ export function renderHouseAdHtml(
     return `<!doctype html><html><head><meta charset="utf-8"><style>
       *{box-sizing:border-box;margin:0}
       a{text-decoration:none;display:block}
-      .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;background:#070a10;
+      .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;background:${p.bgColor};
         font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;padding:0 12px;
-        overflow:hidden;border-radius:0;border:1px solid rgba(255,255,255,.08);border-left:3px solid #6ee7b7}
+        overflow:hidden;border-radius:0;border:1px solid ${edge};border-left:3px solid ${p.accentColor}}
     </style></head><body>
       <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
-        <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#6ee7b7;flex:0 0 auto">CrawlProof Ads</span>
-        <strong style="color:#eef3f8;flex:0 0 auto;white-space:nowrap">${esc(HOUSE.headline)}</strong>
-        <span style="color:#c7d2de;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto">— ${esc(HOUSE.body)}</span>
-        <span style="color:#6ee7b7;font-weight:600;flex:0 0 auto;white-space:nowrap">${esc(HOUSE.cta)}</span>
+        <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:${p.accentColor};flex:0 0 auto">CrawlProof Ads</span>
+        <strong style="color:${p.fgColor};flex:0 0 auto;white-space:nowrap">${esc(HOUSE.headline)}</strong>
+        <span style="color:${bodyInk};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto">— ${esc(HOUSE.body)}</span>
+        <span style="color:${p.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap">${esc(HOUSE.cta)}</span>
       </a>
     </body></html>`;
   }
@@ -145,12 +155,17 @@ export function renderHouseAdHtml(
   const isRect = format === "banner_300x250";
   const row = !isRect; // leaderboard + mobile are horizontal
 
-  const label = `<span style="position:absolute;top:8px;left:10px;z-index:3;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#9fb0c3">CrawlProof Ads</span>`;
-  const headline = `<div style="font-weight:800;font-size:${isMobile ? 13 : isRect ? 20 : 17}px;line-height:1.1;color:#eef3f8">${esc(HOUSE.headline)}</div>`;
+  // Over the hero image the ink is the theme's over-image colour, not the
+  // palette foreground: the scrim below is mixed from the same side, so on a
+  // light unit the artwork fades to white and the copy has to go dark.
+  const ink = overImageInk(theme);
+  const inkMuted = hexToRgba(ink, 0.78);
+  const label = `<span style="position:absolute;top:8px;left:10px;z-index:3;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:${hexToRgba(ink, 0.62)}">CrawlProof Ads</span>`;
+  const headline = `<div style="font-weight:800;font-size:${isMobile ? 13 : isRect ? 20 : 17}px;line-height:1.1;color:${ink}">${esc(HOUSE.headline)}</div>`;
   const body = isMobile
     ? ""
-    : `<div style="font-size:${isRect ? 13 : 12}px;color:#c7d2de;margin-top:4px;max-width:${isRect ? "100%" : "62%"}">${esc(HOUSE.body)}</div>`;
-  const cta = `<span style="background:#6ee7b7;color:#04121a;font-weight:700;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(HOUSE.cta)}</span>`;
+    : `<div style="font-size:${isRect ? 13 : 12}px;color:${inkMuted};margin-top:4px;max-width:${isRect ? "100%" : "62%"}">${esc(HOUSE.body)}</div>`;
+  const cta = `<span style="background:${p.accentColor};color:${solid(p.bgColor)};font-weight:700;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(HOUSE.cta)}</span>`;
 
   const content = row
     ? `<div style="position:relative;z-index:2;display:flex;align-items:center;gap:10px;height:100%;padding:0 12px">
@@ -162,15 +177,16 @@ export function renderHouseAdHtml(
          <div style="margin-top:12px">${cta}</div>
        </div>`;
 
+  const scrim = overlayInk(theme);
   const overlay = isRect
-    ? "linear-gradient(180deg, rgba(7,10,16,.12) 0%, rgba(7,10,16,.86) 76%)"
-    : "linear-gradient(90deg, rgba(7,10,16,.92) 0%, rgba(7,10,16,.5) 62%, rgba(7,10,16,.2) 100%)";
+    ? `linear-gradient(180deg, ${hexToRgba(scrim, 0.12)} 0%, ${hexToRgba(scrim, 0.86)} 76%)`
+    : `linear-gradient(90deg, ${hexToRgba(scrim, 0.92)} 0%, ${hexToRgba(scrim, 0.5)} 62%, ${hexToRgba(scrim, 0.2)} 100%)`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
     .cp-ad{position:relative;width:${w}px;height:${h}px;overflow:hidden;border-radius:0;
-      border:1px solid rgba(255,255,255,.08);background:#070a10;
+      border:1px solid ${edge};background:${p.bgColor};
       font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
     .cp-ad .bg{position:absolute;inset:0;z-index:0;background:url("${esc(img)}") center/cover no-repeat}
     .cp-ad .ov{position:absolute;inset:0;z-index:1;background:${overlay}}
@@ -181,15 +197,34 @@ export function renderHouseAdHtml(
   </body></html>`;
 }
 
+// CrawlProof's own palette, in both polarities. The light trio is hand-picked
+// rather than derived: this is the brand's own ad, and the derived teal lands a
+// shade off the green the marketing site actually uses.
+export const HOUSE_DARK: AdPalette = {
+  bgColor: "#070a10",
+  fgColor: "#eef3f8",
+  accentColor: "#6ee7b7",
+};
+export const HOUSE_LIGHT: AdPalette = {
+  bgColor: "#f6f9fb",
+  fgColor: "#0d1620",
+  accentColor: "#0f7a5a",
+};
+
+export function housePalette(theme: AdTheme): AdPalette {
+  return theme === "light" ? HOUSE_LIGHT : HOUSE_DARK;
+}
+
 function houseCreative(format: AdFormatId, copy: HouseCopy): AdCreative {
   return {
     format,
     headline: copy.headline,
     body: copy.body,
     ctaText: copy.cta,
-    bgColor: "#070a10",
-    fgColor: "#eef3f8",
-    accentColor: "#6ee7b7",
+    ...HOUSE_DARK,
+    lightBgColor: HOUSE_LIGHT.bgColor,
+    lightFgColor: HOUSE_LIGHT.fgColor,
+    lightAccentColor: HOUSE_LIGHT.accentColor,
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     logoUrl: null,
     imageUrl: houseImageFor(format),
@@ -197,7 +232,7 @@ function houseCreative(format: AdFormatId, copy: HouseCopy): AdCreative {
 }
 
 /** A default house-ad fill promoting the CrawlProof Ad Network. Not metered. */
-export function houseFill(format: AdFormatId): Fill {
+export function houseFill(format: AdFormatId, theme: AdTheme = "dark"): Fill {
   // Drawn once here, then threaded through both the creative and the render so
   // a single fill can't advertise one pitch in its HTML and another in its text.
   const copy = pickHouse();
@@ -223,7 +258,7 @@ export function houseFill(format: AdFormatId): Fill {
     refSlug: "house",
     creative,
     clickUrl,
-    html: renderHouseAdHtml(format, clickUrl, copy),
+    html: renderHouseAdHtml(format, clickUrl, copy, theme),
     text: renderCreativeText(creative, clickUrl, { label: "CRAWLPROOF ADS" }),
     tier: "house",
   };

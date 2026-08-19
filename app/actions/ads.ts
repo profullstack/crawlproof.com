@@ -113,7 +113,8 @@ export async function previewAds(input: { url: string }): Promise<
 }
 
 const ALLOWED_FORMATS = new Set<AdFormatId>(AD_FORMAT_IDS);
-const HEX = /^#[0-9a-fA-F]{6}$/;
+// 6- or 8-digit: the editor's opacity slider writes #rrggbbaa.
+const HEX = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 function cleanCreative(c: Partial<AdCreative>): AdCreative | null {
   if (!c.format || !ALLOWED_FORMATS.has(c.format)) return null;
@@ -125,6 +126,13 @@ function cleanCreative(c: Partial<AdCreative>): AdCreative | null {
     bgColor: HEX.test(c.bgColor ?? "") ? c.bgColor! : "#0b0d10",
     fgColor: HEX.test(c.fgColor ?? "") ? c.fgColor! : "#e7e9ee",
     accentColor: HEX.test(c.accentColor ?? "") ? c.accentColor! : "#6ee7b7",
+    // Light trio is optional: null means "derive it at render time", which is
+    // what every creative predating theme variants does. An invalid value is
+    // dropped to null rather than defaulted, so a bad edit falls back to the
+    // derived palette instead of pinning a wrong colour.
+    lightBgColor: HEX.test(c.lightBgColor ?? "") ? c.lightBgColor! : null,
+    lightFgColor: HEX.test(c.lightFgColor ?? "") ? c.lightFgColor! : null,
+    lightAccentColor: HEX.test(c.lightAccentColor ?? "") ? c.lightAccentColor! : null,
     fontFamily: (c.fontFamily ?? "system-ui, sans-serif").slice(0, 200),
     logoUrl: c.logoUrl ?? null,
     imageUrl: c.imageUrl ?? null,
@@ -233,6 +241,9 @@ export async function saveCampaign(input: {
     bg_color: c.bgColor,
     fg_color: c.fgColor,
     accent_color: c.accentColor,
+    light_bg_color: c.lightBgColor ?? null,
+    light_fg_color: c.lightFgColor ?? null,
+    light_accent_color: c.lightAccentColor ?? null,
     font_family: c.fontFamily,
   }));
   const { error: cErr } = await supabase.from("ad_creatives").insert(rows);
@@ -310,6 +321,9 @@ export async function updateCreatives(input: {
         bg_color: cleaned.bgColor,
         fg_color: cleaned.fgColor,
         accent_color: cleaned.accentColor,
+        light_bg_color: cleaned.lightBgColor,
+        light_fg_color: cleaned.lightFgColor,
+        light_accent_color: cleaned.lightAccentColor,
       })
       .eq("id", c.id)
       .eq("owner_id", user.id);
@@ -389,6 +403,9 @@ export async function regenerateCampaign(input: {
       bg_color: c.bgColor,
       fg_color: c.fgColor,
       accent_color: c.accentColor,
+      light_bg_color: c.lightBgColor ?? null,
+      light_fg_color: c.lightFgColor ?? null,
+      light_accent_color: c.lightAccentColor ?? null,
       font_family: c.fontFamily,
     };
     const existingId = idByFormat.get(c.format);

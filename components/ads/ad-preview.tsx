@@ -6,9 +6,11 @@ import {
   brandInitial,
   formatSpec,
   hexToRgba,
+  paletteFor,
   FEED_FORMAT_ID,
   TERMINAL_FORMAT_ID,
 } from "@/lib/ads/formats";
+import { hairline, overImageInk, overlayInk, solid, type AdTheme } from "@/lib/ads/theme";
 import { renderCreativeText } from "@/lib/ads/terminal";
 import { ATTRIBUTION, ctaLabel, DEFAULT_LABEL, oneLine } from "@/lib/ads/feeditem";
 
@@ -18,8 +20,19 @@ const PREVIEW_CLICK_URL = "https://crawlproof.com/a/00000000-0000-0000-0000-0000
 
 // Live React mirror of renderCreativeHtml (lib/ads/creative.ts). Kept visually
 // in sync with the served HTML so the editor preview matches production.
-export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale?: number }) {
+export function AdPreview({
+  creative,
+  scale = 1,
+  theme = "dark",
+}: {
+  creative: AdCreative;
+  scale?: number;
+  /** Polarity to preview in. Mirrors renderCreativeHtml's `theme` option. */
+  theme?: AdTheme;
+}) {
   const { w, h } = formatSpec(creative.format);
+  const p = paletteFor(creative, theme);
+  const edge = hairline(theme);
 
   // Terminal ad — render the exact ASCII the MOTD endpoint serves, monospaced.
   if (creative.format === TERMINAL_FORMAT_ID) {
@@ -28,10 +41,10 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
         <pre
           style={{
             margin: 0,
-            background: creative.bgColor,
-            color: creative.fgColor,
-            border: "1px solid rgba(255,255,255,.08)",
-            borderRadius: 8,
+            background: p.bgColor,
+            color: p.fgColor,
+            border: `1px solid ${edge}`,
+            borderRadius: 0,
             padding: "10px 12px",
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
             fontSize: 11,
@@ -61,7 +74,7 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
           style={{
             background: "#ffffff",
             color: "#1a1a1a",
-            border: "1px solid rgba(255,255,255,.08)",
+            border: `1px solid ${hairline("light")}`,
             borderRadius: 8,
             padding: "12px 14px",
             fontFamily: "Georgia, 'Times New Roman', serif",
@@ -100,14 +113,14 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
             gap: 8,
             width: "100%",
             height: h,
-            background: creative.bgColor,
+            background: p.bgColor,
             fontFamily: creative.fontFamily,
             fontSize: 13,
             padding: "0 12px",
             overflow: "hidden",
-            borderRadius: 8,
-            border: "1px solid rgba(255,255,255,.08)",
-            borderLeft: `3px solid ${creative.accentColor}`,
+            borderRadius: 0,
+            border: `1px solid ${edge}`,
+            borderLeft: `3px solid ${p.accentColor}`,
             textDecoration: "none",
             boxSizing: "border-box",
           }}
@@ -117,19 +130,19 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
               fontSize: 9,
               letterSpacing: ".12em",
               textTransform: "uppercase",
-              color: creative.accentColor,
+              color: p.accentColor,
               flex: "0 0 auto",
             }}
           >
             Sponsored
           </span>
-          <strong style={{ color: creative.fgColor, flex: "0 0 auto", whiteSpace: "nowrap" }}>
+          <strong style={{ color: p.fgColor, flex: "0 0 auto", whiteSpace: "nowrap" }}>
             {creative.headline}
           </strong>
           {creative.body && (
             <span
               style={{
-                color: creative.fgColor,
+                color: p.fgColor,
                 opacity: 0.72,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -141,7 +154,7 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
               — {creative.body}
             </span>
           )}
-          <span style={{ color: creative.accentColor, fontWeight: 600, flex: "0 0 auto", whiteSpace: "nowrap" }}>
+          <span style={{ color: p.accentColor, fontWeight: 600, flex: "0 0 auto", whiteSpace: "nowrap" }}>
             {creative.ctaText} →
           </span>
         </a>
@@ -173,8 +186,8 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
         alignItems: "center",
         justifyContent: "center",
         borderRadius: 6,
-        background: creative.accentColor,
-        color: creative.bgColor,
+        background: p.accentColor,
+        color: solid(p.bgColor),
         fontWeight: 800,
         fontSize: Math.round(markSize * 0.55),
         lineHeight: 1,
@@ -187,8 +200,8 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
   const cta = (
     <span
       style={{
-        background: creative.accentColor,
-        color: creative.bgColor,
+        background: p.accentColor,
+        color: solid(p.bgColor),
         fontWeight: 600,
         borderRadius: 6,
         padding: isMobile ? "4px 8px" : "7px 12px",
@@ -200,7 +213,7 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
     </span>
   );
 
-  const heroText = row ? creative.fgColor : creative.imageUrl ? "#f4f7fb" : creative.fgColor;
+  const heroText = row ? p.fgColor : creative.imageUrl ? overImageInk(theme) : p.fgColor;
   const text = (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
       <div
@@ -226,10 +239,10 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
 
   // Rectangle background: hero image + gradient, or an accent-tinted brand wash.
   const bg: string = row
-    ? creative.bgColor
+    ? p.bgColor
     : creative.imageUrl
-      ? creative.bgColor
-      : `radial-gradient(120% 80% at 100% 0%, ${hexToRgba(creative.accentColor, 0.18)} 0%, ${hexToRgba(creative.bgColor, 0)} 60%), ${creative.bgColor}`;
+      ? p.bgColor
+      : `radial-gradient(120% 80% at 100% 0%, ${hexToRgba(p.accentColor, 0.18)} 0%, ${hexToRgba(p.bgColor, 0)} 60%), ${p.bgColor}`;
 
   const box: CSSProperties = {
     position: "relative",
@@ -239,10 +252,10 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
     transformOrigin: "top left",
     background: bg,
     fontFamily: creative.fontFamily,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: isMobile ? "8px 10px" : 14,
     overflow: "hidden",
-    border: "1px solid rgba(255,255,255,.08)",
+    border: `1px solid ${edge}`,
     boxSizing: "border-box",
   };
 
@@ -264,7 +277,7 @@ export function AdPreview({ creative, scale = 1 }: { creative: AdCreative; scale
                 position: "absolute",
                 inset: 0,
                 zIndex: 1,
-                background: `linear-gradient(180deg, ${hexToRgba(creative.bgColor, 0.15)} 0%, ${hexToRgba(creative.bgColor, 0.86)} 74%)`,
+                background: `linear-gradient(180deg, ${hexToRgba(overlayInk(theme), 0.15)} 0%, ${hexToRgba(overlayInk(theme), 0.86)} 74%)`,
               }}
             />
           </>
