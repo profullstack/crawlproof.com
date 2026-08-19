@@ -258,7 +258,7 @@ export function renderTerminalHtml(creative: AdCreative, clickUrl: string): stri
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
-    .cp-ad{background:${creative.bgColor};color:${creative.fgColor};border-radius:8px;
+    .cp-ad{background:${creative.bgColor};color:${creative.fgColor};border-radius:0;
       border:1px solid rgba(255,255,255,.08);padding:10px 12px;overflow:auto}
     pre{margin:0;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
       white-space:pre;color:${creative.fgColor}}
