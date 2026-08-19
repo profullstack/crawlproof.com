@@ -113,9 +113,12 @@ section; `app/actions/promote.ts` gains `addKeywordSources`, `addFeedSource`,
 
 ### 2.3 Not built yet
 
-Reddit destinations and subreddit discovery, the durable job model with idempotency
-keys, approval modes, relevance scoring, crossposts, per-destination cooldowns,
-account groups, the HTTP API surface, and the CLI. §5 onward describes these.
+Reddit destinations and subreddit discovery, approval modes, relevance scoring,
+crossposts, per-destination cooldowns, account groups, the HTTP API surface, and the
+CLI. §5 onward describes these.
+
+The durable job model *is* built — see §9. It is listed under §16 phase 1 as the
+piece the rest of the scheduler hangs off.
 
 ---
 
@@ -375,19 +378,67 @@ UNIQUE (campaign_id, connection_id, destination_key, normalized_url)
 
 ## 9. Scheduling and jobs
 
-Not built. Today the sweep publishes inline on the tick. The target is durable
-publication jobs carrying immutable resolved inputs — resolved title, body and URL,
-`scheduledAt`, an `idempotencyKey`, an attempt count, and a state machine of
-`queued → preflighting → blocked → publishing → published | retrying | failed |
-cancelled`.
+**Built.** `promo_job` (migration `20260819120000_promote_jobs.sql`) and
+`lib/promote/jobs.ts`. A job is one intended publication: one link, to one account,
+at one destination, for one scheduling slot. It carries the resolved URL and title
+frozen at plan time, the body once a worker has written it, the ownership and source
+that selected it, an attempt count, a state, and an idempotency key.
 
-Two properties matter most and neither exists yet: **no publication without an
-idempotency key**, and **a failed worker cannot double-publish after retry or
-failover**. The existing claim-then-work pattern gives the second property for list
-scheduling but not for individual publications.
+The state machine is `queued → preflighting → blocked → publishing → published |
+retrying | failed | cancelled`. Only `queued`, `publishing`, `published`, `failed`
+and `cancelled` are reached today; the other three are in the CHECK constraint
+already so the Reddit provider does not need a migration to use them.
 
-Schedule model: interval / times-of-day / cron, timezone, days of week, quiet hours,
-jitter, and per-day caps overall and per provider.
+### 9.1 Why the old claim did not hold
+
+The sweep read every due campaign and "claimed" each by pushing `next_run_at`
+forward. That UPDATE carried no predicate on `next_run_at`, so it was a
+read-then-write: two sweeps that both read the row both won it. And the worker runs
+the sweep on a 60s interval *and* out-of-band for "Post now"
+(`POST /dashboard/promote/sweep`), so overlapping runs are designed in, not rare.
+
+Downstream, nothing was idempotent. A crash between `postViaAccount()` returning and
+the `promo_post` insert left no record; `last_promoted_at` is only stamped at the end
+of the campaign, so the same link was still least-recently-promoted on the next tick
+and went out again.
+
+### 9.2 The two mechanisms
+
+**Plan before publishing.** Jobs are inserted before anything is sent, keyed on
+`sha256(list, link, account, destination, kind, slot)`. The slot is the `next_run_at`
+value the sweep *observed as due* — not the wall clock, which would give each sweep
+its own key and rebuild the bug. A racing sweep derives the same keys, loses to the
+unique index, and gets nothing back, so it publishes nothing.
+
+**Claim by compare-and-swap.** `update ... where id = ? and state = 'queued'`. The
+read and the write are one statement, so two workers cannot both observe `queued`.
+Postgres decides ownership; a prior SELECT does not.
+
+The campaign-level claim is still there and now carries its predicate
+(`.eq("next_run_at", observed)`), but it is an optimization — it saves duplicated
+work. The guarantee lives in the job.
+
+### 9.3 At most once, deliberately
+
+A job still `publishing` past its lease (`PUBLISH_LEASE_MS`, 10 minutes) is **failed,
+never retried**. No provider we publish through accepts an idempotency key, so an
+interrupted publish has genuinely unknown outcome — the post may be live. Re-running
+it is the duplicate this exists to prevent. The reaper closes it with the outcome
+recorded as unknown and surfaces it in history for a human. The credit is not
+refunded, because refunding a post that was in fact delivered is the other way to be
+wrong; support can refund from history.
+
+Retry is therefore reserved for failures that provably happened *before* the publish
+call. Bounded retry with backoff for those is still open, and is what `retrying` and
+`attempt_count` are for.
+
+A pending cookie-auth post counts as published for the job: it has been handed to the
+Playwright worker, so the job must not run again. `reconcilePromo` settles the
+`promo_post` later, as before.
+
+Schedule model — interval / times-of-day / cron, timezone, days of week, quiet hours,
+jitter, and per-day caps overall and per provider — is still the existing single
+`cadence_seconds` plus quiet hours. Not built.
 
 ---
 
@@ -533,11 +584,11 @@ rather than an account one.
 | 7 | One or more authorized connected accounts can be selected | built (pre-existing) |
 | 8 | Web, CLI, API and MCP use the same campaign and job records | partial — web + MCP; no CLI or API |
 | 9 | A shared topic feed is fetched once and reused across campaigns | **built** |
-| 10 | No publication runs without an idempotency key | not built |
+| 10 | No publication runs without an idempotency key | **built** |
 | 11 | Reddit checks activity, links, crossposts, rules, requirements | not built |
 | 12 | Reddit supports one original link and up to two delayed crossposts | not built |
 | 13 | Every attempted publication appears in history and audit log | built (pre-existing) |
-| 14 | A failed worker cannot double-publish after retry or failover | partial — per list, not per publication |
+| 14 | A failed worker cannot double-publish after retry or failover | **built** — per publication |
 | 15 | Preview and approve the exact item, copy, account and destination | not built |
 
 ---
@@ -545,8 +596,9 @@ rather than an account one.
 ## 16. Delivery phases
 
 1. **Shared Promote core** — source normalization, keyword and custom-feed ingestion,
-   campaigns and blending, connected accounts, dashboard. *Sources, blending and
-   ingestion are built; the durable scheduler and queue are not.*
+   campaigns and blending, connected accounts, dashboard. *Sources, blending,
+   ingestion and the durable job model are built. The richer schedule model
+   (times-of-day, cron, per-provider caps) and the review queue are not.*
 2. **Reddit provider** — server-side OAuth, subreddit discovery, activity/link/
    crosspost filtering, rules and requirements, original link posting, delayed
    crossposts, Reddit-specific preflight and metrics.
