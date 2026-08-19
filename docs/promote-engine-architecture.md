@@ -1,6 +1,7 @@
 # CrawlProof Promote — Multi-Channel Promotion Engine
 
 **Status:** architecture baseline. Phase 1 content sources are built; the rest is design.
+**Last reconciled with `master`:** 2026-08-19, at `a1a7d30` (PR #206).
 **Primary interface:** `/dashboard/promote`
 **Surfaces:** PWA/Web, CLI, HTTP API, MCP
 **First provider:** Reddit
@@ -212,6 +213,27 @@ least-recently-promoted first.
 The window is the last 50 posts, long enough to be a ratio and short enough that
 changing the mix takes effect within a day.
 
+**The mix is narrowed to the classes the campaign can actually supply** before any
+deficit is computed — `effectiveMix()` in `lib/promote/blend.ts`. A class survives the
+narrowing if the campaign has a link ready in it *or* an enabled source feeding it;
+if nothing survives, the configured mix is used unchanged. So an all-owned campaign
+runs on a 100%-owned effective mix and posts on target forever, and shared re-enters
+the mix the moment a keyword source is added.
+
+This is not a refinement, it is what keeps the feature alive. The sources migration
+backfilled every pre-existing list with the 70/30 default. Without the narrowing, a
+campaign holding only owned links reads that as "30% short on shared", finds no
+shared inventory, covers with owned content, and marks each post `via_fallback` —
+and then the daily fallback cap below stops it posting at all. In production that
+mislabelled six posts within minutes of the migration and was three posts from
+silencing the campaign (PR #205).
+
+The general rule, which outlives this feature: **a class with no inventory and no
+source is not starved, it is not part of that campaign's mix.** Backfilling a policy
+default onto rows that predate the policy makes those rows look permanently in
+violation of it, and a quota on the violation path turns that into silent death
+rather than a visible error.
+
 ### 4.2 Fallback
 
 ```json
@@ -226,6 +248,10 @@ This is what lets a user with no original content still run a campaign, while th
 stops it becoming an uncontrolled shared-content firehose. Fallback posts are marked
 `via_fallback` and counted over a rolling 24 hours — rolling rather than calendar, so
 the cap cannot be gamed at a midnight boundary.
+
+Fallback only applies **within the effective mix of §4.1**. Covering for a class the
+campaign never had is not a fallback and must not be marked or capped as one; only a
+class that is genuinely in the mix and genuinely ran dry counts against the cap.
 
 ---
 
@@ -484,6 +510,13 @@ campaigns; retain an auditable record of requesting user and exact publication.
 
 Of these, provenance for shared content and duplicate prevention are built. The
 `maxFallbackItemsPerDay` cap is a mass-posting control as much as an editorial one.
+
+"Pause after repeated provider rejections" is now half-built, at the connected-account
+layer rather than the campaign layer: `lib/sp/accountHealth.ts` (PR #206) stops
+retrying an account whose consecutive failures have run away — the case that prompted
+it had logged 2,953. Campaign-level pausing on destination rejection is still open, and
+the Reddit provider will need it, since a subreddit rejection is a destination fact
+rather than an account one.
 
 ---
 
