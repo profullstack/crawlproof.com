@@ -540,7 +540,7 @@ export function renderCreativeHtml(
       a{text-decoration:none;display:block}
       .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;
         background:${p.bgColor};font-family:${creative.fontFamily};font-size:13px;
-        padding:0 12px;overflow:hidden;border-radius:8px;
+        padding:0 12px;overflow:hidden;border-radius:0;
         border:1px solid ${edge};border-left:3px solid ${p.accentColor}}
     </style></head><body>
       <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
@@ -600,7 +600,7 @@ export function renderCreativeHtml(
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
     .cp-ad{position:relative;width:${w}px;height:${h}px;background:${bg};font-family:${creative.fontFamily};
-      border-radius:8px;padding:${isMobile ? "8px 10px" : "14px"};overflow:hidden;
+      border-radius:0;padding:${isMobile ? "8px 10px" : "14px"};overflow:hidden;
       border:1px solid ${edge}}
   </style></head><body>
     <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">${rectBg}${inner}</a>

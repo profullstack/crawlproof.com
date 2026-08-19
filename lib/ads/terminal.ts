@@ -268,7 +268,7 @@ export function renderTerminalHtml(
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
-    .cp-ad{background:${p.bgColor};color:${p.fgColor};border-radius:8px;
+    .cp-ad{background:${p.bgColor};color:${p.fgColor};border-radius:0;
       border:1px solid ${hairline(theme)};padding:10px 12px;overflow:auto}
     pre{margin:0;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
       white-space:pre;color:${p.fgColor}}
