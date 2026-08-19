@@ -42,6 +42,7 @@ import { processUserAlerts } from "../lib/alerts/worker";
 import { processDuePortScans } from "../lib/prober-queue";
 import { processDueMonitors } from "../lib/uptime";
 import { processDuePromoteLists } from "../lib/promote/sweep";
+import { reapStalePublishingJobs } from "../lib/promote/jobs";
 import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
 
@@ -1377,13 +1378,31 @@ async function promoteSweep() {
   const r = await processDuePromoteLists(supabase, { anthropic, openai });
   if (r.postsAttempted > 0) {
     console.log(
-      `[worker] promote sweep lists=${r.listsProcessed} attempted=${r.postsAttempted} ok=${r.postsSucceeded} pending=${r.postsPending} fail=${r.postsFailed} paused=${r.listsPaused}`,
+      `[worker] promote sweep lists=${r.listsProcessed} planned=${r.jobsPlanned} attempted=${r.postsAttempted} ok=${r.postsSucceeded} pending=${r.postsPending} fail=${r.postsFailed} paused=${r.listsPaused}`,
     );
   }
 }
 setInterval(
   () => promoteSweep().catch((e) => console.error("[worker] promote sweep", e)),
   60_000,
+);
+
+// Promote job reaper: close out jobs whose worker died mid-publish.
+//
+// These are failed, never retried. No provider we publish through takes an
+// idempotency key, so an interrupted publish may already be live on the
+// platform and re-running it is the duplicate the job model exists to prevent.
+// Runs on its own timer because it is about workers that are no longer running
+// a sweep at all.
+async function promoteReapSweep() {
+  const r = await reapStalePublishingJobs(supabase);
+  if (r.reaped > 0) {
+    console.warn(`[worker] promote reaped ${r.reaped} interrupted job(s)`);
+  }
+}
+setInterval(
+  () => promoteReapSweep().catch((e) => console.error("[worker] promote reap", e)),
+  5 * 60_000,
 );
 
 // Promote content sources: refresh each subscribed feed once and fan its new

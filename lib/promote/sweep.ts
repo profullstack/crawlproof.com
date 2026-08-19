@@ -1,6 +1,13 @@
-// Promote sweep: processes due promo_lists, picks the next link,
-// generates a fresh pitch via LLM, publishes via the sp platform layer,
-// debits 1 credit per post, and advances the scheduler.
+// Promote sweep: processes due promo_lists, picks the next link, plans a
+// durable job per intended publication, generates a fresh pitch via LLM,
+// publishes via the sp platform layer, debits 1 credit per post, and advances
+// the scheduler.
+//
+// The job layer (lib/promote/jobs.ts) is what makes a publication happen at
+// most once. This sweep runs on a 60s interval *and* out-of-band whenever a
+// user clicks "Post now", so two runs racing the same campaign is normal. They
+// now converge: both derive the same idempotency key for the same slot, one
+// insert wins, and only the worker that wins the claim publishes.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -8,6 +15,13 @@ import type OpenAI from "openai";
 import { generatePitch } from "@/lib/promote/generatePitch";
 import { selectNextLink } from "@/lib/promote/selectLink";
 import type { Ownership } from "@/lib/promote/blend";
+import {
+  claimJob,
+  planJobs,
+  recordJobBody,
+  settleJob,
+  type PlanJobInput,
+} from "@/lib/promote/jobs";
 import { postViaAccount, type PostResult } from "@/lib/sp/post";
 
 export type PromoteSweepClients = {
@@ -17,6 +31,7 @@ export type PromoteSweepClients = {
 
 export type PromoteSweepResult = {
   listsProcessed: number;
+  jobsPlanned: number;
   postsAttempted: number;
   postsSucceeded: number;
   postsFailed: number;
@@ -37,6 +52,9 @@ type PromoList = {
   quiet_start: number | null;
   quiet_end: number | null;
   timezone: string | null;
+  // The due time this sweep observed. It is the scheduling slot every job
+  // planned this tick is keyed on, so a racing sweep keys on the same one.
+  next_run_at: string;
   source_mix?: unknown;
   fallback_policy?: unknown;
 };
@@ -48,6 +66,7 @@ type PromoLink = {
   angle: string | null;
   summary?: string | null;
   source_name?: string | null;
+  source_id?: string | null;
   ownership?: Ownership | null;
   times_promoted?: number | null;
 };
@@ -71,6 +90,7 @@ export async function processDuePromoteLists(
 ): Promise<PromoteSweepResult> {
   const result: PromoteSweepResult = {
     listsProcessed: 0,
+    jobsPlanned: 0,
     postsAttempted: 0,
     postsSucceeded: 0,
     postsFailed: 0,
@@ -78,35 +98,55 @@ export async function processDuePromoteLists(
     listsPaused: 0,
   };
 
+  const dueBy = new Date().toISOString();
+
   const { data: lists, error } = await supabase
     .from("promo_list")
     .select(
-      "id, user_id, name, cadence_seconds, post_mode, target_account_ids, brand_voice, quiet_start, quiet_end, timezone, source_mix, fallback_policy",
+      "id, user_id, name, cadence_seconds, post_mode, target_account_ids, brand_voice, quiet_start, quiet_end, timezone, next_run_at, source_mix, fallback_policy",
     )
     .eq("status", "running")
-    .lte("next_run_at", new Date().toISOString())
+    .lte("next_run_at", dueBy)
     .order("next_run_at", { ascending: true })
     .limit(limit);
 
   if (error || !lists || lists.length === 0) return result;
 
-  // Claim each due list by pushing next_run_at forward before processing, so an
-  // overlapping sweep (e.g. the periodic tick racing a manual "Post now"
-  // trigger) can't pick up the same list and double-post. advanceScheduler
-  // re-stamps next_run_at at the end of a successful run.
-  await Promise.all(
-    (lists as PromoList[]).map((l) =>
-      supabase
+  // Claim each due list by pushing next_run_at forward, conditional on it still
+  // being due. The predicate is the point: without it this is a read-then-write
+  // and an overlapping sweep wins the same list. Only the lists whose update
+  // matched a row are ours to process.
+  //
+  // "Still due" rather than "unchanged since we read it": the minimum cadence is
+  // 300s, so a claim always pushes next_run_at well into the future and the
+  // loser's predicate cannot match. Re-asserting the same condition the select
+  // used avoids depending on a timestamptz round-tripping to a byte-identical
+  // string — and a claim that silently never matched would stop every campaign
+  // posting with nothing in the logs, which is the failure mode this codebase
+  // has already paid for once.
+  //
+  // This is an optimization, not the safety property — it saves duplicated
+  // work. The guarantee that nothing publishes twice lives in the job's
+  // idempotency key and claim, one level down.
+  const claimed = await Promise.all(
+    (lists as PromoList[]).map(async (l) => {
+      const { data } = await supabase
         .from("promo_list")
-        .update({ next_run_at: new Date(Date.now() + l.cadence_seconds * 1000).toISOString() })
-        .eq("id", l.id),
-    ),
+        .update({
+          next_run_at: new Date(Date.now() + l.cadence_seconds * 1000).toISOString(),
+        })
+        .eq("id", l.id)
+        .lte("next_run_at", dueBy)
+        .select("id");
+      return (data ?? []).length > 0 ? l : null;
+    }),
   );
 
-  for (const list of lists as PromoList[]) {
+  for (const list of claimed.filter((l): l is PromoList => l !== null)) {
     try {
       const r = await processOneList(supabase, list, clients);
       result.listsProcessed++;
+      result.jobsPlanned += r.planned;
       result.postsAttempted += r.attempted;
       result.postsSucceeded += r.succeeded;
       result.postsFailed += r.failed;
@@ -136,8 +176,22 @@ async function processOneList(
   supabase: SupabaseClient<any>,
   list: PromoList,
   clients: PromoteSweepClients,
-): Promise<{ attempted: number; succeeded: number; failed: number; pending: number; paused: boolean }> {
-  const out = { attempted: 0, succeeded: 0, failed: 0, pending: 0, paused: false };
+): Promise<{
+  planned: number;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  pending: number;
+  paused: boolean;
+}> {
+  const out = {
+    planned: 0,
+    attempted: 0,
+    succeeded: 0,
+    failed: 0,
+    pending: 0,
+    paused: false,
+  };
 
   // Resolve accounts
   const accounts = await resolveAccounts(supabase, list);
@@ -195,7 +249,53 @@ async function processOneList(
     postTargets.push({ link, account: nextAccount });
   }
 
-  for (const { link: targetLink, account } of postTargets) {
+  // Write down what we intend to publish, before publishing any of it. A
+  // racing sweep that reached the same decision derives the same idempotency
+  // keys and gets nothing back here, so it publishes nothing.
+  const plans: PlanJobInput[] = postTargets.map(({ link: targetLink, account }) => ({
+    userId: list.user_id,
+    listId: list.id,
+    linkId: targetLink.id,
+    accountId: account.id,
+    platform: account.platform,
+    resolvedUrl: targetLink.url,
+    resolvedTitle: targetLink.title,
+    ownership,
+    sourceId: targetLink.source_id ?? null,
+    viaFallback,
+    slotAt: list.next_run_at,
+  }));
+
+  const jobs = await planJobs(supabase, plans);
+  out.planned = jobs.length;
+
+  if (jobs.length === 0) {
+    // Either another sweep already owns this slot, or the job table could not
+    // be written (planJobs has already said which, loudly). Nothing to do, and
+    // in particular nothing to publish.
+    await advanceScheduler(supabase, list);
+    return out;
+  }
+
+  const accountsById = new Map(accounts.map((a) => [a.id, a]));
+
+  for (const [index, job] of jobs.entries()) {
+    const account = accountsById.get(job.account_id);
+    if (!account) {
+      // The account was disconnected between resolve and plan. Close the job
+      // rather than leaving it queued: nothing reclaims a queued job, so it
+      // would sit there forever misrepresenting the campaign as backed up.
+      await settleJob(supabase, job.id, {
+        state: "cancelled",
+        error: "connected account is no longer available",
+      });
+      continue;
+    }
+
+    // Take the job. Nothing below this line runs twice for the same job, and
+    // nothing above it published anything.
+    if (!(await claimJob(supabase, job))) continue;
+
     // Check credits before each post
     const { data: hasCredit } = await supabase.rpc("consume_credit", {
       p_owner: list.user_id,
@@ -203,7 +303,15 @@ async function processOneList(
     });
 
     if (!hasCredit) {
-      // Insufficient credits — auto-pause
+      // Insufficient credits — auto-pause. Cancel this job and every one still
+      // queued behind it, so a paused campaign does not leave a tick's worth of
+      // jobs stranded in 'queued' with nothing that will ever claim them.
+      for (const stranded of jobs.slice(index)) {
+        await settleJob(supabase, stranded.id, {
+          state: "cancelled",
+          error: "insufficient_credits",
+        });
+      }
       await supabase
         .from("promo_list")
         .update({
@@ -222,7 +330,7 @@ async function processOneList(
       const { data: recentPitches } = await supabase
         .from("promo_post")
         .select("body")
-        .eq("link_id", targetLink.id)
+        .eq("link_id", job.link_id)
         .eq("platform", account.platform)
         .eq("status", "posted")
         .order("created_at", { ascending: false })
@@ -234,18 +342,22 @@ async function processOneList(
 
       // Generate a fresh pitch
       const pitch = await generatePitch({
-        url: targetLink.url,
-        title: targetLink.title,
-        angle: targetLink.angle,
+        url: job.resolved_url,
+        title: job.resolved_title,
+        angle: link.angle,
         platform: account.platform,
         brandVoice: list.brand_voice,
         recentBodies,
         anthropic: clients.anthropic,
         openai: clients.openai,
-        summary: targetLink.summary ?? null,
-        sourceName: targetLink.source_name ?? null,
-        ownership,
+        summary: link.summary ?? null,
+        sourceName: link.source_name ?? null,
+        ownership: job.ownership,
       });
+
+      // Freeze the copy on the job before it goes out, so a job interrupted
+      // during publish can be read back and shows exactly what was sent.
+      await recordJobBody(supabase, job.id, pitch.body);
 
       // Publish via the existing sp platform layer
       const postResult: PostResult = await postViaAccount({
@@ -265,56 +377,80 @@ async function processOneList(
       // the real URL/status (and refund on failure). Only synchronous API posts
       // (bluesky/telegram/discord + OAuth reddit/mastodon) are 'posted' now.
       const isPending = postResult.ok && postResult.pending === true;
-      await supabase.from("promo_post").insert({
-        list_id: list.id,
-        link_id: targetLink.id,
-        account_id: account.id,
-        platform: account.platform,
-        ownership,
-        source_id: (targetLink as { source_id?: string | null }).source_id ?? null,
-        via_fallback: viaFallback,
-        body: pitch.body,
-        provider: pitch.provider,
-        model: pitch.model,
-        status: !postResult.ok ? "failed" : isPending ? "pending" : "posted",
-        external_post_id: postResult.ok && !isPending ? postResult.platformPostId : null,
-        post_url: postResult.ok && !isPending ? postResult.webUrl || null : null,
-        error: postResult.ok ? null : postResult.error,
-        credits_spent: 1,
-        posted_at: postResult.ok && !isPending ? new Date().toISOString() : null,
-        sp_post_id: postResult.ok && isPending ? postResult.postId : null,
-      });
+      const { data: inserted } = await supabase
+        .from("promo_post")
+        .insert({
+          list_id: list.id,
+          link_id: job.link_id,
+          account_id: account.id,
+          platform: account.platform,
+          ownership: job.ownership,
+          source_id: job.source_id,
+          via_fallback: job.via_fallback,
+          body: pitch.body,
+          provider: pitch.provider,
+          model: pitch.model,
+          status: !postResult.ok ? "failed" : isPending ? "pending" : "posted",
+          external_post_id: postResult.ok && !isPending ? postResult.platformPostId : null,
+          post_url: postResult.ok && !isPending ? postResult.webUrl || null : null,
+          error: postResult.ok ? null : postResult.error,
+          credits_spent: 1,
+          posted_at: postResult.ok && !isPending ? new Date().toISOString() : null,
+          sp_post_id: postResult.ok && isPending ? postResult.postId : null,
+        })
+        .select("id")
+        .maybeSingle();
+
+      const promoPostId = (inserted as { id?: string } | null)?.id ?? null;
 
       if (!postResult.ok) {
         out.failed++;
+        await settleJob(supabase, job.id, {
+          state: "failed",
+          error: postResult.error ?? "publish failed",
+          promoPostId,
+        });
         // Synchronous failure — refund the credit now. (Async cookie failures
         // are refunded later by reconcilePromo in the worker.)
         await supabase.rpc("consume_credit", {
           p_owner: list.user_id,
           p_count: -1,
         });
-      } else if (isPending) {
-        out.pending++;
       } else {
-        out.succeeded++;
+        // A pending cookie-auth post has been handed to the browser worker, so
+        // as far as this job is concerned the publish happened: the job must
+        // not be re-run. reconcilePromo settles the promo_post later.
+        await settleJob(supabase, job.id, { state: "published", promoPostId });
+        if (isPending) out.pending++;
+        else out.succeeded++;
       }
     } catch (err) {
       out.failed++;
       const message = err instanceof Error ? err.message : "Unknown error";
 
       // Record the failed post
-      await supabase.from("promo_post").insert({
-        list_id: list.id,
-        link_id: targetLink.id,
-        account_id: account.id,
-        platform: account.platform,
-        ownership,
-        source_id: (targetLink as { source_id?: string | null }).source_id ?? null,
-        via_fallback: viaFallback,
-        body: `[generation failed: ${message}]`,
-        status: "failed",
+      const { data: inserted } = await supabase
+        .from("promo_post")
+        .insert({
+          list_id: list.id,
+          link_id: job.link_id,
+          account_id: account.id,
+          platform: account.platform,
+          ownership: job.ownership,
+          source_id: job.source_id,
+          via_fallback: job.via_fallback,
+          body: `[generation failed: ${message}]`,
+          status: "failed",
+          error: message,
+          credits_spent: 0,
+        })
+        .select("id")
+        .maybeSingle();
+
+      await settleJob(supabase, job.id, {
+        state: "failed",
         error: message,
-        credits_spent: 0,
+        promoPostId: (inserted as { id?: string } | null)?.id ?? null,
       });
 
       // Refund credit
