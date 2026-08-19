@@ -414,9 +414,13 @@ unique index, and gets nothing back, so it publishes nothing.
 read and the write are one statement, so two workers cannot both observe `queued`.
 Postgres decides ownership; a prior SELECT does not.
 
-The campaign-level claim is still there and now carries its predicate
-(`.eq("next_run_at", observed)`), but it is an optimization — it saves duplicated
-work. The guarantee lives in the job.
+The campaign-level claim is still there and now carries a predicate — it re-asserts
+the same "still due" condition the select used (`.lte("next_run_at", dueBy)`), so the
+loser's update matches nothing once the winner has pushed the campaign forward. It
+re-asserts the condition rather than matching the exact timestamp read back, because
+a predicate that silently never matched would stop every campaign posting with
+nothing in the logs. It is an optimization either way — it saves duplicated work. The
+guarantee lives in the job.
 
 ### 9.3 At most once, deliberately
 
