@@ -3,9 +3,11 @@
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { previewAds, saveCampaign, uploadAdAsset } from "@/app/actions/ads";
-import { AD_FORMATS, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
+import { AD_FORMATS, paletteFor, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import type { SiteBrand } from "@/lib/ads/brand";
 import { AdPreview } from "@/components/ads/ad-preview";
+import { ColorField } from "@/components/ads/color-field";
+import type { AdTheme } from "@/lib/ads/theme";
 
 function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -27,8 +29,13 @@ export function NewAdForm() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Which polarity the previews show and the colour pickers edit.
+  const [theme, setTheme] = useState<AdTheme>("dark");
 
   const current = creatives.find((c) => c.format === active) ?? creatives[0];
+  const palette = current
+    ? paletteFor(current, theme)
+    : { bgColor: "#0b0d10", fgColor: "#e7e9ee", accentColor: "#6ee7b7" };
 
   function generate(e: React.FormEvent) {
     e.preventDefault();
@@ -52,6 +59,27 @@ export function NewAdForm() {
   }
   function patchAll(patch: Partial<AdCreative>) {
     setCreatives((cs) => cs.map((c) => ({ ...c, ...patch })));
+  }
+
+  // Writes to whichever trio the theme switch has selected. Editing the light
+  // trio for the first time seeds the other two from the derived palette, so a
+  // publisher never sees two of three colours jump.
+  function patchPalette(key: "bg" | "fg" | "accent", v: string) {
+    if (theme === "dark") {
+      const field = key === "bg" ? "bgColor" : key === "fg" ? "fgColor" : "accentColor";
+      return patchAll({ [field]: v } as Partial<AdCreative>);
+    }
+    setCreatives((cs) =>
+      cs.map((c) => {
+        const seed = paletteFor(c, "light");
+        return {
+          ...c,
+          lightBgColor: key === "bg" ? v : (c.lightBgColor ?? seed.bgColor),
+          lightFgColor: key === "fg" ? v : (c.lightFgColor ?? seed.fgColor),
+          lightAccentColor: key === "accent" ? v : (c.lightAccentColor ?? seed.accentColor),
+        };
+      }),
+    );
   }
 
   function onUpload(kind: "logoUrl" | "imageUrl") {
@@ -186,7 +214,7 @@ export function NewAdForm() {
                     style={{ maxWidth: f.w > 360 ? 360 : f.w + 16 }}
                   >
                     <div style={{ overflowX: "auto" }}>
-                      <AdPreview creative={c} />
+                      <AdPreview creative={c} theme={theme} />
                     </div>
                     <div className="text-xs text-[var(--color-muted)]">
                       {f.label} · {f.w}×{f.h}
@@ -238,10 +266,31 @@ export function NewAdForm() {
               </label>
             </div>
 
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">Theme</span>
+              {(["dark", "light"] as AdTheme[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTheme(t)}
+                  className={`rounded-md px-3 py-1 text-sm capitalize ${
+                    theme === t
+                      ? "bg-[var(--color-accent)] text-black"
+                      : "border border-[var(--color-border)] text-[var(--color-muted)]"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+              <span className="text-xs text-[var(--color-muted)]">
+                Publishers are served whichever matches their page.
+              </span>
+            </div>
+
             <div className="flex flex-wrap items-center gap-5">
-              <ColorField label="Background" value={current.bgColor} onChange={(v) => patchAll({ bgColor: v })} />
-              <ColorField label="Text" value={current.fgColor} onChange={(v) => patchAll({ fgColor: v })} />
-              <ColorField label="Accent" value={current.accentColor} onChange={(v) => patchAll({ accentColor: v })} />
+              <ColorField label="Background" value={palette.bgColor} onChange={(v) => patchPalette("bg", v)} />
+              <ColorField label="Text" value={palette.fgColor} onChange={(v) => patchPalette("fg", v)} alpha={false} />
+              <ColorField label="Accent" value={palette.accentColor} onChange={(v) => patchPalette("accent", v)} />
               <span className="text-xs text-[var(--color-muted)]">Colours apply to all formats</span>
             </div>
 
@@ -308,32 +357,5 @@ export function NewAdForm() {
         </>
       )}
     </div>
-  );
-}
-
-function ColorField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label className="flex items-center gap-2">
-      <input
-        type="color"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-8 cursor-pointer rounded border border-[var(--color-border)] bg-transparent"
-        aria-label={label}
-      />
-      <span className="text-xs text-[var(--color-muted)]">
-        {label}
-        <br />
-        <span className="font-mono">{value}</span>
-      </span>
-    </label>
   );
 }

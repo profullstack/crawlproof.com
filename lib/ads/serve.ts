@@ -10,6 +10,7 @@ import {
   type AdFormatId,
 } from "./creative";
 import { FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
+import { isAdTheme, type AdTheme } from "./theme";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import {
@@ -73,6 +74,9 @@ type CreativeRow = {
   bg_color: string;
   fg_color: string;
   accent_color: string;
+  light_bg_color?: string | null;
+  light_fg_color?: string | null;
+  light_accent_color?: string | null;
   font_family: string;
 };
 
@@ -85,10 +89,35 @@ function rowToCreative(r: CreativeRow): AdCreative {
     bgColor: r.bg_color,
     fgColor: r.fg_color,
     accentColor: r.accent_color,
+    lightBgColor: r.light_bg_color ?? null,
+    lightFgColor: r.light_fg_color ?? null,
+    lightAccentColor: r.light_accent_color ?? null,
     fontFamily: r.font_family,
     logoUrl: r.logo_url,
     imageUrl: r.image_url,
   };
+}
+
+/**
+ * Which polarity to render this fill in.
+ *
+ * The tag measures the publisher's actual page background and sends what it
+ * found, which beats anything stored — a site can be redesigned between the
+ * slot being created and the ad being served. The slot's own setting is the
+ * fallback for surfaces that cannot measure anything: a MOTD over curl, a feed
+ * spliced at build time, a page whose script was blocked.
+ *
+ * Dark is the final default because it is what every creative rendered as
+ * before variants existed, so a request that says nothing gets exactly what it
+ * got yesterday.
+ */
+export function resolveTheme(
+  requested: string | null | undefined,
+  slotDefault: string | null | undefined,
+): AdTheme {
+  if (isAdTheme(requested)) return requested;
+  if (isAdTheme(slotDefault)) return slotDefault;
+  return "dark";
 }
 
 export type ServeContext = {
@@ -103,6 +132,11 @@ export type ServeContext = {
    * row to build utm_content.
    */
   src?: string | null;
+  /**
+   * Polarity of the publisher's page, as measured by the tag. 'auto' (or
+   * absent) falls back to the slot's stored default.
+   */
+  theme?: string | null;
 };
 
 // Returns a rendered fill for the slot, or null if the slot is inactive /
@@ -116,15 +150,20 @@ export async function serveAd(
 
   const { data: slot } = await sb
     .from("ad_slots")
-    .select("id, status, formats, owner_id")
+    .select("id, status, formats, owner_id, theme")
     .eq("id", slotId)
     .maybeSingle();
   if (!slot || slot.status !== "active") return null;
   if (Array.isArray(slot.formats) && !slot.formats.includes(format)) return null;
 
+  // `theme` rides behind `add column if not exists`, and migrations here are
+  // applied by hand — a deploy that lands first would read undefined, which
+  // resolveTheme treats exactly like 'auto'.
+  const theme = resolveTheme(ctx.theme, (slot as { theme?: string | null }).theme);
+
   // Bots get the house ad — never a paid impression (keeps advertiser stats
   // clean and avoids exposing paid creatives to crawlers).
-  if (isBotDevice(ctx.device)) return houseFill(format);
+  if (isBotDevice(ctx.device)) return houseFill(format, theme);
 
   // Campaigns with a ready creative in this format. 'exhausted' is a legacy
   // status no longer written by ad_charge_click — rows still carrying it are
@@ -132,7 +171,7 @@ export async function serveAd(
   const { data: creatives } = await sb
     .from("ad_creatives")
     .select(
-      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family, ad_campaigns!inner(id, owner_id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
+      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family, ad_campaigns!inner(id, owner_id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
     )
     .eq("format", format)
     .eq("status", "ready")
@@ -140,7 +179,7 @@ export async function serveAd(
     .limit(100);
 
   // No paid creative for this format → default CrawlProof house ad.
-  if (!creatives || creatives.length === 0) return houseFill(format);
+  if (!creatives || creatives.length === 0) return houseFill(format, theme);
 
   type CampaignJoin = {
     id: string;
@@ -171,7 +210,7 @@ export async function serveAd(
   const candidates = (creatives as unknown as Row[]).filter(
     (row) => !!oneCampaign(row.ad_campaigns),
   );
-  if (candidates.length === 0) return houseFill(format);
+  if (candidates.length === 0) return houseFill(format, theme);
 
   // A campaign is PAID-eligible only if its owner can actually cover a click at
   // its bid. Without this a broke campaign would win the auction and displace
@@ -216,7 +255,7 @@ export async function serveAd(
     // Rotate the CrawlProof house ad into a slice of otherwise-fillable requests
     // so the ad network keeps promoting itself even on well-monetized slots.
     // Unmetered, so no paid impression is spent on these.
-    if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format);
+    if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format, theme);
 
     // Bid-weighted lottery: every eligible campaign can win, with probability
     // proportional to its bid, so all active ads rotate (higher bids more often).
@@ -236,7 +275,7 @@ export async function serveAd(
     pick = free[Math.floor(Math.random() * free.length)];
   }
 
-  if (!pick) return houseFill(format);
+  if (!pick) return houseFill(format, theme);
   const campaign = oneCampaign(pick.ad_campaigns);
   if (!campaign) return null;
 
@@ -312,7 +351,7 @@ export async function serveAd(
     refSlug: campaign.ref_slug,
     creative,
     clickUrl,
-    html: renderCreativeHtml(creative, clickUrl),
+    html: renderCreativeHtml(creative, clickUrl, { theme }),
     text: renderCreativeText(creative, clickUrl),
     tier,
   };

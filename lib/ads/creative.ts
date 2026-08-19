@@ -18,13 +18,25 @@ import {
   brandInitial,
   formatSpec,
   hexToRgba,
+  paletteFor,
   type AdCreative,
   type AdFormatId,
 } from "./formats";
+import {
+  contrastRatio,
+  derivePalette,
+  hairline,
+  overImageInk,
+  overlayInk,
+  solid,
+  themeOfBackground,
+  type AdPalette,
+  type AdTheme,
+} from "./theme";
 
 // Re-export the client-safe format primitives so existing server importers of
 // this module keep working; client components should import from ./formats.
-export { AD_FORMATS, AD_FORMAT_IDS, formatSpec };
+export { AD_FORMATS, AD_FORMAT_IDS, formatSpec, paletteFor };
 export { renderCreativeText, renderTerminalHtml };
 export type { AdCreative, AdFormatId };
 
@@ -35,7 +47,9 @@ export type { AdCreative, AdFormatId };
 const CLAUDE_MODEL = "claude-sonnet-5";
 const OPENAI_MODEL = "gpt-5-mini";
 
-const HEX = /^#([0-9a-fA-F]{6})$/;
+// 6- or 8-digit: the editor's alpha slider writes #rrggbbaa, and a creative
+// saved with a translucent wash must survive a regeneration round-trip.
+const HEX = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 function safeHex(v: string | undefined, fallback: string): string {
   return v && HEX.test(v.trim()) ? v.trim().toLowerCase() : fallback;
 }
@@ -60,9 +74,20 @@ const CopySchema = z.object({
     .string()
     .max(18)
     .describe("Button label, e.g. 'Try it free', 'Get started', 'Learn more'."),
-  bgColor: z.string().describe("Background hex like #0b0d10 — on-brand, good contrast with fg."),
-  fgColor: z.string().describe("Text hex with strong contrast against bg."),
-  accentColor: z.string().describe("Accent/CTA hex — the brand's signature colour if visible."),
+  bgColor: z.string().describe("DARK-mode background hex like #0b0d10 — on-brand, good contrast with fgColor."),
+  fgColor: z.string().describe("DARK-mode text hex with strong contrast against bgColor."),
+  accentColor: z.string().describe("DARK-mode accent/CTA hex — the brand's signature colour if visible."),
+  lightBgColor: z
+    .string()
+    .describe("LIGHT-mode background hex — near-white (e.g. #f7f9fc), same brand hue family as bgColor."),
+  lightFgColor: z
+    .string()
+    .describe("LIGHT-mode text hex — near-black, strong contrast against lightBgColor."),
+  lightAccentColor: z
+    .string()
+    .describe(
+      "LIGHT-mode accent/CTA hex — the same brand hue as accentColor, deepened so it reads on near-white.",
+    ),
   // The two prose lengths. Everything above is display copy sized for a box;
   // these are for placements that sit *inside* somebody's writing, where the ad
   // is read rather than glanced at.
@@ -129,11 +154,15 @@ const SYSTEM_PROMPT = [
   "You are a senior performance-marketing copywriter and brand designer.",
   "Given a company's website content and detected brand colours, write a single",
   "display-ad concept: a headline, a tiny mobile headline, one benefit line, a CTA,",
-  "and an on-brand colour trio (background, foreground, accent).",
+  "and TWO on-brand colour trios (background, foreground, accent): one for dark",
+  "publisher pages and one for light ones.",
   "Rules: infer voice and value proposition ONLY from the provided content — never",
   "invent features, prices, or claims. Keep it concrete and specific to this product.",
   "Colours must be readable: high contrast between background and foreground.",
   "Prefer the site's real brand/accent colour when the palette makes it obvious.",
+  "The two trios must share the same brand hues — the light one is not a different",
+  "design, it is the same ad on a near-white card. Do not merely invert the hex:",
+  "an accent chosen to glow on near-black needs deepening to read on near-white.",
   ...SUMMARY_RULES,
 ].join(" ");
 
@@ -156,10 +185,30 @@ function copyToCreatives(brand: SiteBrand, copy: AdCopy, heroUrl: string | null)
   const bg = safeHex(copy.bgColor, brand.themeColor && HEX.test(brand.themeColor) ? brand.themeColor : "#0b0d10");
   const fg = safeHex(copy.fgColor, "#e7e9ee");
   const accent = safeHex(copy.accentColor, brand.palette[0] ?? "#6ee7b7");
+
+  // The model is asked for a light trio too, but it is the least-constrained
+  // thing in the schema and the easiest for a small model to fumble — so every
+  // value is validated against the background it will actually sit on, and a
+  // trio that fails is replaced by the derived one. A wrong light palette is
+  // worse than a computed one: it ships an unreadable ad to a real publisher.
+  const derivedLight = derivePalette({ bgColor: bg, fgColor: fg, accentColor: accent }, "light");
+  const lightBg = safeHex(copy.lightBgColor, derivedLight.bgColor);
+  const lightFg = safeHex(copy.lightFgColor, derivedLight.fgColor);
+  const lightAccent = safeHex(copy.lightAccentColor, derivedLight.accentColor);
+  const light: AdPalette =
+    themeOfBackground(lightBg) === "light" &&
+    contrastRatio(lightFg, lightBg) >= 4.5 &&
+    contrastRatio(lightAccent, lightBg) >= 3
+      ? { bgColor: lightBg, fgColor: lightFg, accentColor: lightAccent }
+      : derivedLight;
+
   const base = {
     bgColor: bg,
     fgColor: fg,
     accentColor: accent,
+    lightBgColor: light.bgColor,
+    lightFgColor: light.fgColor,
+    lightAccentColor: light.accentColor,
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     logoUrl: brand.logoUrl,
     imageUrl: heroUrl,
@@ -428,24 +477,41 @@ function esc(s: string): string {
 // The brand mark: a real <img> logo when we have one, otherwise an accent-tinted
 // monogram tile. Never renders empty. Sandboxed served ads can't run JS, so we
 // only show the <img> when the URL was verified at generation time.
-function markHtml(creative: AdCreative, size: number): string {
+function markHtml(creative: AdCreative, size: number, p: AdPalette): string {
   if (creative.logoUrl) {
     return `<img src="${esc(creative.logoUrl)}" alt="" style="height:${size}px;width:auto;max-width:${Math.round(size * 3)}px;border-radius:4px;flex:0 0 auto;object-fit:contain" />`;
   }
   const fs = Math.round(size * 0.55);
-  return `<span style="height:${size}px;width:${size}px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border-radius:6px;background:${creative.accentColor};color:${hexToRgba(creative.bgColor, 1)};font-weight:800;font-size:${fs}px;line-height:1">${esc(brandInitial(creative.headline))}</span>`;
+  // The monogram punches out of the accent tile, so the ink must be opaque even
+  // when the advertiser gave the background an alpha wash.
+  return `<span style="height:${size}px;width:${size}px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border-radius:6px;background:${p.accentColor};color:${solid(p.bgColor)};font-weight:800;font-size:${fs}px;line-height:1">${esc(brandInitial(creative.headline))}</span>`;
 }
+
+export type RenderOptions = {
+  /**
+   * Polarity of the page the unit will sit on. Defaults to dark, which is what
+   * every creative rendered as before theme variants existed.
+   */
+  theme?: AdTheme;
+};
 
 // Self-contained HTML for a creative — used by the served ad unit inside an
 // isolated iframe (and mirrored by the React <AdPreview>). clickUrl is the
 // destination with ?ref= already applied.
-export function renderCreativeHtml(creative: AdCreative, clickUrl: string): string {
+export function renderCreativeHtml(
+  creative: AdCreative,
+  clickUrl: string,
+  opts: RenderOptions = {},
+): string {
   const { w, h } = formatSpec(creative.format);
+  const theme: AdTheme = opts.theme ?? "dark";
+  const p = paletteFor(creative, theme);
+  const edge = hairline(theme);
 
   // Terminal ad — the ASCII artwork in a <pre>, so the same creative can also
   // fill a web slot. The canonical delivery is /api/ads/motd (text/plain).
   if (creative.format === "terminal_ascii") {
-    return renderTerminalHtml(creative, clickUrl);
+    return renderTerminalHtml(creative, clickUrl, { theme });
   }
 
   // Feed ad — the sponsored line as it will appear inside somebody's reader.
@@ -456,32 +522,32 @@ export function renderCreativeHtml(creative: AdCreative, clickUrl: string): stri
   // own stylesheet rather than by ours.
   if (creative.format === "feed_item") {
     return `<!doctype html><html><head><meta charset="utf-8"><style>
-      body{margin:0;padding:12px;background:${creative.bgColor};color:${creative.fgColor};
+      body{margin:0;padding:12px;background:${p.bgColor};color:${p.fgColor};
         font-family:${creative.fontFamily};font-size:14px;line-height:1.45}
-      a{color:${creative.accentColor}}
+      a{color:${p.accentColor}}
       pre{overflow:auto;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-      hr{border:0;border-top:1px solid rgba(255,255,255,.14)}
+      hr{border:0;border-top:1px solid ${edge}}
     </style></head><body>${renderFeedHtml(creative, clickUrl)}</body></html>`;
   }
 
   // Native text link — a borderless, full-width single line. No image/box.
   if (creative.format === "text_link") {
     const body = creative.body
-      ? `<span style="color:${creative.fgColor};opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto">— ${esc(creative.body)}</span>`
+      ? `<span style="color:${p.fgColor};opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto">— ${esc(creative.body)}</span>`
       : "";
     return `<!doctype html><html><head><meta charset="utf-8"><style>
       *{box-sizing:border-box;margin:0}
       a{text-decoration:none;display:block}
       .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;
-        background:${creative.bgColor};font-family:${creative.fontFamily};font-size:13px;
+        background:${p.bgColor};font-family:${creative.fontFamily};font-size:13px;
         padding:0 12px;overflow:hidden;border-radius:8px;
-        border:1px solid rgba(255,255,255,.08);border-left:3px solid ${creative.accentColor}}
+        border:1px solid ${edge};border-left:3px solid ${p.accentColor}}
     </style></head><body>
       <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
-        <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:${creative.accentColor};flex:0 0 auto">Sponsored</span>
-        <strong style="color:${creative.fgColor};flex:0 0 auto;white-space:nowrap">${esc(creative.headline)}</strong>
+        <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:${p.accentColor};flex:0 0 auto">Sponsored</span>
+        <strong style="color:${p.fgColor};flex:0 0 auto;white-space:nowrap">${esc(creative.headline)}</strong>
         ${body}
-        <span style="color:${creative.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap">${esc(creative.ctaText)} →</span>
+        <span style="color:${p.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap">${esc(creative.ctaText)} →</span>
       </a>
     </body></html>`;
   }
@@ -490,12 +556,15 @@ export function renderCreativeHtml(creative: AdCreative, clickUrl: string): stri
   const isMobile = creative.format === "banner_320x50";
   const row = isLeaderboard || isMobile;
   const showBody = !isMobile;
-  const mark = markHtml(creative, isMobile ? 20 : 28);
-  const cta = `<span style="background:${creative.accentColor};color:${hexToRgba(creative.bgColor, 1)};font-weight:600;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(creative.ctaText)}</span>`;
+  const mark = markHtml(creative, isMobile ? 20 : 28, p);
+  // The CTA label punches out of the accent chip, so it takes the background as
+  // opaque ink — an alpha wash there would make the label see-through.
+  const cta = `<span style="background:${p.accentColor};color:${solid(p.bgColor)};font-weight:600;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(creative.ctaText)}</span>`;
 
-  // On the rectangle a hero image reads best full-bleed with a bottom gradient
-  // (matches the house ad); text colour stays readable over it.
-  const heroText = row ? creative.fgColor : creative.imageUrl ? "#f4f7fb" : creative.fgColor;
+  // On the rectangle a hero image reads best full-bleed with a gradient
+  // (matches the house ad); text over it takes the theme's over-image ink,
+  // which is the side the gradient is mixed from.
+  const heroText = row ? p.fgColor : creative.imageUrl ? overImageInk(theme) : p.fgColor;
   const text = `
     <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
       <div style="font-weight:700;font-size:${isMobile ? 13 : isLeaderboard ? 16 : 18}px;line-height:1.15;color:${heroText};overflow:hidden;text-overflow:ellipsis;${isMobile ? "white-space:nowrap" : ""}">${esc(creative.headline)}</div>
@@ -512,22 +581,27 @@ export function renderCreativeHtml(creative: AdCreative, clickUrl: string): stri
 
   // Rectangle background: hero image + readability gradient, or a subtle
   // accent-tinted brand wash so the middle is never a dead flat block.
+  //
+  // The gradient is mixed from the theme's own ink rather than the creative's
+  // background: a light unit needs to fade the image to white, and reusing an
+  // alpha-washed background here would leave the headline sitting on raw photo.
+  const scrim = overlayInk(theme);
   const rectBg = creative.imageUrl
     ? `<div style="position:absolute;inset:0;z-index:0;background:url('${esc(creative.imageUrl)}') center/cover no-repeat"></div>
-       <div style="position:absolute;inset:0;z-index:1;background:linear-gradient(180deg, ${hexToRgba(creative.bgColor, 0.15)} 0%, ${hexToRgba(creative.bgColor, 0.86)} 74%)"></div>`
+       <div style="position:absolute;inset:0;z-index:1;background:linear-gradient(180deg, ${hexToRgba(scrim, 0.15)} 0%, ${hexToRgba(scrim, 0.86)} 74%)"></div>`
     : "";
   const bg = row
-    ? creative.bgColor
+    ? p.bgColor
     : creative.imageUrl
-      ? creative.bgColor
-      : `radial-gradient(120% 80% at 100% 0%, ${hexToRgba(creative.accentColor, 0.18)} 0%, ${hexToRgba(creative.bgColor, 0)} 60%), ${creative.bgColor}`;
+      ? p.bgColor
+      : `radial-gradient(120% 80% at 100% 0%, ${hexToRgba(p.accentColor, 0.18)} 0%, ${hexToRgba(p.bgColor, 0)} 60%), ${p.bgColor}`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
     .cp-ad{position:relative;width:${w}px;height:${h}px;background:${bg};font-family:${creative.fontFamily};
       border-radius:8px;padding:${isMobile ? "8px 10px" : "14px"};overflow:hidden;
-      border:1px solid rgba(255,255,255,.08)}
+      border:1px solid ${edge}}
   </style></head><body>
     <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">${rectBg}${inner}</a>
   </body></html>`;

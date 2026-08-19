@@ -28,6 +28,45 @@ ${VISITOR_SNIPPET}
       if (w >= 300) return 'banner_300x250';
       return 'banner_320x50';
     }
+    // --- theme detection -------------------------------------------------
+    // Which polarity the unit should render in. A dark ad on a black-on-white
+    // blog reads as a hole punched in the page, so we measure rather than
+    // assume: the first ancestor with a real background colour wins.
+    function luma(c) {
+      var m = /rgba?\\(([^)]+)\\)/.exec(c || '');
+      if (!m) return null;
+      var p = m[1].split(',').map(function (x) { return parseFloat(x); });
+      if (p.length < 3) return null;
+      // Fully transparent tells us nothing about what the viewer sees.
+      if (p.length > 3 && p[3] === 0) return null;
+      var a = p.length > 3 ? p[3] : 1;
+      // Composite over white — an unstyled page is white, whatever the OS says.
+      var f = function (v) { var s = (v * a + 255 * (1 - a)) / 255;
+        return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+      return 0.2126 * f(p[0]) + 0.7152 * f(p[1]) + 0.0722 * f(p[2]);
+    }
+    function detectTheme(el) {
+      // 1. An explicit data-theme on the unit always wins — this is the knob a
+      //    publisher reaches for when our guess is wrong for their page.
+      var want = (el.getAttribute('data-theme') || '').toLowerCase();
+      if (want === 'light' || want === 'dark') return want;
+      try {
+        // 2. Walk up for the first painted background.
+        for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+          var l = luma(getComputedStyle(n).backgroundColor);
+          if (l !== null) return l >= 0.5 ? 'light' : 'dark';
+        }
+        // 3. Nothing painted anywhere — the browser is showing its own canvas.
+        //    A page that opted into a dark canvas says so via color-scheme;
+        //    otherwise what the viewer sees is white, regardless of their OS
+        //    preference, so prefers-color-scheme must NOT decide this.
+        var cs = getComputedStyle(document.documentElement).colorScheme || '';
+        if (cs.indexOf('dark') !== -1 && cs.indexOf('light') === -1) return 'dark';
+        return 'light';
+      } catch (_) {
+        return 'auto';
+      }
+    }
     function fill(el) {
       if (el.getAttribute('data-cp-filled')) return;
       var slot = el.getAttribute('data-slot');
@@ -41,6 +80,8 @@ ${VISITOR_SNIPPET}
       // publisher reported every impression as an anonymous visitor.
       var v = getVisitorId();
       if (v) q += '&v=' + encodeURIComponent(v);
+      var theme = detectTheme(el);
+      if (theme === 'light' || theme === 'dark') q += '&theme=' + theme;
       el.setAttribute('data-cp-filled', '1');
       fetch(ORIGIN + '/api/ads/serve' + q, { mode: 'cors', credentials: 'omit', cache: 'no-store' })
         .then(function(r){ return r.json(); })
@@ -88,6 +129,12 @@ ${VISITOR_SNIPPET}
       scan();
     }
     // Expose a manual trigger for SPA/late-inserted slots.
+    //
+    // Deliberately NOT wired to a prefers-color-scheme listener: re-filling a
+    // unit is a fresh /api/ads/serve call, and serving meters an impression.
+    // Auto-refilling on every theme toggle would bill advertisers for ads
+    // nobody newly saw. A site with a live theme switcher can call scan()
+    // itself after clearing data-cp-filled, and pay the impression knowingly.
     window.crawlproofAds = { scan: scan };
   } catch (_) {}
 })();`;

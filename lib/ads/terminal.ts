@@ -7,7 +7,8 @@
 // Pure and client-safe (no server-only imports) so the editor preview can
 // render exactly what the endpoint serves - same rule as ./formats.
 
-import type { AdCreative } from "./formats";
+import { paletteFor, type AdCreative } from "./formats";
+import { hairline, type AdTheme } from "./theme";
 
 /** Default box width in columns - fits an 80-col terminal with margin, and
  * leaves room for a click URL carrying a surface tag on one line. */
@@ -253,15 +254,24 @@ function esc(s: string): string {
  * monospace <pre>. Lets the terminal creative still fill a normal web slot
  * (and the /api/ads/frame iframe) without needing a separate design.
  */
-export function renderTerminalHtml(creative: AdCreative, clickUrl: string): string {
+export function renderTerminalHtml(
+  creative: AdCreative,
+  clickUrl: string,
+  opts: { theme?: AdTheme } = {},
+): string {
   const artwork = renderCreativeText(creative, clickUrl, { color: false });
+  // Only the web preview of the terminal unit is themed. The canonical
+  // delivery is text/plain into somebody's shell, which has no colours of ours
+  // to honour — the terminal's own palette decides.
+  const theme: AdTheme = opts.theme ?? "dark";
+  const p = paletteFor(creative, theme);
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
-    .cp-ad{background:${creative.bgColor};color:${creative.fgColor};border-radius:8px;
-      border:1px solid rgba(255,255,255,.08);padding:10px 12px;overflow:auto}
+    .cp-ad{background:${p.bgColor};color:${p.fgColor};border-radius:8px;
+      border:1px solid ${hairline(theme)};padding:10px 12px;overflow:auto}
     pre{margin:0;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-      white-space:pre;color:${creative.fgColor}}
+      white-space:pre;color:${p.fgColor}}
   </style></head><body>
     <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored"><pre>${esc(artwork)}</pre></a>
   </body></html>`;

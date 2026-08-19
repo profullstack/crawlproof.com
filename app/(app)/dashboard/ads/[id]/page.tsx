@@ -21,6 +21,9 @@ type CreativeRow = {
   bg_color: string;
   fg_color: string;
   accent_color: string;
+  light_bg_color: string | null;
+  light_fg_color: string | null;
+  light_accent_color: string | null;
   font_family: string;
 };
 
@@ -64,7 +67,7 @@ export default async function CampaignDetailPage({
     supabase
       .from("ad_creatives")
       .select(
-        "id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, font_family",
+        "id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family",
       )
       .eq("campaign_id", id)
       .order("format"),
@@ -95,6 +98,9 @@ export default async function CampaignDetailPage({
       bgColor: r.bg_color,
       fgColor: r.fg_color,
       accentColor: r.accent_color,
+      lightBgColor: r.light_bg_color,
+      lightFgColor: r.light_fg_color,
+      lightAccentColor: r.light_accent_color,
       fontFamily: r.font_family,
       logoUrl: r.logo_url,
       imageUrl: r.image_url,
