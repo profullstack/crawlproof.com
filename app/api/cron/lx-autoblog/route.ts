@@ -4,8 +4,10 @@ import { env } from "@/lib/env";
 import { nextPublishAt } from "@/lib/lx/schedule";
 import {
   enqueueArticleGenerate,
+  enqueueGuestPostGenerate,
   enqueueKeywordResearch,
 } from "@/lib/lx/workerClient";
+import { isGuestPostSlot, planGuestPost } from "@/lib/lx/autoGuestPost";
 import { repairStuckLxJobs } from "@/lib/lx/repair";
 
 export const runtime = "nodejs";
@@ -82,6 +84,8 @@ export async function POST(req: Request) {
 
   let enqueued = 0;
   let skipped_no_webhook = 0;
+  let guest_posts = 0;
+  let guest_posts_unavailable = 0;
 
   for (const s of due ?? []) {
     if (!s.webhook_url) {
@@ -101,7 +105,31 @@ export async function POST(req: Request) {
       .update({ next_publish_at: next?.toISOString() ?? null })
       .eq("id", s.id);
 
-    await enqueueArticleGenerate(s.id);
+    // Every tenth post this site publishes goes to a partner's blog instead of
+    // its own. The cadence, the partner and the topic are all decided without a
+    // human — see lib/lx/autoGuestPost, which is deliberate about the two
+    // places that would be expensive to get wrong: it only ever targets sites
+    // that opted into the network, and it never costs the author a publishing
+    // slot.
+    //
+    // That last part is why this falls through rather than skipping. A site
+    // with no eligible partner, or one that has already written for everybody
+    // recently, still publishes today — to its own blog, as it always did.
+    // Silence would be the worse failure: the customer is paying for a
+    // schedule, not for a guest post.
+    let guested = false;
+    if (await isGuestPostSlot(svc, s.id as string)) {
+      const plan = await planGuestPost(svc, s.id as string);
+      if (plan) {
+        await enqueueGuestPostGenerate(s.id as string, plan.targetSiteId, plan.topic);
+        guest_posts++;
+        guested = true;
+      } else {
+        guest_posts_unavailable++;
+      }
+    }
+
+    if (!guested) await enqueueArticleGenerate(s.id);
     enqueued++;
   }
 
@@ -110,6 +138,12 @@ export async function POST(req: Request) {
     repaired,
     topped_up,
     enqueued,
+    guest_posts,
+    // Slots that were due a guest post and published normally instead, because
+    // no partner was available. Reported rather than swallowed: a number that
+    // climbs every day means the network has stopped producing matches, and
+    // that is invisible from the article count alone.
+    guest_posts_unavailable,
     skipped_no_webhook,
   });
 }
