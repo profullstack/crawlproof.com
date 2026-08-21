@@ -10,6 +10,8 @@ import { parseDevice } from "@/lib/tracker/device";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { enqueuePostHogEvent } from "@/lib/posthog/events";
 import { pruneExitSessions, updateExitRollup } from "@/lib/tracker/exit";
+import { gateAgent } from "@/lib/tracker/agent-gate";
+import { refuse } from "@/lib/tracker/agent-response";
 
 export const runtime = "nodejs";
 
@@ -167,6 +169,18 @@ async function ingest(request: NextRequest, parseBody: boolean) {
     .maybeSingle();
   if (!project || !project.tracker_enabled) return ok(request);
 
+  /*
+   * Ban / throttle / backoff, before anything is counted.
+   *
+   * Placed here on purpose: after the project is known (rules are per-project)
+   * and before the first rollup write, so a refused agent costs one read and
+   * leaves no trace in anyone's numbers. gateAgent never throws and falls open
+   * on error -- an analytics beacon that starts refusing real traffic because a
+   * counter table hiccuped is a worse outage than one that over-counts.
+   */
+  const gate = await gateAgent(sb, site, userAgent);
+  if (gate.action !== "allow") return refuse(gate);
+
   const { bucket, isAi } = categorize({ referrer, userAgent });
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
 
@@ -304,6 +318,10 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         lng: geo?.lng ?? null,
         visitor_id: parsed.data.visitorId ?? "",
         session_id: parsed.data.sessionId ?? "",
+        // Retained now, truncated by the gate. Without it a dashboard can say a
+        // bot came and never which one, which is the question every customer
+        // actually asks.
+        user_agent: gate.userAgent,
       });
       // Prune stale rows (best-effort; skip on error).
       await sb
