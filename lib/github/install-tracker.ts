@@ -58,6 +58,22 @@ const CANDIDATES: string[] = [
   "src/layouts/BaseLayout.astro",
   "layouts/_default/baseof.html", // Hugo
   "_layouts/default.html", // Jekyll
+  /*
+   * Server-rendered JSX that is not Next.
+   *
+   * Hono, Elysia and friends render the whole document from an ordinary
+   * component, conventionally a single shell called Layout. There is no
+   * framework convention pointing at it, so nothing above finds it and the
+   * dashboard reports a repo with a perfectly good <body> as having no target
+   * file at all.
+   *
+   * The code-search fallback does not rescue this either: GitHub's search API
+   * does not index private repositories, which is exactly what these are.
+   */
+  "src/views/Layout.jsx",
+  "src/views/Layout.tsx",
+  "src/views/layout.jsx",
+  "app/views/Layout.jsx",
   "index.html",
   "public/index.html",
   "src/index.html",
@@ -77,6 +93,10 @@ const COMMON_MONOREPO_CANDIDATES: string[] = [
   "apps/web/index.html",
   "apps/web/public/index.html",
   "apps/web/src/index.html",
+  // The same non-Next JSX shell, one workspace down. This is where both
+  // tipoffwatch.com and genrewatch.com actually keep theirs.
+  "apps/web/src/views/Layout.jsx",
+  "apps/web/src/views/Layout.tsx",
 ];
 
 const BRANCH_PREFIX = "crawlproof/install-stats-tracker";
@@ -277,6 +297,9 @@ function rankCandidatePath(path: string, repoName: string): number {
   if (!path.includes("/")) score += 50;
   // Next.js App Router is more common than Pages — slight nudge.
   if (/\/app\/layout\.(tsx|jsx)$/.test(path)) score += 10;
+  // A views/Layout shell is as canonical for a Hono app as app/layout is for
+  // Next, and it sits deeper, so it needs the same nudge not to lose on length.
+  if (/\/views\/layout\.(tsx|jsx)$/i.test(path)) score += 10;
   // Shorter paths slightly preferred (closer to root = more canonical).
   score -= path.length * 0.05;
   return score;
