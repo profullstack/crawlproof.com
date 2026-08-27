@@ -20,10 +20,14 @@ const snippet = `(function(){
     var ORIGIN = ${JSON.stringify(env.siteUrl)};
     var SIZES = ${JSON.stringify(FORMATS)};
 ${VISITOR_SNIPPET}
+    // What the publisher asked for, or a width-appropriate guess when they said
+    // nothing. An explicit format is passed through as-is: whether it actually
+    // fits is decided server-side, which is the only place that knows the other
+    // formats the slot offers. The measured width rides along as ?w= and the
+    // response says what was really served.
     function pickFormat(el, w) {
       var f = el.getAttribute('data-format');
       if (f && SIZES[f]) return f;
-      // Choose by available width when unspecified.
       if (w >= 728) return 'banner_728x90';
       if (w >= 300) return 'banner_300x250';
       return 'banner_320x50';
@@ -73,8 +77,8 @@ ${VISITOR_SNIPPET}
       if (!slot) return;
       var w = el.clientWidth || el.offsetWidth || 300;
       var format = pickFormat(el, w);
-      var dims = SIZES[format] || SIZES.banner_300x250;
-      var q = '?slot=' + encodeURIComponent(slot) + '&format=' + encodeURIComponent(format);
+      var q = '?slot=' + encodeURIComponent(slot) + '&format=' + encodeURIComponent(format)
+        + '&w=' + Math.round(w);
       // Mints the id if this is the first CrawlProof script on the page. It
       // used to only read one stats.js had already written, so an ad-tag-only
       // publisher reported every impression as an anonymous visitor.
@@ -87,6 +91,10 @@ ${VISITOR_SNIPPET}
         .then(function(r){ return r.json(); })
         .then(function(res){
           if (!res || !res.ok || !res.html) { el.removeAttribute('data-cp-filled'); return; }
+          // Serving may downgrade a format that could not fit the measured
+          // width, so size from what came back rather than what we asked for.
+          if (res.format && SIZES[res.format]) format = res.format;
+          var dims = SIZES[format] || SIZES.banner_300x250;
           var iframe = document.createElement('iframe');
           iframe.setAttribute('title', 'Advertisement');
           iframe.setAttribute('scrolling', 'no');

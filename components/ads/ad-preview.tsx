@@ -138,7 +138,19 @@ export function AdPreview({
           >
             Sponsored
           </span>
-          <strong style={{ color: p.fgColor, flex: "0 0 auto", whiteSpace: "nowrap" }}>
+          {/* Yields before the CTA does — mirrors the served unit, where a
+              rigid headline used to push the CTA out of an overflow:hidden
+              row on narrow containers. */}
+          <strong
+            style={{
+              color: p.fgColor,
+              flex: "0 1 auto",
+              minWidth: 0,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
             {creative.headline}
           </strong>
           {creative.body && (
@@ -150,13 +162,21 @@ export function AdPreview({
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 minWidth: 0,
-                flex: "1 1 auto",
+                flex: "1 1 0",
               }}
             >
               — {creative.body}
             </span>
           )}
-          <span style={{ color: p.accentColor, fontWeight: 600, flex: "0 0 auto", whiteSpace: "nowrap" }}>
+          <span
+            style={{
+              color: p.accentColor,
+              fontWeight: 600,
+              flex: "0 0 auto",
+              whiteSpace: "nowrap",
+              marginLeft: "auto",
+            }}
+          >
             {creative.ctaText} →
           </span>
         </a>

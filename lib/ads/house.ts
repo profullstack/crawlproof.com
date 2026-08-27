@@ -134,18 +134,24 @@ export function renderHouseAdHtml(
 
   // Native text link — no artwork, single full-width line.
   if (format === "text_link") {
+    // Same narrow-container handling as the paid text link — see the comment in
+    // renderCreativeHtml. The headline yields, the body drops, the label and
+    // the CTA always survive.
     return `<!doctype html><html><head><meta charset="utf-8"><style>
       *{box-sizing:border-box;margin:0}
       a{text-decoration:none;display:block}
       .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;background:${p.bgColor};
         font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;padding:0 12px;
         overflow:hidden;border-radius:0;border:1px solid ${edge};border-left:3px solid ${p.accentColor}}
+      .cp-head{color:${p.fgColor};flex:0 1 auto;min-width:0;white-space:nowrap;
+        overflow:hidden;text-overflow:ellipsis}
+      @media (max-width:520px){.cp-body{display:none}}
     </style></head><body>
       <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
         <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:${p.accentColor};flex:0 0 auto">CrawlProof Ads</span>
-        <strong style="color:${p.fgColor};flex:0 0 auto;white-space:nowrap">${esc(HOUSE.headline)}</strong>
-        <span style="color:${bodyInk};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto">— ${esc(HOUSE.body)}</span>
-        <span style="color:${p.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap">${esc(HOUSE.cta)}</span>
+        <strong class="cp-head">${esc(HOUSE.headline)}</strong>
+        <span class="cp-body" style="color:${bodyInk};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 0">— ${esc(HOUSE.body)}</span>
+        <span style="color:${p.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap;margin-left:auto">${esc(HOUSE.cta)}</span>
       </a>
     </body></html>`;
   }

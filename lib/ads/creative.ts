@@ -534,8 +534,19 @@ export function renderCreativeHtml(
   // Native text link — a borderless, full-width single line. No image/box.
   if (creative.format === "text_link") {
     const body = creative.body
-      ? `<span style="color:${p.fgColor};opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto">— ${esc(creative.body)}</span>`
+      ? `<span class="cp-body" style="color:${p.fgColor};opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 0">— ${esc(creative.body)}</span>`
       : "";
+    // The unit fills its container, so it renders at whatever width the
+    // publisher's column happens to be — and this is the one format that used
+    // to break there. Everything but the CTA was `flex:0 0 auto`, so on a phone
+    // the headline pushed the CTA past `overflow:hidden` and the only clickable
+    // affordance vanished: 0.04% CTR on mobile against 0.81% on desktop. Now
+    // the headline is the piece that yields (it ellipsises), and the body line
+    // — the least load-bearing part — drops out entirely when there is no room
+    // for it. The label and the CTA always survive.
+    //
+    // The media query measures the iframe, which is the container, so it is
+    // asking exactly the right question. There is no viewport involved.
     return `<!doctype html><html><head><meta charset="utf-8"><style>
       *{box-sizing:border-box;margin:0}
       a{text-decoration:none;display:block}
@@ -543,12 +554,15 @@ export function renderCreativeHtml(
         background:${p.bgColor};font-family:${creative.fontFamily};font-size:13px;
         padding:0 12px;overflow:hidden;border-radius:0;
         border:1px solid ${edge};border-left:3px solid ${p.accentColor}}
+      .cp-head{color:${p.fgColor};flex:0 1 auto;min-width:0;white-space:nowrap;
+        overflow:hidden;text-overflow:ellipsis}
+      @media (max-width:520px){.cp-body{display:none}}
     </style></head><body>
       <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
         <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:${p.accentColor};flex:0 0 auto">Sponsored</span>
-        <strong style="color:${p.fgColor};flex:0 0 auto;white-space:nowrap">${esc(creative.headline)}</strong>
+        <strong class="cp-head">${esc(creative.headline)}</strong>
         ${body}
-        <span style="color:${p.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap">${esc(creative.ctaText)} →</span>
+        <span style="color:${p.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap;margin-left:auto">${esc(creative.ctaText)} →</span>
       </a>
     </body></html>`;
   }

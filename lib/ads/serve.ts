@@ -9,7 +9,7 @@ import {
   type AdCreative,
   type AdFormatId,
 } from "./creative";
-import { FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
+import { fitAdFormat, FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
 import { isAdTheme, type AdTheme } from "./theme";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
@@ -137,13 +137,19 @@ export type ServeContext = {
    * absent) falls back to the slot's stored default.
    */
   theme?: string | null;
+  /**
+   * Width in CSS pixels of the container the unit will sit in, as measured by
+   * the tag. Absent for older tags and for the non-web consumers (MOTD, feed),
+   * in which case the requested format is served unchanged.
+   */
+  width?: number | null;
 };
 
 // Returns a rendered fill for the slot, or null if the slot is inactive /
 // no eligible ad exists. Records the impression as a side effect.
 export async function serveAd(
   slotId: string,
-  format: AdFormatId,
+  requestedFormat: AdFormatId,
   ctx: ServeContext = {},
 ): Promise<Fill | null> {
   const sb = serviceClient();
@@ -154,7 +160,14 @@ export async function serveAd(
     .eq("id", slotId)
     .maybeSingle();
   if (!slot || slot.status !== "active") return null;
-  if (Array.isArray(slot.formats) && !slot.formats.includes(format)) return null;
+
+  // A unit wider than the container it was asked for loses its right-hand side
+  // rather than shrinking, so the publisher's `data-format` is honoured only
+  // while it fits. Constrained to the slot's own list, so this can never turn a
+  // servable request into an empty fill. Callers read the format actually
+  // served back off `fill.creative.format`.
+  const format = fitAdFormat(requestedFormat, ctx.width, slot.formats);
+  if (!format) return null;
 
   // `theme` rides behind `add column if not exists`, and migrations here are
   // applied by hand — a deploy that lands first would read undefined, which

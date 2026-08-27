@@ -36,6 +36,10 @@ export async function GET(request: NextRequest) {
     // What the tag measured on the publisher's page. Anything other than
     // light/dark (including absent) defers to the slot's stored default.
     const theme = url.searchParams.get("theme");
+    // Width of the container the tag measured, so serving can decline to send a
+    // unit that cannot fit it. Absent on older tags — serveAd then honours the
+    // requested format unchanged.
+    const width = Number(url.searchParams.get("w"));
     if (!slotId || !isAdFormat(format)) {
       return NextResponse.json({ ok: false }, { status: 200, headers });
     }
@@ -50,6 +54,7 @@ export async function GET(request: NextRequest) {
       country: geo?.countryCode ?? null,
       device,
       theme,
+      width: Number.isFinite(width) && width > 0 ? width : null,
     });
 
     if (!fill) return NextResponse.json({ ok: false }, { status: 200, headers });
@@ -60,7 +65,9 @@ export async function GET(request: NextRequest) {
         impressionId: fill.impressionId,
         html: fill.html,
         clickUrl: fill.clickUrl,
-        format,
+        // What was actually served, which is not always what was asked for —
+        // the tag sizes its iframe from this.
+        format: fill.creative.format,
       },
       { status: 200, headers },
     );

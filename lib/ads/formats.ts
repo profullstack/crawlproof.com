@@ -92,6 +92,60 @@ export const PUBLISHER_FORMAT_IDS: AdFormatId[] = [
   "text_link",
 ];
 
+/**
+ * Formats that occupy a fixed pixel box and can therefore fail to fit.
+ *
+ * `text_link` is deliberately absent: it renders full-width into whatever it is
+ * given, so its nominal 600px is a preview size rather than a requirement. The
+ * terminal and feed units have no pixel box at all.
+ */
+const FIXED_WIDTH_FORMATS: AdFormatId[] = ["banner_300x250", "banner_728x90", "banner_320x50"];
+
+/**
+ * The format to actually serve, given what the publisher asked for and how much
+ * room their container turned out to have.
+ *
+ * The tag clamps its iframe to `max-width:100%` with scrolling off, so a unit
+ * wider than its container does not shrink — it loses its right-hand side,
+ * which is where the CTA sits. A 728x90 asked for on a phone was measured at
+ * 0.01% CTR against 0.34% for a rectangle on the same devices: the click target
+ * was simply off-screen. So an explicit `data-format` is honoured only while it
+ * fits, and downgraded when it does not.
+ *
+ * `allowed` is the slot's own format list, because serving refuses anything
+ * outside it — a downgrade to a format the slot never opted into would return
+ * no fill at all, which is worse than the clipped ad we started with.
+ *
+ * Returns null only when the request was never servable (the slot does not
+ * offer the requested format), preserving the previous refusal exactly.
+ */
+export function fitAdFormat(
+  requested: AdFormatId,
+  width: number | null | undefined,
+  allowed: readonly string[] | null | undefined,
+): AdFormatId | null {
+  const offers = (f: AdFormatId) => !Array.isArray(allowed) || allowed.includes(f);
+  if (!offers(requested)) return null;
+
+  // No measurement (an older tag, or a non-web consumer like the MOTD and feed
+  // endpoints) means no basis to second-guess the publisher.
+  if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) return requested;
+  if (!FIXED_WIDTH_FORMATS.includes(requested)) return requested;
+  if (formatSpec(requested).w <= width) return requested;
+
+  const candidates = FIXED_WIDTH_FORMATS.filter(offers);
+  const fits = candidates.filter((f) => formatSpec(f).w <= width);
+  if (fits.length === 0) {
+    // Nothing fits. A slightly clipped unit still beats a blank one, so fall
+    // back to the narrowest thing the slot offers rather than giving up.
+    return candidates.reduce((a, b) => (formatSpec(b).w < formatSpec(a).w ? b : a), requested);
+  }
+  // Largest by area, not by width: at 390px both the rectangle (300) and the
+  // mobile strip (320) fit, and the rectangle converts roughly 7x better.
+  const area = (f: AdFormatId) => formatSpec(f).w * formatSpec(f).h;
+  return fits.reduce((a, b) => (area(b) > area(a) ? b : a));
+}
+
 // The terminal format id, kept as a named constant since several call sites
 // (serving, the MOTD endpoint, the publisher snippet) branch on it.
 export const TERMINAL_FORMAT_ID = "terminal_ascii" as const;
