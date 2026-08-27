@@ -26,6 +26,7 @@ const ENGINE_COLORS: Record<Engine, string> = {
   spec: "#64748b",
   dns: "#84cc16",
   links: "#14b8a6",
+  repo: "#8b5cf6",
   vu1nz: "#f97316",
   claude: "#d97706",
   openai: "#10b981",

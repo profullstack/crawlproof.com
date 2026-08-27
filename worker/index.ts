@@ -5,6 +5,8 @@ import { runAudit } from "../lib/audit/engine";
 import { specAudit } from "../lib/audit/spec-engine";
 import { dnsAudit } from "../lib/audit/dns-engine";
 import { linksAudit } from "../lib/audit/links-engine";
+import { repoAudit } from "../lib/audit/repo-engine";
+import type { RepoRef } from "../lib/audit/repo";
 import { slopAudit } from "../lib/audit/slop-engine";
 import { vu1nzAudit } from "../lib/audit/vu1nz-engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
@@ -309,6 +311,50 @@ async function vu1nzRepoTargets(projectId: string | null | undefined): Promise<s
   return targets;
 }
 
+/**
+ * Repositories bound to a project, for the Repo Health engine, newest first —
+ * plus an installation token when we can mint one.
+ *
+ * Unlike the Vu1nz lookup this keeps private repos: we only read metadata and
+ * counts through the installation token, and never hand the repo to a third
+ * party. A token also lifts the engine off GitHub's 60/hour anonymous limit.
+ */
+async function projectRepoRefs(
+  projectId: string | null | undefined,
+): Promise<{ refs: RepoRef[]; token: string | null }> {
+  if (!projectId) return { refs: [], token: null };
+  const { data, error } = await supabase
+    .from("project_repos")
+    .select("installation_id, repo_owner, repo_name")
+    .eq("project_id", projectId)
+    .order("added_at", { ascending: false });
+  if (error) {
+    console.warn(`[worker] repo lookup failed project=${projectId}: ${error.message}`);
+    return { refs: [], token: null };
+  }
+
+  const rows = (data ?? []) as Array<{
+    installation_id: number;
+    repo_owner: string;
+    repo_name: string;
+  }>;
+  const refs = rows.map((row) => ({ owner: row.repo_owner, repo: row.repo_name }));
+
+  let token: string | null = null;
+  if (rows.length > 0) {
+    try {
+      token = await getOrMintInstallationToken(rows[0].installation_id);
+    } catch (err) {
+      console.warn(
+        `[worker] repo token mint failed installation=${rows[0].installation_id}: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    }
+  }
+  return { refs, token };
+}
+
 async function processJob(job: Job) {
   const { auditId } = job;
   console.log(`[worker] running audit ${auditId}`);
@@ -406,6 +452,13 @@ async function processJob(job: Job) {
       markdown = r.markdown;
     } else if (engine === "slop") {
       const r = await slopAudit(audit.target_url);
+      score = r.score;
+      summary = r.summary;
+      findings = r.findings;
+      markdown = r.markdown;
+    } else if (engine === "repo") {
+      const { refs, token } = await projectRepoRefs(audit.project_id as string | null);
+      const r = await repoAudit(audit.target_url, { projectRepos: refs, token });
       score = r.score;
       summary = r.summary;
       findings = r.findings;

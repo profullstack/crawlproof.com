@@ -130,6 +130,7 @@ export type Engine =
   | "dns"
   | "links"
   | "slop"
+  | "repo"
   | "vu1nz"
   | "claude"
   | "openai"
@@ -187,6 +188,13 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     popular: true,
     blurb:
       "Sweeps up to 50 pages and scores how careless your site looks — placeholder copy, near-duplicate pages, leaked template variables, missing first-party evidence, stale dates, design drift — with a per-page fix list. Reports observable defects, not \"was this AI-written\". Free.",
+  },
+  repo: {
+    label: "Repo Health",
+    cost: 0,
+    available: true,
+    blurb:
+      "Scores the GitHub project behind your site: a 0–100 health score (commit recency, rhythm, issue and PR resolution) plus an undervalued score that measures the building against the attention it has already received. Ten behavioral signals — solo builder, hidden gem, fork magnet, release machine — with the fixes that move each one. Free.",
   },
   vu1nz: {
     label: "Vu1nz web scanner",

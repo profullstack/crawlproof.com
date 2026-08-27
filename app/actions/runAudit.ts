@@ -47,7 +47,7 @@ async function notifyWorker(auditId: string, pdfEmail?: string) {
   }
 }
 
-const ALL_ENGINES: Engine[] = ["rule", "spec", "dns", "links", "slop", "vu1nz", "claude", "openai", "gemini", "qwen", "kimi", "deepseek", "zai", "perplexity", "fugu"];
+const ALL_ENGINES: Engine[] = ["rule", "spec", "dns", "links", "slop", "repo", "vu1nz", "claude", "openai", "gemini", "qwen", "kimi", "deepseek", "zai", "perplexity", "fugu"];
 
 // Free engines an anonymous visitor may pick from the hero form. Both are
 // deterministic, self-hosted, and page-budgeted, so opening them up costs us
