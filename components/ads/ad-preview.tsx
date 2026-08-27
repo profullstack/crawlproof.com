@@ -6,11 +6,13 @@ import {
   brandInitial,
   formatSpec,
   hexToRgba,
+  imageScrim,
+  overImageShadow,
   paletteFor,
   FEED_FORMAT_ID,
   TERMINAL_FORMAT_ID,
 } from "@/lib/ads/formats";
-import { hairline, overImageInk, overlayInk, solid, type AdTheme } from "@/lib/ads/theme";
+import { hairline, overImageInk, solid, type AdTheme } from "@/lib/ads/theme";
 import { renderCreativeText } from "@/lib/ads/terminal";
 import { ATTRIBUTION, ctaLabel, DEFAULT_LABEL, oneLine } from "@/lib/ads/feeditem";
 
@@ -213,7 +215,11 @@ export function AdPreview({
     </span>
   );
 
-  const heroText = row ? p.fgColor : creative.imageUrl ? overImageInk(theme) : p.fgColor;
+  const overImage = !row && Boolean(creative.imageUrl);
+  const heroText = overImage ? overImageInk(theme) : p.fgColor;
+  // Mirrors renderCreativeHtml: the scrim stops short of opaque so the artwork
+  // survives, and the copy carries its own contrast over the image.
+  const textShadow = overImage ? overImageShadow(theme) : undefined;
   const text = (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
       <div
@@ -222,6 +228,7 @@ export function AdPreview({
           fontSize: isMobile ? 13 : isLeaderboard ? 16 : 18,
           lineHeight: 1.15,
           color: heroText,
+          textShadow,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: isMobile ? "nowrap" : undefined,
@@ -230,7 +237,15 @@ export function AdPreview({
         {creative.headline}
       </div>
       {showBody && (
-        <div style={{ fontSize: isLeaderboard ? 12 : 13, lineHeight: 1.3, color: heroText, opacity: 0.85 }}>
+        <div
+          style={{
+            fontSize: isLeaderboard ? 12 : 13,
+            lineHeight: 1.3,
+            color: heroText,
+            textShadow,
+            opacity: overImage ? 0.9 : 0.85,
+          }}
+        >
           {creative.body}
         </div>
       )}
@@ -277,7 +292,7 @@ export function AdPreview({
                 position: "absolute",
                 inset: 0,
                 zIndex: 1,
-                background: `linear-gradient(180deg, ${hexToRgba(overlayInk(theme), 0.15)} 0%, ${hexToRgba(overlayInk(theme), 0.86)} 74%)`,
+                background: imageScrim(theme),
               }}
             />
           </>

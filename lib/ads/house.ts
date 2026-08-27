@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import { env } from "@/lib/env";
 import { formatSpec, type AdCreative, type AdFormatId } from "./creative";
-import { hexToRgba } from "./formats";
-import { hairline, overImageInk, overlayInk, solid, type AdPalette, type AdTheme } from "./theme";
+import { hexToRgba, imageScrim, overImageShadow } from "./formats";
+import { hairline, overImageInk, solid, type AdPalette, type AdTheme } from "./theme";
 import { FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import { renderFeedHtml } from "./feeditem";
@@ -159,12 +159,17 @@ export function renderHouseAdHtml(
   // palette foreground: the scrim below is mixed from the same side, so on a
   // light unit the artwork fades to white and the copy has to go dark.
   const ink = overImageInk(theme);
-  const inkMuted = hexToRgba(ink, 0.78);
-  const label = `<span style="position:absolute;top:8px;left:10px;z-index:3;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:${hexToRgba(ink, 0.62)}">CrawlProof Ads</span>`;
-  const headline = `<div style="font-weight:800;font-size:${isMobile ? 13 : isRect ? 20 : 17}px;line-height:1.1;color:${ink}">${esc(HOUSE.headline)}</div>`;
+  // The scrim below stops short of opaque so the artwork stays visible, so the
+  // copy carries its own contrast instead of relying on a flat block behind it.
+  const shadow = `text-shadow:${overImageShadow(theme)};`;
+  // .86 rather than .78 for the same reason: the body line is the first thing
+  // to lose against a bright patch of the hero image.
+  const inkMuted = hexToRgba(ink, 0.86);
+  const label = `<span style="position:absolute;top:8px;left:10px;z-index:3;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:${hexToRgba(ink, 0.72)};${shadow}">CrawlProof Ads</span>`;
+  const headline = `<div style="font-weight:800;font-size:${isMobile ? 13 : isRect ? 20 : 17}px;line-height:1.1;color:${ink};${shadow}">${esc(HOUSE.headline)}</div>`;
   const body = isMobile
     ? ""
-    : `<div style="font-size:${isRect ? 13 : 12}px;color:${inkMuted};margin-top:4px;max-width:${isRect ? "100%" : "62%"}">${esc(HOUSE.body)}</div>`;
+    : `<div style="font-size:${isRect ? 13 : 12}px;color:${inkMuted};${shadow}margin-top:4px;max-width:${isRect ? "100%" : "62%"}">${esc(HOUSE.body)}</div>`;
   const cta = `<span style="background:${p.accentColor};color:${solid(p.bgColor)};font-weight:700;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(HOUSE.cta)}</span>`;
 
   const content = row
@@ -177,10 +182,7 @@ export function renderHouseAdHtml(
          <div style="margin-top:12px">${cta}</div>
        </div>`;
 
-  const scrim = overlayInk(theme);
-  const overlay = isRect
-    ? `linear-gradient(180deg, ${hexToRgba(scrim, 0.12)} 0%, ${hexToRgba(scrim, 0.86)} 76%)`
-    : `linear-gradient(90deg, ${hexToRgba(scrim, 0.92)} 0%, ${hexToRgba(scrim, 0.5)} 62%, ${hexToRgba(scrim, 0.2)} 100%)`;
+  const overlay = imageScrim(theme, isRect ? "vertical" : "horizontal");
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}

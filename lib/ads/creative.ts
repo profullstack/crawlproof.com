@@ -18,6 +18,8 @@ import {
   brandInitial,
   formatSpec,
   hexToRgba,
+  imageScrim,
+  overImageShadow,
   paletteFor,
   type AdCreative,
   type AdFormatId,
@@ -27,7 +29,6 @@ import {
   derivePalette,
   hairline,
   overImageInk,
-  overlayInk,
   solid,
   themeOfBackground,
   type AdPalette,
@@ -564,11 +565,19 @@ export function renderCreativeHtml(
   // On the rectangle a hero image reads best full-bleed with a gradient
   // (matches the house ad); text over it takes the theme's over-image ink,
   // which is the side the gradient is mixed from.
-  const heroText = row ? p.fgColor : creative.imageUrl ? overImageInk(theme) : p.fgColor;
+  const overImage = !row && Boolean(creative.imageUrl);
+  const heroText = overImage ? overImageInk(theme) : p.fgColor;
+  // The scrim stops well short of opaque so the artwork survives, so the copy
+  // carries its own contrast. Only over an image — on a flat brand wash a
+  // shadow is just mud.
+  const shadow = overImage ? `text-shadow:${overImageShadow(theme)};` : "";
+  // .9 rather than .85 for the same reason: the body line is the first thing
+  // to lose against a bright patch of photo.
+  const bodyFade = overImage ? ".9" : ".85";
   const text = `
     <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
-      <div style="font-weight:700;font-size:${isMobile ? 13 : isLeaderboard ? 16 : 18}px;line-height:1.15;color:${heroText};overflow:hidden;text-overflow:ellipsis;${isMobile ? "white-space:nowrap" : ""}">${esc(creative.headline)}</div>
-      ${showBody ? `<div style="font-size:${isLeaderboard ? 12 : 13}px;line-height:1.3;color:${heroText};opacity:.85">${esc(creative.body)}</div>` : ""}
+      <div style="font-weight:700;font-size:${isMobile ? 13 : isLeaderboard ? 16 : 18}px;line-height:1.15;color:${heroText};${shadow}overflow:hidden;text-overflow:ellipsis;${isMobile ? "white-space:nowrap" : ""}">${esc(creative.headline)}</div>
+      ${showBody ? `<div style="font-size:${isLeaderboard ? 12 : 13}px;line-height:1.3;color:${heroText};${shadow}opacity:${bodyFade}">${esc(creative.body)}</div>` : ""}
     </div>`;
 
   const inner = row
@@ -581,14 +590,9 @@ export function renderCreativeHtml(
 
   // Rectangle background: hero image + readability gradient, or a subtle
   // accent-tinted brand wash so the middle is never a dead flat block.
-  //
-  // The gradient is mixed from the theme's own ink rather than the creative's
-  // background: a light unit needs to fade the image to white, and reusing an
-  // alpha-washed background here would leave the headline sitting on raw photo.
-  const scrim = overlayInk(theme);
   const rectBg = creative.imageUrl
     ? `<div style="position:absolute;inset:0;z-index:0;background:url('${esc(creative.imageUrl)}') center/cover no-repeat"></div>
-       <div style="position:absolute;inset:0;z-index:1;background:linear-gradient(180deg, ${hexToRgba(scrim, 0.15)} 0%, ${hexToRgba(scrim, 0.86)} 74%)"></div>`
+       <div style="position:absolute;inset:0;z-index:1;background:${imageScrim(theme)}"></div>`
     : "";
   const bg = row
     ? p.bgColor

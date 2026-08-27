@@ -5,11 +5,55 @@
 
 import {
   derivePalette,
+  overlayInk,
   parseColor,
   themeOfBackground,
   type AdPalette,
   type AdTheme,
 } from "./theme";
+
+/**
+ * How opaque the readability scrim over hero imagery is allowed to get.
+ *
+ * It used to reach 0.86, which is close enough to opaque that the bottom third
+ * of every rectangle collapsed into a flat block of the theme's ink. That is
+ * most of the unit, and it hid the one thing a display ad has to sell: the
+ * artwork. 0.6 leaves the picture visible all the way down.
+ *
+ * The contrast the scrim no longer supplies comes from `overImageShadow`
+ * instead — a shadow follows the glyphs, so it buys legibility over exactly
+ * the pixels the copy covers rather than over the whole lower half.
+ */
+export const SCRIM_ALPHA = 0.6;
+
+/**
+ * The gradient laid over a hero image so copy stays readable on top of it.
+ *
+ * Mixed from the theme's own ink rather than the creative's background: a light
+ * unit needs to fade the image towards white, and an alpha-washed background
+ * would leave the headline sitting on raw photo.
+ *
+ * Vertical for the rectangle, where the copy stacks at the bottom; horizontal
+ * for the leaderboard and mobile strips, where it sits on the left and the
+ * image has to survive on the right.
+ */
+export function imageScrim(theme: AdTheme, axis: "vertical" | "horizontal" = "vertical"): string {
+  const ink = overlayInk(theme);
+  return axis === "vertical"
+    ? `linear-gradient(180deg, ${hexToRgba(ink, 0.1)} 0%, ${hexToRgba(ink, SCRIM_ALPHA)} 70%)`
+    : `linear-gradient(90deg, ${hexToRgba(ink, SCRIM_ALPHA)} 0%, ${hexToRgba(ink, 0.34)} 62%, ${hexToRgba(ink, 0.12)} 100%)`;
+}
+
+/**
+ * Text shadow for copy sitting on hero imagery, mixed from the same ink as the
+ * scrim. Two shadows on purpose: a tight one for edge definition against busy
+ * detail, and a wide soft one that darkens (or lightens) the few pixels around
+ * each glyph so the copy holds even where the image runs bright behind it.
+ */
+export function overImageShadow(theme: AdTheme): string {
+  const ink = overlayInk(theme);
+  return `0 1px 2px ${hexToRgba(ink, 0.9)}, 0 0 12px ${hexToRgba(ink, 0.75)}`;
+}
 
 export const AD_FORMATS = [
   { id: "banner_300x250", label: "Medium Rectangle", w: 300, h: 250 },
