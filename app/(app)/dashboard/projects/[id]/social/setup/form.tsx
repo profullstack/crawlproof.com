@@ -9,6 +9,7 @@ import {
   connectViaCookies,
   disconnectAccount,
 } from "@/app/actions/socialPosting";
+import { parseAccountHandle } from "@/lib/sp/parseHandle";
 
 export function ConnectBlueskyForm() {
   const router = useRouter();
@@ -17,6 +18,7 @@ export function ConnectBlueskyForm() {
   const [appPassword, setAppPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const parsedHandle = parseAccountHandle(handle, "bluesky").handle;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,12 +45,18 @@ export function ConnectBlueskyForm() {
         <input
           className="input mt-1"
           type="text"
-          placeholder="you.bsky.social"
+          placeholder="you.bsky.social or bsky.app/profile/you.bsky.social"
           autoComplete="off"
           required
           value={handle}
           onChange={(e) => setHandle(e.target.value)}
         />
+        {parsedHandle && parsedHandle !== handle.trim() && (
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            We&rsquo;ll save this as{" "}
+            <code className="font-mono">{parsedHandle}</code>.
+          </p>
+        )}
       </div>
       <div>
         <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
@@ -192,16 +200,16 @@ export function ConnectTelegramForm() {
         <input
           className="input mt-1"
           type="text"
-          placeholder="@yourchannel"
+          placeholder="@yourchannel or t.me/yourchannel"
           autoComplete="off"
           required
           value={channel}
           onChange={(e) => setChannel(e.target.value)}
         />
         <p className="mt-1 text-xs text-[var(--color-muted)]">
-          The @username of a public channel, or the numeric id of a private
-          channel (starts with <code>-100</code>). Add your bot as an admin
-          with “Post Messages” permission first.
+          The @username of a public channel, its t.me link, or the numeric id
+          of a private channel (starts with <code>-100</code>). Add your bot as
+          an admin with “Post Messages” permission first.
         </p>
       </div>
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
@@ -237,6 +245,18 @@ const PLATFORM_LABELS: Record<string, string> = {
   mastodon: "Mastodon",
 };
 
+// Both forms of what people actually paste, so the field reads as
+// "either of these is fine" rather than "type it by hand".
+const HANDLE_PLACEHOLDERS: Record<string, string> = {
+  reddit: "yourusername or reddit.com/user/yourusername",
+  facebook_page: "MyPage, 123456789, or facebook.com/MyPage",
+  threads: "yourusername or threads.net/@yourusername",
+  instagram: "yourusername or instagram.com/yourusername",
+  x: "yourusername or x.com/yourusername",
+  linkedin: "yourname or linkedin.com/in/yourname",
+  mastodon: "yourusername or mastodon.social/@yourusername",
+};
+
 const PLATFORM_HINTS: Record<string, string> = {
   reddit: "Log in to reddit.com, then export cookies with the Cookie-Editor extension.",
   facebook_page:
@@ -265,6 +285,10 @@ export function ConnectViaCookiesForm({
   const [instanceUrl, setInstanceUrl] = useState("mastodon.social");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Same parse the server will do, so what we show is what gets stored.
+  const parsed = parseAccountHandle(handle, platform);
+  const parsedHandle = parsed.handle;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -305,23 +329,38 @@ export function ConnectViaCookiesForm({
             value={instanceUrl}
             onChange={(e) => setInstanceUrl(e.target.value)}
           />
+          {parsed.host && parsed.host !== instanceUrl.trim() && (
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              The URL below names{" "}
+              <code className="font-mono">{parsed.host}</code> — we&rsquo;ll use
+              that instead.
+            </p>
+          )}
         </div>
       )}
       <div>
         <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-          {platform === "facebook_page" ? "Page name or ID" : "Username"}
+          {platform === "facebook_page" ? "Page name, ID or URL" : "Username or profile URL"}
         </label>
         <input
           className="input mt-1"
           type="text"
-          placeholder={
-            platform === "facebook_page" ? "MyPage or 123456789" : "yourusername"
-          }
+          placeholder={HANDLE_PLACEHOLDERS[platform]}
           autoComplete="off"
           required
           value={handle}
           onChange={(e) => setHandle(e.target.value)}
         />
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
+          {parsedHandle && parsedHandle !== handle.trim() ? (
+            <>
+              We&rsquo;ll save this as{" "}
+              <code className="font-mono">{parsedHandle}</code>.
+            </>
+          ) : (
+            <>Paste the profile URL and we&rsquo;ll pull the name out of it.</>
+          )}
+        </p>
       </div>
       <div>
         <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
@@ -392,21 +431,42 @@ export function DisconnectButton({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   return (
-    <button
-      type="button"
-      className="text-xs text-[var(--color-fail)] hover:underline"
-      disabled={pending}
-      onClick={() => {
-        if (!confirm(`Disconnect ${handle}? Queued posts will be deleted.`))
-          return;
-        start(async () => {
-          await disconnectAccount(accountId);
-          router.refresh();
-        });
-      }}
-    >
-      {pending ? "…" : "Disconnect"}
-    </button>
+    <div className="shrink-0 text-right">
+      <button
+        type="button"
+        className="text-xs text-[var(--color-fail)] hover:underline"
+        disabled={pending}
+        onClick={() => {
+          if (!confirm(`Disconnect ${handle}? Queued posts will be deleted.`))
+            return;
+          setError(null);
+          start(async () => {
+            // An account with a long posting history takes a while to
+            // clear, so this can be a slow one — but it must never fail
+            // in silence the way it used to.
+            const r = await disconnectAccount(accountId).catch(
+              (err: unknown) => ({
+                ok: false as const,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            );
+            if (!r.ok) {
+              setError(r.error);
+              return;
+            }
+            router.refresh();
+          });
+        }}
+      >
+        {pending ? "Disconnecting…" : "Disconnect"}
+      </button>
+      {error && (
+        <p className="mt-1 max-w-[16rem] text-xs text-[var(--color-fail)]">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

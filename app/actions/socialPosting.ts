@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
+import { parseAccountHandle } from "@/lib/sp/parseHandle";
 import { createBlueskySession } from "@/lib/sp/platforms/bluesky";
 import {
   renderPostForPlatform,
@@ -58,7 +59,8 @@ export async function connectBluesky(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const handle = (input.handle ?? "").trim().replace(/^@/, "");
+  // Accepts a bare handle or a pasted bsky.app/profile/… URL.
+  const handle = parseAccountHandle(input.handle ?? "", "bluesky").handle;
   const appPassword = (input.appPassword ?? "").trim();
   if (!handle) return { ok: false, error: "Enter your Bluesky handle." };
   if (!appPassword) return { ok: false, error: "Enter an app password." };
@@ -161,6 +163,16 @@ export async function connectDiscord(input: {
   return { ok: true, accountId: data.id };
 }
 
+// A pasted t.me/yourchannel (or its /s/ preview form) is the same thing
+// as @yourchannel. Numeric ids and @handles pass through untouched.
+function normalizeTelegramChannel(raw: string): string {
+  const trimmed = raw.trim();
+  const m = trimmed.match(
+    /^(?:https?:\/\/)?(?:www\.)?(?:t(?:elegram)?\.me|telegram\.dog)\/(?:s\/)?(?:@)?([A-Za-z0-9_]+)/i,
+  );
+  return m ? `@${m[1]}` : trimmed;
+}
+
 // ------------------------------------------------------------
 // connectTelegram — take a bot token + channel reference, verify with
 // getMe + getChat (which also confirms the bot has been added to the
@@ -200,7 +212,10 @@ export async function connectTelegram(input: {
 
   let chat;
   try {
-    chat = await getTelegramChatInfo({ token, chatRef: input.channel ?? "" });
+    chat = await getTelegramChatInfo({
+      token,
+      chatRef: normalizeTelegramChannel(input.channel ?? ""),
+    });
   } catch (err) {
     return {
       ok: false,
@@ -256,9 +271,27 @@ export async function connectViaCookies(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const { platform, cookiesJson, handle, externalId, imageStyle, instanceUrl } = input;
+  const { platform, cookiesJson, externalId, imageStyle } = input;
   if (!cookiesJson.trim()) return { ok: false, error: "Paste your cookie JSON." };
-  if (!handle.trim()) return { ok: false, error: "Enter your username / page name." };
+  if (!input.handle.trim()) {
+    return { ok: false, error: "Enter your username / page name." };
+  }
+
+  // People paste profile URLs here. Take the id out of the URL — storing
+  // it verbatim breaks posting (the platform wants a bare id) and creates
+  // a duplicate account, since external_id is the upsert conflict key.
+  const parsed = parseAccountHandle(input.handle, platform);
+  const handle = parsed.handle;
+  if (!handle) {
+    return {
+      ok: false,
+      error: "That doesn't look like a username or profile URL.",
+    };
+  }
+  // A pasted Mastodon profile URL names its own instance; trust it over
+  // whatever is sitting in the instance field.
+  const instanceUrl =
+    platform === "mastodon" ? (parsed.host ?? input.instanceUrl) : input.instanceUrl;
 
   // Validate JSON structure
   try {
@@ -279,7 +312,7 @@ export async function connectViaCookies(input: {
         user_id: user.id,
         platform,
         auth_mode: "cookie",
-        handle: handle.trim().replace(/^@/, ""),
+        handle,
         external_id: (externalId ?? handle).trim(),
         enc_access_token: encryptSecret(cookiesJson),
         image_style: imageStyle ?? "editorial",
@@ -310,13 +343,43 @@ export async function disconnectAccount(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  const { error } = await supabase
+  // This cascades into sp_post / promo_post / promo_job — thousands of
+  // rows for a well-used account. It used to exceed PostgREST's 8s
+  // statement timeout because the FK columns weren't indexed, and the
+  // account survived; see 20260827120000_sp_account_disconnect.sql.
+  // Select the deleted id back so a delete that matched nothing is
+  // distinguishable from one that worked.
+  const { data: removed, error } = await supabase
     .from("sp_account")
     .delete()
     .eq("id", accountId)
-    .eq("user_id", user.id);
-  if (error) return { ok: false, error: error.message };
+    .eq("user_id", user.id)
+    .select("id");
+  if (error) {
+    return {
+      ok: false,
+      error: /statement timeout|canceling statement/i.test(error.message)
+        ? "Timed out removing this account's post history. Please try again."
+        : error.message,
+    };
+  }
+  // A delete that matched no rows and raised no error means the row was
+  // invisible to us — already gone, or an RLS policy stopped matching.
+  // The first is fine; the second is the silent failure this whole change
+  // exists to stop, so check which it was before claiming success.
+  if (!removed || removed.length === 0) {
+    const { data: survivor } = await supabase
+      .from("sp_account")
+      .select("id")
+      .eq("id", accountId)
+      .maybeSingle();
+    if (survivor) {
+      return { ok: false, error: "Could not disconnect that account." };
+    }
+  }
+
   revalidatePath("/dashboard/projects", "layout");
+  revalidatePath("/dashboard/promote/accounts");
   return { ok: true };
 }
 
