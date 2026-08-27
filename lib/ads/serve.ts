@@ -415,6 +415,39 @@ export async function campaignSummary(
   }
 }
 
+/**
+ * The visitor this click belongs to.
+ *
+ * Prefers the id recorded on the impression over anything the caller passed.
+ * That is both more accurate and safer: the impression's copy was written
+ * server-side from the tag at serve time, whereas `?v=` on a click URL is
+ * whatever the requester typed, and dedupe keys on it.
+ *
+ * This exists because the web click URL never carried `?v=` at all — only the
+ * short /a/<code> form read it back off the impression — so every click on a
+ * banner or text link arrived with a null visitor and deduped on IP alone.
+ * 284 of 297 such clicks had an impression that knew the visitor; none of them
+ * kept it. Two readers behind one NAT looked like one person clicking twice.
+ */
+async function resolveClickVisitor(
+  sb: ReturnType<typeof serviceClient>,
+  impressionId: string | null | undefined,
+  fromCaller: string | null | undefined,
+): Promise<string | null> {
+  if (!impressionId) return fromCaller ?? null;
+  try {
+    const { data } = await sb
+      .from("ad_impressions")
+      .select("visitor_id")
+      .eq("id", impressionId)
+      .maybeSingle();
+    return (data?.visitor_id as string | null | undefined) ?? fromCaller ?? null;
+  } catch {
+    // A lookup failure must never cost the publisher a click.
+    return fromCaller ?? null;
+  }
+}
+
 // Resolve a click: record it, return the destination URL (with ?ref=) to
 // redirect to. Returns null if the campaign/creative can't be resolved.
 export async function resolveClick(input: {
@@ -436,6 +469,7 @@ export async function resolveClick(input: {
 
   // slot_id must be present (ad_clicks.slot_id NOT NULL) to record a click.
   if (input.slotId) {
+    const visitorId = await resolveClickVisitor(sb, input.impressionId, input.ctx?.visitorId);
     // The row is stored under today's salt; the dedupe lookup has to consider
     // yesterday's too, or every check silently misses for the first hours after
     // the salt rotates.
@@ -444,7 +478,7 @@ export async function resolveClick(input: {
       campaignId: campaign.id,
       slotId: input.slotId,
       impressionId: input.impressionId,
-      visitorId: input.ctx?.visitorId,
+      visitorId,
       ipHashes: rotatingIpHashCandidates(input.ctx?.ip ?? null, CLICK_DEDUPE_WINDOW_MS),
       device: input.ctx?.device,
     });
@@ -457,7 +491,7 @@ export async function resolveClick(input: {
         p_slot: input.slotId,
         p_creative: input.creativeId ?? null,
         p_impression: input.impressionId ?? null,
-        p_visitor: input.ctx?.visitorId ?? null,
+        p_visitor: visitorId,
         p_ip_hash: ipHash,
         p_country: input.ctx?.country ?? null,
         p_device: input.ctx?.device ?? null,
@@ -473,7 +507,7 @@ export async function resolveClick(input: {
         slot_id: input.slotId,
         campaign_id: campaign.id,
         creative_id: input.creativeId ?? null,
-        visitor_id: input.ctx?.visitorId ?? null,
+        visitor_id: visitorId,
         ip_hash: ipHash,
         geo_country: input.ctx?.country ?? null,
         device: input.ctx?.device ?? null,
