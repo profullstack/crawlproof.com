@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allocate,
+  DEFAULT_MODIFIERS,
   anchorTokens,
   crossQueries,
   dropDuplicates,
@@ -64,24 +65,44 @@ describe("resolveMasters", () => {
 
 describe("resolveModifiers", () => {
   it("prefers the explicit column", () => {
-    expect(resolveModifiers(SITE)).toContain("merchant account");
+    expect(resolveModifiers(SITE, resolveMasters(SITE))).toContain("merchant account");
   });
 
   it("mines the niche when the column is empty — 13 of 17 live sites", () => {
-    const derived = resolveModifiers({
-      modifiers: [],
-      niche: "security operations and threat detection",
-    });
+    const derived = resolveModifiers(
+      { modifiers: [], niche: "security operations and threat detection" },
+      ["siem", "edr"],
+    );
     expect(derived).toEqual(
       expect.arrayContaining(["security", "operations", "threat", "detection"]),
     );
     // "and" carries no narrowing and would weaken the gate.
     expect(derived).not.toContain("and");
   });
+
+  it("subtracts the subjects from the niche-derived terms", () => {
+    // vu1nz.com: niche "CI/CD and supply chain security" says nothing its
+    // own subjects do not already say. A term that is also a subject cannot
+    // narrow anything, and keeping it is what admits "adt home security".
+    const derived = resolveModifiers(
+      { modifiers: [], niche: "CI/CD and supply chain security" },
+      ["ci/cd security", "supply chain security", "devops security"],
+    );
+    expect(derived).not.toContain("security");
+    expect(derived).not.toContain("supply");
+  });
+
+  it("falls back to the commercial vocabulary when the niche adds nothing", () => {
+    const derived = resolveModifiers(
+      { modifiers: [], niche: "CI/CD and supply chain security" },
+      ["ci/cd security", "supply chain security", "devops security"],
+    );
+    expect(derived).toBe(DEFAULT_MODIFIERS);
+  });
 });
 
 describe("isOnNiche — the gate that was missing", () => {
-  const anchors = anchorTokens(SITE);
+  const anchors = anchorTokens(SITE, resolveMasters(SITE));
 
   // These are real published titles. Each is a peptide *vendor* — a
   // competitor storefront in an industry coinpayportal sells payment
@@ -127,7 +148,11 @@ describe("isOnNiche — the gate that was missing", () => {
 });
 
 describe("crossQueries", () => {
-  const crosses = crossQueries(resolveMasters(SITE), resolveModifiers(SITE), 3);
+  const crosses = crossQueries(
+    resolveMasters(SITE),
+    resolveModifiers(SITE, resolveMasters(SITE)),
+    3,
+  );
 
   it("gives every subject coverage, including the five that never had any", () => {
     const covered = new Set(crosses.map((c) => c.master));

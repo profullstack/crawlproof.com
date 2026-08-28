@@ -293,8 +293,11 @@ export async function researchKeywords(
   }
 
   const masters = resolveMasters(site);
-  const modifiers = resolveModifiers(site);
-  const anchors = anchorTokens(site);
+  // Masters are passed through so the derived terms can subtract them: an
+  // anchor word that is also a subject word lets a candidate satisfy both
+  // halves of the gate with one token. See anchorTokens.
+  const modifiers = resolveModifiers(site, masters);
+  const anchors = anchorTokens(site, masters);
 
   if (masters.length === 0) {
     return {

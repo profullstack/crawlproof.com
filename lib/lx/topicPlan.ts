@@ -136,50 +136,112 @@ export function resolveMasters(site: SiteTopicFields): string[] {
 }
 
 /**
+ * The tail terms that turn any subject into an article this blog would write.
+ *
+ * A last-resort vocabulary, used when a site has no modifiers column and its
+ * niche says nothing the subjects do not already say. That case is common and
+ * it is where the worst output came from: vu1nz.com covers "ci/cd security"
+ * and "supply chain security" under the niche "CI/CD and supply chain
+ * security", so mining the niche yields only words the subjects already
+ * contain — and a gate built from those admits "adt home security" and
+ * "brinks home security" on a supply-chain blog.
+ *
+ * These are commercial and comparative rather than topical on purpose. They
+ * are what distinguishes an article a B2B blog publishes ("screen sharing
+ * software for teams") from a search result about a physical object
+ * ("garage door opener remote"), and they generalise across every niche,
+ * which a topical list could not.
+ */
+// Every entry has to be a word that a *commercial software* search uses and an
+// ordinary one does not. "teams" and "business" were in an earlier version of
+// this list and both had to come out: "community emergency response team" is a
+// real queued keyword on a SOC blog, and it passed the gate on the token
+// "team". A generic English noun cannot carry the second half of a two-part
+// test, however natural it reads in a keyword phrase.
+export const DEFAULT_MODIFIERS = [
+  "software",
+  "tools",
+  "platform",
+  "alternatives",
+  "comparison",
+  "pricing",
+  "integration",
+  "automation",
+  "checklist",
+  "best practices",
+];
+
+/**
  * The tail terms that anchor a subject to this site's own business.
  *
- * Thirteen of seventeen live sites have an empty `modifiers` column, so the
- * niche is mined for them rather than treating the empty case as
- * "no anchoring required" — that reading is precisely how an unanchored
- * expansion gets to run, and it is the thing being fixed. A site with neither
- * modifiers nor a niche gets an empty list, and `crossQueries` then declines
- * to produce anything, which surfaces as an actionable "set a niche" error
- * instead of silently publishing vendor listicles.
+ * Three sources, in descending order of how much the operator meant them.
+ * The middle one subtracts the subjects: a niche word that is also a subject
+ * word cannot narrow anything, and keeping it is what lets a candidate satisfy
+ * both halves of the gate with a single token.
+ *
+ * @param site the row
+ * @param masters from `resolveMasters` — subtracted from the derived terms
  */
-export function resolveModifiers(site: SiteTopicFields): string[] {
+export function resolveModifiers(
+  site: SiteTopicFields,
+  masters: string[] = [],
+): string[] {
   const explicit = (site.modifiers ?? [])
     .map((m) => (m ?? "").trim())
     .filter((m) => m.length > 0);
   if (explicit.length > 0) return explicit.slice(0, 20);
-  return Array.from(new Set(tokens(site.niche ?? ""))).slice(0, 8);
+
+  const masterTokens = new Set(masters.flatMap((m) => tokens(m).map(stem)));
+  const fromNiche = Array.from(new Set(tokens(site.niche ?? ""))).filter(
+    (t) => !masterTokens.has(stem(t)),
+  );
+  if (fromNiche.length > 0) return fromNiche.slice(0, 8);
+
+  return DEFAULT_MODIFIERS;
 }
 
 /**
- * Every token that means "this keyword is about our business".
+ * Every token that means "this keyword is about our business, not just our
+ * subject".
  *
- * The union of the modifiers and the niche, because the two are populated
- * inconsistently across live sites and a candidate matching either is anchored
- * in the sense the gate cares about.
+ * Master tokens are excluded, and that exclusion is the fix for the sharpest
+ * version of the original bug. On vu1nz.com the subject "devops security" and
+ * the niche both contain "security"; without the subtraction, "adt home
+ * security" matches the subject on `security` and then matches the anchor on
+ * the very same word, satisfying a two-part test with one token. The anchor
+ * has to be evidence the subject match did not already provide.
  */
-export function anchorTokens(site: SiteTopicFields): Set<string> {
+export function anchorTokens(
+  site: SiteTopicFields,
+  masters: string[] = [],
+): Set<string> {
+  const masterTokens = new Set(masters.flatMap((m) => tokens(m).map(stem)));
   const out = new Set<string>();
-  for (const modifier of resolveModifiers(site)) {
-    for (const token of tokens(modifier)) out.add(stem(token));
+  for (const modifier of resolveModifiers(site, masters)) {
+    for (const token of tokens(modifier)) {
+      const stemmed = stem(token);
+      if (!masterTokens.has(stemmed)) out.add(stemmed);
+    }
   }
-  for (const token of tokens(site.niche ?? "")) out.add(stem(token));
+  for (const token of tokens(site.niche ?? "")) {
+    const stemmed = stem(token);
+    if (!masterTokens.has(stemmed)) out.add(stemmed);
+  }
   return out;
 }
 
 /**
  * Is this candidate about one of our subjects *and* about what we do?
  *
- * Both halves are required, and that conjunction is the whole fix. The old
- * gate asked only the first question, which is why nineteen articles about
- * other people's peptide shops passed it.
+ * Both halves are required, on different words, and that conjunction is the
+ * whole fix. The old gate asked only the first question, which is why
+ * nineteen articles about other people's peptide shops passed it — and why
+ * a supply-chain security blog was queued to write about home alarm
+ * installers.
  *
  * @param keyword the candidate
  * @param master the subject it was researched for
- * @param anchors from `anchorTokens`
+ * @param anchors from `anchorTokens`, which has already removed subject words
  */
 export function isOnNiche(
   keyword: string,
@@ -199,6 +261,8 @@ export function isOnNiche(
   // "yes" by default would restore the old behaviour exactly. Answering "no"
   // would empty every queue on the platform. Neither is acceptable, so the
   // caller is required to supply anchors and this asserts rather than guesses.
+  // In practice `resolveModifiers` always yields something, so an empty set
+  // here means a site with no subjects at all.
   if (anchors.size === 0) return false;
 
   for (const token of candidate) {
