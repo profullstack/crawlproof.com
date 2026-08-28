@@ -23,8 +23,10 @@ type Existing = {
   target_audiences: string[];
   description: string;
   seed_keywords: string[];
+  master_keywords: string[];
   modifiers: string[];
   preserve_keywords: boolean;
+  ads_enabled: boolean;
   keywords: string[];
   seo_title: string | null;
   seo_description: string | null;
@@ -109,6 +111,14 @@ export function SetupForm({
     (initial?.target_audiences ?? []).join(", "),
   );
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [masterKeywords, setMasterKeywords] = useState(
+    // Falls back to the seed list for any site the backfill has not reached,
+    // so the field is never blank on a project that already has subjects.
+    (initial?.master_keywords?.length
+      ? initial.master_keywords
+      : (initial?.seed_keywords ?? [])
+    ).join(", "),
+  );
   const [seedKeywords, setSeedKeywords] = useState(
     (initial?.seed_keywords ?? []).join(", "),
   );
@@ -117,6 +127,11 @@ export function SetupForm({
   );
   const [preserveKeywords, setPreserveKeywords] = useState<boolean>(
     initial?.preserve_keywords ?? false,
+  );
+  // Default ON, matching the column default. A new project is in the network
+  // unless its owner takes the tick out.
+  const [adsEnabled, setAdsEnabled] = useState<boolean>(
+    initial?.ads_enabled ?? true,
   );
   const [keywords, setKeywords] = useState(
     (initial?.keywords ?? []).join("\n"),
@@ -425,6 +440,13 @@ export function SetupForm({
   // Each line is a CSV row "<keyword>,<volume>". For seed-building and
   // dedupe we only care about the keyword half (everything before the
   // first comma).
+  function masterKeywordsAsArray(): string[] {
+    return masterKeywords
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
   function keywordsAsArray(): string[] {
     return keywords
       .split("\n")
@@ -569,9 +591,11 @@ export function SetupForm({
         niche,
         targetAudiences: audiences,
         description,
+        masterKeywords,
         seedKeywords,
         modifiers,
         preserveKeywords,
+        adsEnabled,
         keywords,
         seoTitle,
         seoDescription,
@@ -845,6 +869,34 @@ export function SetupForm({
         </div>
         <div>
           <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+            Master keywords (comma-separated, 3-12 subjects)
+          </label>
+          <input
+            className="input mt-1 w-full font-mono text-sm"
+            type="text"
+            placeholder="peptide, crypto, casino, marijuana, iptv, torrents"
+            value={masterKeywords}
+            onChange={(e) => setMasterKeywords(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            The subjects this blog covers, and the list it always rebuilds from.
+            The planner splits every research run evenly across{" "}
+            <strong>all</strong> of them and fills whichever is furthest behind
+            first, so a subject cannot run away with the schedule. Each one is
+            researched crossed with a modifier below — never on its own.{" "}
+            {masterKeywordsAsArray().length > 12 ? (
+              <strong className="text-[var(--color-danger,#b91c1c)]">
+                {masterKeywordsAsArray().length} entered — only the first 12 are
+                kept.
+              </strong>
+            ) : (
+              <>{masterKeywordsAsArray().length} subject(s).</>
+            )}
+          </p>
+        </div>
+
+        <div>
+          <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
             Seed keywords (comma-separated, 1-3 word head terms)
           </label>
           <div className="mt-1 flex gap-2">
@@ -913,7 +965,25 @@ export function SetupForm({
             <span>
               <span className="font-medium">Preserve keywords</span> — Refetch
               flows skip the seed list and the long-tail list (still refresh
-              niche, audiences, description).
+              niche, audiences, description). Master keywords are always
+              preserved and are unaffected by this.
+            </span>
+          </label>
+        </div>
+
+        <div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={adsEnabled}
+              onChange={(e) => setAdsEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">Join the CrawlProof network</span> —
+              published articles carry an ad unit and a short list of related
+              posts from partner blogs and the RSS Amplifier directory. Partner
+              links are followed; directory links are <code>nofollow ugc</code>.
+              An ad slot is created for this project automatically.
             </span>
           </label>
         </div>
