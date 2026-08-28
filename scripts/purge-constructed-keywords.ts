@@ -82,12 +82,24 @@ function crossesFor(row: Row): Set<string> {
   return set;
 }
 
-type Bucket = { keep: string[]; leak: string[]; built: string[]; ids: string[] };
+type Bucket = {
+  keep: string[];
+  leak: string[];
+  built: string[];
+  ids: string[];
+  keepIds: string[];
+};
 const bySite = new Map<string, Bucket>();
 
 for (const row of rows) {
   const masters = resolveMasters(row);
-  const b = bySite.get(row.domain) ?? { keep: [], leak: [], built: [], ids: [] };
+  const b = bySite.get(row.domain) ?? {
+    keep: [],
+    leak: [],
+    built: [],
+    ids: [],
+    keepIds: [],
+  };
 
   const master = row.master_keyword ?? attribute(row.keyword, masters);
   const anchors = anchorTokens(row, masters);
@@ -105,6 +117,7 @@ for (const row of rows) {
     b.ids.push(row.id);
   } else {
     b.keep.push(row.keyword);
+    b.keepIds.push(row.id);
   }
   bySite.set(row.domain, b);
 }
@@ -125,6 +138,25 @@ for (const [domain, b] of Array.from(bySite).sort()) {
 }
 
 console.log(`\n--- keep ${k}, delete ${l + c} (${l} leaked, ${c} constructed) of ${rows.length}`);
+// REQUEUE=1 flips the output: instead of deleting the bad rows, emit the
+// statement that returns the SURVIVORS to the queue. Used for rows that failed
+// on infrastructure (an OpenAI 429, say) rather than on their content — those
+// are legitimate researched keywords and throwing them away wastes the spend,
+// but only the ones that still pass today's gate may come back.
+if (process.env.REQUEUE === "1") {
+  const keepIds = Array.from(bySite.values()).flatMap((b) => b.keepIds);
+  console.log(`\n-- REQUEUE ${keepIds.length} rows:`);
+  for (let i = 0; i < keepIds.length; i += 200) {
+    console.log(
+      `update lx_keyword set status='queued', status_reason=null where status='failed' and id in (${keepIds
+        .slice(i, i + 200)
+        .map((id) => `'${id}'`)
+        .join(",")});`,
+    );
+  }
+  process.exit(0);
+}
+
 console.log("\n-- SQL:");
 for (let i = 0; i < allIds.length; i += 200) {
   console.log(
