@@ -42,6 +42,7 @@ import { processUserAlerts } from "../lib/alerts/worker";
 import { processDuePortScans } from "../lib/prober-queue";
 import { processDueMonitors } from "../lib/uptime";
 import { processDuePromoteLists } from "../lib/promote/sweep";
+import { crawlFeeds } from "../lib/lx/feedCrawl";
 import { reapStalePublishingJobs } from "../lib/promote/jobs";
 import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
@@ -1475,6 +1476,39 @@ setInterval(
   SESSION_REFRESH_TICK_MS,
 );
 
+// Directory feed crawl.
+//
+// The autoblog cites real posts from RSS Amplifier topic feeds. Those used to
+// be fetched live inside article delivery on a 3s budget — a third-party HTTP
+// call on the critical path of the thing customers pay for, and a source with
+// no visibility when it broke. This reads them here instead, on the worker's
+// own clock, and delivery reads rows.
+//
+// The source list is derived from every active site's master_keywords on each
+// sweep, so adding a subject to a blog gets its feed crawled without anybody
+// filing a request. Tick is 30 minutes; individual sources refresh at most
+// every 6h (REFRESH_AFTER_MS), so most ticks find only a few due and are cheap.
+const FEED_CRAWL_TICK_MS = 30 * 60 * 1000; // 30 min
+let feedCrawlRunning = false;
+async function feedCrawlSweep() {
+  if (feedCrawlRunning) return; // a slow directory must not stack up sweeps
+  feedCrawlRunning = true;
+  try {
+    const r = await crawlFeeds(supabase);
+    if (r.fetched > 0) {
+      console.log(
+        `[worker] feed crawl sources=${r.sources} fetched=${r.fetched} ok=${r.succeeded} new=${r.newItems} gave_up=${r.gaveUp}`,
+      );
+    }
+  } finally {
+    feedCrawlRunning = false;
+  }
+}
+setInterval(
+  () => feedCrawlSweep().catch((e) => console.error("[worker] feed crawl sweep", e)),
+  FEED_CRAWL_TICK_MS,
+);
+
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to
 // run as a separate Railway service.
@@ -1487,4 +1521,5 @@ server.listen(port, bindHost, () => {
   promoteSweep().catch((e) => console.error("[worker] promote sweep", e));
   promoteIngestSweep().catch((e) => console.error("[worker] promote ingest", e));
   sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
+  feedCrawlSweep().catch((e) => console.error("[worker] feed crawl sweep", e));
 });

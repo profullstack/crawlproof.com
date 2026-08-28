@@ -30,7 +30,7 @@
 // lookup threw has cost the customer the thing they are paying for.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { postsFromTopicFeeds } from "./feedTopics";
+import { cachedFeedPosts } from "./feedCrawl";
 
 /** Format asked of the slot. 728x90 is the in-article leaderboard. */
 const AD_FORMAT = "banner_728x90";
@@ -205,7 +205,10 @@ export async function buildNetworkBlock(
 
   const parts: string[] = [];
 
-  const feedLinks: NetworkLink[] = await postsFromTopicFeeds(topics, MAX_FEED_LINKS)
+  // Read from the crawl cache, never live. A publish must not wait on the
+  // directory's server; a topic the sweep has not reached yet costs this
+  // article its citation block and the next one gets it.
+  const feedLinks: NetworkLink[] = await cachedFeedPosts(supabase, topics, MAX_FEED_LINKS)
     .then((posts) =>
       posts.map((p) => ({ title: p.title, url: p.link, source: "directory" as const })),
     )
