@@ -37,6 +37,7 @@ import {
   crossQueries,
   dropDuplicates,
   isOnNiche,
+  ownAnchorTokens,
   resolveMasters,
   resolveModifiers,
   signature,
@@ -77,8 +78,14 @@ const MAX_BUYER_JOURNEY_VOLUME_LOOKUP = 160;
  */
 const CROSS_PER_MASTER = 3;
 
-/** A candidate with the subject it belongs to. */
-type Candidate = { row: DfsKeywordRow; master: string };
+/**
+ * A candidate with the subject it belongs to.
+ *
+ * `fromCross` marks the locally-built subject x modifier constructions. They
+ * are excellent *seeds* — that is their real job — and mediocre *articles*, so
+ * they are tracked separately and only published as a last resort.
+ */
+type Candidate = { row: DfsKeywordRow; master: string; fromCross?: boolean };
 
 function parseStoredKeyword(row: string): DfsKeywordRow | null {
   const idx = row.indexOf(",");
@@ -271,6 +278,13 @@ export type KeywordResearchResult = {
   apiCost: number;
   /** Rows allocated per subject — surfaced so a skewed queue is visible. */
   perMaster?: Record<string, number>;
+  /**
+   * True when nothing researched survived and the run fell back to
+   * constructed subject x modifier topics. A degraded result, not a failure —
+   * reported rather than swallowed, because a site sitting on this for weeks
+   * means its upstreams or its modifiers need attention.
+   */
+  usedCrossFloor?: boolean;
   error?: string;
 };
 
@@ -303,6 +317,9 @@ export async function researchKeywords(
   // halves of the gate with one token. See anchorTokens.
   const modifiers = resolveModifiers(site, masters);
   const anchors = anchorTokens(site, masters);
+  // Site-supplied anchors only. A partial match on a multi-word subject may
+  // not be rescued by the generic vocabulary — see isOnNiche.
+  const ownAnchors = ownAnchorTokens(site, masters);
 
   if (masters.length === 0) {
     return {
@@ -376,6 +393,7 @@ export async function researchKeywords(
   const crosses = crossQueries(masters, modifiers, CROSS_PER_MASTER);
   for (const { master, query } of crosses) {
     candidates.push({
+      fromCross: true,
       row: {
         keyword: query,
         search_volume: null,
@@ -487,7 +505,9 @@ export async function researchKeywords(
   // ------------------------------------------------------------------
   // Gate, rank, allocate.
   // ------------------------------------------------------------------
-  const onNiche = candidates.filter((c) => isOnNiche(c.row.keyword, c.master, anchors));
+  const onNiche = candidates.filter((c) =>
+    isOnNiche(c.row.keyword, c.master, anchors, ownAnchors),
+  );
 
   // Volume filtering applies only to what came back from an API with a volume
   // attached. The locally-built crosses have no volume by construction and
@@ -524,20 +544,53 @@ export async function researchKeywords(
     publishedSignatures,
   );
 
-  // Take each subject's allocated share, then interleave so the published
-  // sequence alternates subjects rather than running one to exhaustion.
-  const byMaster = new Map<string, Candidate[]>();
-  for (const master of masters) byMaster.set(master, []);
-  for (const candidate of deduped) {
-    const bucket = byMaster.get(candidate.master);
-    if (!bucket) continue;
-    if (bucket.length >= (allocation.get(candidate.master) ?? 0)) continue;
-    bucket.push({ row: candidate.row, master: candidate.master });
+  /**
+   * Take each subject's allocated share, then interleave so the published
+   * sequence alternates subjects rather than running one to exhaustion.
+   */
+  function select(pool: Candidate[]): Candidate[] {
+    const byMaster = new Map<string, Candidate[]>();
+    for (const master of masters) byMaster.set(master, []);
+    for (const candidate of pool) {
+      const bucket = byMaster.get(candidate.master);
+      if (!bucket) continue;
+      if (bucket.length >= (allocation.get(candidate.master) ?? 0)) continue;
+      bucket.push(candidate);
+    }
+    // Subjects that could not fill their share hand it back, so a subject
+    // with no available candidates costs the run coverage rather than volume.
+    return interleave(byMaster).slice(0, TARGET_KEYWORDS);
   }
 
-  // Subjects that could not fill their share hand it back, so a subject with
-  // no available candidates costs the run coverage rather than volume.
-  const chosen = interleave(byMaster).slice(0, TARGET_KEYWORDS);
+  // The crosses are held back from the normal pass.
+  //
+  // They were being used as per-subject filler, and the first production run
+  // showed what that publishes: "saving money pricing", "deals platform",
+  // "coordination d0rz", "ai content loop". On-niche, gate-passing, and not
+  // article topics anybody would search for — bl0ggers' niche is
+  // "human-in-the-loop AI publishing", so its derived modifiers are literally
+  // "human" and "loop", and crossing a subject with those yields nonsense.
+  //
+  // Their real value is upstream: as DataForSEO seeds they are what turns
+  // "peptide" into "peptide merchant account". So they still seed every
+  // expansion — they just no longer get published on the strength of being
+  // grammatically adjacent to the niche.
+  let chosen = select(deduped.filter((c) => !c.fromCross));
+
+  // Last resort, and site-level rather than per-subject: only when the entire
+  // run would otherwise insert nothing does the constructed floor get used.
+  // That preserves "a blog with every upstream down still publishes" without
+  // letting constructions pad an otherwise healthy run.
+  let usedCrossFloor = false;
+  if (chosen.length === 0) {
+    chosen = select(deduped);
+    usedCrossFloor = chosen.length > 0;
+    if (usedCrossFloor) {
+      console.warn(
+        `[lx] ${site.domain}: no researched keywords survived; falling back to ${chosen.length} constructed subject x modifier topics`,
+      );
+    }
+  }
 
   if (chosen.length === 0) {
     const details = sourceErrors.length > 0
@@ -593,5 +646,11 @@ export async function researchKeywords(
     perMaster[row.master_keyword] = (perMaster[row.master_keyword] ?? 0) + 1;
   }
 
-  return { ok: true, inserted: insertRows.length, apiCost: totalCost, perMaster };
+  return {
+    ok: true,
+    inserted: insertRows.length,
+    apiCost: totalCost,
+    perMaster,
+    usedCrossFloor,
+  };
 }

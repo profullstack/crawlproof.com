@@ -223,6 +223,29 @@ export function resolveModifiers(
  * the very same word, satisfying a two-part test with one token. The anchor
  * has to be evidence the subject match did not already provide.
  */
+export function ownAnchorTokens(
+  site: SiteTopicFields,
+  masters: string[] = [],
+): Set<string> {
+  const masterTokens = new Set(masters.flatMap((m) => tokens(m).map(stem)));
+  const defaults = new Set(DEFAULT_MODIFIERS.flatMap((m) => tokens(m).map(stem)));
+  const out = new Set<string>();
+
+  const add = (phrase: string) => {
+    for (const token of tokens(phrase)) {
+      const stemmed = stem(token);
+      if (!masterTokens.has(stemmed) && !defaults.has(stemmed)) out.add(stemmed);
+    }
+  };
+
+  const explicit = (site.modifiers ?? [])
+    .map((m) => (m ?? "").trim())
+    .filter((m) => m.length > 0);
+  for (const modifier of explicit) add(modifier);
+  add(site.niche ?? "");
+  return out;
+}
+
 export function anchorTokens(
   site: SiteTopicFields,
   masters: string[] = [],
@@ -274,6 +297,7 @@ export function isOnNiche(
   keyword: string,
   master: string,
   anchors: Set<string>,
+  ownAnchors?: Set<string>,
 ): boolean {
   const candidate = new Set(tokens(keyword).map(stem));
   if (candidate.size === 0) return false;
@@ -283,6 +307,27 @@ export function isOnNiche(
 
   const hits = masterTokens.filter((t) => candidate.has(t)).length;
   if (hits === 0) return false;
+
+  // A PARTIAL match on a multi-word subject may only be rescued by an anchor
+  // the site itself supplied — never by the generic commercial vocabulary.
+  //
+  // The first production run leaked exactly this shape: "open standards"
+  // matched on "open" alone and the default anchor "software" then admitted
+  // "open broadcaster software"; "supply chain security" matched on "supply"
+  // and "automation" admitted "industrial automation supply"; "online
+  // shopping" matched on "online" and "pricing" admitted "quickbooks online
+  // pricing". One generic subject word plus one generic tail word is not
+  // evidence of anything, and the defaults are generic by construction.
+  //
+  // A complete subject match is unaffected — including a single-word subject,
+  // where "iptv" + "alternatives" is a real query.
+  if (ownAnchors && masterTokens.length > 1 && hits < masterTokens.length) {
+    if (ownAnchors.size === 0) return false;
+    for (const token of candidate) {
+      if (ownAnchors.has(token)) return true;
+    }
+    return false;
+  }
 
   // A COMPLETE match on a multi-word subject is its own evidence, and needs no
   // anchor.
