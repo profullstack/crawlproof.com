@@ -1,5 +1,5 @@
 import { env } from "@/lib/env";
-import { CREDIT_PACKS } from "@/lib/credits";
+import { ANON_DAILY_SCANS, CREDIT_PACKS, SIGNUP_CREDITS } from "@/lib/credits";
 
 function Tag({ data }: { data: unknown }) {
   return (
@@ -51,7 +51,7 @@ export function SoftwareApplicationJsonLd() {
             price: "0",
             priceCurrency: "USD",
             description:
-              "10 anonymous audits/day per IP, plus 20 free credits on signup.",
+              `${ANON_DAILY_SCANS} anonymous audits/day per IP, plus ${SIGNUP_CREDITS} free credits on signup.`,
           },
           // Real catalog — pay-per-scan credit packs, no subscription tier.
           ...CREDIT_PACKS.map((p) => ({

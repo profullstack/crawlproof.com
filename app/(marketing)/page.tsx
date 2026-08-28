@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { HeroAuditForm } from "@/components/hero-audit-form";
+import { ANON_DAILY_SCANS, SCAN_CREDITS, SIGNUP_CREDITS } from "@/lib/credits";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
 import { PerformancePreview } from "@/components/report/performance-preview";
 import { UptimePreview } from "@/components/report/uptime-preview";
@@ -33,7 +34,7 @@ const faqs = [
   },
   {
     q: "Is the free tier really free?",
-    a: "Yes — anonymous visitors get 10 audits per day per IP with no signup, and signing up unlocks 20 free credits (1 AI-model scan). Paid scans cost 20 credits (~$1) with volume discounts down to $0.50/scan at the 100-scan pack. No subscription, credits never expire.",
+    a: `Yes — anonymous visitors get ${ANON_DAILY_SCANS} audits per day per IP with no signup, and signing up unlocks ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan). Paid scans cost ${SCAN_CREDITS} credits (~$1) with volume discounts down to $0.50/scan at the 100-scan pack. No subscription, credits never expire.`,
   },
 ];
 

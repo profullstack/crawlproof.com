@@ -5,8 +5,9 @@ import { requestReportPdf } from "@/app/actions/reportPdf";
 
 // Post-report PDF capture. Shown at the BOTTOM of /r/<token>, after the
 // findings — value-first, so we ask for an email only once the visitor has
-// already seen the report. Email is required (it's where the PDF goes);
-// phone and monthly sales stay optional.
+// already seen the report. Email is the only thing asked for up front; the
+// commercial questions (monthly sales, phone) appear only behind an explicit
+// "estimate what this costs me" action, and remain optional even then.
 export function EmailReportForm({
   token,
   complete,
@@ -19,6 +20,9 @@ export function EmailReportForm({
   const [phone, setPhone] = useState("");
   const [monthlySales, setMonthlySales] = useState("");
   const [marketingOptIn, setMarketingOptIn] = useState(false);
+  // Revealed only when the visitor asks for the impact estimate — see the
+  // note on the form body.
+  const [wantsEstimate, setWantsEstimate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<null | "emailed" | "queued">(null);
 
@@ -70,46 +74,70 @@ export function EmailReportForm({
             : "Drop your email and we'll send the PDF the moment this scan finishes."}
         </p>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Email">
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              if (error) setError(null);
-            }}
-            className="input"
-            autoComplete="email"
-          />
-        </Field>
-        <Field label="Phone" helper="Optional.">
-          <input
-            type="tel"
-            placeholder="+1 555 123 4567"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            className="input"
-            autoComplete="tel"
-          />
-        </Field>
-      </div>
-      <Field
-        label="Monthly website sales"
-        helper="Optional. Used only to estimate the possible revenue impact of crawlability issues."
-      >
+      {/* Email alone, and nothing else, until the visitor asks for more.
+
+          The form previously showed three inputs for what is a one-field
+          request: a phone number and "monthly website sales" sat next to the
+          email, both marked optional. Optional or not, being asked your
+          revenue in order to receive a PDF reads as a sales qualification,
+          and it is the wrong trade at the moment somebody is doing us the
+          favour of handing over an address. The commercial questions are
+          worth asking — but behind something the visitor chose, for a thing
+          they get in return. */}
+      <Field label="Email">
         <input
-          type="number"
-          inputMode="decimal"
-          min="0"
-          step="any"
-          placeholder="USD"
-          value={monthlySales}
-          onChange={(e) => setMonthlySales(e.target.value)}
+          type="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            if (error) setError(null);
+          }}
           className="input"
+          autoComplete="email"
         />
       </Field>
+
+      {!wantsEstimate ? (
+        <button
+          type="button"
+          onClick={() => setWantsEstimate(true)}
+          className="self-start text-sm underline text-[var(--color-muted)]"
+        >
+          Also estimate what these issues might cost me
+        </button>
+      ) : (
+        <div className="flex flex-col gap-3 border-l-2 border-[var(--color-border)] pl-3">
+          <p className="text-xs leading-relaxed text-[var(--color-muted)]">
+            We&apos;ll add a revenue-impact estimate to the report. Both fields are
+            optional — the PDF sends either way.
+          </p>
+          <Field label="Monthly website sales">
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              placeholder="USD"
+              value={monthlySales}
+              onChange={(e) => setMonthlySales(e.target.value)}
+              className="input"
+              autoFocus
+            />
+          </Field>
+          <Field label="Phone" helper="Only if you'd like us to walk through it.">
+            <input
+              type="tel"
+              placeholder="+1 555 123 4567"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="input"
+              autoComplete="tel"
+            />
+          </Field>
+        </div>
+      )}
+
       <button type="submit" className="btn btn-primary" disabled={pending}>
         {pending ? "Sending…" : "Email me the PDF"}
       </button>
