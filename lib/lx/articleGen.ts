@@ -1057,9 +1057,19 @@ export async function generateArticle(
   };
   if (chargeSource === "none") {
     // Return the claim — the keyword can run later once credits exist.
+    //
+    // The reason is written even though the row goes back to `queued`, because
+    // this is the one failure that leaves no trace anywhere else: the keyword
+    // looks untouched, no article row is created, and nothing reaches the
+    // model, so a site silently stops publishing while its dashboard shows a
+    // healthy queue. That is exactly the shape of the outage that ran from
+    // 2026-08-19 undetected.
     await supabase
       .from("lx_keyword")
-      .update({ status: "queued" })
+      .update({
+        status: "queued",
+        status_reason: "out of article quota and credits",
+      })
       .eq("id", keyword.id);
     return { ok: false, error: "out of article quota and credits" };
   }
@@ -1500,16 +1510,37 @@ export async function generateArticle(
   return { ok: true, articleId: inserted.id, slug: finalSlug };
 }
 
+/**
+ * Mark a keyword failed, and record WHY on the row.
+ *
+ * The reason used to go only to `console.warn`, which meant it lived in the
+ * Railway log buffer and nowhere else. That cost nine days: publishing stopped
+ * on 2026-08-19 and every one of the 308 failed rows carried a null
+ * `status_reason`, so the outage was invisible from the database and from the
+ * dashboard — the only symptom was a number going up. Every caller here
+ * already computes a precise reason ("embedding failed: …", "quality gate
+ * failed after N attempts (slop=…)"); it simply was not being kept.
+ *
+ * Best-effort and never throws: a keyword that cannot record its reason must
+ * still be marked failed, or the generator retries it forever.
+ */
 async function failKeyword(
   supabase: SupabaseClient<any>,
   keywordId: string,
   reason: string,
 ): Promise<void> {
   console.warn(`[lx] keyword ${keywordId} failed:`, reason);
-  await supabase
+  const { error } = await supabase
     .from("lx_keyword")
-    .update({ status: "failed" })
+    .update({ status: "failed", status_reason: reason.slice(0, 2000) })
     .eq("id", keywordId);
+  if (error) {
+    console.warn(`[lx] keyword ${keywordId}: could not record reason:`, error.message);
+    await supabase
+      .from("lx_keyword")
+      .update({ status: "failed" })
+      .eq("id", keywordId);
+  }
 }
 
 // Bump the user's credit balance back by SCAN_CREDITS — called when generation
