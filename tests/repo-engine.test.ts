@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { parseRepoUrl, repoFromHtml, type RepoSignals } from "@/lib/audit/repo";
-import { cadenceScore, scoreRepo, topAuthorShare } from "@/lib/audit/repo-score";
+import { cadenceScore, cadenceWindow, scoreRepo, topAuthorShare } from "@/lib/audit/repo-score";
 import { repoAudit, resolveRepo } from "@/lib/audit/repo-engine";
 
 const NOW = Date.parse("2026-08-27T12:00:00Z");
@@ -106,6 +106,17 @@ describe("cadenceScore", () => {
 
   it("is null with no history", () => {
     expect(cadenceScore([], NOW)).toBeNull();
+  });
+
+  it("measures a young repo over its own life, not a fixed 12 weeks", () => {
+    // Two weeks old, committed in both of them: a perfect rhythm so far.
+    const createdAt = new Date(NOW - 14 * DAY).toISOString();
+    expect(cadenceWindow(createdAt, NOW)).toBe(2);
+    expect(cadenceScore([daysAgo(1), daysAgo(9)], NOW, cadenceWindow(createdAt, NOW))).toBe(1);
+  });
+
+  it("keeps the full window for a repo older than 12 weeks", () => {
+    expect(cadenceWindow(new Date(NOW - 400 * DAY).toISOString(), NOW)).toBe(12);
   });
 });
 

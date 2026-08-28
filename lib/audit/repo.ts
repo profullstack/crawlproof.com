@@ -387,12 +387,24 @@ export async function collectRepoSignals(
   );
   const totalPrs = await searchCount(`repo:${slug} type:pr`, token, fetchImpl, notes);
   const mergedPrs = await searchCount(`repo:${slug} type:pr is:merged`, token, fetchImpl, notes);
-  const helpWantedOpen = await searchCount(
-    `repo:${slug} type:issue state:open label:"help wanted","good first issue"`,
-    token,
-    fetchImpl,
-    notes,
+  // Deliberately the core issues endpoint, not search: the tag only needs to
+  // know whether any labelled entry point exists, and search runs on a much
+  // tighter budget (30/min with a token) that a run of several repos exhausts.
+  //
+  // One request per label, because `labels=` is an AND filter — asking for
+  // both in one call matches only issues carrying both, which is nearly none.
+  const helpWantedResults = await Promise.all(
+    ["help wanted", "good first issue"].map((label) =>
+      gh<unknown[]>(
+        `/repos/${slug}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=1`,
+        token,
+        fetchImpl,
+      ),
+    ),
   );
+  const helpWantedOpen = helpWantedResults.some((res) => res.ok)
+    ? helpWantedResults.reduce((n, res) => n + (res.ok && res.body ? res.body.length : 0), 0)
+    : null;
 
   return {
     ref,

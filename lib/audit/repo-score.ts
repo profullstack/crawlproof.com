@@ -106,21 +106,39 @@ function daysSince(iso: string | null, now: number): number | null {
 }
 
 /**
- * Commit rhythm: the share of the last 12 weeks that saw at least one commit.
+ * Weeks of rhythm we can fairly judge: twelve, or the repo's whole life if it
+ * is younger than that.
+ *
+ * A repository created two weeks ago cannot have committed in week eleven, and
+ * scoring it as though it failed to is how a brand-new project with 185
+ * commits lands in the "Quiet" band.
+ */
+export function cadenceWindow(createdAt: string, now: number): number {
+  const age = (now - Date.parse(createdAt)) / (7 * DAY_MS);
+  if (!Number.isFinite(age)) return 12;
+  return Math.max(1, Math.min(12, Math.ceil(age)));
+}
+
+/**
+ * Commit rhythm: the share of the observed weeks that saw at least one commit.
  *
  * Deliberately not commit *count* — a hundred commits in one weekend and
  * nothing since is a burst, not a rhythm, and this scores it as one.
  */
-export function cadenceScore(commitDates: string[], now: number): number | null {
+export function cadenceScore(
+  commitDates: string[],
+  now: number,
+  window = 12,
+): number | null {
   if (commitDates.length === 0) return null;
   const weeks = new Set<number>();
   for (const d of commitDates) {
     const t = Date.parse(d);
     if (Number.isNaN(t)) continue;
     const weeksAgo = Math.floor((now - t) / (7 * DAY_MS));
-    if (weeksAgo >= 0 && weeksAgo < 12) weeks.add(weeksAgo);
+    if (weeksAgo >= 0 && weeksAgo < window) weeks.add(weeksAgo);
   }
-  return weeks.size / 12;
+  return weeks.size / window;
 }
 
 /** Bots are dropped before any contributor signal is computed. */
@@ -189,7 +207,8 @@ export function scoreRepo(s: RepoSignals, now: number = Date.now()): RepoScore {
 
   // ---- Health -------------------------------------------------------------
   const recency = daysSinceCommit === null ? null : clamp01(1 - daysSinceCommit / 90);
-  const cadence = cadenceScore(s.commitDates, now);
+  const window = cadenceWindow(s.createdAt, now);
+  const cadence = cadenceScore(s.commitDates, now, window);
 
   const health = combine([
     {
@@ -210,7 +229,9 @@ export function scoreRepo(s: RepoSignals, now: number = Date.now()): RepoScore {
       detail:
         cadence === null
           ? "No commit history available."
-          : `${Math.round(cadence * 12)} of the last 12 weeks had at least one commit.`,
+          : `${Math.round(cadence * window)} of the last ${window} week(s) had at least one commit${
+              window < 12 ? " (the repo is younger than the 12-week window)" : ""
+            }.`,
     },
     {
       key: "issue_health",

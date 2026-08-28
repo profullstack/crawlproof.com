@@ -195,7 +195,7 @@ function buildFindings(s: RepoSignals, score: RepoScore, now: number): Finding[]
           : cadence.value >= 0.25
             ? "warn"
             : "fail",
-    title: `Commit rhythm across the last 12 weeks`,
+    title: "Commit rhythm",
     detail: `${cadence?.detail ?? "No commit history available."} A steady rhythm scores higher than the same number of commits landed in one burst.`,
     evidence: { commits_90d: s.commits90, commits_180d: s.commits180, cadence: cadence?.value },
     priority: 4,
