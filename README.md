@@ -191,6 +191,37 @@ Every audit produces the canonical 10 sections from `lib/audit/prompt.ts`:
 9. **Recommended Fixes** — actionable, templated, prioritized
 10. **Priority To-Do Checklist** — copy-paste-able checklist
 
+## Contributing
+
+Issues and pull requests are welcome. Two things worth knowing before you open
+one:
+
+- `pnpm test` and `npx tsc --noEmit` should both be clean. The suite is fast
+  (~10s) and runs without any credentials.
+- Database changes are migrations under `supabase/migrations/`, applied by hand
+  one file at a time. Merging a PR does not apply them.
+
+By contributing you agree that your contribution is licensed under the AGPL-3.0
+(below), the same terms as the rest of the project.
+
 ## License
 
-Proprietary. © CrawlProof.
+Copyright © 2026 Profullstack, Inc.
+
+Licensed under the **GNU Affero General Public License v3.0 only**
+(`AGPL-3.0-only`). The full text is in [LICENSE](./LICENSE).
+
+In short: you may use, study, modify and redistribute this software, including
+commercially. The condition is reciprocity — and because CrawlProof is a hosted
+service, the clause that matters most is section 13:
+
+> **If you run a modified version of this software as a network service, you
+> must offer its complete source code to the users of that service.**
+
+That is the difference between the AGPL and the ordinary GPL, and it is the
+reason this project uses it. Self-host it, fork it, change it, run it for your
+own company — none of that obliges you to do anything. Offer it to other people
+over a network, and your changes have to be available to them too.
+
+This applies to the code in this repository. It says nothing about the
+CrawlProof hosted service, the name, or the logo — see [TRADEMARK.md](./TRADEMARK.md).
