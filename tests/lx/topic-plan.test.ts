@@ -17,6 +17,7 @@ import {
   resolveMasters,
   resolveModifiers,
   signature,
+  stem,
 } from "@/lib/lx/topicPlan";
 
 // coinpayportal.com, exactly as stored.
@@ -215,6 +216,43 @@ describe("allocate", () => {
 
   it("is a no-op for an empty subject list", () => {
     expect(allocate([], new Map(), 30).size).toBe(0);
+  });
+});
+
+describe("stem — plural collapsing", () => {
+  // The subtle one. An earlier version stripped two characters from every
+  // "-es", so "codes" became "cod" while "code" stayed "code" and the two
+  // never matched. That silently broke plural matching everywhere, and made
+  // several of the peptide rejections above pass for the wrong reason:
+  // "skye peptides" was rejected because "peptides" stemmed to "peptid" and
+  // failed to match the subject at all, not because it lacked an anchor.
+  it.each([
+    ["codes", "code"],
+    ["peptides", "peptide"],
+    ["payments", "payment"],
+    ["alternatives", "alternative"],
+    ["practices", "practice"],
+    ["transactions", "transaction"],
+  ])("collapses %j onto %j", (plural, singular) => {
+    expect(stem(plural)).toBe(stem(singular));
+  });
+
+  it.each([
+    ["boxes", "box"],
+    ["matches", "match"],
+    ["searches", "search"],
+  ])("still strips the epenthetic e in %j", (plural, singular) => {
+    expect(stem(plural)).toBe(stem(singular));
+  });
+
+  it("handles -ies", () => {
+    expect(stem("companies")).toBe(stem("company"));
+  });
+
+  it("leaves a short word alone rather than mangling it", () => {
+    // "aeo" and "soc" must not lose characters they cannot spare.
+    expect(stem("aeo")).toBe("aeo");
+    expect(stem("gas")).toBe("gas");
   });
 });
 

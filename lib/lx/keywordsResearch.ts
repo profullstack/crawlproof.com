@@ -40,6 +40,7 @@ import {
   resolveMasters,
   resolveModifiers,
   signature,
+  stem,
   tokens,
 } from "./topicPlan";
 
@@ -115,9 +116,13 @@ type KeywordBoost = {
 function attribute(keyword: string, masters: string[]): string | null {
   let best: string | null = null;
   let bestLen = 0;
-  const candidate = new Set(tokens(keyword));
+  // Stemmed on both sides, so attribution and the gate agree about what
+  // "promo codes" and "promo code" are. They disagreed before, and a keyword
+  // attributed to a subject the gate then could not match was dropped for a
+  // reason nobody would have guessed from the strings.
+  const candidate = new Set(tokens(keyword).map(stem));
   for (const master of masters) {
-    const masterTokens = tokens(master);
+    const masterTokens = tokens(master).map(stem);
     if (masterTokens.length === 0) continue;
     const hit = masterTokens.filter((t) => candidate.has(t));
     if (hit.length === 0) continue;

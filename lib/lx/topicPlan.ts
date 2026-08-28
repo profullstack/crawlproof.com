@@ -87,9 +87,21 @@ export function tokens(phrase: string): string[] {
  * the same article. A real stemmer would be a dependency and a behaviour
  * change in the gate, for a class of match this never needs to make.
  */
-function stem(token: string): string {
+export function stem(token: string): string {
   if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
-  if (token.length > 4 && token.endsWith("es")) return token.slice(0, -2);
+
+  if (token.length > 3 && token.endsWith("es")) {
+    // "-es" is two different plurals and stripping a fixed number of
+    // characters gets one of them wrong. Taking two always ("codes" → "cod")
+    // does not collide with the singular ("code" → "code"), so a subject of
+    // "promo codes" stopped matching the keyword "promo code" — the exact
+    // shape this function exists to collapse. Strip one by default and two
+    // only after a sibilant, which is where the extra "e" is really epenthetic:
+    // "boxes" → "box", "matches" → "match", but "codes" → "code".
+    const short = token.slice(0, -2);
+    return /(?:s|x|z|ch|sh)$/.test(short) ? short : token.slice(0, -1);
+  }
+
   if (token.length > 3 && token.endsWith("s")) return token.slice(0, -1);
   return token;
 }
@@ -217,16 +229,31 @@ export function anchorTokens(
 ): Set<string> {
   const masterTokens = new Set(masters.flatMap((m) => tokens(m).map(stem)));
   const out = new Set<string>();
-  for (const modifier of resolveModifiers(site, masters)) {
-    for (const token of tokens(modifier)) {
+
+  const add = (phrase: string) => {
+    for (const token of tokens(phrase)) {
       const stemmed = stem(token);
       if (!masterTokens.has(stemmed)) out.add(stemmed);
     }
-  }
-  for (const token of tokens(site.niche ?? "")) {
-    const stemmed = stem(token);
-    if (!masterTokens.has(stemmed)) out.add(stemmed);
-  }
+  };
+
+  for (const modifier of resolveModifiers(site, masters)) add(modifier);
+  add(site.niche ?? "");
+
+  // The commercial vocabulary is always unioned in, not just used as a
+  // fallback. bl0ggers.com's niche ("human-in-the-loop AI publishing") yields
+  // exactly {human, loop} once its own subjects are removed — non-empty, so
+  // the fallback never fired, and a thin anchor set rejected "ai writing
+  // tools", which is precisely what that blog should write.
+  //
+  // Unioning is safe because these words are commercial-software words: they
+  // rescue the good keywords without admitting any of the junk. None of "adt
+  // home security", "samsung tv remote", "palantir technologies" or "bayesian
+  // optimization" contains one — and where a site's own subject already
+  // claims one ("developer tools" on logicsrc), the master-token subtraction
+  // above removes it, so "mac tools" stays rejected.
+  for (const modifier of DEFAULT_MODIFIERS) add(modifier);
+
   return out;
 }
 
@@ -252,17 +279,35 @@ export function isOnNiche(
   if (candidate.size === 0) return false;
 
   const masterTokens = tokens(master).map(stem);
-  const onSubject = masterTokens.length === 0
-    ? true
-    : masterTokens.some((t) => candidate.has(t));
-  if (!onSubject) return false;
+  if (masterTokens.length === 0) return false;
 
-  // An anchorless site cannot answer the second question, and answering it
-  // "yes" by default would restore the old behaviour exactly. Answering "no"
-  // would empty every queue on the platform. Neither is acceptable, so the
-  // caller is required to supply anchors and this asserts rather than guesses.
-  // In practice `resolveModifiers` always yields something, so an empty set
-  // here means a site with no subjects at all.
+  const hits = masterTokens.filter((t) => candidate.has(t)).length;
+  if (hits === 0) return false;
+
+  // A COMPLETE match on a multi-word subject is its own evidence, and needs no
+  // anchor.
+  //
+  // This is what separates the two failure shapes. Every bad keyword found on
+  // live sites matched exactly one generic word out of a multi-word subject —
+  // "security" from "devops security", "remote" from "remote control",
+  // "response" from "incident response", "tools" from "developer tools". None
+  // matched a subject in full. Meanwhile "abercrombie promo code" matches
+  // "promo codes" completely and is precisely what a coupon blog should write,
+  // yet an anchor rule alone rejects it, because a coupon site's subject IS
+  // its topic and it has no narrowing term to offer.
+  //
+  // Single-word subjects are excluded from this, and that exclusion is the
+  // original bug: "peptide" is one token, so "skye peptides" would match it
+  // "completely". A one-word subject can only ever be a vertical the site
+  // serves or a word too broad to stand alone, so it always needs the anchor.
+  if (masterTokens.length > 1 && hits === masterTokens.length) return true;
+
+  // Otherwise: a partial or single-word subject match, which has to be backed
+  // by a word the subject did not supply.
+  //
+  // An anchorless site cannot answer that, and answering "yes" by default
+  // would restore the old behaviour exactly. `resolveModifiers` always yields
+  // something, so an empty set here means a site with no subjects configured.
   if (anchors.size === 0) return false;
 
   for (const token of candidate) {
