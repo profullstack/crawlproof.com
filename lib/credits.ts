@@ -12,6 +12,31 @@ export const CREDIT_RACK_CENTS = 5;
 // auto-fix). 20 × $0.05 = $1.00 rack, unchanged from the old 1-credit-=-$1 era.
 export const SCAN_CREDITS = 20;
 
+/**
+ * Credits a new account starts with.
+ *
+ * **Mirrors the database**: `profiles.credits_balance` has a column default of
+ * 20, and that default is what actually grants the credits — this constant
+ * only describes it for the marketing copy. Changing this number alone changes
+ * what the site promises, not what a signup receives; the column default has to
+ * move with it.
+ *
+ * It exists because the promise had already drifted. The report paywall card
+ * said "3 free AI credits on signup" while /pricing, the homepage FAQ, llms.txt
+ * and the JSON-LD all said 20 — so a visitor comparing two pages saw a number
+ * that decided whether signing up unlocks a paid scan at all. Every one of
+ * those strings now reads from here.
+ */
+export const SIGNUP_CREDITS = 20;
+
+/**
+ * Free rule-based scans an anonymous visitor gets per day, per IP.
+ *
+ * Same reasoning as SIGNUP_CREDITS: quoted on four separate pages, and a
+ * number quoted in four places is a number that will disagree with itself.
+ */
+export const ANON_DAILY_SCANS = 10;
+
 // Credits charged for one outreach send (email / SMS recipient / social post).
 export const OUTREACH_CREDITS = 1;
 
@@ -119,8 +144,32 @@ export function perScanCents(pack: CreditPack): number {
 }
 
 // Effective price of a single credit under this pack, in cents.
+//
+// Rounded, and therefore NOT safe to display on its own — see
+// `perCreditLabel`. Kept for callers doing comparison or sorting, where a whole
+// cent is precise enough.
 export function perCreditCents(pack: CreditPack): number {
   return Math.round(pack.amountCents / pack.credits);
+}
+
+/**
+ * Exact per-credit price, as displayed.
+ *
+ * Every pack's true per-credit price lands on a half-cent — $9/200 = $0.045,
+ * $35/1000 = $0.035, $50/2000 = $0.025 — and rounding half-up sent all three
+ * *upward*, so the page advertised $0.05, $0.04 and $0.03. Overstating your own
+ * price on the pricing page is a strange way to lose an argument with a
+ * customer who can do the division.
+ *
+ * Three decimals, with a trailing zero trimmed only down to two, so a pack that
+ * really is a round number ($1.00/20 = $0.05) reads "$0.05" rather than
+ * "$0.050" — and a hypothetical $0.10 never degrades to "$0.1", which reads as
+ * a typo rather than a price.
+ */
+export function perCreditLabel(pack: CreditPack): string {
+  const exact = pack.amountCents / pack.credits / 100;
+  const three = exact.toFixed(3);
+  return `$${three.endsWith("0") ? three.slice(0, -1) : three}`;
 }
 
 // ----- Engines (free utilities + partner scanners + LLM providers) ----------

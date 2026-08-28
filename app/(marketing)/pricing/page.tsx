@@ -1,14 +1,16 @@
 import Link from "next/link";
 import {
+  ANON_DAILY_SCANS,
   CREDIT_PACKS,
   CREDIT_RACK_CENTS,
   ENGINES,
   LEAD_RUN_CREDITS,
   OUTREACH_CREDITS,
   SCAN_CREDITS,
+  SIGNUP_CREDITS,
   discountPct,
   dollars,
-  perCreditCents,
+  perCreditLabel,
 } from "@/lib/credits";
 
 export const metadata = {
@@ -30,7 +32,7 @@ export default function PricingPage() {
       <h1 className="text-center text-4xl font-extrabold">Pay per scan</h1>
       <p className="mx-auto mt-2 max-w-2xl text-center text-[var(--color-muted)]">
         Rule-based scans are free up to the daily limit. AI-model scans cost{" "}
-        <strong>20 credits (~$1) each</strong>. Buy credits with crypto via CoinPay;
+        <strong>{SCAN_CREDITS} credits (~$1) each</strong>. Buy credits with crypto via CoinPay;
         no subscription, no expiry.
       </p>
       <div className="mx-auto mt-8 grid max-w-6xl gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -131,7 +133,7 @@ export default function PricingPage() {
               <div className="mt-1 text-sm text-[var(--color-muted)]">
                 {p.credits} credit{p.credits === 1 ? "" : "s"} ·{" "}
                 <span className="font-mono text-xs">
-                  {dollars(perCreditCents(p))}/credit
+                  {perCreditLabel(p)}/credit
                 </span>
               </div>
               <Link
@@ -146,8 +148,9 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 text-center text-xs text-[var(--color-muted)]">
-        Sign-ups include 20 free credits (1 AI-model scan). Anonymous visitors get 10
-        free rule-based scans per day per IP.
+        Sign-ups include {SIGNUP_CREDITS} free credits ({SIGNUP_CREDITS / SCAN_CREDITS}{" "}
+        AI-model scan). Anonymous visitors get {ANON_DAILY_SCANS} free rule-based scans
+        per day per IP.
       </p>
     </main>
   );

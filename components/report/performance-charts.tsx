@@ -1,5 +1,7 @@
 "use client";
 
+import { SCAN_CREDITS, SIGNUP_CREDITS } from "@/lib/credits";
+
 import dynamic from "next/dynamic";
 import Link from "next/link";
 
@@ -84,7 +86,8 @@ export function PerformanceCharts({ overlayTitle, overlayBody }: PerformanceChar
             Sign up free
           </Link>
           <p className="mt-2 text-xs text-[var(--color-muted)]">
-            3 free AI credits on signup · free rule-based scans up to the daily limit.
+            {SIGNUP_CREDITS} free credits on signup ({SIGNUP_CREDITS / SCAN_CREDITS} AI-model
+            scan) · free rule-based scans up to the daily limit.
           </p>
         </div>
       </div>

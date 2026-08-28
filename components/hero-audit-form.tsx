@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { startAuditFromForm } from "@/app/actions/runAudit";
 
 // Datafa.st injects `window.datafast` once its script.js loads. Calls
@@ -134,7 +135,16 @@ export function HeroAuditForm({ defaultScan = "rule" }: { defaultScan?: HeroScan
       </Field>
       <p className="text-xs leading-relaxed text-[var(--color-muted)]">
         No email, no signup, no card. The report opens on-page in seconds — you
-        can email yourself a PDF copy from the report once it&apos;s ready.
+        can email yourself a PDF copy from the report once it&apos;s ready.{" "}
+        {/* Only two of the six free scanners can run anonymously, so the other
+            four were invisible from here — real, free, and reachable by nobody.
+            A link rather than four more radio buttons: the rest genuinely
+            require an account, and offering them in this selector would mean
+            submitting a form that cannot succeed. */}
+        <Link href="/tools" className="underline">
+          All free tools
+        </Link>
+        .
       </p>
       <div className="border-t border-[var(--color-border)] pt-3">
         <label className="flex items-start gap-2 text-xs text-[var(--color-muted)]">
