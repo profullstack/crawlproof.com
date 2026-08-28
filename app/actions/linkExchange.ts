@@ -289,6 +289,9 @@ export type SiteInput = {
   niche: string;
   targetAudiences: string;
   description: string;
+  // Comma-separated 3-12 subjects this blog covers. The durable list the
+  // keyword planner allocates evenly across; see lib/lx/topicPlan.
+  masterKeywords: string;
   // Comma-separated 1-3 word head terms for DataForSEO expansion.
   seedKeywords: string;
   // Comma-separated tail terms ("payments", "merchant account") that the
@@ -297,6 +300,9 @@ export type SiteInput = {
   // When true, Refetch flows skip overwriting the keywords text[]. Used
   // after a hand-curated build via seeds × modifiers.
   preserveKeywords: boolean;
+  // Network opt-in: ad units and partner/directory links in published
+  // articles. Default true — see the migration note on lx_site.ads_enabled.
+  adsEnabled: boolean;
   // Comma-separated. parseList() into a text[].
   keywords: string;
   seoTitle: string;
@@ -360,6 +366,12 @@ export async function createOrUpdateSite(
   const seedKeywords = parseList(input.seedKeywords, 50, 40);
   const modifiers = parseList(input.modifiers, 20, 40);
   const preserveKeywords = !!input.preserveKeywords;
+  // The DB constraint caps this at 12; parse to the same number so an
+  // oversized paste is trimmed here rather than rejected as a write error the
+  // form cannot explain.
+  const masterKeywords = parseList(input.masterKeywords, 12, MAX.keyword);
+  // Absent reads as opted in, matching the column default.
+  const adsEnabled = input.adsEnabled !== false;
   // Keywords use parseKeywordRows so each row keeps its `,<volume>` hint.
   // Allow up to ~80 chars per row to fit "keyword phrase here,12345".
   const keywords = parseKeywordRows(input.keywords, MAX.keywords, MAX.keyword + 20);
@@ -433,6 +445,8 @@ export async function createOrUpdateSite(
         target_audiences: audiences,
         description,
         seed_keywords: seedKeywords,
+        master_keywords: masterKeywords,
+        ads_enabled: adsEnabled,
         modifiers,
         preserve_keywords: preserveKeywords,
         keywords,
@@ -489,6 +503,8 @@ export async function createOrUpdateSite(
           target_audiences: audiences,
           description,
           seed_keywords: seedKeywords,
+          master_keywords: masterKeywords,
+          ads_enabled: adsEnabled,
           modifiers,
           preserve_keywords: preserveKeywords,
           keywords,
@@ -534,6 +550,8 @@ export async function createOrUpdateSite(
       target_audiences: audiences,
       description,
       seed_keywords: seedKeywords,
+      master_keywords: masterKeywords,
+      ads_enabled: adsEnabled,
       modifiers,
       preserve_keywords: preserveKeywords,
       keywords,

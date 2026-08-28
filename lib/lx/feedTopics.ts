@@ -62,7 +62,26 @@ export function topicSlug(keyword: string): string {
  * @returns post titles, channel title and sponsored items removed
  */
 export function itemTitles(xml: string): string[] {
-  const out: string[] = [];
+  return itemEntries(xml).map((e) => e.title);
+}
+
+/** A usable post from a topic feed. */
+export type FeedEntry = { title: string; link: string | null };
+
+/**
+ * Posts in a topic feed, with their links.
+ *
+ * The link is what a *citation* needs; `itemTitles` only ever needed the
+ * subject, and is now a projection of this. Keeping one parser means the
+ * sponsored-item exclusion below cannot be enforced on one path and forgotten
+ * on the other — and the path that carries links out to a published page is
+ * precisely the one where forgetting it would be worst.
+ *
+ * @param xml an RSS document
+ * @returns entries, channel-level and sponsored items removed
+ */
+export function itemEntries(xml: string): FeedEntry[] {
+  const out: FeedEntry[] = [];
 
   // Item blocks only — this is what keeps the channel's own <title> (the name
   // of the topic) out of the candidate list.
@@ -84,10 +103,73 @@ export function itemTitles(xml: string): string[] {
     if (/\(sponsored\)\s*$/i.test(title)) continue;
 
     if (title.length < MIN_TITLE_LEN || title.length > MAX_TITLE_LEN) continue;
-    out.push(title);
+
+    const href = decodeXml(item.match(/<link>([\s\S]*?)<\/link>/i)?.[1] ?? "").trim();
+    // Only absolute http(s) links survive. A feed carrying a relative link, a
+    // javascript: URL or a bare guid must not be able to put either into an
+    // anchor on a customer's published page.
+    const link = /^https?:\/\/\S+$/i.test(href) ? href : null;
+
+    out.push({ title, link });
   }
 
   return out;
+}
+
+/**
+ * Real posts from the directory on the subjects given, with links.
+ *
+ * Unlike `subjectFromTopicFeeds`, which wants one subject to write about, this
+ * wants several posts to cite — so it reads across every requested topic
+ * rather than stopping at the first that answers, and returns only entries
+ * that carry a usable link.
+ *
+ * @param keywords subject words, tried in random order
+ * @param limit most entries to return
+ * @param fetchImpl injected by the tests
+ */
+export async function postsFromTopicFeeds(
+  keywords: string[],
+  limit = 3,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Array<{ title: string; link: string; topic: string }>> {
+  const slugs = shuffle(
+    Array.from(new Set((keywords ?? []).map(topicSlug).filter(Boolean))),
+  ).slice(0, MAX_FEEDS);
+
+  const out: Array<{ title: string; link: string; topic: string }> = [];
+  const seen = new Set<string>();
+
+  for (const slug of slugs) {
+    if (out.length >= limit) break;
+    let xml: string;
+    try {
+      const res = await fetchImpl(
+        `${RSSAMPLIFIER}/topics/${encodeURIComponent(slug)}.rss`,
+        {
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+          headers: { accept: "application/rss+xml, application/xml;q=0.9" },
+        },
+      );
+      if (!res.ok) continue;
+      xml = await res.text();
+    } catch {
+      continue;
+    }
+
+    // One entry per topic before taking a second from any of them, so a block
+    // of three citations shows three subjects rather than three posts from
+    // whichever feed happened to be longest.
+    const entries = shuffle(itemEntries(xml).filter((e) => e.link));
+    for (const entry of entries) {
+      if (!entry.link || seen.has(entry.link)) continue;
+      seen.add(entry.link);
+      out.push({ title: entry.title, link: entry.link, topic: slug.replace(/-/g, " ") });
+      break;
+    }
+  }
+
+  return out.slice(0, limit);
 }
 
 /**

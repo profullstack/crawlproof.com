@@ -14,6 +14,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildEvent, sendWebhook, type Post } from "@profullstack/autoblog";
 import { env } from "../env";
+import { findExchangeCandidates } from "./exchangeMatcher";
+import { buildNetworkBlock } from "./networkBlock";
 
 type ArticleRow = {
   id: string;
@@ -44,6 +46,13 @@ type SiteRow = {
   webhook_secret: string | null;
   author_name: string | null;
   author_url: string | null;
+  // Network opt-in, resolved for the site that will HOST the post. For a guest
+  // post that is the partner, not the author: it is the host's readers who see
+  // the ad unit and the host's owner who agreed to carry it.
+  project_id: string;
+  user_id: string;
+  niche: string | null;
+  ads_enabled: boolean | null;
 };
 
 /**
@@ -109,7 +118,7 @@ export type DeliveryResult = {
   error?: string;
 };
 
-function articleToPost(article: ArticleRow, site: SiteRow): Post {
+function articleToPost(article: ArticleRow, site: SiteRow, networkHtml = ""): Post {
   const blogRoot = site.blog_root_url.replace(/\/$/, "");
   const url = `${blogRoot}/${article.slug}`;
 
@@ -140,7 +149,13 @@ function articleToPost(article: ArticleRow, site: SiteRow): Post {
     title: article.title,
     slug: article.slug,
     excerpt: article.excerpt || article.meta_description || null,
-    html: `${jsonLd}\n${article.content_html}`,
+    // The network block goes after the article and outside the JSON-LD, so an
+    // ad unit and a list of other people's links are never described to a
+    // crawler as part of this article's body.
+    html: [jsonLd, article.content_html, networkHtml].filter(Boolean).join("\n"),
+    // Markdown deliberately does NOT carry the block. A receiver rendering the
+    // markdown path would have to trust our HTML through its own sanitiser,
+    // and the ad unit needs a script tag that no markdown renderer will emit.
     markdown: article.content_markdown,
     status: "published",
     published_at: publishedAt,
@@ -187,7 +202,7 @@ export async function deliverArticle(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, domain, blog_root_url, webhook_url, webhook_secret, author_name, author_url",
+      "id, domain, blog_root_url, webhook_url, webhook_secret, author_name, author_url, project_id, user_id, niche, ads_enabled",
     )
     .eq("id", deliveryTargetId)
     .maybeSingle<SiteRow>();
@@ -208,7 +223,42 @@ export async function deliverArticle(
     };
   }
 
-  const post = articleToPost(claimed, site);
+  // Ads and partner links for the hosting site, if it is in the network.
+  //
+  // Built here rather than at generation time because the host is only known
+  // once the guest-post target has been resolved, and because a redelivery
+  // should carry a current block rather than one frozen weeks ago. The whole
+  // thing is best-effort: `buildNetworkBlock` swallows its own failures, and
+  // this catch covers the rest, because an article that publishes without an
+  // ad has cost an impression while an article that fails to publish has cost
+  // the customer the thing they pay for.
+  const partnerLinks = await findExchangeCandidates(supabase, {
+    selfSiteId: site.id,
+    selfNiche: site.niche,
+    keyword: (claimed.tags ?? []).join(" ") || claimed.title,
+    slots: 3,
+  })
+    .then((r) =>
+      r.candidates.map((c) => ({
+        title: c.title,
+        url: c.url,
+        source: "partner" as const,
+      })),
+    )
+    .catch(() => []);
+
+  const networkHtml = await buildNetworkBlock(
+    supabase,
+    site,
+    claimed.tags ?? [],
+    partnerLinks,
+    env.siteUrl,
+  ).catch((err: unknown) => {
+    console.warn("[lx] network block failed:", err);
+    return "";
+  });
+
+  const post = articleToPost(claimed, site, networkHtml);
   // Reuse the saved delivery id on retries so receivers idempotently
   // dedupe. SDK uses event.id as the webhook-id header.
   const event = buildEvent(post, {
