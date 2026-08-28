@@ -1,14 +1,20 @@
 // Keyword research pipeline (PRD §6.1, §15).
 //
-// Inputs: siteId — site must have niche + (optionally) target_audiences set.
-// Outputs: up to 30 new rows in lx_keyword (status='queued'), scheduled
-//          across the next ~6 weeks honoring publish_days + daily_article_count.
+// Inputs: siteId — the site's `master_keywords` (the durable subject list) and
+//         `modifiers` (what the site actually does) are the two lists this
+//         works from. `niche` backfills the modifiers when that column is empty.
+// Outputs: up to 30 new rows in lx_keyword (status='queued'), allocated evenly
+//          across every master subject and scheduled across the next ~6 weeks
+//          honoring publish_days + daily_article_count.
 //
-// Caching: lx_keyword_metrics rows live 60 days. Before paying DataForSEO
-// for a seed, we check whether we already have a recent expansion cached
-// (heuristic: same seed string, region='us'). For v1 we always re-fetch on
-// manual trigger; cache is queried per-keyword to short-circuit the
-// volume backfill step.
+// **Every subject is researched, and none is researched alone.** Both halves
+// matter and both were broken. See lib/lx/topicPlan.ts for the failure this
+// was written against — nineteen articles about peptide vendors on a payments
+// blog — and why the fix is a cross product rather than a bigger slice.
+//
+// Cost note: the cross queries all go into a *single* keywordIdeas call, which
+// accepts 200 seeds. Covering ten subjects properly is therefore cheaper than
+// the three separate calls this replaced, not more expensive.
 //
 // Spend ledger: every DataForSEO call writes a row to lx_dataforseo_usage.
 
@@ -25,6 +31,17 @@ import {
 } from "./buyerJourneyKeywords";
 import { DataForSeoClient, filterOutliers, type DfsKeywordRow } from "./dataforseo";
 import { nextPublishAt } from "./schedule";
+import {
+  allocate,
+  anchorTokens,
+  crossQueries,
+  dropDuplicates,
+  isOnNiche,
+  resolveMasters,
+  resolveModifiers,
+  signature,
+  tokens,
+} from "./topicPlan";
 
 type SiteRow = {
   id: string;
@@ -33,6 +50,8 @@ type SiteRow = {
   target_audiences: string[];
   description: string | null;
   seed_keywords: string[];
+  master_keywords: string[];
+  modifiers: string[];
   keywords: string[];
   competitors: string[];
   tone: string | null;
@@ -45,24 +64,20 @@ const TARGET_KEYWORDS = 30;
 const MIN_VOLUME = 50;
 const MIN_BUYER_JOURNEY_VOLUME = 10;
 const MIN_WORDS = 2;
-const PER_SEED_LIMIT = 200;
+const IDEAS_LIMIT = 600;
 const MAX_BUYER_JOURNEY_VOLUME_LOOKUP = 160;
-const SEED_TOKEN_STOPLIST = new Set([
-  "the","and","for","with","you","your","that","this","from","into","over",
-  "but","not","are","was","were","has","had","have","its","off","out","all",
-  "any","new","get","how","why","what","who","best","top",
-]);
 
-function buildSeeds(site: SiteRow): string[] {
-  const seeds: string[] = [];
-  for (const s of site.seed_keywords ?? []) seeds.push(s.trim());
-  if (site.niche) seeds.push(site.niche.trim());
-  for (const a of (site.target_audiences ?? []).slice(0, 3)) {
-    if (site.niche && a) seeds.push(`${site.niche} for ${a}`);
-    else if (a) seeds.push(a);
-  }
-  return Array.from(new Set(seeds.filter((s) => s.length > 0))).slice(0, 5);
-}
+/**
+ * Cross depth per subject.
+ *
+ * Three narrowing terms per subject: enough that a subject yields more than a
+ * single phrasing, few enough that ten subjects still fit one API call with
+ * room for the seed list to grow.
+ */
+const CROSS_PER_MASTER = 3;
+
+/** A candidate with the subject it belongs to. */
+type Candidate = { row: DfsKeywordRow; master: string };
 
 function parseStoredKeyword(row: string): DfsKeywordRow | null {
   const idx = row.indexOf(",");
@@ -82,19 +97,38 @@ function parseStoredKeyword(row: string): DfsKeywordRow | null {
   };
 }
 
-function seedTokens(seed: string): string[] {
-  return seed
-    .toLowerCase()
-    .split(/[\s-]+/)
-    .map((t) => t.replace(/[^a-z0-9]/g, ""))
-    .filter((t) => t.length >= 4 && !SEED_TOKEN_STOPLIST.has(t));
-}
-
 type KeywordBoost = {
   priority: number;
   intent: BuyerJourneyKeywordIntent;
   clusterType: BuyerJourneyClusterType;
 };
+
+/**
+ * Which subject a candidate belongs to.
+ *
+ * Longest match wins, so a site covering both "crypto" and "cryptocurrency"
+ * attributes "cryptocurrency merchant account" to the more specific of the
+ * two rather than to whichever happens to sort first. Returns null when no
+ * subject claims it — the caller drops those, which is the same verdict the
+ * niche gate would reach a moment later.
+ */
+function attribute(keyword: string, masters: string[]): string | null {
+  let best: string | null = null;
+  let bestLen = 0;
+  const candidate = new Set(tokens(keyword));
+  for (const master of masters) {
+    const masterTokens = tokens(master);
+    if (masterTokens.length === 0) continue;
+    const hit = masterTokens.filter((t) => candidate.has(t));
+    if (hit.length === 0) continue;
+    const len = hit.join("").length;
+    if (len > bestLen) {
+      bestLen = len;
+      best = master;
+    }
+  }
+  return best;
+}
 
 function rankKeywords(
   rows: DfsKeywordRow[],
@@ -136,26 +170,22 @@ function rankKeywords(
   return scored.map((s) => s.row);
 }
 
-function primarySeedQuery(site: SiteRow, seeds: string[]): string {
-  return (
-    seeds[0] ??
-    site.niche ??
-    site.keywords?.[0] ??
-    site.description ??
-    site.domain ??
-    "site keyword research"
-  ).trim();
-}
-
-function buildBuyerJourneyInput(site: SiteRow, seeds: string[]): BuyerJourneyKeywordInput {
+function buildBuyerJourneyInput(
+  site: SiteRow,
+  masters: string[],
+  modifiers: string[],
+): BuyerJourneyKeywordInput {
   const brand = site.domain?.replace(/^www\./, "") || site.niche || "the website";
   const offer = [site.niche, site.description]
     .filter((s): s is string => !!s && s.trim().length > 0)
     .join(" — ")
     .slice(0, 900);
   return {
-    seedQuery: primarySeedQuery(site, seeds),
-    additionalSeeds: seeds.slice(1, 8),
+    // Every subject, not just the first one. The old code passed
+    // `seeds[0]` here and `seeds.slice(1, 8)` from an already-truncated
+    // list, which is how one subject came to own the entire model run.
+    seedQuery: masters.join(", "),
+    additionalSeeds: modifiers.slice(0, 8),
     offer: offer || brand,
     audience: site.target_audiences?.join(", ") || "the site's target customers",
     brand,
@@ -182,21 +212,6 @@ function rowFromCandidate(
   };
 }
 
-function dedupeBySite(
-  candidates: DfsKeywordRow[],
-  existing: Set<string>,
-): DfsKeywordRow[] {
-  const out: DfsKeywordRow[] = [];
-  const seen = new Set<string>();
-  for (const r of candidates) {
-    const k = r.keyword.toLowerCase();
-    if (existing.has(k) || seen.has(k)) continue;
-    seen.add(k);
-    out.push(r);
-  }
-  return out;
-}
-
 function scheduleKeywords(
   count: number,
   publishDays: number[],
@@ -218,10 +233,39 @@ function scheduleKeywords(
   return dates;
 }
 
+/**
+ * Interleave per-subject picks so the schedule alternates topics.
+ *
+ * Allocation decides *how many* rows each subject gets; this decides the order
+ * they are scheduled in, and the two are separate concerns. A fair allocation
+ * emitted subject-by-subject would still publish six consecutive peptide posts
+ * and then six consecutive casino ones — fair over a quarter, and visibly
+ * spammy over a fortnight. Round-robining the emission is what makes the fix
+ * legible to a reader of the blog rather than only to a reader of the database.
+ */
+function interleave(byMaster: Map<string, Candidate[]>): Candidate[] {
+  const queues = Array.from(byMaster.values()).map((c) => [...c]);
+  const out: Candidate[] = [];
+  let live = true;
+  while (live) {
+    live = false;
+    for (const queue of queues) {
+      const next = queue.shift();
+      if (next) {
+        out.push(next);
+        live = true;
+      }
+    }
+  }
+  return out;
+}
+
 export type KeywordResearchResult = {
   ok: boolean;
   inserted: number;
   apiCost: number;
+  /** Rows allocated per subject — surfaced so a skewed queue is visible. */
+  perMaster?: Record<string, number>;
   error?: string;
 };
 
@@ -240,7 +284,7 @@ export async function researchKeywords(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, domain, niche, target_audiences, description, seed_keywords, keywords, competitors, tone, publish_days, publish_hour, daily_article_count",
+      "id, domain, niche, target_audiences, description, seed_keywords, master_keywords, modifiers, keywords, competitors, tone, publish_days, publish_hour, daily_article_count",
     )
     .eq("id", siteId)
     .maybeSingle<SiteRow>();
@@ -248,153 +292,255 @@ export async function researchKeywords(
     return { ok: false, inserted: 0, apiCost: 0, error: "site not found" };
   }
 
-  const savedKeywords = (site.keywords ?? [])
-    .map(parseStoredKeyword)
-    .filter((r): r is DfsKeywordRow => !!r);
-  const seeds = buildSeeds(site);
-  if (savedKeywords.length === 0 && seeds.length === 0) {
+  const masters = resolveMasters(site);
+  const modifiers = resolveModifiers(site);
+  const anchors = anchorTokens(site);
+
+  if (masters.length === 0) {
     return {
       ok: false,
       inserted: 0,
       apiCost: 0,
-      error: "add saved keywords or seed keywords first",
+      error: "add master keywords (the subjects this blog covers) first",
+    };
+  }
+  // Refusing here rather than falling back to an unanchored expansion is the
+  // point. An anchorless run is exactly the run that produced the vendor
+  // articles, so it must be an error the operator sees and fixes, not a
+  // degraded mode that quietly publishes.
+  if (anchors.size === 0) {
+    return {
+      ok: false,
+      inserted: 0,
+      apiCost: 0,
+      error:
+        "set a niche or modifiers first — keywords are only researched crossed with what this site does, never on their own",
     };
   }
 
-  // Skip keywords this site already has in active/history states. Failed
-  // rows are intentionally ignored here: an upstream outage should not
-  // permanently poison a topic and prevent the top-up sweep from
-  // refilling the queue.
+  // Existing rows serve two purposes: the duplicate fingerprints, and the
+  // per-subject coverage the allocator balances against. Failed rows are
+  // intentionally excluded from the duplicate set — an upstream outage should
+  // not permanently poison a topic — but they still count toward coverage, so
+  // a subject that keeps failing does not monopolise every top-up.
   const { data: existingRows } = await supabase
     .from("lx_keyword")
-    .select("keyword, status")
+    .select("keyword, status, master_keyword")
     .eq("site_id", site.id);
-  const existingSet = new Set(
-    (existingRows ?? [])
-      .filter((r: { status: string }) => r.status !== "failed")
-      .map((r: { keyword: string }) => r.keyword.toLowerCase()),
-  );
 
-  const savedChosen = dedupeBySite(savedKeywords, existingSet).slice(0, TARGET_KEYWORDS);
-
-  // If the saved long-tail list does not fill the target queue, top it
-  // up using the same DataForSEO Labs endpoint + relevance gate used by
-  // the settings page's "Refetch keywords" flow.
-  const allRows: DfsKeywordRow[] = [];
-  const buyerJourneyBoosts = new Map<string, KeywordBoost>();
-  let totalCost = 0;
-  const seedErrors: string[] = [];
-  if (savedChosen.length < TARGET_KEYWORDS && seeds.length > 0) {
-    if (deps.openai || deps.anthropic) {
-      try {
-        const buyerJourney = await generateBuyerJourneyKeywordOpportunities(
-          buildBuyerJourneyInput(site, seeds),
-          {
-            openai: deps.openai,
-            anthropic: deps.anthropic,
-            backendAiProvider: deps.backendAiProvider,
-          },
-        );
-        const candidates = flattenBuyerJourneyKeywords(
-          buyerJourney.output,
-          MAX_BUYER_JOURNEY_VOLUME_LOOKUP,
-        );
-        const volumeKeywords = candidates.map((c) => c.keyword);
-        const volume = volumeKeywords.length > 0
-          ? await dfs.searchVolume(volumeKeywords)
-          : { rows: [], cost: 0, taskId: null };
-        totalCost += volume.cost;
-        if (volume.cost > 0 || volume.taskId) {
-          await supabase.from("lx_dataforseo_usage").insert({
-            task_id: volume.taskId,
-            endpoint: "search_volume/live",
-            cost: volume.cost,
-            site_id: site.id,
-          });
-        }
-
-        const metricsByKeyword = new Map(
-          volume.rows.map((r) => [r.keyword.toLowerCase(), r]),
-        );
-        for (const candidate of candidates) {
-          const metrics = metricsByKeyword.get(candidate.keyword.toLowerCase());
-          const volumeValue = metrics?.search_volume ?? 0;
-          if (
-            volumeValue >= MIN_BUYER_JOURNEY_VOLUME ||
-            candidate.priority >= 4
-          ) {
-            allRows.push(rowFromCandidate(candidate, metrics));
-            buyerJourneyBoosts.set(candidate.keyword.toLowerCase(), {
-              priority: candidate.priority,
-              intent: candidate.intent,
-              clusterType: candidate.clusterType,
-            });
-          }
-        }
-      } catch (err) {
-        seedErrors.push(
-          `buyer-journey model: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+  const publishedSignatures = new Set<string>();
+  const coverage = new Map<string, number>();
+  for (const row of (existingRows ?? []) as Array<{
+    keyword: string;
+    status: string;
+    master_keyword: string | null;
+  }>) {
+    if (row.status !== "failed") {
+      const sig = signature(row.keyword);
+      if (sig) publishedSignatures.add(sig);
     }
-
-    for (const seed of seeds.slice(0, 3)) {
-      try {
-        const result = await dfs.keywordIdeas([seed], {
-          limit: PER_SEED_LIMIT,
-          minVolume: MIN_VOLUME,
-          minWords: MIN_WORDS,
-          closelyVariants: false,
-        });
-        totalCost += result.cost;
-        await supabase.from("lx_dataforseo_usage").insert({
-          task_id: result.taskId,
-          endpoint: "keyword_ideas/live",
-          cost: result.cost,
-          site_id: site.id,
-        });
-
-        const tokens = seedTokens(seed);
-        const relevant = tokens.length === 0
-          ? result.rows
-          : result.rows.filter((r) => {
-              const kw = r.keyword.toLowerCase();
-              return tokens.some((t) => kw.includes(t));
-            });
-        allRows.push(...relevant);
-      } catch (err) {
-        seedErrors.push(
-          `"${seed}": ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    // Attribute legacy rows (written before provenance existed) so the
+    // allocator sees the real history rather than treating a blog with
+    // twenty-three peptide posts as having no coverage at all. Without this
+    // the balancing would take a full cycle to notice the existing skew.
+    const master = row.master_keyword ?? attribute(row.keyword, masters);
+    if (master) {
+      const key = master.toLowerCase();
+      coverage.set(key, (coverage.get(key) ?? 0) + 1);
     }
   }
 
-  const filtered = filterOutliers(allRows).filter(
-    (r) => {
-      const boost = buyerJourneyBoosts.get(r.keyword.toLowerCase());
-      if (boost && boost.priority >= 4) return true;
-      return (r.search_volume ?? 0) >= MIN_VOLUME;
-    },
+  const allocation = allocate(masters, coverage, TARGET_KEYWORDS);
+
+  // ------------------------------------------------------------------
+  // Candidate sources. All three are gated identically; they differ only
+  // in how they are obtained and how likely they are to be unavailable.
+  // ------------------------------------------------------------------
+  const candidates: Candidate[] = [];
+  const buyerJourneyBoosts = new Map<string, KeywordBoost>();
+  let totalCost = 0;
+  const sourceErrors: string[] = [];
+
+  // Source 0 — the floor. Subject × modifier, built locally from two columns
+  // the operator controls. No network, no failure mode, always on-niche by
+  // construction. Everything below is an improvement on this, never a
+  // prerequisite for it.
+  const crosses = crossQueries(masters, modifiers, CROSS_PER_MASTER);
+  for (const { master, query } of crosses) {
+    candidates.push({
+      row: {
+        keyword: query,
+        search_volume: null,
+        competition: null,
+        competition_index: null,
+        cpc: null,
+        low_top_of_page_bid: null,
+        high_top_of_page_bid: null,
+        monthly_searches: null,
+      },
+      master,
+    });
+  }
+
+  // Source 1 — hand-saved long-tail from the settings page.
+  for (const parsed of (site.keywords ?? []).map(parseStoredKeyword)) {
+    if (!parsed) continue;
+    const master = attribute(parsed.keyword, masters);
+    if (master) candidates.push({ row: parsed, master });
+  }
+
+  // Source 2 — the buyer-journey model, now seeded with every subject.
+  if (deps.openai || deps.anthropic) {
+    try {
+      const buyerJourney = await generateBuyerJourneyKeywordOpportunities(
+        buildBuyerJourneyInput(site, masters, modifiers),
+        {
+          openai: deps.openai,
+          anthropic: deps.anthropic,
+          backendAiProvider: deps.backendAiProvider,
+        },
+      );
+      const flattened = flattenBuyerJourneyKeywords(
+        buyerJourney.output,
+        MAX_BUYER_JOURNEY_VOLUME_LOOKUP,
+      );
+      const volumeKeywords = flattened.map((c) => c.keyword);
+      const volume = volumeKeywords.length > 0
+        ? await dfs.searchVolume(volumeKeywords)
+        : { rows: [], cost: 0, taskId: null };
+      totalCost += volume.cost;
+      if (volume.cost > 0 || volume.taskId) {
+        await supabase.from("lx_dataforseo_usage").insert({
+          task_id: volume.taskId,
+          endpoint: "search_volume/live",
+          cost: volume.cost,
+          site_id: site.id,
+        });
+      }
+
+      const metricsByKeyword = new Map(
+        volume.rows.map((r) => [r.keyword.toLowerCase(), r]),
+      );
+      for (const candidate of flattened) {
+        const metrics = metricsByKeyword.get(candidate.keyword.toLowerCase());
+        const volumeValue = metrics?.search_volume ?? 0;
+        if (volumeValue < MIN_BUYER_JOURNEY_VOLUME && candidate.priority < 4) continue;
+        const master = attribute(candidate.keyword, masters);
+        if (!master) continue;
+        candidates.push({ row: rowFromCandidate(candidate, metrics), master });
+        buyerJourneyBoosts.set(candidate.keyword.toLowerCase(), {
+          priority: candidate.priority,
+          intent: candidate.intent,
+          clusterType: candidate.clusterType,
+        });
+      }
+    } catch (err) {
+      sourceErrors.push(
+        `buyer-journey model: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // Source 3 — DataForSEO expansion of the CROSSED phrases.
+  //
+  // One call carrying every cross, because keywordIdeas accepts 200 seeds.
+  // The bare subject is never sent: "peptide" on its own is what returned
+  // "skye peptides" and "pure peptide labs", and no downstream filter can
+  // reliably tell those from a keyword worth writing about.
+  if (crosses.length > 0) {
+    try {
+      const result = await dfs.keywordIdeas(
+        crosses.map((c) => c.query),
+        {
+          limit: IDEAS_LIMIT,
+          minVolume: MIN_VOLUME,
+          minWords: MIN_WORDS,
+          closelyVariants: false,
+        },
+      );
+      totalCost += result.cost;
+      await supabase.from("lx_dataforseo_usage").insert({
+        task_id: result.taskId,
+        endpoint: "keyword_ideas/live",
+        cost: result.cost,
+        site_id: site.id,
+      });
+      for (const row of result.rows) {
+        const master = attribute(row.keyword, masters);
+        if (master) candidates.push({ row, master });
+      }
+    } catch (err) {
+      sourceErrors.push(
+        `keyword ideas: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Gate, rank, allocate.
+  // ------------------------------------------------------------------
+  const onNiche = candidates.filter((c) => isOnNiche(c.row.keyword, c.master, anchors));
+
+  // Volume filtering applies only to what came back from an API with a volume
+  // attached. The locally-built crosses have no volume by construction and
+  // must not be discarded for it — they are the floor that keeps the queue
+  // from emptying when everything upstream is unavailable.
+  const withVolume = onNiche.filter((c) => c.row.search_volume !== null);
+  const withoutVolume = onNiche.filter((c) => c.row.search_volume === null);
+  const volumeKept = filterOutliers(withVolume.map((c) => c.row)).filter((r) => {
+    const boost = buyerJourneyBoosts.get(r.keyword.toLowerCase());
+    if (boost && boost.priority >= 4) return true;
+    return (r.search_volume ?? 0) >= MIN_VOLUME;
+  });
+  const volumeKeptKeys = new Set(volumeKept.map((r) => r.keyword.toLowerCase()));
+
+  const ranked = rankKeywords(volumeKept, buyerJourneyBoosts);
+  const rankIndex = new Map(ranked.map((r, i) => [r.keyword.toLowerCase(), i]));
+
+  const survivors = [
+    ...withVolume
+      .filter((c) => volumeKeptKeys.has(c.row.keyword.toLowerCase()))
+      .sort(
+        (a, b) =>
+          (rankIndex.get(a.row.keyword.toLowerCase()) ?? Infinity) -
+          (rankIndex.get(b.row.keyword.toLowerCase()) ?? Infinity),
+      ),
+    // Crosses last within each subject: a real long-tail phrase with measured
+    // demand is a better article than a two-word construction, but the
+    // construction is a better article than nothing.
+    ...withoutVolume,
+  ];
+
+  const deduped = dropDuplicates(
+    survivors.map((c) => ({ ...c, keyword: c.row.keyword })),
+    publishedSignatures,
   );
-  const ranked = rankKeywords(filtered, buyerJourneyBoosts);
-  const existingWithSaved = new Set(existingSet);
-  for (const r of savedChosen) existingWithSaved.add(r.keyword.toLowerCase());
-  const researchedChosen = dedupeBySite(ranked, existingWithSaved).slice(
-    0,
-    TARGET_KEYWORDS - savedChosen.length,
-  );
-  const chosen = [...savedChosen, ...researchedChosen].slice(0, TARGET_KEYWORDS);
+
+  // Take each subject's allocated share, then interleave so the published
+  // sequence alternates subjects rather than running one to exhaustion.
+  const byMaster = new Map<string, Candidate[]>();
+  for (const master of masters) byMaster.set(master, []);
+  for (const candidate of deduped) {
+    const bucket = byMaster.get(candidate.master);
+    if (!bucket) continue;
+    if (bucket.length >= (allocation.get(candidate.master) ?? 0)) continue;
+    bucket.push({ row: candidate.row, master: candidate.master });
+  }
+
+  // Subjects that could not fill their share hand it back, so a subject with
+  // no available candidates costs the run coverage rather than volume.
+  const chosen = interleave(byMaster).slice(0, TARGET_KEYWORDS);
+
   if (chosen.length === 0) {
-    const details = seedErrors.length > 0
-      ? ` Seed errors: ${seedErrors.join("; ")}`
+    const details = sourceErrors.length > 0
+      ? ` Source errors: ${sourceErrors.join("; ")}`
       : "";
     return {
       ok: false,
       inserted: 0,
       apiCost: totalCost,
       error:
-        "No new keyword candidates found. Saved keywords may already be published or queued; add new seed keywords/settings and try again." +
+        "No new keyword candidates found. Every candidate was already published or off-niche; add master keywords or modifiers and try again." +
         details,
     };
   }
@@ -405,7 +551,6 @@ export async function researchKeywords(
   // without first reshaping it. We re-introduce it when keyword overlap
   // across customers becomes measurable.
 
-  // Schedule them across publish_days.
   const slots = scheduleKeywords(
     chosen.length,
     site.publish_days,
@@ -413,15 +558,16 @@ export async function researchKeywords(
     site.daily_article_count,
   );
 
-  const insertRows = chosen.map((r, i) => ({
+  const insertRows = chosen.map((c, i) => ({
     site_id: site.id,
-    keyword: r.keyword,
+    keyword: c.row.keyword,
+    master_keyword: c.master,
     scheduled_for: slots[i]?.toISOString().slice(0, 10) ??
       new Date(Date.now() + (i + 1) * 86400000).toISOString().slice(0, 10),
     status: "queued",
     source: "auto",
-    search_volume: r.search_volume,
-    cpc_usd: r.cpc,
+    search_volume: c.row.search_volume,
+    cpc_usd: c.row.cpc,
   }));
 
   const { error: insErr } = await supabase.from("lx_keyword").insert(insertRows);
@@ -434,5 +580,10 @@ export async function researchKeywords(
     };
   }
 
-  return { ok: true, inserted: insertRows.length, apiCost: totalCost };
+  const perMaster: Record<string, number> = {};
+  for (const row of insertRows) {
+    perMaster[row.master_keyword] = (perMaster[row.master_keyword] ?? 0) + 1;
+  }
+
+  return { ok: true, inserted: insertRows.length, apiCost: totalCost, perMaster };
 }
