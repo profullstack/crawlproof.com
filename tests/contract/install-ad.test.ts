@@ -16,6 +16,12 @@ const github = vi.hoisted(() => {
       return { path, sha: `sha-${path}`, content };
     }),
     searchRepoCode: vi.fn(async () => []),
+    // The tree lists exactly the files this fake repo has, which is what the
+    // real one does and what discovery now leans on.
+    listRepoTree: vi.fn(async () => ({
+      files: [...files.keys()],
+      truncated: false,
+    })),
     createBranch: vi.fn(async () => ({ created: true })),
     putFile: vi.fn(async ({ path }: { path: string; contentUtf8: string }) => ({
       content: { sha: `new-sha-${path}`, path },
@@ -33,6 +39,7 @@ vi.mock("@/lib/github/repos", () => ({
   getRepo: github.getRepo,
   getFileContent: github.getFileContent,
   searchRepoCode: github.searchRepoCode,
+  listRepoTree: github.listRepoTree,
   createBranch: github.createBranch,
   putFile: github.putFile,
   openPullRequest: github.openPullRequest,
@@ -75,6 +82,7 @@ describe("installAdEmbed", () => {
     github.getRepo.mockClear();
     github.getFileContent.mockClear();
     github.searchRepoCode.mockClear();
+    github.listRepoTree.mockClear();
     github.createBranch.mockClear();
     github.putFile.mockClear();
     github.openPullRequest.mockClear();
@@ -154,6 +162,56 @@ describe("installAdEmbed", () => {
     // …and everything lands above </body>.
     expect(content.indexOf("data-cp-ad")).toBeLessThan(content.indexOf("</body>"));
     expect(content.lastIndexOf("data-cp-ad")).toBeLessThan(content.indexOf("</body>"));
+  });
+
+  it("installs into a shell the canonical paths do not know about", async () => {
+    github.files.set(
+      "site/templates/shell.html",
+      "<!doctype html>\n<html><head></head><body>\n<main></main>\n</body></html>\n",
+    );
+
+    const result = await installAdEmbed({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      slotId: "slot-abc",
+    });
+
+    expect(result.status).toBe("opened");
+    expect(result.path).toBe("site/templates/shell.html");
+  });
+
+  it("asks for a path instead of dead-ending when nothing closes a document", async () => {
+    github.files.set("README.md", "# no html here\n");
+
+    const result = await installAdEmbed({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      slotId: "slot-abc",
+    });
+
+    expect(result.status).toBe("noop");
+    expect(result.needsTargetPath).toBe(true);
+    expect(github.openPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("installs at an explicitly named path", async () => {
+    github.files.set(
+      "weird/place/Doc.tsx",
+      "export const Doc = () => <html><body></body></html>;\n",
+    );
+
+    const result = await installAdEmbed({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      slotId: "slot-abc",
+      targetPath: "weird/place/Doc.tsx",
+    });
+
+    expect(result.status).toBe("opened");
+    expect(result.path).toBe("weird/place/Doc.tsx");
   });
 
   it("no-ops when the embed exists and no CSP needs changes", async () => {

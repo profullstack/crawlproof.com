@@ -115,6 +115,16 @@ export function SlotManager({
   const [repoChoices, setRepoChoices] = useState<
     { owner: string; repo: string; installation_id: number }[] | null
   >(null);
+  // Set when the installer can't find a document shell on its own. The
+  // publisher knows where theirs is, so we ask rather than dead-ending, and
+  // remember which repo the failed attempt was against so the retry matches.
+  const [askPath, setAskPath] = useState(false);
+  const [targetPath, setTargetPath] = useState("");
+  const [lastRepo, setLastRepo] = useState<{
+    owner: string;
+    repo: string;
+    installation_id: number;
+  } | null>(null);
 
   const snippets = slot ? snippetsFor(fmt, slot.id, origin) : [];
   // The first recipe is the canonical one for each unit, so an unset selection
@@ -187,15 +197,19 @@ export function SlotManager({
     }
   }
 
-  async function submitPr(pick?: { owner: string; repo: string; installation_id: number }) {
+  async function submitPr(
+    pick?: { owner: string; repo: string; installation_id: number },
+    path?: string,
+  ) {
     if (!slot) return;
+    const repo = pick ?? lastRepo ?? undefined;
     setPrBusy(true);
     setPrMsg(null);
     try {
       const res = await fetch(`/api/ads/slots/${slot.id}/install-embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pick ?? {}),
+        body: JSON.stringify({ ...(repo ?? {}), ...(path ? { target_path: path } : {}) }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -207,8 +221,12 @@ export function SlotManager({
         return;
       }
       setRepoChoices(null);
+      if (repo) setLastRepo(repo);
       const r = json.data;
-      setPrMsg({ ok: true, text: r.detail, url: r.prUrl });
+      // Discovery came up empty (or the path given was wrong): ask for the
+      // file instead of leaving the publisher with a message and no button.
+      setAskPath(Boolean(r.needsTargetPath));
+      setPrMsg({ ok: !r.needsTargetPath, text: r.detail, url: r.prUrl });
     } catch (e) {
       setPrMsg({ ok: false, text: e instanceof Error ? e.message : "Network error." });
     } finally {
@@ -342,6 +360,38 @@ export function SlotManager({
                 Adds every size above <code>&lt;/body&gt;</code>; keep the ones you want.
               </span>
             </div>
+
+            {askPath && (
+              <div className="mt-2 rounded border border-[var(--color-border)] p-2 text-xs">
+                <div className="mb-1 text-[var(--color-muted)]">
+                  Which file closes your <code>&lt;/body&gt;</code>? Repo-relative, e.g.{" "}
+                  <code>src/app.html</code> or <code>apps/web/app/layout.tsx</code>.
+                </div>
+                <form
+                  className="flex flex-wrap items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const path = targetPath.trim();
+                    if (path) submitPr(undefined, path);
+                  }}
+                >
+                  <input
+                    className="input flex-1 font-mono text-xs"
+                    value={targetPath}
+                    onChange={(e) => setTargetPath(e.target.value)}
+                    placeholder="app/layout.tsx"
+                    aria-label="Path to the file that closes the document"
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-primary text-xs"
+                    disabled={prBusy || !targetPath.trim()}
+                  >
+                    {prBusy ? "Opening PR…" : "Install here"}
+                  </button>
+                </form>
+              </div>
+            )}
 
             {repoChoices && (
               <div className="mt-2 rounded border border-[var(--color-border)] p-2 text-xs">

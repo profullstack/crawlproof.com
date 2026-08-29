@@ -81,6 +81,8 @@ export interface InstallAdResult {
   path?: string;
   /** CSP config files patched so the ad unit isn't blocked. */
   cspPaths?: string[];
+  /** Discovery found nothing: the UI should ask for a file path and retry. */
+  needsTargetPath?: boolean;
   detail: string;
 }
 
@@ -163,7 +165,17 @@ export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdRe
     targetPath = candidates[0]?.path;
   }
   if (!targetPath) {
-    return { status: "noop", detail: "No layout/template file with a </body> tag was found in the repo." };
+    // Discovery probes the canonical layout paths, every template-shaped file
+    // in the repo tree, and code search. When all three come up empty the
+    // publisher knows where their shell is and we don't, so say so and let
+    // them name it (the caller passes it back as targetPath).
+    return {
+      status: "noop",
+      needsTargetPath: true,
+      detail:
+        `No file with a </body> tag was found in ${input.owner}/${input.repo} on ${base}. ` +
+        "If your document shell lives somewhere unusual, give the file path and we'll install there.",
+    };
   }
 
   const file = await getFileContent({
@@ -174,7 +186,12 @@ export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdRe
     ref: base,
   });
   if (!file) {
-    return { status: "noop", path: targetPath, detail: `File not found: ${targetPath}` };
+    return {
+      status: "noop",
+      path: targetPath,
+      needsTargetPath: true,
+      detail: `File not found on ${base}: ${targetPath}`,
+    };
   }
 
   // Layout may already carry the embed (e.g. a re-run, or the publisher pasted
@@ -185,7 +202,12 @@ export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdRe
     ? null
     : injectBeforeBodyClose(file.content, embed, file.path);
   if (!alreadyInstalled && !updated) {
-    return { status: "noop", path: file.path, detail: `No <body> tag in ${file.path}.` };
+    return {
+      status: "noop",
+      path: file.path,
+      needsTargetPath: true,
+      detail: `No </body> tag in ${file.path}, so there's nowhere to put the units. Try another file.`,
+    };
   }
 
   // Patch the site's CSP so the browser can load /ad.js, reach /api/ads/serve,

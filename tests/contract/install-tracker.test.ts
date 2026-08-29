@@ -16,6 +16,12 @@ const github = vi.hoisted(() => {
       return { path, sha: `sha-${path}`, content };
     }),
     searchRepoCode: vi.fn(async () => []),
+    // The tree lists exactly the files this fake repo has, which is what the
+    // real one does and what discovery now leans on.
+    listRepoTree: vi.fn(async () => ({
+      files: [...files.keys()],
+      truncated: false,
+    })),
     createBranch: vi.fn(async () => ({ created: true })),
     putFile: vi.fn(async ({ path }: { path: string; contentUtf8: string }) => ({
       content: { sha: `new-sha-${path}`, path },
@@ -33,6 +39,7 @@ vi.mock("@/lib/github/repos", () => ({
   getRepo: github.getRepo,
   getFileContent: github.getFileContent,
   searchRepoCode: github.searchRepoCode,
+  listRepoTree: github.listRepoTree,
   createBranch: github.createBranch,
   putFile: github.putFile,
   openPullRequest: github.openPullRequest,
@@ -50,6 +57,7 @@ describe("install tracker candidate discovery", () => {
     github.getRepo.mockClear();
     github.getFileContent.mockClear();
     github.searchRepoCode.mockClear();
+    github.listRepoTree.mockClear();
     github.createBranch.mockClear();
     github.putFile.mockClear();
     github.openPullRequest.mockClear();
@@ -88,6 +96,76 @@ describe("install tracker candidate discovery", () => {
     expect(candidates.map((c) => c.path)).toContain(
       "apps/web/public/index.html",
     );
+  });
+
+  it("finds a shell no convention predicts, by scanning the repo tree", async () => {
+    // Nothing in the canonical list points here, and code search does not
+    // index private repos — the tree is the only thing that can find it.
+    github.files.set(
+      "server/render/document.tsx",
+      "export const Document = ({ children }) => <html><body>{children}</body></html>;\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates.map((c) => c.path)).toContain("server/render/document.tsx");
+    expect(github.searchRepoCode).toHaveBeenCalledOnce();
+  });
+
+  it("finds a Django-style templates/base.html instead of penalizing it", async () => {
+    github.files.set(
+      "templates/base.html",
+      "<!doctype html>\n<html><body>{% block content %}{% endblock %}</body></html>\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates.map((c) => c.path)).toContain("templates/base.html");
+  });
+
+  it("never offers build output or vendored copies", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
+    );
+    github.files.set("dist/index.html", "<html><body>built</body></html>\n");
+    github.files.set(
+      "node_modules/some-pkg/index.html",
+      "<html><body>vendored</body></html>\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    const paths = candidates.map((c) => c.path);
+    expect(paths[0]).toBe("app/layout.tsx");
+    expect(paths).not.toContain("dist/index.html");
+    expect(paths).not.toContain("node_modules/some-pkg/index.html");
+  });
+
+  it("only opens files that exist when the tree says so", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
+    );
+
+    await findInstallCandidates({ token: "token", owner: "owner", repo: "repo" });
+
+    // One request for the one real file, rather than a miss for every
+    // convention we have ever written down.
+    const probed = github.getFileContent.mock.calls.map((c) => c[0].path);
+    expect(probed).toEqual(["app/layout.tsx"]);
   });
 
   it("does not double-prefix common monorepo candidates when rootPath is set", async () => {

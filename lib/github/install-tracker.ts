@@ -9,6 +9,7 @@ import {
   createBranch,
   getFileContent,
   getRepo,
+  listRepoTree,
   openPullRequest,
   putFile,
   searchRepoCode,
@@ -74,6 +75,37 @@ const CANDIDATES: string[] = [
   "src/views/Layout.tsx",
   "src/views/layout.jsx",
   "app/views/Layout.jsx",
+  // Next.js layouts are not always TypeScript.
+  "app/layout.js",
+  "src/app/layout.js",
+  "pages/_document.js",
+  "src/pages/_document.js",
+  // Remix / React Router: the document shell is the root route.
+  "app/root.tsx",
+  "app/root.jsx",
+  // SvelteKit renders every page into one HTML shell.
+  "src/app.html",
+  // Nuxt, when a project overrides the generated document.
+  "app.html",
+  // Astro, beyond the two names already probed above.
+  "src/layouts/Base.astro",
+  "src/layouts/MainLayout.astro",
+  "src/layouts/main.astro",
+  // Hugo without the _default indirection.
+  "layouts/baseof.html",
+  // Eleventy.
+  "_includes/base.njk",
+  "_includes/layout.njk",
+  "src/_includes/base.njk",
+  "src/_includes/layout.njk",
+  // Rails.
+  "app/views/layouts/application.html.erb",
+  // Django / Flask / anything Jinja.
+  "templates/base.html",
+  // Laravel Blade.
+  "resources/views/layouts/app.blade.php",
+  // A WordPress theme closes the document in footer.php.
+  "footer.php",
   "index.html",
   "public/index.html",
   "src/index.html",
@@ -279,9 +311,15 @@ function cspCandidatePaths(root: string): string[] {
 function rankCandidatePath(path: string, repoName: string): number {
   let score = 0;
   // Strong negatives — almost never the live site's template.
-  if (/(^|\/)(boilerplates?|examples?|templates?|samples?|fixtures?|__tests__|tests?|spec|stories|playground|sandbox|demo|node_modules)(\/|$)/i.test(path)) {
+  // `templates/` is deliberately absent: for Django, Flask, Jinja and Rails
+  // that directory is exactly where the document shell lives, and penalizing
+  // it hid the only installable file in those repos.
+  if (/(^|\/)(boilerplates?|examples?|samples?|fixtures?|__tests__|tests?|spec|stories|playground|sandbox|demo|node_modules)(\/|$)/i.test(path)) {
     score -= 100;
   }
+  // Build output and vendored copies are never the site's own template, and a
+  // tree scan surfaces plenty of both.
+  if (SKIP_DIR_RE.test(path)) score -= 100;
   // Penalize markdown / docs paths just in case.
   if (/(^|\/)(docs?|documentation)(\/|$)/i.test(path)) score -= 20;
   // Likely a real app dir.
@@ -300,9 +338,94 @@ function rankCandidatePath(path: string, repoName: string): number {
   // A views/Layout shell is as canonical for a Hono app as app/layout is for
   // Next, and it sits deeper, so it needs the same nudge not to lose on length.
   if (/\/views\/layout\.(tsx|jsx)$/i.test(path)) score += 10;
+  // The same nudge for the other frameworks' one true shell, each of which
+  // sits deep enough to lose to noise on path length alone.
+  if (/(^|\/)src\/app\.html$/i.test(path)) score += 15; // SvelteKit
+  if (/(^|\/)app\/root\.(tsx|jsx)$/i.test(path)) score += 10; // Remix
+  if (/(^|\/)baseof\.html$/i.test(path)) score += 10; // Hugo
+  if (/(^|\/)footer\.php$/i.test(path)) score += 5; // WordPress theme
+  // Whatever the framework, a file under a templates dir is a better guess
+  // than a component that merely happens to be named the same.
+  if (TEMPLATE_DIR_RE.test(path)) score += 5;
   // Shorter paths slightly preferred (closer to root = more canonical).
   score -= path.length * 0.05;
   return score;
+}
+
+// Scanning the tree means fetching files to see whether they close a document,
+// so the filter below decides what is worth a request.
+
+// Extensions that are essentially always a page or document template.
+const DOCUMENT_EXT_RE =
+  /\.(x?html?|astro|ejs|hbs|handlebars|liquid|njk|nunjucks|twig|erb|mustache|eta|gohtml|tmpl|cshtml|razor|edge)$/i;
+
+// Extensions that are usually a component rather than a document. One of these
+// only earns a request when its name or its directory says "document shell".
+const COMPONENT_EXT_RE = /\.([cm]?[jt]sx?|vue|svelte|php)$/i;
+
+// The names a document shell goes by, across frameworks. Matched against the
+// first dot-segment, so application.html.erb and _document.tsx both work.
+const SHELL_NAME_RE =
+  /^(_?document|_?app|layout|root|base|baseof|default|shell|template|footer|head|html|entry-server)$/i;
+
+// Directories that hold templates whatever the stack.
+const TEMPLATE_DIR_RE =
+  /(^|\/)(layouts?|views?|templates?|_layouts|_includes|partials|themes?)(\/|$)/i;
+
+// Never worth a request: build output, vendored code, test fixtures.
+const SKIP_DIR_RE =
+  /(^|\/)(node_modules|\.git|\.next|\.nuxt|\.svelte-kit|\.astro|\.cache|\.vercel|dist|build|out|coverage|vendor|third_party|storybook-static|\.storybook|__snapshots__|__fixtures__|__mocks__)(\/|$)/i;
+
+/** How many tree-discovered files we will open looking for a </body>. */
+const MAX_TREE_PROBES = 30;
+
+/** Parallel GETs against the contents API. Polite, and well under the limit. */
+const PROBE_CONCURRENCY = 6;
+
+/**
+ * Template-shaped paths from a repo tree, best-first and capped.
+ *
+ * The canonical list only knows the conventions someone thought to write
+ * down. A repo that keeps its shell somewhere else — or uses a framework
+ * nobody here has met — still has a file that closes the document, and the
+ * tree names every path in the repo for one request.
+ */
+function templateShapedPaths(
+  files: string[],
+  root: string,
+  repoName: string,
+): string[] {
+  const prefix = root ? `${root}/` : "";
+  return files
+    .filter((p) => (prefix ? p.startsWith(prefix) : true))
+    .filter((p) => !SKIP_DIR_RE.test(p))
+    .filter((p) => {
+      const name = p.slice(p.lastIndexOf("/") + 1);
+      if (DOCUMENT_EXT_RE.test(name)) return true;
+      if (!COMPONENT_EXT_RE.test(name)) return false;
+      return SHELL_NAME_RE.test(name.split(".")[0]) || TEMPLATE_DIR_RE.test(p);
+    })
+    .sort((a, b) => rankCandidatePath(b, repoName) - rankCandidatePath(a, repoName))
+    .slice(0, MAX_TREE_PROBES);
+}
+
+/** Run an async map over items, at most `limit` in flight. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return out;
 }
 
 export interface InstallCandidate {
@@ -333,17 +456,53 @@ export async function findInstallCandidates(input: {
   const root = normalizeRoot(input.rootPath);
   const canonical = candidatePaths(root);
 
-  const found = new Map<string, { sizeBytes?: number }>();
-
-  // Probe the canonical list — cheap, no rate limit on contents API.
-  for (const path of canonical) {
-    const file = await getFileContent({
+  // One request lists every path in the repo, which answers two questions the
+  // canonical probes can't: which of those paths actually exist (so we skip
+  // the misses), and where a repo that follows none of our conventions keeps
+  // its shell. Unlike code search this works on private repos, which is most
+  // of them.
+  let tree: Awaited<ReturnType<typeof listRepoTree>> = null;
+  try {
+    tree = await listRepoTree({
       token: input.token,
       owner: input.owner,
       repo: input.repo,
-      path,
       ref,
     });
+  } catch {
+    // The tree is an optimization on top of a fallback; losing it only costs
+    // us the probes we were making before.
+  }
+
+  let probes: string[];
+  if (tree) {
+    const present = new Set(tree.files);
+    probes = [
+      // A truncated tree is only a prefix of the repo, so absence from it
+      // proves nothing — keep probing the whole canonical list.
+      ...(tree.truncated ? canonical : canonical.filter((p) => present.has(p))),
+      ...templateShapedPaths(tree.files, root, input.repo),
+    ];
+  } else {
+    probes = canonical;
+  }
+
+  const found = new Map<string, { sizeBytes?: number }>();
+
+  // Open each candidate and keep the ones that actually close a document.
+  const files = await mapWithConcurrency(
+    [...new Set(probes)],
+    PROBE_CONCURRENCY,
+    (path) =>
+      getFileContent({
+        token: input.token,
+        owner: input.owner,
+        repo: input.repo,
+        path,
+        ref,
+      }),
+  );
+  for (const file of files) {
     if (file && /<\/body>/i.test(file.content)) {
       found.set(file.path, { sizeBytes: file.content.length });
     }
@@ -691,11 +850,44 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     }
   }
 
-  // 2. Fallback: ask GitHub's code search for any file containing </body>
+  // 2. Fallback: read the repo tree and probe anything template-shaped. The
+  //    canonical list above is a list of conventions, and a repo is free to
+  //    keep its shell somewhere none of them predict. This runs before code
+  //    search because it works on private repos, which search does not index.
+  if (!target && !alreadyInstalledPath) {
+    let tree: Awaited<ReturnType<typeof listRepoTree>> = null;
+    try {
+      tree = await listRepoTree({
+        token: input.token,
+        owner: input.owner,
+        repo: input.repo,
+        ref: base,
+      });
+    } catch {
+      // Non-fatal: code search below is still there to try.
+    }
+    if (tree) {
+      const seen = new Set(candidates);
+      for (const path of templateShapedPaths(tree.files, root, input.repo)) {
+        if (seen.has(path)) continue;
+        const r = await probe(path);
+        if (r.kind === "already") {
+          alreadyInstalledPath = r.path;
+          break;
+        }
+        if (r.kind === "hit") {
+          target = r.file;
+          break;
+        }
+      }
+    }
+  }
+
+  // 3. Fallback: ask GitHub's code search for any file containing </body>
   //    in this repo. Handles monorepos (e.g. apps/web/app/layout.tsx,
   //    sites/foo/app/layout.tsx) and non-standard frameworks
   //    (SvelteKit src/app.html, Remix app/root.tsx, ...).
-  if (!target) {
+  if (!target && !alreadyInstalledPath) {
     try {
       const hits = await searchRepoCode({
         token: input.token,
@@ -729,12 +921,12 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   }
 
   if (!target && !alreadyInstalledPath) {
-    const probed = candidates.join(", ");
     const hint = root
-      ? `Looked under root "${root}". Try a different root path or open an issue with your repo layout.`
-      : "Monorepo? Set a root path on the project's Repos tab to point at the app directory (e.g. apps/web).";
+      ? `Looked under root "${root}". Try a different root path, or name the file to install into.`
+      : "Monorepo? Set a root path on the project's Repos tab to point at the app directory (e.g. apps/web). Otherwise name the file to install into.";
     throw new Error(
-      `No template file with </body> found in ${input.owner}/${input.repo}. Probed canonical paths: ${probed}. ${hint}`,
+      `No template file with </body> found in ${input.owner}/${input.repo} on ${base}. ` +
+        `Searched the canonical layout paths, every template-shaped file in the repo, and code search. ${hint}`,
     );
   }
 
