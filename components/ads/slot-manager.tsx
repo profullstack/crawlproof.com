@@ -115,6 +115,15 @@ export function SlotManager({
   const [repoChoices, setRepoChoices] = useState<
     { owner: string; repo: string; installation_id: number }[] | null
   >(null);
+  // File-picking step, mirroring the stats-tracker installer: the publisher
+  // confirms which file the units land in instead of the installer silently
+  // taking the top-ranked guess.
+  const [pathStep, setPathStep] = useState<{
+    repo: { owner: string; repo: string; installation_id: number };
+    candidates: { path: string; score: number; sizeBytes?: number }[];
+    loading: boolean;
+  } | null>(null);
+  const [manualPath, setManualPath] = useState("");
 
   const snippets = slot ? snippetsFor(fmt, slot.id, origin) : [];
   // The first recipe is the canonical one for each unit, so an unset selection
@@ -187,27 +196,52 @@ export function SlotManager({
     }
   }
 
-  async function submitPr(pick?: { owner: string; repo: string; installation_id: number }) {
+  async function callInstall(body: Record<string, unknown>) {
+    if (!slot) throw new Error("No slot");
+    const res = await fetch(`/api/ads/slots/${slot.id}/install-embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "Request failed.");
+    return json.data;
+  }
+
+  // Step 1: resolve the repo and list the files that could hold the units.
+  async function startInstall(pick?: { owner: string; repo: string; installation_id: number }) {
     if (!slot) return;
     setPrBusy(true);
     setPrMsg(null);
     try {
-      const res = await fetch(`/api/ads/slots/${slot.id}/install-embed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pick ?? {}),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        setPrMsg({ ok: false, text: json.error ?? "Could not open PR." });
-        return;
-      }
-      if (json.data?.needsRepo) {
-        setRepoChoices(json.data.repos);
+      const data = await callInstall({ ...(pick ?? {}), mode: "candidates" });
+      if (data?.needsRepo) {
+        setRepoChoices(data.repos);
+        setPathStep(null);
         return;
       }
       setRepoChoices(null);
-      const r = json.data;
+      setPathStep({ repo: data.repo, candidates: data.candidates ?? [], loading: false });
+    } catch (e) {
+      setPrMsg({ ok: false, text: e instanceof Error ? e.message : "Network error." });
+    } finally {
+      setPrBusy(false);
+    }
+  }
+
+  // Step 2: open the PR against the file the publisher chose.
+  async function submitPr(targetPath: string) {
+    if (!slot || !pathStep) return;
+    setPrBusy(true);
+    setPrMsg(null);
+    try {
+      const r = await callInstall({
+        ...pathStep.repo,
+        mode: "submit",
+        target_path: targetPath,
+      });
+      setPathStep(null);
+      setManualPath("");
       setPrMsg({ ok: true, text: r.detail, url: r.prUrl });
     } catch (e) {
       setPrMsg({ ok: false, text: e instanceof Error ? e.message : "Network error." });
@@ -335,8 +369,8 @@ export function SlotManager({
                 can't safely guess where each belongs, so the publisher keeps
                 or moves whichever they want. */}
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-3">
-              <button className="btn text-xs" onClick={() => submitPr()} disabled={prBusy}>
-                {prBusy ? "Opening PR…" : "Submit PR to install all sizes"}
+              <button className="btn text-xs" onClick={() => startInstall()} disabled={prBusy}>
+                {prBusy ? "Working…" : "Submit PR to install all sizes"}
               </button>
               <span className="text-xs text-[var(--color-muted)]">
                 Adds every size above <code>&lt;/body&gt;</code>; keep the ones you want.
@@ -352,11 +386,72 @@ export function SlotManager({
                       key={`${r.owner}/${r.repo}`}
                       className="btn text-xs"
                       disabled={prBusy}
-                      onClick={() => submitPr(r)}
+                      onClick={() => startInstall(r)}
                     >
                       {r.owner}/{r.repo}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {pathStep && (
+              <div className="mt-2 rounded border border-[var(--color-border)] p-2 text-xs">
+                <div className="mb-1 text-[var(--color-muted)]">
+                  Repo: <strong>{pathStep.repo.owner}/{pathStep.repo.repo}</strong>
+                </div>
+
+                {pathStep.candidates.length === 0 ? (
+                  <p>
+                    No candidate files found. Enter a file path manually below, or
+                    close and try a different repo.
+                  </p>
+                ) : (
+                  <>
+                    <div className="mb-1 text-[var(--color-muted)]">
+                      Choose the file the ad units go in (best match first):
+                    </div>
+                    <ul className="max-h-48 divide-y divide-[var(--color-border)] overflow-y-auto rounded border border-[var(--color-border)]">
+                      {pathStep.candidates.map((c) => (
+                        <li key={c.path} className="flex items-center justify-between gap-3 p-2">
+                          <div className="min-w-0">
+                            <p className="truncate font-mono">{c.path}</p>
+                            <p className="text-[var(--color-muted)]">
+                              score {c.score.toFixed(0)}
+                              {c.sizeBytes != null && ` · ${c.sizeBytes}b`}
+                            </p>
+                          </div>
+                          <button
+                            className="btn text-xs"
+                            disabled={prBusy}
+                            onClick={() => submitPr(c.path)}
+                          >
+                            Use this file
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={manualPath}
+                    onChange={(e) => setManualPath(e.target.value)}
+                    placeholder="apps/web/src/components/Layout.jsx"
+                    className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 font-mono text-xs"
+                  />
+                  <button
+                    className="btn text-xs"
+                    disabled={prBusy || !manualPath.trim()}
+                    onClick={() => submitPr(manualPath.trim())}
+                  >
+                    Use path
+                  </button>
+                  <button className="btn text-xs" disabled={prBusy} onClick={() => setPathStep(null)}>
+                    Cancel
+                  </button>
                 </div>
               </div>
             )}

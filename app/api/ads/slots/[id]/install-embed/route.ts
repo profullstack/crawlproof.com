@@ -14,7 +14,8 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
-import { installAdEmbed } from "@/lib/github/install-ad";
+import { installAdEmbed, previewAdInstallAtPath } from "@/lib/github/install-ad";
+import { findInstallCandidates } from "@/lib/github/install-tracker";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,12 @@ const bodySchema = z.object({
   repo: z.string().min(1).optional(),
   installation_id: z.number().int().positive().optional(),
   target_path: z.string().max(500).optional(),
+  root_path: z.string().max(500).optional(),
+  /** "candidates": return ranked candidate paths (no PR).
+   *  "preview":    return the diff that would be applied at target_path.
+   *  "submit":     open the PR (default). Mirrors the stats-tracker route so
+   *                the publisher picks the file the same way in both flows. */
+  mode: z.enum(["candidates", "preview", "submit"]).optional(),
 });
 
 type BoundRepo = {
@@ -109,6 +116,52 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     );
   }
 
+  const mode = body.mode ?? "submit";
+
+  // mode=candidates / mode=preview are read-only inspections of the repo. They
+  // open no PR, so they deliberately run before the PR-run row is created —
+  // browsing for a file should not litter the project's PR history.
+  if (mode === "candidates" || mode === "preview") {
+    try {
+      const token = await getOrMintInstallationToken(installationId!);
+      if (mode === "candidates") {
+        const candidates = await findInstallCandidates({
+          token,
+          owner: owner!,
+          repo: repo!,
+          rootPath: body.root_path,
+        });
+        // Echo the resolved repo: when exactly one is bound the client never
+        // picked it, and it needs the identity to submit against.
+        return NextResponse.json({
+          data: {
+            candidates,
+            repo: { owner: owner!, repo: repo!, installation_id: installationId! },
+          },
+        });
+      }
+      if (!body.target_path) {
+        return NextResponse.json(
+          { error: "target_path is required for preview" },
+          { status: 400 },
+        );
+      }
+      const preview = await previewAdInstallAtPath({
+        token,
+        owner: owner!,
+        repo: repo!,
+        path: body.target_path,
+        slotId,
+      });
+      return NextResponse.json({ data: preview });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "GitHub request failed." },
+        { status: 502 },
+      );
+    }
+  }
+
   // Track the install as a PR run (mirrors the stats-tracker installer) so it
   // shows up alongside other automated PRs for the project.
   const { data: run } = await (svc as any)
@@ -141,6 +194,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       owner: owner!,
       repo: repo!,
       slotId,
+      rootPath: body.root_path,
       targetPath: body.target_path,
     });
     await finalize({

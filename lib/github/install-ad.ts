@@ -146,6 +146,69 @@ function injectBeforeBodyClose(content: string, embed: string, path: string): st
   return updated;
 }
 
+/**
+ * Generate the would-be diff for installing the ad units at a specific path.
+ * The ads counterpart to previewInstallAtPath — lets the slot UI show the user
+ * exactly what lands in their repo before a PR is opened, so picking the file
+ * is a decision rather than a guess.
+ */
+export async function previewAdInstallAtPath(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  path: string;
+  slotId: string;
+}): Promise<
+  | { status: "already_installed"; path: string }
+  | {
+      status: "ready";
+      path: string;
+      snippet: string;
+      before: string;
+      after: string;
+      addsImport: boolean;
+    }
+  | { status: "not_a_template"; path: string; reason: string }
+> {
+  const repoMeta = await getRepo({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+  });
+  const file = await getFileContent({
+    token: input.token,
+    owner: input.owner,
+    repo: input.repo,
+    path: input.path,
+    ref: repoMeta.default_branch,
+  });
+  if (!file) {
+    return { status: "not_a_template", path: input.path, reason: "File not found." };
+  }
+  if (hasAdReference(file.content, input.slotId)) {
+    return { status: "already_installed", path: file.path };
+  }
+
+  const snippet = embedBlock(input.slotId, PUBLISHER_FORMAT_IDS, file.path);
+  const after = injectBeforeBodyClose(file.content, snippet, file.path);
+  if (!after) {
+    return {
+      status: "not_a_template",
+      path: file.path,
+      reason: "No </body> tag in this file, so there is nowhere to put the ad units.",
+    };
+  }
+
+  return {
+    status: "ready",
+    path: file.path,
+    snippet,
+    before: file.content,
+    after,
+    addsImport: isJsx(file.path) && !/from\s+["']next\/script["']/.test(file.content),
+  };
+}
+
 export async function installAdEmbed(input: InstallAdInput): Promise<InstallAdResult> {
   const formats = PUBLISHER_FORMAT_IDS;
   const repoMeta = await getRepo({ token: input.token, owner: input.owner, repo: input.repo });

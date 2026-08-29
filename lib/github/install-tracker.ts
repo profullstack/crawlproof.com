@@ -9,6 +9,7 @@ import {
   createBranch,
   getFileContent,
   getRepo,
+  listRepoTree,
   openPullRequest,
   putFile,
   searchRepoCode,
@@ -305,6 +306,67 @@ function rankCandidatePath(path: string, repoName: string): number {
   return score;
 }
 
+// File types that can hold a literal </body>. Pug/Haml/Slim are deliberately
+// absent: they never write the closing tag, so injecting before it is
+// impossible and listing them would only offer the user a dead end.
+const SHELL_EXTENSIONS =
+  /\.(html?|jsx|tsx|vue|svelte|astro|ejs|erb|php|hbs|handlebars|mustache|njk|liquid|twig|eta)$/i;
+
+// Directories that never hold the file we want: dependencies, build output,
+// and vendored copies. Cheap to exclude here and it keeps the read budget for
+// files that could plausibly be the live shell.
+const IGNORED_TREE_DIRS =
+  /(^|\/)(node_modules|\.next|\.nuxt|\.svelte-kit|\.output|\.vercel|\.git|dist|build|out|coverage|vendor|third_party|bower_components|__snapshots__)(\/|$)/i;
+
+// Basenames that read like a document shell. A repo can hold hundreds of
+// components; these are the ones worth spending a contents-API read on.
+const SHELL_BASENAME =
+  /^(_?document|_?app|layout|layouts?|baselayout|rootlayout|base|baseof|default|index|main|root|shell|template|html|page)$/i;
+
+// Plain .ts/.js can hold a shell too — a Hono route that returns a template
+// string with a literal </body>. The name gate has to be stricter there than
+// for components: "index.ts" and "app.ts" appear by the hundred in a normal
+// repo and would eat the whole read budget, so only unambiguously
+// shell-shaped names qualify.
+const SCRIPT_EXTENSIONS = /\.(m?[jt]s)$/i;
+const STRICT_SHELL_BASENAME =
+  /^(_?document|layout|baselayout|rootlayout|baseof|shell|template|html)$/i;
+
+// How many ranked files we actually open to look for </body>. The tree call is
+// one request; each read is another, so this is the real cost knob.
+const MAX_TREE_READS = 25;
+
+/**
+ * Enumerate the repo's file tree and return the paths that plausibly hold a
+ * document shell, best-ranked first.
+ *
+ * The canonical-path probe list only finds shells a framework convention put
+ * where we expected. Server-rendered JSX (Hono, Elysia, Fastify) puts the
+ * whole document in an ordinary component whose location is entirely the
+ * author's choice — d3vices.com keeps it at apps/web/src/components/Layout.jsx
+ * — and GitHub's code search does not index private repos, so neither of the
+ * existing strategies can see it. Walking the tree does, for any framework,
+ * without another hardcoded path.
+ */
+function shellCandidatesFromTree(files: string[], root: string): string[] {
+  const prefix = root ? `${root}/` : "";
+  return files
+    .filter((p) => (prefix ? p.startsWith(prefix) : true))
+    .filter((p) => !IGNORED_TREE_DIRS.test(p))
+    .filter((p) => SHELL_EXTENSIONS.test(p) || SCRIPT_EXTENSIONS.test(p))
+    .filter((p) => !/\.(min|test|spec)\.[a-z]+$/i.test(p))
+    .filter((p) => {
+      // Every .html file is worth a look; for component files, require a
+      // shell-shaped name so we don't read the whole component directory;
+      // for plain scripts, require the strict name (see STRICT_SHELL_BASENAME).
+      if (/\.html?$/i.test(p)) return true;
+      const base = p.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
+      return SCRIPT_EXTENSIONS.test(p)
+        ? STRICT_SHELL_BASENAME.test(base)
+        : SHELL_BASENAME.test(base);
+    });
+}
+
 export interface InstallCandidate {
   path: string;
   /** Score from rankCandidatePath — debug / explainer. */
@@ -362,6 +424,50 @@ export async function findInstallCandidates(input: {
     }
   } catch {
     // Search is a fallback; tolerate failure.
+  }
+
+  // Walk the actual file tree. This is what finds shells that live wherever
+  // the author chose — the case the canonical list cannot enumerate and code
+  // search cannot see on a private repo. Ranked first so the read budget goes
+  // to the most plausible files, and every hit is confirmed by reading it,
+  // so nothing reaches the picker without a real </body>.
+  try {
+    const tree = await listRepoTree({
+      token: input.token,
+      owner: input.owner,
+      repo: input.repo,
+      ref,
+    });
+    if (tree) {
+      const unseen = shellCandidatesFromTree(tree.files, root)
+        .filter((p) => !found.has(p))
+        .sort((a, b) => rankCandidatePath(b, input.repo) - rankCandidatePath(a, input.repo))
+        .slice(0, MAX_TREE_READS);
+
+      const reads = await Promise.all(
+        unseen.map(async (path) => {
+          try {
+            const file = await getFileContent({
+              token: input.token,
+              owner: input.owner,
+              repo: input.repo,
+              path,
+              ref,
+            });
+            return file && /<\/body>/i.test(file.content)
+              ? { path: file.path, sizeBytes: file.content.length }
+              : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      for (const hit of reads) {
+        if (hit && !found.has(hit.path)) found.set(hit.path, { sizeBytes: hit.sizeBytes });
+      }
+    }
+  } catch {
+    // Tree walk is an enhancement over the probes above; tolerate failure.
   }
 
   const ranked: InstallCandidate[] = [...found.entries()].map(([path, meta]) => ({
