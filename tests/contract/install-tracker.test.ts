@@ -15,7 +15,9 @@ const github = vi.hoisted(() => {
       if (!content) return null;
       return { path, sha: `sha-${path}`, content };
     }),
-    searchRepoCode: vi.fn(async () => []),
+    // Annotated because an empty default return infers never[], and a test
+    // that hands back a hit then cannot typecheck.
+    searchRepoCode: vi.fn(async (): Promise<{ name: string; path: string }[]> => []),
     // Without this the tree walk throws on an undefined function, is swallowed
     // by its own catch, and every test below silently exercises the old
     // canonical-probe path instead of the one that ships.
