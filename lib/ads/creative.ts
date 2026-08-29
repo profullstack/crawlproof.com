@@ -26,13 +26,17 @@ import {
 } from "./formats";
 import {
   contrastRatio,
+  cssVar,
   derivePalette,
   hairline,
   overImageInk,
   solid,
   themeOfBackground,
+  themeStyle,
   type AdPalette,
   type AdTheme,
+  type AdThemePref,
+  type ThemeVars,
 } from "./theme";
 
 // Re-export the client-safe format primitives so existing server importers of
@@ -478,23 +482,51 @@ function esc(s: string): string {
 // The brand mark: a real <img> logo when we have one, otherwise an accent-tinted
 // monogram tile. Never renders empty. Sandboxed served ads can't run JS, so we
 // only show the <img> when the URL was verified at generation time.
-function markHtml(creative: AdCreative, size: number, p: AdPalette): string {
+function markHtml(creative: AdCreative, size: number): string {
   if (creative.logoUrl) {
     return `<img src="${esc(creative.logoUrl)}" alt="" style="height:${size}px;width:auto;max-width:${Math.round(size * 3)}px;border-radius:4px;flex:0 0 auto;object-fit:contain" />`;
   }
   const fs = Math.round(size * 0.55);
   // The monogram punches out of the accent tile, so the ink must be opaque even
-  // when the advertiser gave the background an alpha wash.
-  return `<span style="height:${size}px;width:${size}px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border-radius:6px;background:${p.accentColor};color:${solid(p.bgColor)};font-weight:800;font-size:${fs}px;line-height:1">${esc(brandInitial(creative.headline))}</span>`;
+  // when the advertiser gave the background an alpha wash — `solidBg`, not `bg`.
+  return `<span style="height:${size}px;width:${size}px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border-radius:6px;background:${cssVar("accent")};color:${cssVar("solidBg")};font-weight:800;font-size:${fs}px;line-height:1">${esc(brandInitial(creative.headline))}</span>`;
 }
 
 export type RenderOptions = {
   /**
    * Polarity of the page the unit will sit on. Defaults to dark, which is what
    * every creative rendered as before theme variants existed.
+   *
+   * 'auto' ships both palettes in the one document and lets
+   * `prefers-color-scheme` inside the frame pick — the only option open to an
+   * embed that cannot see the page it is on. See `themeStyle`.
    */
-  theme?: AdTheme;
+  theme?: AdThemePref;
 };
+
+/**
+ * Every theme-dependent value the HTML formats use, for one polarity.
+ *
+ * Derived colours (the hairline, the punch-out ink, the scrim mixed from the
+ * over-image side) belong here rather than at the call site: they are the ones
+ * that silently stop matching when a document carries two palettes.
+ */
+function creativeVars(creative: AdCreative, theme: AdTheme): ThemeVars {
+  const p = paletteFor(creative, theme);
+  return {
+    bg: p.bgColor,
+    fg: p.fgColor,
+    accent: p.accentColor,
+    solidBg: solid(p.bgColor),
+    edge: hairline(theme),
+    overInk: overImageInk(theme),
+    shadow: overImageShadow(theme),
+    scrim: imageScrim(theme),
+    // The brand wash behind a rectangle with no hero image, so the middle of
+    // the unit is never a dead flat block.
+    wash: `radial-gradient(120% 80% at 100% 0%, ${hexToRgba(p.accentColor, 0.18)} 0%, ${hexToRgba(p.bgColor, 0)} 60%), ${p.bgColor}`,
+  };
+}
 
 // Self-contained HTML for a creative — used by the served ad unit inside an
 // isolated iframe (and mirrored by the React <AdPreview>). clickUrl is the
@@ -505,9 +537,8 @@ export function renderCreativeHtml(
   opts: RenderOptions = {},
 ): string {
   const { w, h } = formatSpec(creative.format);
-  const theme: AdTheme = opts.theme ?? "dark";
-  const p = paletteFor(creative, theme);
-  const edge = hairline(theme);
+  const theme: AdThemePref = opts.theme ?? "dark";
+  const vars = themeStyle(theme, (t) => creativeVars(creative, t));
 
   // Terminal ad — the ASCII artwork in a <pre>, so the same creative can also
   // fill a web slot. The canonical delivery is /api/ads/motd (text/plain).
@@ -522,19 +553,19 @@ export function renderCreativeHtml(
   // a readable page background, since a feed body is rendered by the reader's
   // own stylesheet rather than by ours.
   if (creative.format === "feed_item") {
-    return `<!doctype html><html><head><meta charset="utf-8"><style>
-      body{margin:0;padding:12px;background:${p.bgColor};color:${p.fgColor};
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
+      body{margin:0;padding:12px;background:${cssVar("bg")};color:${cssVar("fg")};
         font-family:${creative.fontFamily};font-size:14px;line-height:1.45}
-      a{color:${p.accentColor}}
+      a{color:${cssVar("accent")}}
       pre{overflow:auto;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-      hr{border:0;border-top:1px solid ${edge}}
+      hr{border:0;border-top:1px solid ${cssVar("edge")}}
     </style></head><body>${renderFeedHtml(creative, clickUrl)}</body></html>`;
   }
 
   // Native text link — a borderless, full-width single line. No image/box.
   if (creative.format === "text_link") {
     const body = creative.body
-      ? `<span class="cp-body" style="color:${p.fgColor};opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 0">— ${esc(creative.body)}</span>`
+      ? `<span class="cp-body" style="color:${cssVar("fg")};opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 0">— ${esc(creative.body)}</span>`
       : "";
     // The unit fills its container, so it renders at whatever width the
     // publisher's column happens to be — and this is the one format that used
@@ -547,22 +578,22 @@ export function renderCreativeHtml(
     //
     // The media query measures the iframe, which is the container, so it is
     // asking exactly the right question. There is no viewport involved.
-    return `<!doctype html><html><head><meta charset="utf-8"><style>
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
       *{box-sizing:border-box;margin:0}
       a{text-decoration:none;display:block}
       .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;
-        background:${p.bgColor};font-family:${creative.fontFamily};font-size:13px;
+        background:${cssVar("bg")};font-family:${creative.fontFamily};font-size:13px;
         padding:0 12px;overflow:hidden;border-radius:0;
-        border:1px solid ${edge};border-left:3px solid ${p.accentColor}}
-      .cp-head{color:${p.fgColor};flex:0 1 auto;min-width:0;white-space:nowrap;
+        border:1px solid ${cssVar("edge")};border-left:3px solid ${cssVar("accent")}}
+      .cp-head{color:${cssVar("fg")};flex:0 1 auto;min-width:0;white-space:nowrap;
         overflow:hidden;text-overflow:ellipsis}
       @media (max-width:520px){.cp-body{display:none}}
     </style></head><body>
       <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
-        <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:${p.accentColor};flex:0 0 auto">Sponsored</span>
+        <span style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:${cssVar("accent")};flex:0 0 auto">Sponsored</span>
         <strong class="cp-head">${esc(creative.headline)}</strong>
         ${body}
-        <span style="color:${p.accentColor};font-weight:600;flex:0 0 auto;white-space:nowrap;margin-left:auto">${esc(creative.ctaText)} →</span>
+        <span style="color:${cssVar("accent")};font-weight:600;flex:0 0 auto;white-space:nowrap;margin-left:auto">${esc(creative.ctaText)} →</span>
       </a>
     </body></html>`;
   }
@@ -571,20 +602,22 @@ export function renderCreativeHtml(
   const isMobile = creative.format === "banner_320x50";
   const row = isLeaderboard || isMobile;
   const showBody = !isMobile;
-  const mark = markHtml(creative, isMobile ? 20 : 28, p);
+  const mark = markHtml(creative, isMobile ? 20 : 28);
   // The CTA label punches out of the accent chip, so it takes the background as
   // opaque ink — an alpha wash there would make the label see-through.
-  const cta = `<span style="background:${p.accentColor};color:${solid(p.bgColor)};font-weight:600;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(creative.ctaText)}</span>`;
+  const cta = `<span style="background:${cssVar("accent")};color:${cssVar("solidBg")};font-weight:600;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(creative.ctaText)}</span>`;
 
   // On the rectangle a hero image reads best full-bleed with a gradient
   // (matches the house ad); text over it takes the theme's over-image ink,
   // which is the side the gradient is mixed from.
+  // Which ink and whether there is a shadow at all depend on the creative, not
+  // the theme, so they are decided here; only the values behind them move.
   const overImage = !row && Boolean(creative.imageUrl);
-  const heroText = overImage ? overImageInk(theme) : p.fgColor;
+  const heroText = overImage ? cssVar("overInk") : cssVar("fg");
   // The scrim stops well short of opaque so the artwork survives, so the copy
   // carries its own contrast. Only over an image — on a flat brand wash a
   // shadow is just mud.
-  const shadow = overImage ? `text-shadow:${overImageShadow(theme)};` : "";
+  const shadow = overImage ? `text-shadow:${cssVar("shadow")};` : "";
   // .9 rather than .85 for the same reason: the body line is the first thing
   // to lose against a bright patch of photo.
   const bodyFade = overImage ? ".9" : ".85";
@@ -606,20 +639,16 @@ export function renderCreativeHtml(
   // accent-tinted brand wash so the middle is never a dead flat block.
   const rectBg = creative.imageUrl
     ? `<div style="position:absolute;inset:0;z-index:0;background:url('${esc(creative.imageUrl)}') center/cover no-repeat"></div>
-       <div style="position:absolute;inset:0;z-index:1;background:${imageScrim(theme)}"></div>`
+       <div style="position:absolute;inset:0;z-index:1;background:${cssVar("scrim")}"></div>`
     : "";
-  const bg = row
-    ? p.bgColor
-    : creative.imageUrl
-      ? p.bgColor
-      : `radial-gradient(120% 80% at 100% 0%, ${hexToRgba(p.accentColor, 0.18)} 0%, ${hexToRgba(p.bgColor, 0)} 60%), ${p.bgColor}`;
+  const bg = row || creative.imageUrl ? cssVar("bg") : cssVar("wash");
 
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
     .cp-ad{position:relative;width:${w}px;height:${h}px;background:${bg};font-family:${creative.fontFamily};
       border-radius:0;padding:${isMobile ? "8px 10px" : "14px"};overflow:hidden;
-      border:1px solid ${edge}}
+      border:1px solid ${cssVar("edge")}}
   </style></head><body>
     <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">${rectBg}${inner}</a>
   </body></html>`;

@@ -8,7 +8,7 @@
 // render exactly what the endpoint serves - same rule as ./formats.
 
 import { paletteFor, type AdCreative } from "./formats";
-import { hairline, type AdTheme } from "./theme";
+import { cssVar, hairline, themeStyle, type AdThemePref } from "./theme";
 
 /** Default box width in columns - fits an 80-col terminal with margin, and
  * leaves room for a click URL carrying a surface tag on one line. */
@@ -257,21 +257,24 @@ function esc(s: string): string {
 export function renderTerminalHtml(
   creative: AdCreative,
   clickUrl: string,
-  opts: { theme?: AdTheme } = {},
+  opts: { theme?: AdThemePref } = {},
 ): string {
   const artwork = renderCreativeText(creative, clickUrl, { color: false });
   // Only the web preview of the terminal unit is themed. The canonical
   // delivery is text/plain into somebody's shell, which has no colours of ours
   // to honour — the terminal's own palette decides.
-  const theme: AdTheme = opts.theme ?? "dark";
-  const p = paletteFor(creative, theme);
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  const theme: AdThemePref = opts.theme ?? "dark";
+  const vars = themeStyle(theme, (t) => {
+    const p = paletteFor(creative, t);
+    return { bg: p.bgColor, fg: p.fgColor, edge: hairline(t) };
+  });
+  return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
-    .cp-ad{background:${p.bgColor};color:${p.fgColor};border-radius:0;
-      border:1px solid ${hairline(theme)};padding:10px 12px;overflow:auto}
+    .cp-ad{background:${cssVar("bg")};color:${cssVar("fg")};border-radius:0;
+      border:1px solid ${cssVar("edge")};padding:10px 12px;overflow:auto}
     pre{margin:0;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-      white-space:pre;color:${p.fgColor}}
+      white-space:pre;color:${cssVar("fg")}}
   </style></head><body>
     <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored"><pre>${esc(artwork)}</pre></a>
   </body></html>`;

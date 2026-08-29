@@ -62,9 +62,13 @@ describe("hero image scrim", () => {
 
 describe("copy over a hero image", () => {
   // The scrim no longer supplies the contrast, so the glyphs carry their own.
+  // The shadow is now declared once as a custom property and referenced at the
+  // glyphs, so the invariant takes both halves: the right value, and something
+  // actually reading it.
   it("gets a text shadow in the scrim's ink", () => {
     const html = renderCreativeHtml(creative(), "https://example.com/x", { theme: "dark" });
-    expect(html).toContain(`text-shadow:${overImageShadow("dark")}`);
+    expect(html).toContain(`--cp-shadow:${overImageShadow("dark")}`);
+    expect(html).toContain("text-shadow:var(--cp-shadow)");
   });
 
   it("does not, when there is no image to sit on", () => {
@@ -77,7 +81,8 @@ describe("copy over a hero image", () => {
   it("covers the house ad too", () => {
     for (const format of ["banner_300x250", "banner_728x90"] as const) {
       const html = renderHouseAdHtml(format, "https://example.com/x", undefined, "light");
-      expect(html).toContain(`text-shadow:${overImageShadow("light")}`);
+      expect(html).toContain(`--cp-shadow:${overImageShadow("light")}`);
+      expect(html).toContain("text-shadow:var(--cp-shadow)");
     }
   });
 });
