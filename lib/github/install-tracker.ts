@@ -75,6 +75,11 @@ const CANDIDATES: string[] = [
   "src/views/Layout.tsx",
   "src/views/layout.jsx",
   "app/views/Layout.jsx",
+  // Shells whose filename does not read as one, so the tree walk's basename
+  // gate cannot recognise them. Cheap to name outright.
+  "app/views/layouts/application.html.erb", // Rails
+  "resources/views/layouts/app.blade.php", // Laravel
+  "footer.php", // a WordPress theme closes the document here
   "index.html",
   "public/index.html",
   "src/index.html",
@@ -280,7 +285,10 @@ function cspCandidatePaths(root: string): string[] {
 function rankCandidatePath(path: string, repoName: string): number {
   let score = 0;
   // Strong negatives — almost never the live site's template.
-  if (/(^|\/)(boilerplates?|examples?|templates?|samples?|fixtures?|__tests__|tests?|spec|stories|playground|sandbox|demo|node_modules)(\/|$)/i.test(path)) {
+  // `templates?` is deliberately absent. For Django, Flask, Jinja and Rails
+  // that directory is exactly where the document shell lives, so the -100 was
+  // burying the only installable file in the repo underneath everything else.
+  if (/(^|\/)(boilerplates?|examples?|samples?|fixtures?|__tests__|tests?|spec|stories|playground|sandbox|demo|node_modules)(\/|$)/i.test(path)) {
     score -= 100;
   }
   // Penalize markdown / docs paths just in case.
@@ -321,7 +329,7 @@ const IGNORED_TREE_DIRS =
 // Basenames that read like a document shell. A repo can hold hundreds of
 // components; these are the ones worth spending a contents-API read on.
 const SHELL_BASENAME =
-  /^(_?document|_?app|layout|layouts?|baselayout|rootlayout|base|baseof|default|index|main|root|shell|template|html|page)$/i;
+  /^(_?document|_?app|layout|layouts?|baselayout|rootlayout|base|baseof|default|index|main|root|shell|template|html|page|footer)$/i;
 
 // Plain .ts/.js can hold a shell too — a Hono route that returns a template
 // string with a literal </body>. The name gate has to be stricter there than
@@ -360,10 +368,17 @@ function shellCandidatesFromTree(files: string[], root: string): string[] {
       // shell-shaped name so we don't read the whole component directory;
       // for plain scripts, require the strict name (see STRICT_SHELL_BASENAME).
       if (/\.html?$/i.test(p)) return true;
-      const base = p.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
-      return SCRIPT_EXTENSIONS.test(p)
-        ? STRICT_SHELL_BASENAME.test(base)
-        : SHELL_BASENAME.test(base);
+      const name = p.split("/").pop() ?? "";
+      // Two readings of the name, because a shell can hide behind an extra
+      // dot: application.html.erb and app.blade.php are the Rails and Laravel
+      // shells, and stripping only the final extension leaves a stem that
+      // matches nothing.
+      const stems = [name.replace(/\.[^.]+$/, ""), name.split(".")[0]];
+      return stems.some((base) =>
+        SCRIPT_EXTENSIONS.test(p)
+          ? STRICT_SHELL_BASENAME.test(base)
+          : SHELL_BASENAME.test(base),
+      );
     });
 }
 
@@ -395,17 +410,43 @@ export async function findInstallCandidates(input: {
   const root = normalizeRoot(input.rootPath);
   const canonical = candidatePaths(root);
 
-  const found = new Map<string, { sizeBytes?: number }>();
-
-  // Probe the canonical list — cheap, no rate limit on contents API.
-  for (const path of canonical) {
-    const file = await getFileContent({
+  // Fetch the tree once, up front. The walk below needs it, and knowing which
+  // files exist also means the canonical list costs one read per real file
+  // instead of a miss for every convention anyone ever wrote down.
+  let tree: Awaited<ReturnType<typeof listRepoTree>> = null;
+  try {
+    tree = await listRepoTree({
       token: input.token,
       owner: input.owner,
       repo: input.repo,
-      path,
       ref,
     });
+  } catch {
+    // Losing the tree only costs us what we were already spending.
+  }
+
+  const found = new Map<string, { sizeBytes?: number }>();
+
+  // Probe the canonical list. A truncated tree is only a prefix of the repo,
+  // so absence from it proves nothing and we probe everything as before.
+  const present = tree && !tree.truncated ? new Set(tree.files) : null;
+  const probes = present ? canonical.filter((p) => present.has(p)) : canonical;
+  const probed = await Promise.all(
+    probes.map(async (path) => {
+      try {
+        return await getFileContent({
+          token: input.token,
+          owner: input.owner,
+          repo: input.repo,
+          path,
+          ref,
+        });
+      } catch {
+        return null;
+      }
+    }),
+  );
+  for (const file of probed) {
     if (file && /<\/body>/i.test(file.content)) {
       found.set(file.path, { sizeBytes: file.content.length });
     }
@@ -431,13 +472,7 @@ export async function findInstallCandidates(input: {
   // search cannot see on a private repo. Ranked first so the read budget goes
   // to the most plausible files, and every hit is confirmed by reading it,
   // so nothing reaches the picker without a real </body>.
-  try {
-    const tree = await listRepoTree({
-      token: input.token,
-      owner: input.owner,
-      repo: input.repo,
-      ref,
-    });
+  {
     if (tree) {
       const unseen = shellCandidatesFromTree(tree.files, root)
         .filter((p) => !found.has(p))
@@ -466,8 +501,6 @@ export async function findInstallCandidates(input: {
         if (hit && !found.has(hit.path)) found.set(hit.path, { sizeBytes: hit.sizeBytes });
       }
     }
-  } catch {
-    // Tree walk is an enhancement over the probes above; tolerate failure.
   }
 
   const ranked: InstallCandidate[] = [...found.entries()].map(([path, meta]) => ({
@@ -797,11 +830,51 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
     }
   }
 
-  // 2. Fallback: ask GitHub's code search for any file containing </body>
+  // 2. Fallback: walk the file tree, the same way the picker does. Without
+  //    this the two flows disagree — findInstallCandidates can show a
+  //    publisher the shell it found at apps/web/src/components/Layout.jsx
+  //    while this function, which is what actually opens the PR, still says
+  //    no template file exists. Runs before code search because it works on
+  //    private repos, which search does not index.
+  if (!target && !alreadyInstalledPath) {
+    let tree: Awaited<ReturnType<typeof listRepoTree>> = null;
+    try {
+      tree = await listRepoTree({
+        token: input.token,
+        owner: input.owner,
+        repo: input.repo,
+        ref: base,
+      });
+    } catch {
+      // Non-fatal: code search below is still there to try.
+    }
+    if (tree) {
+      const seen = new Set(candidates);
+      const ordered = shellCandidatesFromTree(tree.files, root)
+        .filter((p) => !seen.has(p))
+        .sort((a, b) => rankCandidatePath(b, input.repo) - rankCandidatePath(a, input.repo))
+        .slice(0, MAX_TREE_READS);
+      for (const path of ordered) {
+        const r = await probe(path);
+        if (r.kind === "already") {
+          alreadyInstalledPath = r.path;
+          break;
+        }
+        if (r.kind === "hit") {
+          target = r.file;
+          break;
+        }
+      }
+    }
+  }
+
+  // 3. Fallback: ask GitHub's code search for any file containing </body>
   //    in this repo. Handles monorepos (e.g. apps/web/app/layout.tsx,
   //    sites/foo/app/layout.tsx) and non-standard frameworks
   //    (SvelteKit src/app.html, Remix app/root.tsx, ...).
-  if (!target) {
+  //    Skipped once the repo turns out to be installed already: a hit
+  //    elsewhere would have us inject a second copy into an unrelated file.
+  if (!target && !alreadyInstalledPath) {
     try {
       const hits = await searchRepoCode({
         token: input.token,
@@ -835,12 +908,12 @@ export async function installTracker(input: InstallInput): Promise<InstallResult
   }
 
   if (!target && !alreadyInstalledPath) {
-    const probed = candidates.join(", ");
     const hint = root
-      ? `Looked under root "${root}". Try a different root path or open an issue with your repo layout.`
-      : "Monorepo? Set a root path on the project's Repos tab to point at the app directory (e.g. apps/web).";
+      ? `Looked under root "${root}". Try a different root path, or name the file to install into.`
+      : "Monorepo? Set a root path on the project's Repos tab to point at the app directory (e.g. apps/web). Otherwise name the file to install into.";
     throw new Error(
-      `No template file with </body> found in ${input.owner}/${input.repo}. Probed canonical paths: ${probed}. ${hint}`,
+      `No template file with </body> found in ${input.owner}/${input.repo} on ${base}. ` +
+        `Searched the canonical layout paths, every shell-shaped file in the tree, and code search. ${hint}`,
     );
   }
 

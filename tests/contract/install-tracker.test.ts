@@ -16,6 +16,13 @@ const github = vi.hoisted(() => {
       return { path, sha: `sha-${path}`, content };
     }),
     searchRepoCode: vi.fn(async () => []),
+    // Without this the tree walk throws on an undefined function, is swallowed
+    // by its own catch, and every test below silently exercises the old
+    // canonical-probe path instead of the one that ships.
+    listRepoTree: vi.fn(async () => ({
+      files: [...files.keys()],
+      truncated: false,
+    })),
     createBranch: vi.fn(async () => ({ created: true })),
     putFile: vi.fn(async ({ path }: { path: string; contentUtf8: string }) => ({
       content: { sha: `new-sha-${path}`, path },
@@ -33,6 +40,7 @@ vi.mock("@/lib/github/repos", () => ({
   getRepo: github.getRepo,
   getFileContent: github.getFileContent,
   searchRepoCode: github.searchRepoCode,
+  listRepoTree: github.listRepoTree,
   createBranch: github.createBranch,
   putFile: github.putFile,
   openPullRequest: github.openPullRequest,
@@ -50,6 +58,7 @@ describe("install tracker candidate discovery", () => {
     github.getRepo.mockClear();
     github.getFileContent.mockClear();
     github.searchRepoCode.mockClear();
+    github.listRepoTree.mockClear();
     github.createBranch.mockClear();
     github.putFile.mockClear();
     github.openPullRequest.mockClear();
@@ -88,6 +97,109 @@ describe("install tracker candidate discovery", () => {
     expect(candidates.map((c) => c.path)).toContain(
       "apps/web/public/index.html",
     );
+  });
+
+  it("finds a shell whose filename hides behind an extra dot", async () => {
+    // Stripping only the final extension leaves "application.html", which
+    // matches no shell name — so Rails was invisible to the tree walk.
+    github.files.set(
+      "app/views/layouts/application.html.erb",
+      "<html><body><%= yield %></body></html>\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates.map((c) => c.path)).toContain(
+      "app/views/layouts/application.html.erb",
+    );
+  });
+
+  it("offers a Django-style templates/base.html instead of burying it", async () => {
+    github.files.set(
+      "templates/base.html",
+      "<!doctype html>\n<html><body>{% block content %}{% endblock %}</body></html>\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates[0]?.path).toBe("templates/base.html");
+    // It used to score -100, which put it below anything else in the repo.
+    expect(candidates[0]?.score).toBeGreaterThan(-50);
+  });
+
+  it("still ranks a real layout above a templates dir", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
+    );
+    github.files.set("templates/base.html", "<html><body>x</body></html>\n");
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates[0]?.path).toBe("app/layout.tsx");
+  });
+
+  it("only opens files the tree says exist", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
+    );
+
+    await findInstallCandidates({ token: "token", owner: "owner", repo: "repo" });
+
+    // One read for the one real file, rather than a miss for every convention
+    // anyone has ever written down.
+    expect(github.getFileContent.mock.calls.map((c) => c[0].path)).toEqual([
+      "app/layout.tsx",
+    ]);
+  });
+
+  it("probes the whole canonical list when the tree is unavailable", async () => {
+    github.listRepoTree.mockRejectedValueOnce(new Error("409 empty repository"));
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates[0]?.path).toBe("app/layout.tsx");
+    expect(github.getFileContent.mock.calls.length).toBeGreaterThan(20);
+  });
+
+  it("does not trust absence from a truncated tree", async () => {
+    github.listRepoTree.mockResolvedValueOnce({
+      files: [],
+      truncated: true,
+    });
+    github.files.set(
+      "app/layout.tsx",
+      "export default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n",
+    );
+
+    const candidates = await findInstallCandidates({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+    });
+
+    expect(candidates.map((c) => c.path)).toContain("app/layout.tsx");
   });
 
   it("does not double-prefix common monorepo candidates when rootPath is set", async () => {
@@ -238,5 +350,73 @@ export default function RootLayout({ children }) {
     expect(written).toContain('data-site="new-project-id"');
     expect(written).not.toContain("old-project-id");
     expect(written.match(/stats\.js/g)).toHaveLength(1);
+  });
+});
+
+describe("installTracker discovery", () => {
+  beforeEach(() => {
+    github.files.clear();
+    github.getRepo.mockClear();
+    github.getFileContent.mockClear();
+    github.searchRepoCode.mockClear();
+    github.listRepoTree.mockClear();
+    github.createBranch.mockClear();
+    github.putFile.mockClear();
+    github.openPullRequest.mockClear();
+  });
+
+  it("installs into a shell only the tree walk can find", async () => {
+    // The picker could already see this file; the function that opens the PR
+    // could not, so the two flows disagreed about whether the repo was
+    // installable at all.
+    github.files.set(
+      "apps/web/src/components/Layout.jsx",
+      "export const Layout = ({ children }) => <html><body>{children}</body></html>;\n",
+    );
+
+    const result = await installTracker({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      projectId: "proj-1",
+    });
+
+    expect(result.status).toBe("opened");
+    expect(result.path).toBe("apps/web/src/components/Layout.jsx");
+  });
+
+  it("does not inject a second copy when the repo is already installed", async () => {
+    github.files.set(
+      "app/layout.tsx",
+      'export default () => <html><body><script data-site="proj-1" src="http://localhost:3000/stats.js" async></script></body></html>;\n',
+    );
+    // A file code search would happily hand back as another place to install.
+    github.files.set("other/page.html", "<html><body>elsewhere</body></html>\n");
+    github.searchRepoCode.mockResolvedValueOnce([
+      { name: "page.html", path: "other/page.html" },
+    ]);
+
+    const result = await installTracker({
+      token: "token",
+      owner: "owner",
+      repo: "repo",
+      projectId: "proj-1",
+    });
+
+    expect(result.status).toBe("noop");
+    expect(github.putFile).not.toHaveBeenCalled();
+  });
+
+  it("says what it searched when there is no shell at all", async () => {
+    github.files.set("README.md", "# nothing here\n");
+
+    await expect(
+      installTracker({
+        token: "token",
+        owner: "owner",
+        repo: "repo",
+        projectId: "proj-1",
+      }),
+    ).rejects.toThrow(/shell-shaped file in the tree/);
   });
 });
