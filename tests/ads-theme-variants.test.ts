@@ -208,8 +208,11 @@ describe("rendered HTML", () => {
   it("keeps a translucent background from making the CTA label see-through", () => {
     const c = creative({ format: "banner_728x90", bgColor: "#0b0d1080" });
     const html = renderCreativeHtml(c, "https://example.com");
-    // The chip's ink is the background colour, and must be opaque.
-    expect(html).toContain("color:#0b0d10;");
+    // The chip's ink is the background colour, and must be opaque — which is
+    // why it is its own property rather than a second reading of --cp-bg.
+    expect(html).toContain("--cp-solidBg:#0b0d10;");
+    expect(html).toContain("--cp-bg:#0b0d1080;");
+    expect(html).toContain("color:var(--cp-solidBg)");
   });
 });
 

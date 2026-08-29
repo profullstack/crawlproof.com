@@ -21,7 +21,7 @@ const base: Omit<AdCreative, "format"> = {
 };
 
 const formats: AdFormatId[] = ["text_link", "banner_728x90", "banner_300x250", "banner_320x50"];
-const cell = (f: AdFormatId, theme: "light" | "dark") =>
+const cell = (f: AdFormatId, theme: "light" | "dark" | "auto") =>
   `<iframe style="border:0;width:${f === "text_link" ? "600px" : "auto"};height:${f === "text_link" ? 40 : f === "banner_728x90" ? 90 : f === "banner_320x50" ? 50 : 250}px" srcdoc="${renderCreativeHtml({ ...base, format: f }, "https://example.com", { theme }).replace(/"/g, "&quot;")}"></iframe>`;
 
 console.log(`<!doctype html><meta charset="utf-8"><body style="margin:0;font:14px system-ui">
@@ -34,5 +34,14 @@ console.log(`<!doctype html><meta charset="utf-8"><body style="margin:0;font:14p
   <h2 style="margin:0 0 4px">On a dark page (dark variant)</h2>
   <p style="margin:0 0 16px;color:#9aa">Unchanged from before.</p>
   ${formats.map((f) => cell(f, "dark")).join("<br><br>")}
+</section>
+<section style="background:canvas;color:canvastext;padding:24px">
+  <h2 style="margin:0 0 4px">Auto (what /api/ads/frame serves)</h2>
+  <p style="margin:0 0 16px;opacity:.7">
+    Both palettes in one document. Toggle your OS or browser colour scheme and
+    reload — these should follow it, and the section behind them, without the
+    publisher's page having run a line of JavaScript.
+  </p>
+  ${formats.map((f) => cell(f, "auto")).join("<br><br>")}
 </section>
 </body>`);

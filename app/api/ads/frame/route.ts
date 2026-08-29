@@ -8,6 +8,10 @@
 // hidden services. The click link (target="_blank") lives inside CrawlProof's
 // own document, so the host page can never intercept it. Impressions are metered
 // server-side in serveAd, exactly like the JSON path.
+//
+// Because there is no script, there is also no theme detection: this document
+// carries both palettes and lets its own `prefers-color-scheme` decide. Pass
+// `&theme=light` or `&theme=dark` to pin it.
 
 import { NextRequest, NextResponse } from "next/server";
 import { serveAd, isAdFormat } from "@/lib/ads/serve";
@@ -43,6 +47,15 @@ export async function GET(request: NextRequest) {
     const visitorId = url.searchParams.get("v");
     if (!slotId || !isAdFormat(format)) return htmlResponse(EMPTY_HTML);
 
+    // Unlike /ad.js, nothing on this path can look at the page the unit is
+    // sitting in — that is the entire point of a script-free embed, and it used
+    // to mean every frame rendered dark and a light publisher got a black bar
+    // punched into their page. So the default here is 'auto': the creative
+    // ships both palettes and the media query inside this document asks the
+    // browser directly. A publisher who knows better (or has set the slot's
+    // theme) still overrides it.
+    const theme = url.searchParams.get("theme") ?? "auto";
+
     const ip = clientIpFromHeaders(request.headers);
     const geo = await lookupGeo(ip).catch(() => null);
     const device = parseDevice(request.headers.get("user-agent")).deviceType;
@@ -52,6 +65,7 @@ export async function GET(request: NextRequest) {
       ip,
       country: geo?.countryCode ?? null,
       device,
+      theme,
     });
 
     if (!fill) return htmlResponse(EMPTY_HTML);

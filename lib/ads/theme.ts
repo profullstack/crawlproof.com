@@ -36,6 +36,50 @@ export function isAdThemePref(v: string | null | undefined): v is AdThemePref {
 }
 
 /**
+ * The theme-dependent values of one creative document, as CSS custom
+ * properties. Keys are bare names; `cssVar` reads them back.
+ */
+export type ThemeVars = Record<string, string>;
+
+/**
+ * The `:root` rules a creative document opens with.
+ *
+ * Every colour a renderer derives from the theme goes through here rather than
+ * being interpolated into the markup, which is what lets a single document
+ * carry both palettes: `auto` emits the light set as the base and the dark set
+ * behind `prefers-color-scheme`, so the unit matches the reader without anyone
+ * having measured anything.
+ *
+ * That media query is the whole point of the mode. `/ad.js` can read the
+ * publisher's actual background off the DOM and pass a concrete theme, but the
+ * no-JS `/api/ads/frame` embed cannot see the page it is sitting in at all —
+ * the frame is the only surface that gets to ask the browser directly.
+ *
+ * Light is the base for the same reason `ad.js` composites over white: a page
+ * with no styling of its own is white whatever the viewer's OS prefers, so the
+ * unthemed fallback has to be the light one. `color-scheme` rides along so the
+ * frame's own canvas matches behind any hairline the unit does not cover.
+ */
+export function themeStyle(pref: AdThemePref, build: (theme: AdTheme) => ThemeVars): string {
+  const decls = (vars: ThemeVars) =>
+    Object.entries(vars)
+      .map(([name, value]) => `--cp-${name}:${value}`)
+      .join(";");
+
+  if (pref !== "auto") return `:root{${decls(build(pref))}}`;
+
+  return (
+    `:root{color-scheme:light dark;${decls(build("light"))}}` +
+    `@media (prefers-color-scheme:dark){:root{${decls(build("dark"))}}}`
+  );
+}
+
+/** Read a variable declared by `themeStyle`. */
+export function cssVar(name: string): string {
+  return `var(--cp-${name})`;
+}
+
+/**
  * Parse #rgb, #rgba, #rrggbb or #rrggbbaa.
  *
  * The 4- and 8-digit forms are what the editor's alpha slider writes: CSS has

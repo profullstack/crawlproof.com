@@ -10,7 +10,7 @@ import {
   type AdFormatId,
 } from "./creative";
 import { fitAdFormat, FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
-import { isAdTheme, type AdTheme } from "./theme";
+import { isAdTheme, type AdTheme, type AdThemePref } from "./theme";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
 import {
@@ -115,8 +115,31 @@ export function resolveTheme(
   requested: string | null | undefined,
   slotDefault: string | null | undefined,
 ): AdTheme {
+  const pref = resolveThemePref(requested, slotDefault);
+  return pref === "auto" ? "dark" : pref;
+}
+
+/**
+ * The same decision, but allowed to answer 'auto' — which is a real rendering
+ * mode rather than a synonym for the default: the document ships both palettes
+ * and `prefers-color-scheme` inside the frame picks. See `themeStyle`.
+ *
+ * An explicit light/dark still beats it from either side, because both of those
+ * are somebody having actually looked: the tag measured the page, or a
+ * publisher set the slot. 'auto' is what you fall back to when nothing did —
+ * which is exactly the position `/api/ads/frame` is in, since a no-JS embed
+ * cannot see the page it was pasted into.
+ *
+ * Callers that cannot honour a media query — a MOTD over curl, a feed body in
+ * somebody's reader — go through `resolveTheme` above and collapse it to dark.
+ */
+export function resolveThemePref(
+  requested: string | null | undefined,
+  slotDefault: string | null | undefined,
+): AdThemePref {
   if (isAdTheme(requested)) return requested;
   if (isAdTheme(slotDefault)) return slotDefault;
+  if (requested === "auto" || slotDefault === "auto") return "auto";
   return "dark";
 }
 
@@ -171,8 +194,8 @@ export async function serveAd(
 
   // `theme` rides behind `add column if not exists`, and migrations here are
   // applied by hand — a deploy that lands first would read undefined, which
-  // resolveTheme treats exactly like 'auto'.
-  const theme = resolveTheme(ctx.theme, (slot as { theme?: string | null }).theme);
+  // resolveThemePref treats as "nobody said", the same as an absent request.
+  const theme = resolveThemePref(ctx.theme, (slot as { theme?: string | null }).theme);
 
   // Bots get the house ad — never a paid impression (keeps advertiser stats
   // clean and avoids exposing paid creatives to crawlers).
