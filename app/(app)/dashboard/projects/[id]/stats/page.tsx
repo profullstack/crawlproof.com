@@ -1,16 +1,15 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProjectShell } from "@/components/project-shell";
-import { bucketLabel } from "@/lib/tracker/categorize";
-import { countryNameFromCode } from "@/lib/tracker/country";
 import { env } from "@/lib/env";
 import { DEFAULT_PROJECT_ENGINES, type Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 import {
   TrackerAnalytics,
-  type TrackerListItem,
+  type TrackerPanels,
 } from "@/components/charts/tracker-analytics";
-import { buildDailyAxis, toSeriesRow } from "@/lib/tracker/series";
+import { fetchPanels, PANEL_KEYS } from "@/lib/tracker/panels";
+import { DEFAULT_TRACKER_RANGE, trackerRange } from "@/lib/tracker/ranges";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { CareersToggle } from "./careers-toggle";
@@ -20,9 +19,6 @@ import { StatsSubnav } from "./stats-subnav";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
-// Shape returned by the tracker_daily_series RPC. bigint columns arrive as
-// strings over PostgREST; toSeriesRow() coerces them.
-type SeriesRow = Parameters<typeof toSeriesRow>[0];
 type BoundRepo = {
   id: string;
   full_name: string;
@@ -30,14 +26,6 @@ type BoundRepo = {
   default_branch: string | null;
   added_at: string;
 };
-type DeviceRow = {
-  device_type: string;
-  browser: string;
-  os: string;
-  count: number;
-};
-
-const WINDOW_DAYS = 30;
 
 export default async function ProjectStatsPage({
   params,
@@ -59,141 +47,36 @@ export default async function ProjectStatsPage({
   // ordering silently dropped older history, so charts looked like tracking
   // "just started". Aggregating in Postgres returns at most (days) or (lim)
   // rows per call, so history is always complete.
-  const days = WINDOW_DAYS;
-  const [
-    seriesRes,
-    bucketsRes,
-    mixRes,
-    pagesRes,
-    referrersRes,
-    actionsRes,
-    exitRes,
-    countriesRes,
-    citiesRes,
-    devicesRes,
-  ] = await Promise.all([
-    supabase.rpc("tracker_daily_series", { p_project: id, days }),
-    supabase.rpc("tracker_bucket_totals", { p_project: id, days, lim: 10 }),
-    supabase.rpc("tracker_event_mix", { p_project: id, days }),
-    supabase.rpc("tracker_top_pages", { p_project: id, days, lim: 10 }),
-    supabase.rpc("tracker_top_referrers", { p_project: id, days, lim: 10 }),
-    supabase.rpc("tracker_top_actions", { p_project: id, days, lim: 10 }),
-    supabase.rpc("tracker_top_exit_pages", { p_project: id, days, lim: 10 }),
-    supabase.rpc("tracker_top_countries", { p_project: id, days, lim: 10 }),
-    supabase.rpc("tracker_top_cities", { p_project: id, days, lim: 10 }),
-    supabase.rpc("tracker_device_totals", { p_project: id, days }),
-  ]);
-
-  const series = ((seriesRes.data ?? []) as SeriesRow[]).map(toSeriesRow);
-  const daily = buildDailyAxis(series, WINDOW_DAYS);
+  //
+  // This renders every panel at the default range. Each card then owns its own
+  // timeframe tabs and re-fetches just itself from
+  // /api/projects/:id/tracker-stats, so narrowing one chart to the last hour
+  // does not re-run the other eleven.
+  const range = trackerRange(DEFAULT_TRACKER_RANGE);
+  const panels = (await fetchPanels(
+    supabase,
+    id,
+    PANEL_KEYS,
+    range,
+  )) as unknown as TrackerPanels;
 
   // Headline metrics come straight from the series so they stay exact even
   // though Top sources below is truncated to the top 10 buckets. "Other visits"
   // is everything that isn't an AI referral or a bot (human/search/social/
   // referral), matching the original bucket-prefix split.
-  const totalAi = series.reduce((s, p) => s + p.ai, 0);
-  const totalBot = series.reduce((s, p) => s + p.bots, 0);
-  const grandTotal = series.reduce((s, p) => s + p.events, 0);
-  const eventTotal = series.reduce((s, p) => s + p.pageviews + p.interactions, 0);
+  const points = panels.series.points;
+  const totalAi = points.reduce((s, p) => s + p.ai, 0);
+  const totalBot = points.reduce((s, p) => s + p.bots, 0);
+  const grandTotal = points.reduce((s, p) => s + p.events, 0);
+  const eventTotal = points.reduce((s, p) => s + p.pageviews + p.interactions, 0);
   const totalHuman = Math.max(0, grandTotal - totalAi - totalBot);
 
-  const topSources = (
-    (bucketsRes.data ?? []) as Array<{ bucket: string; total: number | string }>
-  ).map((r) => ({ label: bucketLabel(r.bucket), value: Number(r.total) }));
-
-  const mixItems = (
-    (mixRes.data ?? []) as Array<{ event: string; total: number | string }>
-  )
-    .map((r) => ({ label: eventLabel(r.event), value: Number(r.total) }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
-  const eventMix: TrackerListItem[] = mixItems.length
-    ? mixItems
-    : grandTotal
-      ? [{ label: "Pageview", value: grandTotal }]
-      : [];
-
-  const topPages = (
-    (pagesRes.data ?? []) as Array<{ page_path: string; total: number | string }>
-  ).map((r) => ({ label: r.page_path || "/", value: Number(r.total) }));
-
-  const topReferrers = (
-    (referrersRes.data ?? []) as Array<{
-      referrer_host: string;
-      total: number | string;
-    }>
-  ).map((r) => ({ label: r.referrer_host, value: Number(r.total) }));
-
-  const topActions = (
-    (actionsRes.data ?? []) as Array<{
-      event: string;
-      event_target: string;
-      total: number | string;
-    }>
-  ).map((r) => ({
-    label: `${eventLabel(r.event)} · ${r.event_target}`,
-    value: Number(r.total),
-  }));
-
-  const exitPages = (
-    (exitRes.data ?? []) as Array<{ page_path: string; total: number | string }>
-  ).map((r) => ({ label: r.page_path || "/", value: Number(r.total) }));
-
-  const topCountries = (
-    (countriesRes.data ?? []) as Array<{
-      country_code: string;
-      country_name: string;
-      total: number | string;
-    }>
-  )
-    .map((r) => ({
-      label:
-        r.country_name || r.country_code
-          ? `${r.country_name || countryNameFromCode(r.country_code) || r.country_code}${r.country_code ? ` (${r.country_code})` : ""}`
-          : "",
-      value: Number(r.total),
-    }))
-    .filter((it) => it.label);
-
-  const topCities = (
-    (citiesRes.data ?? []) as Array<{
-      city: string;
-      region_code: string;
-      region_name: string;
-      country_code: string;
-      country_name: string;
-      total: number | string;
-    }>
-  )
-    .map((r) => {
-      const region = r.region_code || r.region_name;
-      const country = r.country_code || r.country_name;
-      return {
-        label: [r.city, region, country].filter(Boolean).join(", "),
-        value: Number(r.total),
-      };
-    })
-    .filter((it) => it.label);
-
-  const deviceRows = (
-    (devicesRes.data ?? []) as Array<{
-      device_type: string;
-      browser: string;
-      os: string;
-      total: number | string;
-    }>
-  ).map((r) => ({
-    device_type: r.device_type,
-    browser: r.browser,
-    os: r.os,
-    count: Number(r.total),
-  }));
-
-  const topDevices = topDeviceItems(deviceRows, (row) =>
-    deviceTypeLabel(row.device_type),
-  );
-  const topBrowsers = topDeviceItems(deviceRows, (row) => row.browser);
-  const topOperatingSystems = topDeviceItems(deviceRows, (row) => row.os);
+  // Older projects have rollup rows in tracker_daily_stats but nothing in
+  // tracker_event_daily_stats, which would leave Event mix empty on a page
+  // that is plainly showing traffic. Fall back to a single Pageview row.
+  if (!panels.events.length && grandTotal) {
+    panels.events = [{ label: "Pageview", value: grandTotal }];
+  }
 
   const trackerEnabled = !!(project as { tracker_enabled?: boolean })
     .tracker_enabled;
@@ -362,18 +245,9 @@ export default async function ProjectStatsPage({
           </section>
         ) : (
           <TrackerAnalytics
-            daily={daily}
-            events={eventMix}
-            sources={topSources}
-            pages={topPages}
-            exitPages={exitPages}
-            referrers={topReferrers}
-            actions={topActions}
-            countries={topCountries}
-            cities={topCities}
-            devices={topDevices}
-            browsers={topBrowsers}
-            operatingSystems={topOperatingSystems}
+            projectId={id}
+            initial={panels}
+            initialRange={range.key}
           />
         )}
       </div>
@@ -427,44 +301,6 @@ function ConnectedRepos({
       )}
     </div>
   );
-}
-
-function topDeviceItems(
-  rows: DeviceRow[],
-  labelFor: (row: DeviceRow) => string,
-): TrackerListItem[] {
-  const map = new Map<string, number>();
-  for (const row of rows) {
-    const label = labelFor(row);
-    if (!label) continue;
-    map.set(label, (map.get(label) ?? 0) + row.count);
-  }
-  return Array.from(map.entries())
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
-}
-
-function deviceTypeLabel(deviceType: string) {
-  switch (deviceType) {
-    case "mobile":
-      return "Mobile";
-    case "tablet":
-      return "Tablet";
-    case "desktop":
-      return "Desktop";
-    case "bot":
-      return "Bot";
-    default:
-      return "";
-  }
-}
-
-function eventLabel(event: string) {
-  return event
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 function Metric({
