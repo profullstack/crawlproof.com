@@ -93,6 +93,18 @@ export async function resolveDays(
   return Math.min(Math.max(spanDays, 1), MAX_ALL_DAYS);
 }
 
+// The four rollup-only panels (exit pages, devices, browsers, operating
+// systems) offer the "1D" tab, but that range is defined with `minutes`, not
+// `days` — it is a raw-event window for every other panel. Handing it to
+// resolveDays finds no `days`, falls through to tracker_first_day and returns
+// the project's entire history, so the 1D tab rendered All-time totals: on a
+// site younger than 30 days, 1D, 1M and All were the same number. A sub-day
+// window against a day-resolution rollup is one day — today's UTC rollup —
+// which is exactly what ROLLUP_ONLY_RANGES already documents it to mean.
+export function rollupDays(range: TrackerRange, days: number): number {
+  return isRawRange(range) ? 1 : days;
+}
+
 /** Fetch one panel. Errors surface as an empty panel rather than a broken page. */
 export async function fetchPanel(
   sb: Sb,
@@ -182,7 +194,7 @@ export async function fetchPanel(
       // Rollup-only: tracker_exit_sessions keys on a date, not a timestamp.
       const { data } = await sb.rpc("tracker_top_exit_pages", {
         p_project: projectId,
-        days,
+        days: rollupDays(range, days),
         lim: TOP_N,
       });
       return (
@@ -300,7 +312,7 @@ export async function fetchPanel(
       // device_type / browser / os columns.
       const { data } = await sb.rpc("tracker_device_totals", {
         p_project: projectId,
-        days,
+        days: rollupDays(range, days),
       });
       const rows = (
         (data ?? []) as Array<{

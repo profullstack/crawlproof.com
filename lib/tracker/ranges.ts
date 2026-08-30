@@ -91,8 +91,16 @@ export const PANEL_RANGE_KEYS: Record<string, TrackerRangeKey[]> = {
   exitPages: ROLLUP_ONLY_RANGES,
 };
 
+// These panels answer "1D" from today's UTC rollup, so the shared description
+// ("Last 24 hours") would promise a rolling window they cannot serve. Relabel
+// it here, where the list is already being narrowed, so the tab tooltip
+// describes the number the panel actually returns.
+const ROLLUP_1D_DESCRIPTION = "Today so far, UTC day";
+
 export function rangesForPanel(panel: string): TrackerRange[] {
   const allowed = PANEL_RANGE_KEYS[panel];
   if (!allowed) return TRACKER_RANGES;
-  return TRACKER_RANGES.filter((r) => allowed.includes(r.key));
+  return TRACKER_RANGES.filter((r) => allowed.includes(r.key)).map((r) =>
+    r.key === "1d" ? { ...r, description: ROLLUP_1D_DESCRIPTION } : r,
+  );
 }
