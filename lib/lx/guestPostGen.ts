@@ -33,6 +33,7 @@ import {
   generateImage,
   generateInlineImage,
   normalizeArticleOutput,
+  pendingInlineMarker,
   refundCredit,
   ensureTableOfContentsLinks,
   slugify,
@@ -210,8 +211,10 @@ export async function generateGuestPost(
   const baseSlug = article.slug || slugify(article.title);
   const finalSlug = await uniqueSlug(supabase, target.id, baseSlug);
 
-  // Hero + inline images.
+  // Hero + inline images. Best-effort, so record why each one is missing
+  // rather than publishing image-less in silence — see articleGen.
   let imageUrl: string | null = null;
+  const imageFailures: string[] = [];
   const inlineImageUrls: Array<string | null> = new Array(
     article.inline_image_prompts.length,
   ).fill(null);
@@ -228,11 +231,11 @@ export async function generateGuestPost(
           brand: target.domain ?? null,
         });
         if (bytes) imageUrl = await uploadImage(supabase, target.id, finalSlug, bytes);
+        if (!imageUrl) imageFailures.push("hero: no image returned");
       } catch (err) {
-        console.warn(
-          "[lx] guest hero image failed, continuing without",
-          err instanceof Error ? err.message : err,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        imageFailures.push(`hero: ${msg}`);
+        console.warn("[lx] guest hero image failed, continuing without", msg);
       }
     })(),
     ...article.inline_image_prompts.map(async (p, i) => {
@@ -251,24 +254,32 @@ export async function generateGuestPost(
             bytes,
           );
         }
+        if (!inlineImageUrls[i]) {
+          imageFailures.push(`inline ${i + 1}: no image returned`);
+        }
       } catch (err) {
-        console.warn(
-          `[lx] guest inline image ${i + 1} failed, continuing without`,
-          err instanceof Error ? err.message : err,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        imageFailures.push(`inline ${i + 1}: ${msg}`);
+        console.warn(`[lx] guest inline image ${i + 1} failed, continuing without`, msg);
       }
     }),
   ]);
 
-  // Substitute the inline image markers + strip any pandoc heading IDs.
+  // Substitute the inline image markers + strip any pandoc heading IDs. A
+  // failed image leaves a PENDING marker for the repair sweep to fill in.
   let bodyWithImages = article.markdown_body;
   for (let i = 0; i < article.inline_image_prompts.length; i++) {
     const marker = new RegExp(`<!--\\s*INLINE_IMAGE_${i + 1}\\s*-->`, "g");
     const url = inlineImageUrls[i];
-    const alt = article.inline_image_prompts[i]?.alt ?? "";
+    const spec = article.inline_image_prompts[i];
+    const alt = spec?.alt ?? "";
     bodyWithImages = bodyWithImages.replace(
       marker,
-      url ? `![${alt.replace(/[\[\]]/g, "")}](${url})` : "",
+      url
+        ? `![${alt.replace(/[\[\]]/g, "")}](${url})`
+        : spec
+          ? pendingInlineMarker({ index: i + 1, kind: spec.kind, alt, prompt: spec.prompt })
+          : "",
     );
   }
   bodyWithImages = bodyWithImages.replace(
@@ -316,6 +327,10 @@ export async function generateGuestPost(
       tags: article.tags,
       internal_links: internalLinksPayload,
       outbound_links: outboundLinksPayload,
+      generation_error:
+        imageFailures.length > 0
+          ? `images: ${imageFailures.join("; ")}`.slice(0, 2000)
+          : null,
       status: "ready",
     })
     .select("id")

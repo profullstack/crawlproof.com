@@ -34,6 +34,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { generateArticle } from "../lib/lx/articleGen";
 import { deliverArticle } from "../lib/lx/webhookDeliver";
 import { repairStuckLxJobs } from "../lib/lx/repair";
+import { repairMissingArticleImages } from "../lib/lx/repairImages";
 import { processDueSocialFeeds } from "../lib/sp/feedAutopost";
 import { processBrowserPost } from "../lib/sp/browserPost";
 import { getOrMintInstallationToken } from "../lib/github/installations";
@@ -1304,6 +1305,21 @@ async function lxSweep() {
     repaired.generatingGuestRequests;
   if (totalRecovered > 0) {
     console.log("[worker] lx sweep recovered", repaired);
+  }
+
+  // Posts that published without their art. Image generation has no second
+  // provider, so an OpenAI outage silently ships image-less articles; this
+  // fills them back in once the provider recovers. Bounded per tick because
+  // each article is up to four "high" 1536x1024 renders.
+  if (openai) {
+    try {
+      const images = await repairMissingArticleImages(supabase, openai, { limit: 2 });
+      if (images.articlesRepaired > 0 || images.failures.length > 0) {
+        console.log("[worker] lx image repair", images);
+      }
+    } catch (err) {
+      console.warn("[worker] lx image repair crashed", err);
+    }
   }
 
   // Guest-post requests are persisted before the worker is notified. If

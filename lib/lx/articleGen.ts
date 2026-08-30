@@ -914,6 +914,65 @@ export async function uploadImage(
   return data.publicUrl;
 }
 
+// An inline image that fails to generate used to have its marker deleted,
+// which threw away the only record of where the image belonged and what it
+// was meant to show — the post published a paragraph short of its plan and
+// nothing could put it back. Leave a self-describing marker instead: it is
+// an HTML comment, so it renders as nothing for the reader, and the repair
+// sweep can regenerate exactly that image later. See repairImages.ts.
+const PENDING_INLINE_RE = /<!--\s*INLINE_IMAGE_PENDING\s+([^>]*?)-->/g;
+
+// `--` cannot appear inside an HTML comment, and a quote would end the
+// attribute early. Neither survives a round trip, so drop both.
+function markerAttr(value: string): string {
+  return value.replace(/--+/g, " ").replace(/["<>]/g, "").trim();
+}
+
+export function pendingInlineMarker(spec: {
+  // 1-based position of this image in the article, which is also what names
+  // its object in storage. Carried on the marker so a repair that fills in
+  // only image 2 cannot overwrite image 1.
+  index: number;
+  kind?: string | null;
+  alt?: string | null;
+  prompt: string;
+}): string {
+  const kind = markerAttr(spec.kind ?? "concept");
+  const alt = markerAttr(spec.alt ?? "");
+  const prompt = markerAttr(spec.prompt);
+  return `<!-- INLINE_IMAGE_PENDING n="${spec.index}" kind="${kind}" alt="${alt}" prompt="${prompt}" -->`;
+}
+
+export type PendingInlineImage = {
+  raw: string;
+  index: number;
+  kind: string;
+  alt: string;
+  prompt: string;
+};
+
+export function parsePendingInlineMarkers(markdown: string): PendingInlineImage[] {
+  const out: PendingInlineImage[] = [];
+  for (const m of markdown.matchAll(PENDING_INLINE_RE)) {
+    const attrs = m[1] ?? "";
+    const read = (name: string) =>
+      new RegExp(`${name}="([^"]*)"`).exec(attrs)?.[1] ?? "";
+    const prompt = read("prompt");
+    // A marker with no prompt can't be regenerated — skip it rather than
+    // sending the image model an empty brief.
+    if (!prompt) continue;
+    const index = Number.parseInt(read("n"), 10);
+    out.push({
+      raw: m[0],
+      index: Number.isFinite(index) && index > 0 ? index : out.length + 1,
+      kind: read("kind") || "concept",
+      alt: read("alt"),
+      prompt,
+    });
+  }
+  return out;
+}
+
 export function validateInternalLinks(
   markdown: string,
   expected: string[],
@@ -1342,6 +1401,11 @@ export async function generateArticle(
   // Featured image + inline section images, generated in parallel so the
   // 30–60s image latency stacks once instead of 4×.
   let imageUrl: string | null = null;
+  // Every image call is best-effort so a provider blip can't cost us the
+  // article. That silence is the trap: for a week in August every post
+  // published image-less and nothing recorded why. Collect the reasons and
+  // store them on the row.
+  const imageFailures: string[] = [];
   const inlineImageUrls: Array<string | null> = new Array(
     article.inline_image_prompts.length,
   ).fill(null);
@@ -1360,11 +1424,11 @@ export async function generateArticle(
         });
         if (bytes)
           imageUrl = await uploadImage(supabase, typedSite.id, finalSlug, bytes);
+        if (!imageUrl) imageFailures.push("hero: no image returned");
       } catch (err) {
-        console.warn(
-          "[lx] hero image generation failed, continuing without",
-          err instanceof Error ? err.message : err,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        imageFailures.push(`hero: ${msg}`);
+        console.warn("[lx] hero image generation failed, continuing without", msg);
       }
     })(),
     ...article.inline_image_prompts.map(async (p, i) => {
@@ -1383,25 +1447,33 @@ export async function generateArticle(
             bytes,
           );
         }
+        if (!inlineImageUrls[i]) {
+          imageFailures.push(`inline ${i + 1}: no image returned`);
+        }
       } catch (err) {
-        console.warn(
-          `[lx] inline image ${i + 1} failed, continuing without`,
-          err instanceof Error ? err.message : err,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        imageFailures.push(`inline ${i + 1}: ${msg}`);
+        console.warn(`[lx] inline image ${i + 1} failed, continuing without`, msg);
       }
     }),
   ]);
 
-  // Substitute the inline-image markers in markdown. A missing/failed
-  // image strips the marker rather than leaving a visible comment.
+  // Substitute the inline-image markers in markdown. A missing/failed image
+  // leaves a PENDING marker — invisible to the reader, but enough for the
+  // repair sweep to generate that one image later instead of losing it.
   let bodyWithImages = article.markdown_body;
   for (let i = 0; i < article.inline_image_prompts.length; i++) {
     const marker = new RegExp(`<!--\\s*INLINE_IMAGE_${i + 1}\\s*-->`, "g");
     const url = inlineImageUrls[i];
-    const alt = article.inline_image_prompts[i]?.alt ?? "";
+    const spec = article.inline_image_prompts[i];
+    const alt = spec?.alt ?? "";
     bodyWithImages = bodyWithImages.replace(
       marker,
-      url ? `![${alt.replace(/[\[\]]/g, "")}](${url})` : "",
+      url
+        ? `![${alt.replace(/[\[\]]/g, "")}](${url})`
+        : spec
+          ? pendingInlineMarker({ index: i + 1, kind: spec.kind, alt, prompt: spec.prompt })
+          : "",
     );
   }
 
@@ -1464,6 +1536,10 @@ export async function generateArticle(
       // a blog whose scores are creeping up is drifting before it fails.
       slop_score: gate?.score ?? null,
       slop_issues: gate ? gate.issues : [],
+      generation_error:
+        imageFailures.length > 0
+          ? `images: ${imageFailures.join("; ")}`.slice(0, 2000)
+          : null,
       status: "ready",
     })
     .select("id")
