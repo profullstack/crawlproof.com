@@ -465,19 +465,24 @@ export default async function PortfolioAnalyticsPage({
             )}
           </section>
 
+          {/* No projectId: this page aggregates across every project and
+              drives its own range control in the header, so the per-card
+              timeframe tabs stay hidden here. */}
           <TrackerAnalytics
-            daily={daily}
-            events={eventMix}
-            sources={topSources}
-            pages={topPages}
-            exitPages={exitPages}
-            referrers={topReferrers}
-            actions={topActions}
-            countries={topCountries}
-            cities={topCities}
-            devices={topDevices}
-            browsers={topBrowsers}
-            operatingSystems={topOperatingSystems}
+            initial={{
+              series: { points: daily, granularity: "day" },
+              events: eventMix,
+              sources: topSources,
+              pages: topPages,
+              exitPages,
+              referrers: topReferrers,
+              actions: topActions,
+              countries: topCountries,
+              cities: topCities,
+              devices: topDevices,
+              browsers: topBrowsers,
+              operatingSystems: topOperatingSystems,
+            }}
           />
         </>
       )}
