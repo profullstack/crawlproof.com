@@ -418,7 +418,11 @@ function BreakdownPanel({
           <RankRows data={rows} total={total} />
         </div>
       ) : (
-        <EmptyRange message="No data in this timeframe." range={range} />
+        <EmptyRange
+          message="No data in this timeframe."
+          range={range}
+          ranges={ranges}
+        />
       )}
     </PanelFrame>
   );
@@ -502,7 +506,7 @@ function RankedPanel({
           <RankRows data={rows} total={total} />
         </>
       ) : (
-        <EmptyRange message={empty} range={range} />
+        <EmptyRange message={empty} range={range} ranges={ranges} />
       )}
     </PanelFrame>
   );
@@ -513,16 +517,20 @@ function RankedPanel({
 function EmptyRange({
   message,
   range,
+  ranges,
 }: {
   message: string;
   range: TrackerRangeKey;
+  ranges?: TrackerRange[];
 }) {
+  // Describe the range from the panel's own list, not the global table: the
+  // rollup-only panels relabel 1D as today's UTC day, and the global lookup
+  // would name a rolling 24h window they never queried.
+  const described = ranges?.find((r) => r.key === range) ?? trackerRange(range);
   return (
     <p className="text-sm text-[var(--color-muted)]">
       {message}{" "}
-      <span className="text-xs">
-        ({trackerRange(range).description.toLowerCase()})
-      </span>
+      <span className="text-xs">({described.description.toLowerCase()})</span>
     </p>
   );
 }
