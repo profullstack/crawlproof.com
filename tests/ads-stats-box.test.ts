@@ -84,7 +84,7 @@ describe("getAccountSeries", () => {
     const axis = bucketAxis(range, NOW);
     const rows = [row(new Date(axis.at(-1)!).toISOString(), { free_impressions: 240, free_clicks: 3 })];
 
-    const points = await getAccountSeries(clientReturning(rows), range, NOW);
+    const { data: points } = await getAccountSeries(clientReturning(rows), range, NOW);
     const totals = sumSeries(points);
 
     expect(totals.impressions).toBe(0); // nothing was billable...
@@ -102,7 +102,7 @@ describe("getAccountSeries", () => {
       const since = rangeSince(range, NOW)!;
       const rows = [row(new Date(bucketOf(since, range)).toISOString(), { impressions: 7 })];
 
-      const points = await getAccountSeries(clientReturning(rows), range, NOW);
+      const { data: points } = await getAccountSeries(clientReturning(rows), range, NOW);
       expect(sumSeries(points).impressions, `${range.id} dropped its first bucket`).toBe(7);
     }
   });
@@ -122,13 +122,28 @@ describe("getAccountSeries", () => {
 
   it("zero-fills the whole axis so a quiet range still draws a line", async () => {
     const range = byId("1d");
-    const points = await getAccountSeries(clientReturning([]), range, NOW);
+    const { data: points, failed } = await getAccountSeries(clientReturning([]), range, NOW);
     expect(points).toHaveLength(bucketAxis(range, NOW).length);
     expect(sumSeries(points)).toEqual(EMPTY_TOTALS);
+    // A genuinely quiet range is not a failure, and must not raise the banner.
+    expect(failed).toBe(false);
   });
 
   it("renders an empty range rather than throwing when the RPC fails", async () => {
-    const points = await getAccountSeries(failingClient(), byId("1h"), NOW);
+    const { data: points } = await getAccountSeries(failingClient(), byId("1h"), NOW);
     expect(sumSeries(points)).toEqual(EMPTY_TOTALS);
+  });
+
+  it("says it failed, so the zeros are not reported as real delivery", async () => {
+    // The whole point: a cancelled query and a quiet range both sum to zero.
+    // Without this flag the dashboard presented the first as the second, which
+    // is how a network delivering 176k impressions showed four zeros and read
+    // as a dead pipeline.
+    const failing = await getAccountSeries(failingClient(), byId("1h"), NOW);
+    const quiet = await getAccountSeries(clientReturning([]), byId("1h"), NOW);
+
+    expect(sumSeries(failing.data)).toEqual(sumSeries(quiet.data));
+    expect(failing.failed).toBe(true);
+    expect(quiet.failed).toBe(false);
   });
 });

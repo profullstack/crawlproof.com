@@ -48,6 +48,15 @@ export type EarningsPayoutRow = {
 export type EarningsModel = {
   rangeDays: number;
   /**
+   * True when a delivery query failed and its figures were zero-filled.
+   *
+   * Worth carrying all the way into the model because this feeds the PDF report
+   * as well as the page: without it a cancelled query ships as a document
+   * stating the account delivered nothing, which is a stronger claim than
+   * anything we actually know.
+   */
+  statsUnavailable: boolean;
+  /**
    * Money is a balance and delivery is a rate, so they answer different
    * questions and cannot share a window.
    *
@@ -157,7 +166,7 @@ export async function loadEarnings(
   // campaigns dashboard reports. A free-tier impression is still an impression;
   // what it is not is revenue, and the money columns say so on their own.
   const campaignRows: EarningsCampaignRow[] = campaigns.map((c) => {
-    const s = campaignTotals.get(c.id) ?? EMPTY_TOTALS;
+    const s = campaignTotals.data.get(c.id) ?? EMPTY_TOTALS;
     return {
       id: c.id,
       name: c.name,
@@ -169,7 +178,7 @@ export async function loadEarnings(
   });
 
   const slotRows: EarningsSlotRow[] = slots.map((sl) => {
-    const s = slotTotals.get(sl.id) ?? EMPTY_SLOT_TOTALS;
+    const s = slotTotals.data.get(sl.id) ?? EMPTY_SLOT_TOTALS;
     return {
       id: sl.id,
       name: projectsById.get(sl.project_id)?.name ?? "Site",
@@ -199,11 +208,16 @@ export async function loadEarnings(
     getCampaignDailySeries(supabase, campaignRows.map((c) => c.id), days),
     getSlotDailySeries(supabase, slotRows.map((s) => s.id), days),
   ]);
-  const daily = mergeMoneySeries(campaignSeries, slotSeries, days);
+  const daily = mergeMoneySeries(campaignSeries.data, slotSeries.data, days);
   const earnedTodayCents = daily.length ? daily[daily.length - 1].earnedCents : 0;
 
   return {
     rangeDays: days,
+    statsUnavailable:
+      campaignTotals.failed ||
+      slotTotals.failed ||
+      campaignSeries.failed ||
+      slotSeries.failed,
     totals: {
       spentCents,
       earnedCents,
@@ -217,7 +231,7 @@ export async function loadEarnings(
       pubImpressions: slotRows.reduce((a, s) => a + s.impressions, 0),
       pubClicks: slotRows.reduce((a, s) => a + s.clicks, 0),
       invalidClicks: slots.reduce(
-        (a, sl) => a + (slotTotals.get(sl.id)?.invalidClicks ?? 0),
+        (a, sl) => a + (slotTotals.data.get(sl.id)?.invalidClicks ?? 0),
         0,
       ),
     },

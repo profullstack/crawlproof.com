@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/server";
 import { loadEarnings, dollars, type EarningsModel } from "@/lib/ads/earnings-data";
 import { EarningsPdfButton } from "@/components/ads/earnings-pdf-button";
+import { StatsUnavailable } from "@/components/ads/stats-unavailable";
 
 // recharts is client-only; keep it out of the server bundle.
 const MoneyTrend = dynamic(() => import("@/components/ads/money-trend").then((m) => m.MoneyTrend));
@@ -17,6 +18,8 @@ function ctr(clicks: number, impressions: number): string {
 
 const EMPTY: EarningsModel = {
   rangeDays: RANGE,
+  // Signed out: nothing was attempted, so nothing failed.
+  statsUnavailable: false,
   totals: {
     spentCents: 0,
     earnedCents: 0,
@@ -71,6 +74,10 @@ export default async function EarningsPage() {
         Your CrawlProof ad money across both sides — what you earn as a publisher and what
         you spend as an advertiser. Download a PDF report for your accountant or team.
       </p>
+
+      {model.statsUnavailable && (
+        <StatsUnavailable what="delivery figures for this period" />
+      )}
 
       {/* Balances, not a period. "Available to withdraw" is lifetime earnings
           minus lifetime payouts; clipping it to the last {RANGE} days would

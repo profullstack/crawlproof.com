@@ -29,7 +29,7 @@ const failingClient = (): any => ({
 
 describe("getSlotTotalsSince", () => {
   it("keeps free-tier delivery the paid column alone would hide", async () => {
-    const totals = await getSlotTotalsSince(
+    const { data: totals } = await getSlotTotalsSince(
       clientReturning([
         {
           slot_id: "slot-rss",
@@ -53,7 +53,7 @@ describe("getSlotTotalsSince", () => {
   it("reports invalid clicks separately instead of as delivery", async () => {
     // Folding bot clicks into the free bucket to make them visible would put a
     // 16% CTR on the page. They are counted, and counted apart.
-    const totals = await getSlotTotalsSince(
+    const { data: totals } = await getSlotTotalsSince(
       clientReturning([
         {
           slot_id: "s1",
@@ -74,7 +74,7 @@ describe("getSlotTotalsSince", () => {
   });
 
   it("coerces the bigint-as-string counts PostgREST returns", async () => {
-    const totals = await getSlotTotalsSince(
+    const { data: totals } = await getSlotTotalsSince(
       clientReturning([
         {
           slot_id: "s1",
@@ -100,8 +100,11 @@ describe("getSlotTotalsSince", () => {
   });
 
   it("returns an empty map rather than throwing when the RPC fails", async () => {
-    const totals = await getSlotTotalsSince(failingClient(), null);
+    const { data: totals, failed } = await getSlotTotalsSince(failingClient(), null);
     expect(totals.size).toBe(0);
+    // ...and says so, so the page can print "couldn't load" over the zero row
+    // instead of asserting the site earned nothing.
+    expect(failed).toBe(true);
     // Callers fall back to the zero row, so a failed RPC renders a quiet page
     // rather than a 500.
     expect(totals.get("missing") ?? EMPTY_SLOT_TOTALS).toEqual(EMPTY_SLOT_TOTALS);
@@ -110,7 +113,7 @@ describe("getSlotTotalsSince", () => {
 
 describe("getCampaignTotalsSince", () => {
   it("counts both tiers, so an all-free campaign is not a dead row", async () => {
-    const totals = await getCampaignTotalsSince(
+    const { data: totals } = await getCampaignTotalsSince(
       clientReturning([
         {
           campaign_id: "c1",

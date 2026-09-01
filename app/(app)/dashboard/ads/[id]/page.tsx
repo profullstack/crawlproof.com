@@ -83,7 +83,7 @@ export default async function CampaignDetailPage({
   const clicks = (stats?.clicks as number) ?? 0;
   const freeImpressions = (stats?.free_impressions as number) ?? 0;
   const freeClicks = (stats?.free_clicks as number) ?? 0;
-  const daily = series.get(id) ?? [];
+  const daily = series.data.get(id) ?? [];
   const today = utcToday();
   const creditsAvailable = (profile?.credits_balance ?? 0) + (profile?.ad_bonus_credits ?? 0);
   const display = campaignDisplayStatus(campaign, today, creditsAvailable);

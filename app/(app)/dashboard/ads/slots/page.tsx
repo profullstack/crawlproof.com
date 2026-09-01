@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { fetchSupportedTokens } from "@/lib/coinpay-tokens";
 import { SlotManager } from "@/components/ads/slot-manager";
+import { StatsUnavailable } from "@/components/ads/stats-unavailable";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -53,6 +54,8 @@ export default async function SlotsPage() {
   const withdrawnBySlot = new Map<string, number>();
   const payoutsBySlot = new Map<string, Payout[]>();
   let statsBySlot = new Map<string, SlotTotals>();
+  // Distinguishes "no earnings yet" from "could not read them".
+  let statsFailed = false;
   if (user) {
     const [{ data: p }, { data: s }, { data: ledger }, { data: payouts }, slotStats] =
       await Promise.all([
@@ -77,7 +80,8 @@ export default async function SlotsPage() {
       ]);
     projects = (p as Project[]) ?? [];
     slots = (s as Slot[]) ?? [];
-    statsBySlot = slotStats;
+    statsBySlot = slotStats.data;
+    statsFailed = slotStats.failed;
     for (const row of (ledger as { slot_id: string; amount_cents: number }[]) ?? []) {
       if (row.slot_id) earnedBySlot.set(row.slot_id, (earnedBySlot.get(row.slot_id) ?? 0) + (row.amount_cents ?? 0));
     }
@@ -123,6 +127,8 @@ export default async function SlotsPage() {
         create one, drop one tag on the page, and add a payout wallet — you earn crypto
         for the clicks.
       </p>
+
+      {statsFailed && <StatsUnavailable what="your delivery and earnings figures" />}
 
       {projects.length === 0 ? (
         <div className="card mt-6 p-8 text-center text-[var(--color-muted)]">
