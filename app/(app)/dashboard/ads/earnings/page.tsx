@@ -29,6 +29,7 @@ const EMPTY: EarningsModel = {
     advClicks: 0,
     pubImpressions: 0,
     pubClicks: 0,
+    invalidClicks: 0,
   },
   campaigns: [],
   slots: [],
@@ -45,6 +46,18 @@ export default async function EarningsPage() {
   const model = user ? await loadEarnings(supabase, user.id, RANGE) : EMPTY;
   const t = model.totals;
 
+  // Money that moved *in the window*, which the balance tiles cannot answer —
+  // they are lifetime. Delivery with no money behind it in the same window is
+  // what the free-tier note explains, and this is the only figure that tells
+  // the two apart.
+  const rangeEarnedCents = model.slots.reduce((a, s) => a + s.earnedCents, 0);
+  const rangeSpentCents = model.campaigns.reduce((a, c) => a + c.spentCents, 0);
+  const deliveredInRange = t.pubImpressions > 0 || t.advImpressions > 0;
+  const invalidNote =
+    t.invalidClicks === 1
+      ? "1 further click was filtered as invalid"
+      : `${t.invalidClicks.toLocaleString()} further clicks were filtered as invalid`;
+
   return (
     <div className="mx-auto max-w-4xl">
       <Link href="/dashboard/ads" className="text-sm text-[var(--color-muted)]">
@@ -56,27 +69,73 @@ export default async function EarningsPage() {
       </div>
       <p className="mt-2 text-[var(--color-muted)]">
         Your CrawlProof ad money across both sides — what you earn as a publisher and what
-        you spend as an advertiser. Last {RANGE} days. Download a PDF report for your
-        accountant or team.
+        you spend as an advertiser. Download a PDF report for your accountant or team.
       </p>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {/* Balances, not a period. "Available to withdraw" is lifetime earnings
+          minus lifetime payouts; clipping it to the last {RANGE} days would
+          under-report money the account is owed. The tables below are the ones
+          that cover a window, and they say so. */}
+      <h2 className="mt-6 text-sm font-medium uppercase tracking-wider text-[var(--color-muted)]">
+        Balance · all time
+      </h2>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total earned" value={dollars(t.earnedCents)} accent />
         <Stat label="Total spend" value={dollars(t.spentCents)} />
         <Stat label="Net" value={dollars(t.netCents)} accent={t.netCents >= 0} danger={t.netCents < 0} />
         <Stat label="Available to withdraw" value={dollars(t.availableCents)} />
       </div>
 
-      <div className="mt-6">
-        <MoneyTrend data={model.daily} />
-      </div>
-
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <MiniStat label="Earned today" value={dollars(t.earnedTodayCents)} />
         <MiniStat label="Spent today" value={dollars(t.spendTodayCents)} />
         <MiniStat label="Withdrawn" value={dollars(t.withdrawnCents)} />
         <MiniStat label="Net" value={dollars(t.netCents)} />
       </div>
+
+      {/* Everything below covers the window, and the heading is the only place
+          that has to say so. */}
+      <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-[var(--color-muted)]">
+        Delivery · last {RANGE} days
+      </h2>
+
+      <div className="mt-3">
+        <MoneyTrend data={model.daily} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <MiniStat
+          label="Publisher impr."
+          value={t.pubImpressions.toLocaleString()}
+        />
+        <MiniStat label="Publisher clicks" value={t.pubClicks.toLocaleString()} />
+        <MiniStat
+          label="Advertiser impr."
+          value={t.advImpressions.toLocaleString()}
+        />
+        <MiniStat label="Advertiser clicks" value={t.advClicks.toLocaleString()} />
+      </div>
+
+      {/* Delivery counts free backfill, so a range that earned nothing still
+          reports the traffic it carried. Without this line the tables read as a
+          billing fault rather than as the free tier working. */}
+      {deliveredInRange && rangeEarnedCents === 0 && rangeSpentCents === 0 && (
+        <p className="mt-3 text-sm text-[var(--color-muted)]">
+          Impressions and clicks count free-tier backfill as well as paid inventory — a
+          campaign out of credits or daily budget, or one running on a slot its own
+          account owns. It bills nobody and earns nobody, which is why delivery can be
+          busy while the money is flat.
+        </p>
+      )}
+
+      {/* Otherwise these are recorded and shown nowhere, and on a site under a
+          bot run they are most of the click volume. */}
+      {t.invalidClicks > 0 && (
+        <p className="mt-2 text-sm text-[var(--color-muted)]">
+          {invalidNote} — bot, duplicate, forged, or against a campaign that was not
+          servable — and left out of the figures above.
+        </p>
+      )}
 
       {/* Publisher earnings */}
       <h2 className="mt-8 text-xl font-semibold">Earnings by site</h2>
