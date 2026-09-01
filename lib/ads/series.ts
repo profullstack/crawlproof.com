@@ -27,6 +27,36 @@ export const EMPTY_TOTALS: RangeTotals = {
   spentCents: 0,
 };
 
+/**
+ * A loader's result together with whether the query behind it actually ran.
+ *
+ * Every loader below zero-fills rather than throwing, so one failing panel
+ * cannot take the whole page down with it. That part is deliberate and stays.
+ * What it cost is a way to tell the two apart: a cancelled query and a
+ * genuinely quiet range produced byte-identical output, so the dashboard could
+ * report four zeros over a network delivering six figures and say nothing was
+ * wrong. It has now done exactly that three times, for three unrelated reasons
+ * — the paid-only measure (#199), the same bug on two more surfaces (#225), and
+ * an RPC being cancelled by statement_timeout. Each time the zeros were read as
+ * a dead pipeline and diagnosed from scratch.
+ *
+ * `failed` is how a caller tells "we could not load this" from "this is 0".
+ */
+export type Loaded<T> = { data: T; failed: boolean };
+
+/**
+ * Record an RPC failure and report whether there was one.
+ *
+ * Logs, because the error was previously discarded at the point of failure:
+ * the only surviving evidence that a query had been cancelled was in Postgres'
+ * own logs, which is a long way to go to explain a tile reading 0.
+ */
+function rpcFailed(name: string, error: { message?: string } | null): boolean {
+  if (!error) return false;
+  console.error(`[ads] RPC ${name} failed: ${error.message ?? "unknown error"}`);
+  return true;
+}
+
 type AccountSeriesRow = {
   bucket: string;
   impressions: number | string;
@@ -49,13 +79,14 @@ export async function getAccountSeries(
   supabase: SupabaseClient,
   range: RangeDef,
   now: Date = new Date(),
-): Promise<AccountPoint[]> {
+): Promise<Loaded<AccountPoint[]>> {
   const { data, error } = await supabase.rpc("ad_account_series", {
     p_since: rangeSince(range, now),
     p_bucket_seconds: range.bucketSeconds,
   });
 
-  const rows = error ? [] : ((data as AccountSeriesRow[]) ?? []);
+  const failed = rpcFailed("ad_account_series", error);
+  const rows = failed ? [] : ((data as AccountSeriesRow[]) ?? []);
 
   // "All time" has no fixed start, so the axis runs from the oldest bucket that
   // actually has data rather than from a window offset.
@@ -86,7 +117,7 @@ export async function getAccountSeries(
     point.spentCents += Number(row.spent_cents) || 0;
   }
 
-  return [...byBucket.values()].sort((a, b) => a.t - b.t);
+  return { data: [...byBucket.values()].sort((a, b) => a.t - b.t), failed };
 }
 
 function allTimeAxis(rows: AccountSeriesRow[], range: RangeDef, now: Date): number[] {
@@ -168,7 +199,7 @@ export async function getCampaignRangeTotals(
   supabase: SupabaseClient,
   range: RangeDef,
   now: Date = new Date(),
-): Promise<Map<string, RangeTotals>> {
+): Promise<Loaded<Map<string, RangeTotals>>> {
   return getCampaignTotalsSince(supabase, rangeSince(range, now));
 }
 
@@ -182,10 +213,10 @@ export async function getCampaignRangeTotals(
 export async function getCampaignTotalsSince(
   supabase: SupabaseClient,
   since: string | null,
-): Promise<Map<string, RangeTotals>> {
+): Promise<Loaded<Map<string, RangeTotals>>> {
   const out = new Map<string, RangeTotals>();
   const { data, error } = await supabase.rpc("ad_campaign_totals", { p_since: since });
-  if (error) return out;
+  if (rpcFailed("ad_campaign_totals", error)) return { data: out, failed: true };
 
   for (const row of (data as CampaignTotalsRow[]) ?? []) {
     out.set(row.campaign_id, {
@@ -196,7 +227,7 @@ export async function getCampaignTotalsSince(
       spentCents: Number(row.spent_cents) || 0,
     });
   }
-  return out;
+  return { data: out, failed: false };
 }
 
 /**
@@ -247,10 +278,10 @@ type SlotTotalsRow = {
 export async function getSlotTotalsSince(
   supabase: SupabaseClient,
   since: string | null,
-): Promise<Map<string, SlotTotals>> {
+): Promise<Loaded<Map<string, SlotTotals>>> {
   const out = new Map<string, SlotTotals>();
   const { data, error } = await supabase.rpc("ad_slot_totals", { p_since: since });
-  if (error) return out;
+  if (rpcFailed("ad_slot_totals", error)) return { data: out, failed: true };
 
   for (const row of (data as SlotTotalsRow[]) ?? []) {
     out.set(row.slot_id, {
@@ -262,7 +293,7 @@ export async function getSlotTotalsSince(
       earnedCents: Number(row.earned_cents) || 0,
     });
   }
-  return out;
+  return { data: out, failed: false };
 }
 
 /**
@@ -318,9 +349,10 @@ type DailySeriesRow = {
 /**
  * Per-campaign daily impressions / clicks / spend for the last `days`.
  *
- * Aggregated server-side by the ad_campaign_daily_series RPC (security_invoker,
- * so RLS scopes it to the caller's own campaigns). We must NOT fetch and bucket
- * raw ad_impressions rows here: PostgREST caps a response at 1000 rows, so once
+ * Aggregated server-side by the ad_campaign_daily_series RPC (security definer,
+ * scoped by its own `owner_id = auth.uid()` filter rather than by RLS — see
+ * 20260901153000_ad_reporting_rpcs_security_definer.sql for why). We must NOT
+ * fetch and bucket raw ad_impressions rows here: PostgREST caps a response at 1000 rows, so once
  * total impressions in the window exceed 1000 a few high-volume campaigns eat
  * the whole page and every other campaign gets zero rows back — rendering
  * "no traffic yet" despite having recent impressions. The RPC returns at most
@@ -331,13 +363,13 @@ export async function getCampaignDailySeries(
   supabase: SupabaseClient,
   campaignIds: string[],
   days = 30,
-): Promise<Map<string, CampaignDailyPoint[]>> {
+): Promise<Loaded<Map<string, CampaignDailyPoint[]>>> {
   const axis = dayAxis(days);
   const result = new Map<string, CampaignDailyPoint[]>();
   const emptyFor = () =>
     axis.map((date) => ({ date, impressions: 0, clicks: 0, spentCents: 0 }));
   for (const id of campaignIds) result.set(id, emptyFor());
-  if (campaignIds.length === 0) return result;
+  if (campaignIds.length === 0) return { data: result, failed: false };
 
   // index[campaignId][date] -> point, for O(1) accumulation
   const index = new Map<string, Map<string, CampaignDailyPoint>>();
@@ -350,8 +382,10 @@ export async function getCampaignDailySeries(
   const { data, error } = await supabase.rpc("ad_campaign_daily_series", {
     days,
   });
-  // On error, fall back to the zero-filled series rather than throwing the page.
-  if (error) return result;
+  // On error, fall back to the zero-filled series rather than throwing the
+  // page — but say so, so the caller can render "couldn't load" over a flat
+  // line instead of presenting it as a real month of no traffic.
+  if (rpcFailed("ad_campaign_daily_series", error)) return { data: result, failed: true };
 
   for (const row of (data as DailySeriesRow[]) ?? []) {
     const point = index.get(row.campaign_id)?.get(dayKey(row.day));
@@ -362,7 +396,7 @@ export async function getCampaignDailySeries(
     }
   }
 
-  return result;
+  return { data: result, failed: false };
 }
 
 type SlotSeriesRow = {
@@ -374,20 +408,20 @@ type SlotSeriesRow = {
 
 /**
  * Per-slot daily clicks / publisher earnings for the last `days`.
- * Server-side aggregate via the ad_slot_daily_series RPC (security_invoker →
- * RLS scopes to the caller's own slots). Same 1000-row-cap rationale as
+ * Server-side aggregate via the ad_slot_daily_series RPC (security definer,
+ * self-scoped by `owner_id = auth.uid()`). Same 1000-row-cap rationale as
  * getCampaignDailySeries. See migration 20260717150000_ad_slot_daily_series_rpc.sql.
  */
 export async function getSlotDailySeries(
   supabase: SupabaseClient,
   slotIds: string[],
   days = 30,
-): Promise<Map<string, SlotDailyPoint[]>> {
+): Promise<Loaded<Map<string, SlotDailyPoint[]>>> {
   const axis = dayAxis(days);
   const result = new Map<string, SlotDailyPoint[]>();
   const emptyFor = () => axis.map((date) => ({ date, clicks: 0, earnedCents: 0 }));
   for (const id of slotIds) result.set(id, emptyFor());
-  if (slotIds.length === 0) return result;
+  if (slotIds.length === 0) return { data: result, failed: false };
 
   const index = new Map<string, Map<string, SlotDailyPoint>>();
   for (const id of slotIds) {
@@ -397,7 +431,7 @@ export async function getSlotDailySeries(
   }
 
   const { data, error } = await supabase.rpc("ad_slot_daily_series", { days });
-  if (error) return result;
+  if (rpcFailed("ad_slot_daily_series", error)) return { data: result, failed: true };
 
   for (const row of (data as SlotSeriesRow[]) ?? []) {
     const point = index.get(row.slot_id)?.get(dayKey(row.day));
@@ -407,7 +441,7 @@ export async function getSlotDailySeries(
     }
   }
 
-  return result;
+  return { data: result, failed: false };
 }
 
 /** Merge campaign spend series + slot earnings series into one account-wide

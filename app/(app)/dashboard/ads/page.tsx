@@ -6,6 +6,7 @@ import { MiniTrend } from "@/components/ads/mini-trend";
 import { AccountTrend } from "@/components/ads/account-trend";
 import { RangeTabs } from "@/components/ads/range-tabs";
 import { StatSpark } from "@/components/ads/stat-spark";
+import { StatsUnavailable } from "@/components/ads/stats-unavailable";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -66,6 +67,10 @@ export default async function AdsPage({
   // Spendable credits decide whether a campaign is on the paid tier or running
   // as free backfill, so the badge can't be derived from the campaign row alone.
   let creditsAvailable: number | null = null;
+  // A failed stats query zero-fills, so without this the page would report a
+  // confident 0 for a range it simply could not read. See Loaded<> in
+  // lib/ads/series.ts.
+  let statsFailed = false;
   if (user) {
     const [{ data }, { data: profile }, accountSeries, campaignTotals] = await Promise.all([
       supabase
@@ -84,13 +89,15 @@ export default async function AdsPage({
     ]);
     creditsAvailable = (profile?.credits_balance ?? 0) + (profile?.ad_bonus_credits ?? 0);
     campaigns = (data as CampaignRow[]) ?? [];
-    series = accountSeries;
-    rangeById = campaignTotals;
-    seriesById = await getCampaignDailySeries(
+    series = accountSeries.data;
+    rangeById = campaignTotals.data;
+    const daily = await getCampaignDailySeries(
       supabase,
       campaigns.map((c) => c.id),
       30,
     );
+    seriesById = daily.data;
+    statsFailed = accountSeries.failed || campaignTotals.failed || daily.failed;
   }
 
   const today = utcToday();
@@ -127,6 +134,8 @@ export default async function AdsPage({
             </Suspense>
             <span className="text-sm text-[var(--color-muted)]">{range.hint}</span>
           </div>
+
+          {statsFailed && <StatsUnavailable what="delivery stats" />}
 
           {/* Delivery first, revenue second. The tiles count every ad actually
               shown — paid inventory plus free backfill — and name the split

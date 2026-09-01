@@ -127,6 +127,14 @@ export function buildEarningsReportHtml(input: {
     <div class="sub">Account: ${esc(account)} · Period: ${esc(from)} → ${esc(to)} (${model.rangeDays} days) · Generated ${esc(
       gen.toLocaleString(),
     )}</div>
+    ${
+      // A report that says "0 impressions" because a query was cancelled is
+      // worse than one that admits it could not read them: this document gets
+      // handed to accountants and teams, where a silent zero is taken as fact.
+      model.statsUnavailable
+        ? `<div class="sub" style="color:#b45309">Delivery figures for this period could not be loaded and are shown as zero. Regenerate this report before relying on the impression and click columns.</div>`
+        : ""
+    }
 
     <div class="tiles">
       <div class="tile"><div class="k">Total earned</div><div class="v pos">${esc(dollars(t.earnedCents))}</div></div>
