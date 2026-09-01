@@ -125,12 +125,15 @@ export function sumSeries(points: AccountPoint[]): RangeTotals {
  * impressions. A free-tier impression is still an impression; what it isn't is
  * revenue, and Spend is the tile that says so.
  */
-export function deliveredImpressions(t: RangeTotals): number {
+export function deliveredImpressions(t: {
+  impressions: number;
+  freeImpressions: number;
+}): number {
   return t.impressions + t.freeImpressions;
 }
 
 /** Clicks actually taken in the range: billed plus unbillable-but-real. */
-export function deliveredClicks(t: RangeTotals): number {
+export function deliveredClicks(t: { clicks: number; freeClicks: number }): number {
   return t.clicks + t.freeClicks;
 }
 
@@ -166,10 +169,22 @@ export async function getCampaignRangeTotals(
   range: RangeDef,
   now: Date = new Date(),
 ): Promise<Map<string, RangeTotals>> {
+  return getCampaignTotalsSince(supabase, rangeSince(range, now));
+}
+
+/**
+ * Per-campaign totals from an explicit window start (null = all time).
+ *
+ * Split out from getCampaignRangeTotals because the earnings page and the PDF
+ * report think in calendar days rather than in chart ranges, and both need the
+ * same free-tier-aware figures the campaigns dashboard already gets.
+ */
+export async function getCampaignTotalsSince(
+  supabase: SupabaseClient,
+  since: string | null,
+): Promise<Map<string, RangeTotals>> {
   const out = new Map<string, RangeTotals>();
-  const { data, error } = await supabase.rpc("ad_campaign_totals", {
-    p_since: rangeSince(range, now),
-  });
+  const { data, error } = await supabase.rpc("ad_campaign_totals", { p_since: since });
   if (error) return out;
 
   for (const row of (data as CampaignTotalsRow[]) ?? []) {
@@ -182,6 +197,84 @@ export async function getCampaignRangeTotals(
     });
   }
   return out;
+}
+
+/**
+ * Publisher-side totals for one slot over a window.
+ *
+ * Same paid/free split as RangeTotals, but the money runs the other way
+ * (earned, not spent) and there is one extra bucket: invalidClicks, the clicks
+ * we recorded and refused to count as delivery. They are reported on their own
+ * rather than added to freeClicks — a bot or duplicate click is not delivery,
+ * and folding it in would inflate every CTR on the earnings page.
+ */
+export type SlotTotals = {
+  impressions: number;
+  freeImpressions: number;
+  clicks: number;
+  freeClicks: number;
+  invalidClicks: number;
+  earnedCents: number;
+};
+
+export const EMPTY_SLOT_TOTALS: SlotTotals = {
+  impressions: 0,
+  freeImpressions: 0,
+  clicks: 0,
+  freeClicks: 0,
+  invalidClicks: 0,
+  earnedCents: 0,
+};
+
+type SlotTotalsRow = {
+  slot_id: string;
+  impressions: number | string;
+  free_impressions: number | string;
+  clicks: number | string;
+  free_clicks: number | string;
+  invalid_clicks: number | string;
+  earned_cents: number | string;
+};
+
+/**
+ * Per-slot totals from an explicit window start (null = all time).
+ *
+ * The publisher-side twin of getCampaignTotalsSince. Reads the ad_slot_totals
+ * RPC rather than the ad_slot_stats view: the view is lifetime and counts only
+ * tier 'paid', so on a network where every fill is free backfill it reports
+ * zero for every site. See migration 20260901120000_ad_slot_totals.sql.
+ */
+export async function getSlotTotalsSince(
+  supabase: SupabaseClient,
+  since: string | null,
+): Promise<Map<string, SlotTotals>> {
+  const out = new Map<string, SlotTotals>();
+  const { data, error } = await supabase.rpc("ad_slot_totals", { p_since: since });
+  if (error) return out;
+
+  for (const row of (data as SlotTotalsRow[]) ?? []) {
+    out.set(row.slot_id, {
+      impressions: Number(row.impressions) || 0,
+      freeImpressions: Number(row.free_impressions) || 0,
+      clicks: Number(row.clicks) || 0,
+      freeClicks: Number(row.free_clicks) || 0,
+      invalidClicks: Number(row.invalid_clicks) || 0,
+      earnedCents: Number(row.earned_cents) || 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * Start of a window `days` UTC calendar days long, ending today — the same
+ * window dayAxis() draws and the same one ad_campaign_daily_series filters on,
+ * so a table total always agrees with the chart above it.
+ */
+export function sinceForDays(days: number, now: Date = new Date()): string {
+  const n = Math.max(1, Math.floor(days));
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (n - 1)),
+  ).toISOString();
 }
 
 export type CampaignDailyPoint = {

@@ -3,6 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { fetchSupportedTokens } from "@/lib/coinpay-tokens";
 import { SlotManager } from "@/components/ads/slot-manager";
+import {
+  deliveredClicks,
+  deliveredImpressions,
+  getSlotTotalsSince,
+  type SlotTotals,
+} from "@/lib/ads/series";
 
 // Fallback coins when CoinPay's supported-coins endpoint is unavailable, so the
 // payout dropdown is never empty. Codes match what /payments+/payouts expect.
@@ -34,7 +40,6 @@ type Payout = {
   tx_hash: string | null;
   created_at: string;
 };
-type SlotStat = { slot_id: string; impressions: number; clicks: number; earned_cents: number };
 
 export default async function SlotsPage() {
   const supabase = await createClient();
@@ -47,9 +52,9 @@ export default async function SlotsPage() {
   const earnedBySlot = new Map<string, number>();
   const withdrawnBySlot = new Map<string, number>();
   const payoutsBySlot = new Map<string, Payout[]>();
-  const statsBySlot = new Map<string, SlotStat>();
+  let statsBySlot = new Map<string, SlotTotals>();
   if (user) {
-    const [{ data: p }, { data: s }, { data: ledger }, { data: payouts }, { data: slotStats }] =
+    const [{ data: p }, { data: s }, { data: ledger }, { data: payouts }, slotStats] =
       await Promise.all([
         // Monetization is owner-only: you earn from a slot, so only list projects
         // you OWN — not org/member-shared ones the broad RLS would also return.
@@ -64,11 +69,15 @@ export default async function SlotsPage() {
           .from("ad_payouts")
           .select("id, slot_id, amount_cents, currency, status, tx_hash, created_at")
           .order("created_at", { ascending: false }),
-        supabase.from("ad_slot_stats").select("slot_id, impressions, clicks, earned_cents"),
+        // Lifetime (null window), like the payout figures beside it — but via
+        // the RPC rather than the ad_slot_stats view, because the view counts
+        // only tier 'paid' and every fill here is free backfill, so every site
+        // read 0 impressions while serving six figures of them.
+        getSlotTotalsSince(supabase, null),
       ]);
     projects = (p as Project[]) ?? [];
     slots = (s as Slot[]) ?? [];
-    for (const st of (slotStats as SlotStat[]) ?? []) statsBySlot.set(st.slot_id, st);
+    statsBySlot = slotStats;
     for (const row of (ledger as { slot_id: string; amount_cents: number }[]) ?? []) {
       if (row.slot_id) earnedBySlot.set(row.slot_id, (earnedBySlot.get(row.slot_id) ?? 0) + (row.amount_cents ?? 0));
     }
@@ -139,7 +148,17 @@ export default async function SlotsPage() {
                 availableCents={earned - withdrawn}
                 coins={coins}
                 payouts={slot ? payoutsBySlot.get(slot.id) ?? [] : []}
-                stats={stat ? { impressions: stat.impressions, clicks: stat.clicks, earnedCents: stat.earned_cents } : null}
+                stats={
+                  stat
+                    ? {
+                        // Paid inventory plus free backfill: what the site
+                        // actually showed, not just what someone paid for.
+                        impressions: deliveredImpressions(stat),
+                        clicks: deliveredClicks(stat),
+                        earnedCents: stat.earnedCents,
+                      }
+                    : null
+                }
               />
             );
           })}

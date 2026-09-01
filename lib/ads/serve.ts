@@ -525,6 +525,15 @@ export async function resolveClick(input: {
     } else {
       // Invalid (bot / duplicate / forged): record an unbilled click for
       // analytics, charge nobody.
+      //
+      // `tier` is written explicitly even though 'paid' is the column default,
+      // because which bucket this row lands in is a decision, not a default.
+      // Reporting counts billed clicks as `valid` and unbillable-but-real ones
+      // as `not valid and tier = 'free'`; an invalid click is neither, and
+      // moving it into the free bucket to make it visible would fold bot
+      // traffic into delivery and inflate every CTR on the dashboard. It stays
+      // out, and ad_slot_totals reports the count separately as invalid_clicks
+      // so it is still visible somewhere.
       await sb.from("ad_clicks").insert({
         impression_id: input.impressionId ?? null,
         slot_id: input.slotId,
@@ -538,6 +547,7 @@ export async function resolveClick(input: {
         publisher_earn_cents: 0,
         platform_cut_cents: 0,
         valid: false,
+        tier: "paid",
       });
     }
   }

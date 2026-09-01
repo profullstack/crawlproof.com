@@ -1,8 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  deliveredClicks,
+  deliveredImpressions,
   getCampaignDailySeries,
+  getCampaignTotalsSince,
   getSlotDailySeries,
+  getSlotTotalsSince,
   mergeMoneySeries,
+  sinceForDays,
+  EMPTY_SLOT_TOTALS,
+  EMPTY_TOTALS,
 } from "./series";
 
 // Unified money model for one account — a single user is both an advertiser
@@ -40,6 +47,19 @@ export type EarningsPayoutRow = {
 
 export type EarningsModel = {
   rangeDays: number;
+  /**
+   * Money is a balance and delivery is a rate, so they answer different
+   * questions and cannot share a window.
+   *
+   * `spentCents` / `earnedCents` / `withdrawnCents` / `availableCents` /
+   * `netCents` are ALL TIME: "available to withdraw" is lifetime earnings minus
+   * lifetime payouts, and clipping it to the last 30 days would under-report a
+   * real balance the account is owed.
+   *
+   * Everything else — the impression and click totals, and every row in
+   * `campaigns` and `slots` — covers `rangeDays`, which is what the page and
+   * the PDF header both promise.
+   */
   totals: {
     spentCents: number;
     earnedCents: number;
@@ -52,6 +72,13 @@ export type EarningsModel = {
     advClicks: number;
     pubImpressions: number;
     pubClicks: number;
+    /**
+     * Clicks recorded in the range and deliberately not counted as delivery:
+     * bot, duplicate, forged, or against a campaign that was not servable.
+     * Reported so they are visible somewhere; kept out of pubClicks so a bot
+     * run cannot flatter the CTR.
+     */
+    invalidClicks: number;
   };
   campaigns: EarningsCampaignRow[];
   slots: EarningsSlotRow[];
@@ -67,10 +94,8 @@ type CampaignRow = {
   spend_today_cents: number | null;
   spend_date: string | null;
 };
-type CampaignStat = { campaign_id: string; impressions: number; clicks: number; spent_cents: number };
 type Project = { id: string; name: string };
 type Slot = { id: string; project_id: string; status: string };
-type SlotStat = { slot_id: string; impressions: number; clicks: number; earned_cents: number };
 type LedgerRow = { slot_id: string | null; amount_cents: number | null };
 type PayoutRow = {
   amount_cents: number | null;
@@ -85,21 +110,29 @@ export async function loadEarnings(
   userId: string,
   days = 30,
 ): Promise<EarningsModel> {
+  // The window the tables and the impression/click totals cover. Money is not
+  // scoped to it — see the note on EarningsModel.totals.
+  const since = sinceForDays(days);
+
   const [
     { data: campaignsData },
-    { data: campaignStatsData },
+    campaignTotals,
     { data: projectsData },
     { data: slotsData },
-    { data: slotStatsData },
+    slotTotals,
     { data: ledgerData },
     { data: payoutsData },
   ] = await Promise.all([
     supabase.from("ad_campaigns").select("id, name, status, total_spent_cents, spend_today_cents, spend_date"),
-    supabase.from("ad_campaign_stats").select("campaign_id, impressions, clicks, spent_cents"),
+    // Not ad_campaign_stats / ad_slot_stats: those views are lifetime and count
+    // only tier 'paid', so on a network running entirely on free backfill they
+    // report zero for every campaign and every site. The RPCs take a window and
+    // return both tiers.
+    getCampaignTotalsSince(supabase, since),
     // Monetization is owner-only (payouts go to the slot owner), like /ads/slots.
     supabase.from("projects").select("id, name").eq("owner_id", userId),
     supabase.from("ad_slots").select("id, project_id, status"),
-    supabase.from("ad_slot_stats").select("slot_id, impressions, clicks, earned_cents"),
+    getSlotTotalsSince(supabase, since),
     supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual"),
     supabase
       .from("ad_payouts")
@@ -108,14 +141,10 @@ export async function loadEarnings(
   ]);
 
   const campaigns = (campaignsData as CampaignRow[]) ?? [];
-  const campaignStats = new Map<string, CampaignStat>();
-  for (const s of (campaignStatsData as CampaignStat[]) ?? []) campaignStats.set(s.campaign_id, s);
   const projectsById = new Map<string, Project>();
   for (const p of (projectsData as Project[]) ?? []) projectsById.set(p.id, p);
   // Only slots for projects the user owns (mirrors the /ads/slots scoping).
   const slots = ((slotsData as Slot[]) ?? []).filter((s) => projectsById.has(s.project_id));
-  const slotStats = new Map<string, SlotStat>();
-  for (const s of (slotStatsData as SlotStat[]) ?? []) slotStats.set(s.slot_id, s);
   const earnedBySlot = new Map<string, number>();
   for (const row of (ledgerData as LedgerRow[]) ?? []) {
     if (row.slot_id) earnedBySlot.set(row.slot_id, (earnedBySlot.get(row.slot_id) ?? 0) + (row.amount_cents ?? 0));
@@ -124,31 +153,39 @@ export async function loadEarnings(
 
   const todayUtc = new Date().toISOString().slice(0, 10);
 
+  // Delivery is paid inventory plus free backfill, the same measure the
+  // campaigns dashboard reports. A free-tier impression is still an impression;
+  // what it is not is revenue, and the money columns say so on their own.
   const campaignRows: EarningsCampaignRow[] = campaigns.map((c) => {
-    const s = campaignStats.get(c.id);
+    const s = campaignTotals.get(c.id) ?? EMPTY_TOTALS;
     return {
       id: c.id,
       name: c.name,
       status: c.status,
-      impressions: s?.impressions ?? 0,
-      clicks: s?.clicks ?? 0,
-      spentCents: c.total_spent_cents ?? 0,
+      impressions: deliveredImpressions(s),
+      clicks: deliveredClicks(s),
+      spentCents: s.spentCents,
     };
   });
 
   const slotRows: EarningsSlotRow[] = slots.map((sl) => {
-    const s = slotStats.get(sl.id);
+    const s = slotTotals.get(sl.id) ?? EMPTY_SLOT_TOTALS;
     return {
       id: sl.id,
       name: projectsById.get(sl.project_id)?.name ?? "Site",
       status: sl.status,
-      impressions: s?.impressions ?? 0,
-      clicks: s?.clicks ?? 0,
-      earnedCents: earnedBySlot.get(sl.id) ?? 0,
+      impressions: deliveredImpressions(s),
+      clicks: deliveredClicks(s),
+      earnedCents: s.earnedCents,
     };
   });
 
-  const spentCents = campaignRows.reduce((a, c) => a + c.spentCents, 0);
+  // Lifetime, deliberately — these feed the balance tiles. `availableCents` is
+  // lifetime earnings minus lifetime payouts, so scoping either side to the
+  // range would under-report money the account is actually owed. Read them from
+  // the campaign row and the ledger rather than from campaignRows/slotRows,
+  // whose money columns now cover the range instead.
+  const spentCents = campaigns.reduce((a, c) => a + (c.total_spent_cents ?? 0), 0);
   const earnedCents = [...earnedBySlot.values()].reduce((a, v) => a + v, 0);
   const withdrawnCents = payouts
     .filter((p) => p.status !== "failed")
@@ -179,6 +216,10 @@ export async function loadEarnings(
       advClicks: campaignRows.reduce((a, c) => a + c.clicks, 0),
       pubImpressions: slotRows.reduce((a, s) => a + s.impressions, 0),
       pubClicks: slotRows.reduce((a, s) => a + s.clicks, 0),
+      invalidClicks: slots.reduce(
+        (a, sl) => a + (slotTotals.get(sl.id)?.invalidClicks ?? 0),
+        0,
+      ),
     },
     campaigns: campaignRows,
     slots: slotRows,
