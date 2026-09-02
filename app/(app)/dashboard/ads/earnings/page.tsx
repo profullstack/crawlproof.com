@@ -3,7 +3,7 @@ import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/server";
 import { loadEarnings, dollars, type EarningsModel } from "@/lib/ads/earnings-data";
 import { EarningsPdfButton } from "@/components/ads/earnings-pdf-button";
-import { StatsUnavailable } from "@/components/ads/stats-unavailable";
+import { StatsUnavailable } from "@/components/stats-unavailable";
 
 // recharts is client-only; keep it out of the server bundle.
 const MoneyTrend = dynamic(() => import("@/components/ads/money-trend").then((m) => m.MoneyTrend));

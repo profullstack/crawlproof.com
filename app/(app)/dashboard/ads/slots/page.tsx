@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { fetchSupportedTokens } from "@/lib/coinpay-tokens";
 import { SlotManager } from "@/components/ads/slot-manager";
-import { StatsUnavailable } from "@/components/ads/stats-unavailable";
+import { StatsUnavailable } from "@/components/stats-unavailable";
 import {
   deliveredClicks,
   deliveredImpressions,

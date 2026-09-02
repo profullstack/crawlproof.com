@@ -6,7 +6,7 @@ import { MiniTrend } from "@/components/ads/mini-trend";
 import { AccountTrend } from "@/components/ads/account-trend";
 import { RangeTabs } from "@/components/ads/range-tabs";
 import { StatSpark } from "@/components/ads/stat-spark";
-import { StatsUnavailable } from "@/components/ads/stats-unavailable";
+import { StatsUnavailable } from "@/components/stats-unavailable";
 import {
   deliveredClicks,
   deliveredImpressions,
