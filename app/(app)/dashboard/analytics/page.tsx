@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { rpcFailed } from "@/lib/loaded";
+import { StatsUnavailable } from "@/components/stats-unavailable";
 import { ProjectLogo } from "@/components/project-logo";
 import { FontSparkline } from "@/components/font-sparkline";
 import { bucketLabel } from "@/lib/tracker/categorize";
@@ -175,6 +177,30 @@ export default async function PortfolioAnalyticsPage({
     supabase.rpc("tracker_device_totals_multi", { p_projects: projectIds, days }),
   ]);
 
+  // Every panel below zero-fills on failure so one bad query cannot take the
+  // page down. Without this flag that is indistinguishable from a portfolio
+  // with no traffic: these eleven RPCs run concurrently over every project the
+  // account owns, and when they were cancelled by the 8s statement_timeout the
+  // whole page rendered as zeros with nothing logged.
+  const rpcResults: Array<[string, { error: { message?: string } | null }]> = [
+    ["tracker_daily_series_multi", seriesRes],
+    ["tracker_project_totals", totalsRes],
+    ["tracker_bucket_totals_multi", bucketsRes],
+    ["tracker_event_mix_multi", mixRes],
+    ["tracker_top_pages_multi", pagesRes],
+    ["tracker_top_referrers_multi", referrersRes],
+    ["tracker_top_actions_multi", actionsRes],
+    ["tracker_top_exit_pages_multi", exitRes],
+    ["tracker_top_countries_multi", countriesRes],
+    ["tracker_top_cities_multi", citiesRes],
+    ["tracker_device_totals_multi", devicesRes],
+  ];
+  let statsFailed = false;
+  // Not `.some()`: every failure should be logged, not just the first.
+  for (const [name, res] of rpcResults) {
+    if (rpcFailed("tracker", name, res.error)) statsFailed = true;
+  }
+
   const series = ((seriesRes.data ?? []) as Parameters<typeof toSeriesRow>[0][]).map(
     toSeriesRow,
   );
@@ -215,9 +241,14 @@ export default async function PortfolioAnalyticsPage({
     Math.min(ranked.length, Math.floor(DAILY_ROW_BUDGET / days)),
   );
   const detailIds = ranked.slice(0, detailCount).map((r) => r.project.id);
-  const { data: perProjectRaw } = await supabase.rpc(
+  const { data: perProjectRaw, error: perProjectError } = await supabase.rpc(
     "tracker_project_daily_series",
     { p_projects: detailIds, days },
+  );
+  const perProjectFailed = rpcFailed(
+    "tracker",
+    "tracker_project_daily_series",
+    perProjectError,
   );
 
   const axis = utcDayAxis(days);
@@ -396,6 +427,10 @@ export default async function PortfolioAnalyticsPage({
   return (
     <div className="space-y-6">
       <PageHeader days={days} orgs={orgs} selectedOrgId={selectedOrg?.id ?? null} />
+
+      {(statsFailed || perProjectFailed) && (
+        <StatsUnavailable what="portfolio analytics for this window" />
+      )}
 
       <section className="card p-4">
         <h2 className="text-lg font-semibold">{verdict}</h2>

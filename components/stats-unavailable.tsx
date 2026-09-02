@@ -2,10 +2,12 @@
  * Shown when a stats query failed, in place of the zeros it would otherwise
  * have rendered.
  *
- * The ad dashboards zero-fill on failure so one bad panel cannot take the page
- * down. Without this banner that choice is indistinguishable from a real run of
- * no delivery, which is how a live network reporting six figures of impressions
- * came to show four zeros and read as a dead pipeline.
+ * The ad and tracker dashboards both zero-fill on failure so one bad panel
+ * cannot take the page down. Without this banner that choice is
+ * indistinguishable from a real run of no traffic, which is how a live network
+ * reporting six figures of impressions came to show four zeros, and how every
+ * project on the portfolio page came to read 0 pageviews while ingest was
+ * writing rows every second.
  */
 export function StatsUnavailable({ what = "these figures" }: { what?: string }) {
   return (

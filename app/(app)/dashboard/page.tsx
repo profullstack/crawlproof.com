@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { rpcFailed, type Loaded } from "@/lib/loaded";
 import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
 import { ProjectLogo } from "@/components/project-logo";
+import { StatsUnavailable } from "@/components/stats-unavailable";
 import { backfillProjectLogo } from "@/app/actions/createProject";
 import { getOrCreateDefaultOrg, isOrgWideRole, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
 import { listOrgTeam } from "@/app/actions/org-members";
@@ -118,12 +120,14 @@ export default async function DashboardPage({
   // project has an lx_site row in status=active; social is "on" when at
   // least one social account is linked at the project level.
   const projectIds = (projects ?? []).map((p) => p.id);
-  const [autoblogIds, socialIds, latestPosts, trafficByProject] = await Promise.all([
+  const [autoblogIds, socialIds, latestPosts, traffic] = await Promise.all([
     fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
     fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
     fetchLatestBlogPostByProject(supabase, projectIds),
     fetchSevenDayPageviews(supabase, projectIds),
   ]);
+  const trafficByProject = traffic.data;
+  const trafficFailed = traffic.failed;
 
   // Lazy backfill: any project still missing a logo gets one scraped
   // in the background on this dashboard hit. Fire-and-forget — the
@@ -186,6 +190,10 @@ export default async function DashboardPage({
             })}
           </div>
         </div>
+
+        {projects && projects.length > 0 && trafficFailed && (
+          <StatsUnavailable what="pageviews for these projects" />
+        )}
 
         {projects && projects.length > 0 ? (
           <ul className="grid gap-3 md:grid-cols-2">
@@ -256,13 +264,17 @@ export default async function DashboardPage({
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
                   <div>
                     <div className="text-xs font-medium text-[var(--color-fg)]">
-                      {totalTraffic(trafficByProject.get(p.id) ?? []).toLocaleString()} pageviews
+                      {trafficFailed
+                        ? "Pageviews unavailable"
+                        : `${totalTraffic(trafficByProject.get(p.id) ?? []).toLocaleString()} pageviews`}
                     </div>
                     <div className="text-[11px] text-[var(--color-muted)]">
-                      Past 7 days
+                      {trafficFailed ? "Query failed \u2014 not zero" : "Past 7 days"}
                     </div>
                   </div>
-                  <FontSparkline samples={trafficSamples(trafficByProject.get(p.id))} />
+                  {!trafficFailed && (
+                    <FontSparkline samples={trafficSamples(trafficByProject.get(p.id))} />
+                  )}
                 </div>
                 {orgSchemaReady && (
                   <ProjectOrgMoveControl
@@ -363,7 +375,7 @@ async function fetchLatestBlogPostByProject(
 async function fetchSevenDayPageviews(
   supabase: Awaited<ReturnType<typeof createClient>>,
   projectIds: string[],
-): Promise<Map<string, TrafficPoint[]>> {
+): Promise<Loaded<Map<string, TrafficPoint[]>>> {
   const days = lastSevenDays();
   const out = new Map<string, TrafficPoint[]>();
   for (const projectId of projectIds) {
@@ -372,15 +384,24 @@ async function fetchSevenDayPageviews(
       days.map((day) => ({ day, count: 0 })),
     );
   }
-  if (projectIds.length === 0) return out;
+  if (projectIds.length === 0) return { data: out, failed: false };
 
   // Server-side aggregator — selecting raw rows runs into PostgREST's
   // 1000-row response cap and silently truncates whichever projects'
   // rows didn't make the cut.
-  const { data } = await supabase.rpc("dashboard_project_pageviews", {
+  //
+  // The error is checked rather than discarded: this RPC reads a 1.2M-row
+  // rollup under RLS, and when it was cancelled by the 8s statement_timeout
+  // the zero-filled map below rendered "0 pageviews" on every card. That is
+  // indistinguishable from a portfolio with no traffic, and was read as a
+  // dead tracker three times over.
+  const { data, error } = await supabase.rpc("dashboard_project_pageviews", {
     p_project_ids: projectIds,
     p_since: days[0],
   });
+  if (rpcFailed("tracker", "dashboard_project_pageviews", error)) {
+    return { data: out, failed: true };
+  }
 
   for (const row of (data ?? []) as Array<{
     project_id: string;
@@ -393,7 +414,7 @@ async function fetchSevenDayPageviews(
     if (point) point.count += Number(row.count);
   }
 
-  return out;
+  return { data: out, failed: false };
 }
 
 function lastSevenDays() {
