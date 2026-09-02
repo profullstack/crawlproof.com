@@ -70,7 +70,13 @@ export default async function AdsPage({
   // A failed stats query zero-fills, so without this the page would report a
   // confident 0 for a range it simply could not read. See Loaded<> in
   // lib/ads/series.ts.
+  //
+  // Tracked per loader, not as one flag: the chart and the per-campaign
+  // sparklines come from different RPCs, and either can fail on its own. Only
+  // the panel whose query actually failed should say so.
   let statsFailed = false;
+  let seriesFailed = false;
+  let dailyFailed = false;
   if (user) {
     const [{ data }, { data: profile }, accountSeries, campaignTotals] = await Promise.all([
       supabase
@@ -97,6 +103,8 @@ export default async function AdsPage({
       30,
     );
     seriesById = daily.data;
+    seriesFailed = accountSeries.failed;
+    dailyFailed = daily.failed;
     statsFailed = accountSeries.failed || campaignTotals.failed || daily.failed;
   }
 
@@ -185,7 +193,7 @@ export default async function AdsPage({
           )}
 
           <div className="mt-4">
-            <AccountTrend data={series} range={range} />
+            <AccountTrend data={series} range={range} failed={seriesFailed} />
           </div>
         </>
       )}
@@ -222,7 +230,7 @@ export default async function AdsPage({
                   </div>
                   <div className="flex items-center gap-3">
                     <Link href={`/dashboard/ads/${c.id}`} className="hidden sm:block" aria-label="View campaign">
-                      <MiniTrend data={seriesById.get(c.id) ?? []} />
+                      <MiniTrend data={seriesById.get(c.id) ?? []} failed={dailyFailed} />
                     </Link>
                     <span className="badge whitespace-nowrap" title={display.hint}>
                       {display.label}
