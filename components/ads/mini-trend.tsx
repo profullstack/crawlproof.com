@@ -9,11 +9,28 @@ export function MiniTrend({
   data,
   width = 132,
   height = 34,
+  failed = false,
 }: {
   data: CampaignDailyPoint[];
   width?: number;
   height?: number;
+  failed?: boolean;
 }) {
+  // Zero-filled on failure, so "no traffic yet" would assert something about the
+  // campaign that the query never established. See AccountTrend for the same
+  // distinction on the chart above.
+  if (failed) {
+    return (
+      <div
+        className="flex items-center justify-center text-[10px] text-[var(--color-muted)]"
+        style={{ width, height }}
+        title="Couldn't load this campaign's trend"
+      >
+        unavailable
+      </div>
+    );
+  }
+
   const total = data.reduce((n, p) => n + p.impressions, 0);
   // Count clicks as traffic too (a campaign can have clicks logged without a
   // matching impression row), matching CampaignTrend's empty check. `total`

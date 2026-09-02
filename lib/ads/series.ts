@@ -352,12 +352,23 @@ type DailySeriesRow = {
  * Aggregated server-side by the ad_campaign_daily_series RPC (security definer,
  * scoped by its own `owner_id = auth.uid()` filter rather than by RLS — see
  * 20260901153000_ad_reporting_rpcs_security_definer.sql for why). We must NOT
- * fetch and bucket raw ad_impressions rows here: PostgREST caps a response at 1000 rows, so once
- * total impressions in the window exceed 1000 a few high-volume campaigns eat
- * the whole page and every other campaign gets zero rows back — rendering
- * "no traffic yet" despite having recent impressions. The RPC returns at most
- * (campaigns * days) rows, so it never hits the cap.
- * See migration 20260717032002_ad_campaign_daily_series_rpc.sql.
+ * fetch and bucket raw ad_impressions rows here: PostgREST caps a response at
+ * 1000 rows, so once total impressions in the window exceed 1000 a few
+ * high-volume campaigns eat the whole page and every other campaign gets zero
+ * rows back — rendering "no traffic yet" despite having recent impressions.
+ *
+ * The RPC used to return a row per campaign-day, which was said here to be
+ * safely under that cap and stopped being true as the account grew: 139
+ * campaigns over 30 days is 2,731 rows, and the call was coming back
+ * `206 Partial Content, content-range 0-999/2731`. With no ORDER BY in the
+ * function, which two thirds got dropped was down to the join order — campaigns
+ * silently lost days off the end of their sparkline and five lost every row,
+ * rendering "no traffic yet" beside a row reading "Impressions: 24".
+ *
+ * So it now returns one jsonb array instead. One document is one row, and the
+ * cap cannot apply however many campaigns the account grows to. `data` is that
+ * array already parsed. See 20260902140100_ad_reporting_rpcs_on_rollups.sql,
+ * which is also where it stopped scanning raw events.
  */
 export async function getCampaignDailySeries(
   supabase: SupabaseClient,

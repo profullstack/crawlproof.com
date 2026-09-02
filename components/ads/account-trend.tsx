@@ -26,8 +26,30 @@ import type { AccountPoint } from "@/lib/ads/series";
  * and the split is the point — free backfill is delivery that earns nobody
  * anything, and it should be visible as a share of the whole.
  */
-export function AccountTrend({ data, range }: { data: AccountPoint[]; range: RangeDef }) {
+export function AccountTrend({
+  data,
+  range,
+  failed = false,
+}: {
+  data: AccountPoint[];
+  range: RangeDef;
+  failed?: boolean;
+}) {
   const total = data.reduce((n, p) => n + p.impressions + p.freeImpressions + p.clicks, 0);
+
+  // A failed series arrives zero-filled and so is indistinguishable from a quiet
+  // range by its values alone. Saying "No delivery" here would be a statement of
+  // fact about the network, made from a query that never returned -- the same
+  // mistake #226 fixed for the tiles, still being made by the chart underneath
+  // them, and directly contradicting the banner the page renders above.
+  if (failed) {
+    return (
+      <div className="card flex h-64 items-center justify-center p-4 text-center text-sm text-[var(--color-muted)]">
+        Couldn&apos;t load this chart. It isn&apos;t empty — the query didn&apos;t
+        return. Reloading often fixes it.
+      </div>
+    );
+  }
 
   if (total === 0) {
     return (
