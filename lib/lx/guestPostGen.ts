@@ -42,9 +42,10 @@ import {
   validateInternalLinks,
 } from "./articleGen";
 import { generateStructuredOutput } from "./backendAi";
+import { env } from "../env";
 import { SCAN_CREDITS } from "@/lib/credits";
 
-const CLAUDE_MODEL = "claude-opus-4-8";
+const CLAUDE_MODEL = env.backendAiAnthropicModel;
 
 type SiteCtx = {
   id: string;
@@ -183,7 +184,8 @@ export async function generateGuestPost(
       anthropic,
       openai,
       anthropicModel: CLAUDE_MODEL,
-      maxTokens: 48000,
+      // See articleGen: reasoning tokens share this ceiling on Opus 5.
+      maxTokens: 64000,
       anthropicCacheSystemPrompt: true,
     });
     article = normalizeArticleOutput(generated.output);

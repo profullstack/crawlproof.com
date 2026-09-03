@@ -63,6 +63,25 @@ export function backendAiTextProviderLabel(): string {
   return pref === "auto" ? "Anthropic or OpenAI" : pref === "openai" ? "OpenAI" : "Anthropic";
 }
 
+/**
+ * Thinking config for an Anthropic model.
+ *
+ * Claude 4.6 and later (Opus 5, Opus 4.8, Sonnet 5, Fable 5.1) run adaptive
+ * thinking: the model decides per request how much to reason, and `effort`
+ * bounds it. Sending `disabled` there is the wrong default — on Opus 5 it
+ * makes the model occasionally write its reasoning into the visible answer,
+ * and Fable 5.1 rejects it with a 400. Haiku 4.5 predates adaptive thinking
+ * (it only knows the budget_tokens form), so it stays off there; the Haiku
+ * callsites are short extraction prompts that pass `anthropicEffort: false`.
+ */
+export function anthropicThinkingFor(
+  model: string,
+): { type: "adaptive" } | { type: "disabled" } {
+  return /haiku-4-5|sonnet-4-5|opus-4-5|opus-4-1|claude-3/i.test(model)
+    ? { type: "disabled" }
+    : { type: "adaptive" };
+}
+
 export async function generateStructuredOutput<T>(
   args: StructuredOutputArgs<T>,
 ): Promise<{ provider: BackendAiProvider; output: T }> {
@@ -101,7 +120,7 @@ async function generateWithAnthropic<T>(
   const stream = args.anthropic.messages.stream({
     model: args.anthropicModel,
     max_tokens: args.maxTokens,
-    thinking: { type: "disabled" },
+    thinking: anthropicThinkingFor(args.anthropicModel),
     output_config: {
       ...(args.anthropicEffort === false
         ? {}

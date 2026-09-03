@@ -13,6 +13,15 @@ describe("rateFor", () => {
     expect(rateFor("claude-opus-5")?.output).toBe(25_000_000);
   });
 
+  it("prices each gpt-5.x release on its own row, not as gpt-5", () => {
+    // Every 5.x id starts with "gpt-5"; without an exact row the prefix
+    // match would bill Sol at the 2025 gpt-5 rate.
+    expect(rateFor("gpt-5.6-sol")?.output).toBe(20_000_000);
+    expect(rateFor("gpt-5.6-sol-2026-07-09")?.output).toBe(20_000_000);
+    expect(rateFor("gpt-5.5")?.output).toBe(30_000_000);
+    expect(rateFor("gpt-5")?.output).toBe(10_000_000);
+  });
+
   it("returns null for a model it does not know", () => {
     expect(rateFor("some-model-we-never-added")).toBeNull();
   });
