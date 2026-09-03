@@ -27,6 +27,7 @@ import {
   type ExchangeCandidate,
 } from "./exchangeMatcher";
 import { generateStructuredOutput } from "./backendAi";
+import { env } from "../env";
 import {
   MAX_PRIOR_BODIES,
   runQualityGate,
@@ -39,7 +40,7 @@ import {
 } from "../autopilot/entitlements";
 
 const EMBED_MODEL = "text-embedding-3-small";
-const CLAUDE_MODEL = "claude-opus-4-8";
+const CLAUDE_MODEL = env.backendAiAnthropicModel;
 const IMAGE_MODEL = "gpt-image-2";
 const IMAGE_SIZE = "1536x1024";
 // gpt-image-2 quality tier: low / medium / high / auto. We pay the premium
@@ -1296,8 +1297,10 @@ export async function generateArticle(
         openai,
         anthropicModel: CLAUDE_MODEL,
         // 3,200–4,500 words ≈ ~18k–25k output tokens. JSON escape overhead
-        // can push that another 30%. 48k gives meaningful headroom.
-        maxTokens: 48000,
+        // can push that another 30%, and on Opus 5 / gpt-5.6 the model's
+        // reasoning tokens come out of the same ceiling. 64k keeps headroom
+        // for both; the call streams, so the size costs no timeout risk.
+        maxTokens: 64000,
         anthropicCacheSystemPrompt: true,
       });
       candidate = normalizeArticleOutput(generated.output);

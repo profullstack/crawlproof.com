@@ -24,9 +24,16 @@ const RATES: Record<string, Rate> = {
   "claude-sonnet-4-6": { input: 3_000_000, output: 15_000_000 },
   "claude-opus-5": { input: 5_000_000, output: 25_000_000 },
   "claude-opus-4-8": { input: 5_000_000, output: 25_000_000 },
-  // OpenAI
+  // OpenAI. `gpt-5` is a prefix of every 5.x id, so each newer model needs
+  // its own row or rateFor() prices it at the 2025 gpt-5 rate.
   "gpt-5-mini": { input: 250_000, output: 2_000_000 },
   "gpt-5": { input: 1_250_000, output: 10_000_000 },
+  "gpt-5.5": { input: 5_000_000, output: 30_000_000 },
+  // gpt-5.6 Sol is $4/$20 under the promotional pricing published through
+  // 2026-11-21 (list was $5/$30). Revisit when the promotion ends.
+  "gpt-5.6-sol": { input: 4_000_000, output: 20_000_000 },
+  "gpt-5.6-terra": { input: 2_500_000, output: 15_000_000 },
+  "gpt-5.6-luna": { input: 1_000_000, output: 6_000_000 },
 };
 
 /**

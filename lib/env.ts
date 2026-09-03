@@ -69,8 +69,15 @@ export const env = {
   // so the only env var per provider is the API key.
   backendAiProvider:
     process.env.BACKEND_AI_PROVIDER ?? process.env.AI_TEXT_PROVIDER ?? "openai",
+  // Autoblog article text. Long-form, structured-output generation on the
+  // frontier tier of each provider; the model is env-overridable so a price
+  // cut or a new release is a variable change, not a deploy. Every dated
+  // Haiku/Sonnet callsite (keyword research, blog detection, pitches) keeps
+  // its own pin — those are short extraction prompts, not the article.
   backendAiOpenaiModel:
-    process.env.BACKEND_AI_OPENAI_MODEL ?? "gpt-5.5",
+    process.env.BACKEND_AI_OPENAI_MODEL ?? "gpt-5.6-sol",
+  backendAiAnthropicModel:
+    process.env.BACKEND_AI_ANTHROPIC_MODEL ?? "claude-opus-5",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   // Daily AI spend that triggers a warning. It warns only — nothing throttles
   // or pauses on it, because an alarm that turns the product off is worse
