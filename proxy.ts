@@ -1,3 +1,4 @@
+import { gate } from "@/lib/crawl-gateway";
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { trackReferralCode } from "@profullstack/stack/referrals";
@@ -5,6 +6,12 @@ import { trackReferralCode } from "@profullstack/stack/referrals";
 type Cookie = { name: string; value: string; options?: CookieOptions };
 
 export async function proxy(request: NextRequest) {
+  // Crawl gateway first: AI training crawlers get 402 Payment Required (or the
+  // sales page at /crawl) unless they present a paid pass. People, Googlebot
+  // and retrieval crawlers fall through to everything below.
+  const answer = await gate(request);
+  if (answer) return answer;
+
   // 308 redirect www.crawlproof.com -> crawlproof.com (preserves method + body).
   const host = request.headers.get("host") ?? "";
   if (host.toLowerCase().startsWith("www.")) {
