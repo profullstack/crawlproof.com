@@ -2,6 +2,7 @@ import tls from "node:tls";
 import { Agent, type buildConnector, type Dispatcher } from "undici";
 import { SocksClient } from "socks";
 import { env } from "./env";
+import { paidFetch } from "./paid-fetch";
 
 // Tor routing for .onion targets. Onion addresses don't resolve via DNS, so any
 // fetch to one must go through a Tor SOCKS5 proxy (socks5h — the proxy resolves
@@ -58,7 +59,9 @@ function torDispatcher(): Dispatcher {
 // Fetch that transparently routes .onion targets through Tor and everything
 // else through the normal stack. Callers pass their usual RequestInit.
 export async function smartFetch(url: string, init?: RequestInit): Promise<Response> {
-  if (!isOnion(url)) return fetch(url, init);
+  // The clearnet path pays an x402 gateway when a key is configured; Tor
+  // keeps the plain fetch, since the pass and the proof are clearnet things.
+  if (!isOnion(url)) return paidFetch(url, init);
   if (!torConfigured()) {
     throw new Error(
       "This is a .onion address; set TOR_SOCKS_URL and run a Tor proxy to reach it.",
