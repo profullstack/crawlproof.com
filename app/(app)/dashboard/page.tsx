@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { rpcFailed, type Loaded } from "@/lib/loaded";
 import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
+import { BOTS_DEFINITION, HUMANS_DEFINITION } from "@/lib/tracker/humans";
 import { ProjectLogo } from "@/components/project-logo";
 import { StatsUnavailable } from "@/components/stats-unavailable";
 import { backfillProjectLogo } from "@/app/actions/createProject";
@@ -124,7 +125,7 @@ export default async function DashboardPage({
     fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
     fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
     fetchLatestBlogPostByProject(supabase, projectIds),
-    fetchSevenDayPageviews(supabase, projectIds),
+    fetchSevenDayTraffic(supabase, projectIds),
   ]);
   const trafficByProject = traffic.data;
   const trafficFailed = traffic.failed;
@@ -192,7 +193,7 @@ export default async function DashboardPage({
         </div>
 
         {projects && projects.length > 0 && trafficFailed && (
-          <StatsUnavailable what="pageviews for these projects" />
+          <StatsUnavailable what="traffic for these projects" />
         )}
 
         {projects && projects.length > 0 ? (
@@ -263,17 +264,25 @@ export default async function DashboardPage({
                 )}
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
                   <div>
-                    <div className="text-xs font-medium text-[var(--color-fg)]">
+                    <div
+                      className="text-xs font-medium text-[var(--color-fg)]"
+                      title={trafficFailed ? undefined : HUMANS_DEFINITION}
+                    >
                       {trafficFailed
-                        ? "Pageviews unavailable"
-                        : `${totalTraffic(trafficByProject.get(p.id) ?? []).toLocaleString()} pageviews`}
+                        ? "Traffic unavailable"
+                        : `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human visits`}
                     </div>
-                    <div className="text-[11px] text-[var(--color-muted)]">
-                      {trafficFailed ? "Query failed \u2014 not zero" : "Past 7 days"}
+                    <div
+                      className="text-[11px] text-[var(--color-muted)]"
+                      title={trafficFailed ? undefined : BOTS_DEFINITION}
+                    >
+                      {trafficFailed
+                        ? "Query failed \u2014 not zero"
+                        : `${totalBots(trafficByProject.get(p.id) ?? []).toLocaleString()} bot hits \u00b7 Past 7 days`}
                     </div>
                   </div>
                   {!trafficFailed && (
-                    <FontSparkline samples={trafficSamples(trafficByProject.get(p.id))} />
+                    <FontSparkline samples={humanSamples(trafficByProject.get(p.id))} />
                   )}
                 </div>
                 {orgSchemaReady && (
@@ -330,7 +339,10 @@ export default async function DashboardPage({
 }
 
 type LatestPost = { url: string; publishedAt: string };
-type TrafficPoint = { day: string; count: number };
+// One UTC day of a project's traffic, already split: humans is every bucket
+// that is not `bot:` (AI referrals included), bots is the rest. See
+// lib/tracker/humans.ts for why the card no longer leads with the sum.
+type TrafficPoint = { day: string; humans: number; bots: number };
 
 async function fetchLatestBlogPostByProject(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -372,7 +384,7 @@ async function fetchLatestBlogPostByProject(
   return out;
 }
 
-async function fetchSevenDayPageviews(
+async function fetchSevenDayTraffic(
   supabase: Awaited<ReturnType<typeof createClient>>,
   projectIds: string[],
 ): Promise<Loaded<Map<string, TrafficPoint[]>>> {
@@ -381,7 +393,7 @@ async function fetchSevenDayPageviews(
   for (const projectId of projectIds) {
     out.set(
       projectId,
-      days.map((day) => ({ day, count: 0 })),
+      days.map((day) => ({ day, humans: 0, bots: 0 })),
     );
   }
   if (projectIds.length === 0) return { data: out, failed: false };
@@ -390,28 +402,35 @@ async function fetchSevenDayPageviews(
   // 1000-row response cap and silently truncates whichever projects'
   // rows didn't make the cut.
   //
-  // The error is checked rather than discarded: this RPC reads a 1.2M-row
-  // rollup under RLS, and when it was cancelled by the 8s statement_timeout
-  // the zero-filled map below rendered "0 pageviews" on every card. That is
-  // indistinguishable from a portfolio with no traffic, and was read as a
-  // dead tracker three times over.
-  const { data, error } = await supabase.rpc("dashboard_project_pageviews", {
+  // dashboard_project_traffic reads tracker_daily_stats (the bucket rollup,
+  // the only one that knows bot from human) rather than the bot-inclusive
+  // pageview rollup dashboard_project_pageviews summed. On a crawled site the
+  // old number was 99% one AI training bot and read as "80k pageviews a day".
+  //
+  // The error is checked rather than discarded: when this kind of RPC was
+  // cancelled by the 8s statement_timeout the zero-filled map below rendered
+  // "0" on every card. That is indistinguishable from a portfolio with no
+  // traffic, and was read as a dead tracker three times over.
+  const { data, error } = await supabase.rpc("dashboard_project_traffic", {
     p_project_ids: projectIds,
     p_since: days[0],
   });
-  if (rpcFailed("tracker", "dashboard_project_pageviews", error)) {
+  if (rpcFailed("tracker", "dashboard_project_traffic", error)) {
     return { data: out, failed: true };
   }
 
   for (const row of (data ?? []) as Array<{
     project_id: string;
     day: string;
-    count: number;
+    humans: number | string;
+    bots: number | string;
   }>) {
     const points = out.get(row.project_id);
     if (!points) continue;
     const point = points.find((item) => item.day === row.day);
-    if (point) point.count += Number(row.count);
+    if (!point) continue;
+    point.humans += Number(row.humans);
+    point.bots += Number(row.bots);
   }
 
   return { data: out, failed: false };
@@ -425,12 +444,16 @@ function lastSevenDays() {
   });
 }
 
-function trafficSamples(points: TrafficPoint[] | undefined) {
-  return points?.map((point) => point.count) ?? Array(7).fill(0);
+function humanSamples(points: TrafficPoint[] | undefined) {
+  return points?.map((point) => point.humans) ?? Array(7).fill(0);
 }
 
-function totalTraffic(points: TrafficPoint[]) {
-  return points.reduce((sum, point) => sum + point.count, 0);
+function totalHumans(points: TrafficPoint[]) {
+  return points.reduce((sum, point) => sum + point.humans, 0);
+}
+
+function totalBots(points: TrafficPoint[]) {
+  return points.reduce((sum, point) => sum + point.bots, 0);
 }
 
 function dashboardHref(status: StatusFilter, organizationId: string | null) {

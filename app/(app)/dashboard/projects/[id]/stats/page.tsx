@@ -9,6 +9,13 @@ import {
   type TrackerPanels,
 } from "@/components/charts/tracker-analytics";
 import { fetchPanels, PANEL_KEYS } from "@/lib/tracker/panels";
+import {
+  AI_REFERRALS_DEFINITION,
+  BOTS_DEFINITION,
+  BOTS_LABEL,
+  HUMANS_DEFINITION,
+  HUMANS_LABEL,
+} from "@/lib/tracker/humans";
 import { DEFAULT_TRACKER_RANGE, trackerRange } from "@/lib/tracker/ranges";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
@@ -61,15 +68,16 @@ export default async function ProjectStatsPage({
   )) as unknown as TrackerPanels;
 
   // Headline metrics come straight from the series so they stay exact even
-  // though Top sources below is truncated to the top 10 buckets. "Other visits"
-  // is everything that isn't an AI referral or a bot (human/search/social/
-  // referral), matching the original bucket-prefix split.
+  // though Top sources below is truncated to the top 10 buckets. The page
+  // leads with humans (every bucket that is not `bot:`, AI referrals
+  // included) and shows bot crawls apart — see lib/tracker/humans.ts for why
+  // the old bot-inclusive total is no longer a headline.
   const points = panels.series.points;
   const totalAi = points.reduce((s, p) => s + p.ai, 0);
   const totalBot = points.reduce((s, p) => s + p.bots, 0);
+  const totalHuman = points.reduce((s, p) => s + p.humans, 0);
   const grandTotal = points.reduce((s, p) => s + p.events, 0);
   const eventTotal = points.reduce((s, p) => s + p.pageviews + p.interactions, 0);
-  const totalHuman = Math.max(0, grandTotal - totalAi - totalBot);
 
   // Older projects have rollup rows in tracker_daily_stats but nothing in
   // tracker_event_daily_stats, which would leave Event mix empty on a page
@@ -230,9 +238,24 @@ export default async function ProjectStatsPage({
         )}
 
         <div className="grid gap-3 sm:grid-cols-3">
-          <Metric label="AI referrals" value={totalAi} tone="pass" />
-          <Metric label="AI / bot crawls" value={totalBot} tone="warn" />
-          <Metric label="Other visits" value={totalHuman} tone="muted" />
+          <Metric
+            label={HUMANS_LABEL}
+            value={totalHuman}
+            tone="accent"
+            hint={HUMANS_DEFINITION}
+          />
+          <Metric
+            label="AI referrals"
+            value={totalAi}
+            tone="pass"
+            hint={AI_REFERRALS_DEFINITION}
+          />
+          <Metric
+            label={BOTS_LABEL}
+            value={totalBot}
+            tone="warn"
+            hint={BOTS_DEFINITION}
+          />
         </div>
 
         {grandTotal === 0 && eventTotal === 0 ? (
@@ -307,10 +330,13 @@ function Metric({
   label,
   value,
   tone,
+  hint,
 }: {
   label: string;
   value: number;
-  tone: "pass" | "warn" | "muted";
+  tone: "accent" | "pass" | "warn" | "muted";
+  /** What this number counts; shown on hover and under the figure. */
+  hint?: string;
 }) {
   const color =
     tone === "pass"
@@ -319,11 +345,16 @@ function Metric({
         ? "text-yellow-600"
         : "text-[var(--color-foreground)]";
   return (
-    <div className="card p-4">
+    <div className="card p-4" title={hint}>
       <p className="text-xs text-[var(--color-muted)]">{label}</p>
       <p className={`mt-1 text-2xl font-bold ${color}`}>
         {value.toLocaleString()}
       </p>
+      {hint && (
+        <p className="mt-1 text-[11px] leading-snug text-[var(--color-muted)]">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

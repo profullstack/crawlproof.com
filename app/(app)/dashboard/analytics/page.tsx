@@ -16,10 +16,28 @@ import {
   type TrendDirection,
 } from "@/lib/tracker/trend";
 import {
+  emptyTotals,
+  sumTotals,
+  toProjectTotals,
+  totalsTrends,
+  type ProjectTotals,
+  type TotalsRow,
+} from "@/lib/tracker/totals";
+import {
+  AI_REFERRALS_DEFINITION,
+  ALL_EVENTS_DEFINITION,
+  BOTS_DEFINITION,
+  BOTS_LABEL,
+  HUMANS_DEFINITION,
+  HUMANS_LABEL,
+  humansFrom,
+} from "@/lib/tracker/humans";
+import {
   TrackerAnalytics,
   type TrackerListItem,
 } from "@/components/charts/tracker-analytics";
 import {
+  BOTS_KEY,
   OTHER_KEY,
   PortfolioTrend,
   type PortfolioPoint,
@@ -53,29 +71,14 @@ type PortfolioProject = {
   organization_id?: string | null;
 };
 
-type TotalsRow = {
-  project_id: string;
-  events: number | string;
-  ai: number | string;
-  bots: number | string;
-  prev_events: number | string;
-  prev_ai: number | string;
-  prev_bots: number | string;
-};
-
-type ProjectTotals = {
-  events: number;
-  ai: number;
-  bots: number;
-  prevEvents: number;
-  prevAi: number;
-  prevBots: number;
-};
-
+// Every figure on this page leads with humans (bucket not `bot:`, AI referrals
+// included) and shows bot crawls apart. See lib/tracker/humans.ts.
 type ProjectRow = {
   project: PortfolioProject;
   totals: ProjectTotals;
+  /** Human visits, this window vs the one before. */
   trend: Trend;
+  /** Daily human visits for the sparkline; null when over the row budget. */
   samples: number[] | null;
 };
 
@@ -208,33 +211,21 @@ export default async function PortfolioAnalyticsPage({
 
   const totalsByProject = new Map<string, ProjectTotals>();
   for (const row of (totalsRes.data ?? []) as TotalsRow[]) {
-    totalsByProject.set(row.project_id, {
-      events: Number(row.events),
-      ai: Number(row.ai),
-      bots: Number(row.bots),
-      prevEvents: Number(row.prev_events),
-      prevAi: Number(row.prev_ai),
-      prevBots: Number(row.prev_bots),
-    });
+    totalsByProject.set(row.project_id, toProjectTotals(row));
   }
 
   const portfolio = sumTotals(totalsByProject.values());
-  const eventsTrend = computeTrend(portfolio.events, portfolio.prevEvents);
-  const aiTrend = computeTrend(portfolio.ai, portfolio.prevAi);
-  const botsTrend = computeTrend(portfolio.bots, portfolio.prevBots);
-  const otherTrend = computeTrend(
-    otherVisits(portfolio.events, portfolio.ai, portfolio.bots),
-    otherVisits(portfolio.prevEvents, portfolio.prevAi, portfolio.prevBots),
-  );
+  const trends = totalsTrends(portfolio);
 
-  // Ranked by current-window volume: the biggest properties get the chart
-  // bands, and the daily-detail budget is spent on them first.
+  // Ranked by current-window HUMAN volume: the biggest properties get the
+  // chart bands, and the daily-detail budget is spent on them first. Ranking
+  // by events would hand the top band to whichever site a crawler is hitting.
   const ranked = projects
     .map((project) => ({
       project,
       totals: totalsByProject.get(project.id) ?? emptyTotals(),
     }))
-    .sort((a, b) => b.totals.events - a.totals.events);
+    .sort((a, b) => b.totals.humans - a.totals.humans);
 
   const detailCount = Math.max(
     CHART_BANDS,
@@ -251,6 +242,8 @@ export default async function PortfolioAnalyticsPage({
     perProjectError,
   );
 
+  // Per-project daily HUMAN counts. The RPC also returns events and bots per
+  // row; only humans feed the bands and sparklines.
   const axis = utcDayAxis(days);
   const dailyByProject = new Map<string, Map<string, number>>();
   for (const id of detailIds) dailyByProject.set(id, new Map());
@@ -258,8 +251,12 @@ export default async function PortfolioAnalyticsPage({
     project_id: string;
     day: string;
     events: number | string;
+    humans?: number | string | null;
+    bots?: number | string | null;
   }>) {
-    dailyByProject.get(row.project_id)?.set(row.day, Number(row.events));
+    dailyByProject
+      .get(row.project_id)
+      ?.set(row.day, humansFrom({ humans: row.humans, events: row.events, bots: row.bots ?? 0 }));
   }
 
   const rows: ProjectRow[] = ranked.map(({ project, totals }) => {
@@ -267,22 +264,24 @@ export default async function PortfolioAnalyticsPage({
     return {
       project,
       totals,
-      trend: computeTrend(totals.events, totals.prevEvents),
+      trend: computeTrend(totals.humans, totals.prevHumans),
       samples: byDay ? axis.map((day) => byDay.get(day) ?? 0) : null,
     };
   });
 
   const withTraffic = rows.filter(
-    (r) => r.totals.events > 0 || r.totals.prevEvents > 0,
+    (r) => r.totals.humans > 0 || r.totals.prevHumans > 0,
   );
   const verdict = portfolioVerdict(
-    eventsTrend,
+    trends.humans,
     withTraffic.map((r) => r.trend.direction),
   );
 
-  // Stacked bands for the top properties; "Other" is the exact remainder of
-  // the full-portfolio series, so the stack always sums to the real total.
-  const banded = ranked.slice(0, CHART_BANDS).filter((r) => r.totals.events > 0);
+  // Stacked bands of human visits for the top properties; "Other" is the
+  // exact remainder of the full-portfolio human series, so the stack always
+  // sums to the real human total. Bot crawls ride on top as one unstacked
+  // dashed line so a crawler storm stays visible without swamping the bands.
+  const banded = ranked.slice(0, CHART_BANDS).filter((r) => r.totals.humans > 0);
   const bandIds = banded.map((r) => r.project.id);
   const chartSeries: PortfolioSeries[] = banded.map((r) => ({
     key: r.project.id,
@@ -290,6 +289,7 @@ export default async function PortfolioAnalyticsPage({
   }));
   const hasOther = ranked.length > banded.length;
   if (hasOther) chartSeries.push({ key: OTHER_KEY, name: "Other properties" });
+  chartSeries.push({ key: BOTS_KEY, name: "Bot crawls (all properties)", kind: "overlay" });
 
   const chartData: PortfolioPoint[] = daily.map((point) => {
     const row: PortfolioPoint = { date: point.date };
@@ -299,7 +299,8 @@ export default async function PortfolioAnalyticsPage({
       row[id] = value;
       bandedTotal += value;
     }
-    if (hasOther) row[OTHER_KEY] = Math.max(0, point.events - bandedTotal);
+    if (hasOther) row[OTHER_KEY] = Math.max(0, point.humans - bandedTotal);
+    row[BOTS_KEY] = point.bots;
     return row;
   });
 
@@ -421,7 +422,7 @@ export default async function PortfolioAnalyticsPage({
   const topOperatingSystems = topDeviceItems(deviceRows, (row) => row.os);
 
   const missingSparklines = rows.filter(
-    (r) => r.samples === null && r.totals.events > 0,
+    (r) => r.samples === null && r.totals.humans > 0,
   ).length;
 
   return (
@@ -444,10 +445,30 @@ export default async function PortfolioAnalyticsPage({
       </section>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <TrendMetric label="All events" trend={eventsTrend} tone="accent" />
-        <TrendMetric label="AI referrals" trend={aiTrend} tone="pass" />
-        <TrendMetric label="AI / bot crawls" trend={botsTrend} tone="warn" />
-        <TrendMetric label="Other visits" trend={otherTrend} tone="muted" />
+        <TrendMetric
+          label={HUMANS_LABEL}
+          trend={trends.humans}
+          tone="accent"
+          hint={HUMANS_DEFINITION}
+        />
+        <TrendMetric
+          label="AI referrals"
+          trend={trends.ai}
+          tone="pass"
+          hint={AI_REFERRALS_DEFINITION}
+        />
+        <TrendMetric
+          label={BOTS_LABEL}
+          trend={trends.bots}
+          tone="warn"
+          hint={BOTS_DEFINITION}
+        />
+        <TrendMetric
+          label="All events"
+          trend={trends.events}
+          tone="muted"
+          hint={ALL_EVENTS_DEFINITION}
+        />
       </div>
 
       {portfolio.events === 0 && portfolio.prevEvents === 0 ? (
@@ -464,11 +485,18 @@ export default async function PortfolioAnalyticsPage({
               <div>
                 <h2 className="text-lg font-semibold">Portfolio trend</h2>
                 <p className="text-sm text-[var(--color-muted)]">
-                  Daily events, stacked by property.
+                  Daily human visits, stacked by property. Bot crawls across
+                  every property are the dashed line, kept out of the stack.
                 </p>
               </div>
               <span className="text-xs text-[var(--color-muted)]">
-                {portfolio.events.toLocaleString()} events
+                <span title={HUMANS_DEFINITION}>
+                  {portfolio.humans.toLocaleString()} human visits
+                </span>
+                {" · "}
+                <span title={BOTS_DEFINITION}>
+                  {portfolio.bots.toLocaleString()} bot hits
+                </span>
               </span>
             </div>
             <PortfolioTrend data={chartData} series={chartSeries} />
@@ -479,7 +507,9 @@ export default async function PortfolioAnalyticsPage({
               <div>
                 <h2 className="text-lg font-semibold">By property</h2>
                 <p className="text-sm text-[var(--color-muted)]">
-                  Each site against its own previous {days} days.
+                  Human visits per site against its own previous {days} days.
+                  AI referrals are part of the human figure; bot crawls are
+                  not.
                 </p>
               </div>
               <Link
@@ -603,11 +633,20 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
         <thead>
           <tr className="border-b border-[var(--color-border)] text-left text-xs text-[var(--color-muted)]">
             <th className="py-2 pr-3 font-medium">Property</th>
-            <th className="py-2 pr-3 text-right font-medium">Events</th>
-            <th className="py-2 pr-3 text-right font-medium">Previous</th>
+            <th className="py-2 pr-3 text-right font-medium" title={HUMANS_DEFINITION}>
+              Humans
+            </th>
+            <th className="py-2 pr-3 text-right font-medium" title={HUMANS_DEFINITION}>
+              Previous
+            </th>
             <th className="py-2 pr-3 text-right font-medium">Change</th>
             <th className="py-2 pr-3 font-medium">Trend</th>
-            <th className="py-2 text-right font-medium">AI / bots</th>
+            <th className="py-2 pr-3 text-right font-medium" title={AI_REFERRALS_DEFINITION}>
+              AI
+            </th>
+            <th className="py-2 text-right font-medium" title={BOTS_DEFINITION}>
+              Bots
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -637,11 +676,11 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
                   </span>
                 </Link>
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums">
-                {totals.events.toLocaleString()}
+              <td className="py-2 pr-3 text-right tabular-nums" title={HUMANS_DEFINITION}>
+                {totals.humans.toLocaleString()}
               </td>
               <td className="py-2 pr-3 text-right tabular-nums text-[var(--color-muted)]">
-                {totals.prevEvents.toLocaleString()}
+                {totals.prevHumans.toLocaleString()}
               </td>
               <td className="py-2 pr-3 text-right">
                 <TrendChip trend={trend} />
@@ -653,8 +692,11 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
                   <span className="text-xs text-[var(--color-muted)]">—</span>
                 )}
               </td>
-              <td className="py-2 text-right tabular-nums text-[var(--color-muted)]">
-                {totals.ai.toLocaleString()} / {totals.bots.toLocaleString()}
+              <td className="py-2 pr-3 text-right tabular-nums text-[var(--color-muted)]" title={AI_REFERRALS_DEFINITION}>
+                {totals.ai.toLocaleString()}
+              </td>
+              <td className="py-2 text-right tabular-nums text-[var(--color-muted)]" title={BOTS_DEFINITION}>
+                {totals.bots.toLocaleString()}
               </td>
             </tr>
           ))}
@@ -685,19 +727,24 @@ function TrendMetric({
   label,
   trend,
   tone,
+  hint,
 }: {
   label: string;
   trend: Trend;
   tone: "accent" | "pass" | "warn" | "muted";
+  /** What this number counts; shown on hover and under the figure. */
+  hint?: string;
 }) {
   const color =
     tone === "pass"
       ? "text-green-600"
       : tone === "warn"
         ? "text-yellow-600"
-        : "text-[var(--color-foreground)]";
+        : tone === "muted"
+          ? "text-[var(--color-muted)]"
+          : "text-[var(--color-foreground)]";
   return (
-    <div className="card p-4">
+    <div className="card p-4" title={hint}>
       <p className="text-xs text-[var(--color-muted)]">{label}</p>
       <p className={`mt-1 text-2xl font-bold ${color}`}>
         {trend.current.toLocaleString()}
@@ -706,6 +753,11 @@ function TrendMetric({
         <TrendChip trend={trend} />
         <span>from {trend.previous.toLocaleString()}</span>
       </p>
+      {hint && (
+        <p className="mt-1 text-[11px] leading-snug text-[var(--color-muted)]">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -729,29 +781,6 @@ function parseRange(value: string | undefined): Range {
   return (RANGES as readonly number[]).includes(parsed)
     ? (parsed as Range)
     : DEFAULT_RANGE;
-}
-
-function emptyTotals(): ProjectTotals {
-  return { events: 0, ai: 0, bots: 0, prevEvents: 0, prevAi: 0, prevBots: 0 };
-}
-
-function sumTotals(all: Iterable<ProjectTotals>): ProjectTotals {
-  const out = emptyTotals();
-  for (const t of all) {
-    out.events += t.events;
-    out.ai += t.ai;
-    out.bots += t.bots;
-    out.prevEvents += t.prevEvents;
-    out.prevAi += t.prevAi;
-    out.prevBots += t.prevBots;
-  }
-  return out;
-}
-
-// Everything that isn't an AI referral or a bot crawl, matching the split the
-// per-project stats page uses.
-function otherVisits(events: number, ai: number, bots: number) {
-  return Math.max(0, events - ai - bots);
 }
 
 function buildProjectAccessFilter(

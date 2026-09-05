@@ -3,6 +3,8 @@
 // the sparse per-day rows onto a zero-filled UTC axis so gaps render as flat
 // spans rather than being skipped entirely.
 
+import { humansFrom } from "@/lib/tracker/humans";
+
 export type TrackerSeriesRow = {
   day: string;
   pageviews: number;
@@ -10,6 +12,8 @@ export type TrackerSeriesRow = {
   ai: number;
   bots: number;
   events: number;
+  /** Everything not identified as a crawler; see lib/tracker/humans.ts. */
+  humans: number;
 };
 
 export type TrackerDailyPointShape = {
@@ -19,9 +23,12 @@ export type TrackerDailyPointShape = {
   interactions: number;
   ai: number;
   bots: number;
+  humans: number;
 };
 
 // Coerce a raw RPC row. bigint columns arrive as strings over PostgREST.
+// `humans` is absent until the human-split migration is applied, in which
+// case it is derived from the bucket totals (events - bots is exact there).
 export function toSeriesRow(row: {
   day: string;
   pageviews: number | string;
@@ -29,6 +36,7 @@ export function toSeriesRow(row: {
   ai: number | string;
   bots: number | string;
   events: number | string;
+  humans?: number | string | null;
 }): TrackerSeriesRow {
   return {
     day: row.day,
@@ -37,6 +45,7 @@ export function toSeriesRow(row: {
     ai: Number(row.ai),
     bots: Number(row.bots),
     events: Number(row.events),
+    humans: humansFrom(row),
   };
 }
 
@@ -70,6 +79,7 @@ export function buildDailyAxis(
       interactions: 0,
       ai: 0,
       bots: 0,
+      humans: 0,
     });
   }
 
@@ -81,10 +91,13 @@ export function buildDailyAxis(
     point.ai += row.ai;
     point.bots += row.bots;
     point.events += row.events;
+    point.humans += row.humans;
   }
 
   // Older rollups predate the bucket table, so `events` can be 0 on a day that
-  // clearly had traffic. Fall back to the event table's own totals.
+  // clearly had traffic. Fall back to the event table's own totals. `humans`
+  // is deliberately left alone: those event-table totals are bot-inclusive,
+  // so there is no honest human figure for such a day.
   for (const point of byDay.values()) {
     if (point.events === 0) point.events = point.pageviews + point.interactions;
   }
