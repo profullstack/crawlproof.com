@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { bucketLabel } from "@/lib/tracker/categorize";
 import { countryNameFromCode } from "@/lib/tracker/country";
+import { humansFrom } from "@/lib/tracker/humans";
 import { buildDailyAxis, toSeriesRow } from "@/lib/tracker/series";
 import {
   isRawRange,
@@ -59,6 +60,8 @@ export type SeriesPoint = {
   interactions: number;
   ai: number;
   bots: number;
+  /** Everything not identified as a crawler; see lib/tracker/humans.ts. */
+  humans: number;
 };
 
 export type SeriesPayload = {
@@ -357,6 +360,8 @@ type RecentSeriesRow = {
   ai: number | string;
   bots: number | string;
   events: number | string;
+  /** Absent until the human-split migration is applied; derived then. */
+  humans?: number | string | null;
 };
 
 // Zero-fill the sub-day series across every bucket in the window. The RPC only
@@ -388,6 +393,7 @@ export function buildBucketAxis(
       interactions: 0,
       ai: 0,
       bots: 0,
+      humans: 0,
     });
   }
 
@@ -401,6 +407,7 @@ export function buildBucketAxis(
     point.ai += Number(row.ai);
     point.bots += Number(row.bots);
     point.events += Number(row.events);
+    point.humans += humansFrom(row);
   }
 
   return Array.from(byTs.values());

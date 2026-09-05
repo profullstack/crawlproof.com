@@ -24,6 +24,11 @@ import {
   type TrackerRangeKey,
 } from "@/lib/tracker/ranges";
 import type { ListItem, SeriesPayload } from "@/lib/tracker/panels";
+import {
+  AI_REFERRALS_DEFINITION,
+  BOTS_DEFINITION,
+  HUMANS_DEFINITION,
+} from "@/lib/tracker/humans";
 
 export type TrackerDailyPoint = {
   date: string;
@@ -32,6 +37,8 @@ export type TrackerDailyPoint = {
   interactions: number;
   ai: number;
   bots: number;
+  /** Everything not identified as a crawler; see lib/tracker/humans.ts. */
+  humans: number;
 };
 
 export type TrackerListItem = ListItem;
@@ -181,6 +188,8 @@ function PanelFrame({
   title,
   subtitle,
   total,
+  unit = ["event", "events"],
+  totalHint,
   ranges,
   range,
   onRange,
@@ -193,6 +202,10 @@ function PanelFrame({
   title: string;
   subtitle?: string;
   total?: number;
+  /** [singular, plural] noun for the right-hand total. */
+  unit?: [string, string];
+  /** Hover text that says what the total counts. */
+  totalHint?: string;
   ranges: TrackerRange[];
   range: TrackerRangeKey;
   onRange: (key: TrackerRangeKey) => void;
@@ -212,12 +225,15 @@ function PanelFrame({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs tabular-nums text-[var(--color-muted)]">
+          <span
+            className="text-xs tabular-nums text-[var(--color-muted)]"
+            title={totalHint}
+          >
             {error
               ? "—"
               : total === undefined
                 ? ""
-                : `${total.toLocaleString()} ${total === 1 ? "event" : "events"}`}
+                : `${total.toLocaleString()} ${total === 1 ? unit[0] : unit[1]}`}
           </span>
           {showTabs && (
             <TimeframeTabs
@@ -263,14 +279,21 @@ function TrafficPulse({
     );
 
   const points = data?.points ?? [];
-  const total = points.reduce((sum, point) => sum + point.events, 0);
+  // Lead with people. Older rollup days predate the bucket table and carry
+  // humans: 0, so the frame total is the human figure, not the old
+  // bot-inclusive event count — which is exactly the number this chart used
+  // to mislead with.
+  const humans = points.reduce((sum, point) => sum + point.humans, 0);
+  const bots = points.reduce((sum, point) => sum + point.bots, 0);
   const byTime = data?.granularity === "time";
 
   return (
     <PanelFrame
       title="Traffic pulse"
-      subtitle="Pageviews, interactions, AI referrals, and bot crawls."
-      total={total}
+      subtitle={`Human visits and bot crawls, stacked. AI referrals are the share of humans arriving from an AI assistant; interactions are clicks and form events. ${bots.toLocaleString()} bot ${bots === 1 ? "hit" : "hits"} in this window.`}
+      total={humans}
+      unit={["human visit", "human visits"]}
+      totalHint={HUMANS_DEFINITION}
       ranges={ranges}
       range={range}
       onRange={setRange}
@@ -308,10 +331,15 @@ function TrafficPulse({
               labelFormatter={byTime ? formatLongTime : formatLongDate}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} />
+            {/* The stack is humans + bots = every event, split honestly.
+                The bot-inclusive pageview series is gone: on a crawled site it
+                was indistinguishable from the bot band and double-counted it.
+                AI referrals (a subset of humans) and interactions (clicks and
+                forms, whoever fired them) are unstacked overlays. */}
             <Area
               type="monotone"
-              dataKey="pageviews"
-              name="Pageviews"
+              dataKey="humans"
+              name="Human visits"
               stackId="1"
               stroke="var(--color-accent)"
               fill="var(--color-accent)"
@@ -320,18 +348,18 @@ function TrafficPulse({
             />
             <Area
               type="monotone"
-              dataKey="interactions"
-              name="Interactions"
+              dataKey="bots"
+              name="Bot crawls"
               stackId="1"
-              stroke="#60a5fa"
-              fill="#60a5fa"
-              fillOpacity={0.22}
+              stroke="var(--color-warn)"
+              fill="var(--color-warn)"
+              fillOpacity={0.14}
               isAnimationActive={false}
             />
             <Area
               type="monotone"
               dataKey="ai"
-              name="AI referrals"
+              name="AI referrals (within humans)"
               stroke="var(--color-pass)"
               fill="var(--color-pass)"
               fillOpacity={0.16}
@@ -339,16 +367,31 @@ function TrafficPulse({
             />
             <Area
               type="monotone"
-              dataKey="bots"
-              name="Bot crawls"
-              stroke="var(--color-warn)"
-              fill="var(--color-warn)"
-              fillOpacity={0.14}
+              dataKey="interactions"
+              name="Interactions"
+              stroke="#60a5fa"
+              strokeDasharray="4 3"
+              fill="#60a5fa"
+              fillOpacity={0}
               isAnimationActive={false}
             />
           </AreaChart>
         </ResponsiveContainer>
       </div>
+      <dl className="mt-2 grid gap-x-4 gap-y-1 text-[11px] text-[var(--color-muted)] sm:grid-cols-3">
+        <div>
+          <dt className="inline font-medium text-[var(--color-fg)]">Human visits: </dt>
+          <dd className="inline">{HUMANS_DEFINITION}</dd>
+        </div>
+        <div>
+          <dt className="inline font-medium text-[var(--color-fg)]">Bot crawls: </dt>
+          <dd className="inline">{BOTS_DEFINITION}</dd>
+        </div>
+        <div>
+          <dt className="inline font-medium text-[var(--color-fg)]">AI referrals: </dt>
+          <dd className="inline">{AI_REFERRALS_DEFINITION}</dd>
+        </div>
+      </dl>
     </PanelFrame>
   );
 }

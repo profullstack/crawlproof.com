@@ -26,6 +26,7 @@ function row(day: string, over: Partial<TrackerSeriesRow> = {}): TrackerSeriesRo
     ai: 0,
     bots: 0,
     events: 0,
+    humans: 0,
     ...over,
   };
 }
@@ -170,6 +171,27 @@ describe("buildDailyAxis", () => {
     );
     expect(daily[0].events).toBe(10);
   });
+
+  it("sums humans per day and never backfills them from bot-inclusive totals", () => {
+    const daily = buildDailyAxis(
+      [
+        // A crawled day: 3 people, 997 bot hits.
+        row("2026-08-09", { events: 1000, bots: 997, humans: 3 }),
+        row("2026-08-09", { events: 10, bots: 0, humans: 10 }),
+        // A pre-bucket day: the event table knows 40 hits, nobody knows how
+        // many were people. events gets the legacy backfill; humans stays 0.
+        row("2026-08-08", { pageviews: 30, interactions: 10, events: 0 }),
+      ],
+      2,
+      NOW,
+    );
+    const [older, today] = daily;
+    expect(today.humans).toBe(13);
+    expect(today.bots).toBe(997);
+    expect(today.events).toBe(1010);
+    expect(older.events).toBe(40);
+    expect(older.humans).toBe(0);
+  });
 });
 
 describe("toSeriesRow", () => {
@@ -181,6 +203,7 @@ describe("toSeriesRow", () => {
       ai: "4",
       bots: "5",
       events: "20",
+      humans: "15",
     });
     expect(coerced).toEqual({
       day: "2026-08-09",
@@ -189,6 +212,21 @@ describe("toSeriesRow", () => {
       ai: 4,
       bots: 5,
       events: 20,
+      humans: 15,
     });
+  });
+
+  it("derives humans = events - bots when the RPC predates the split", () => {
+    // Before 20260905120000_tracker_human_split is applied the column is
+    // absent. Both legs come from the bucket rollup, so the identity is exact.
+    const coerced = toSeriesRow({
+      day: "2026-08-09",
+      pageviews: "12",
+      interactions: "3",
+      ai: "4",
+      bots: "5",
+      events: "20",
+    });
+    expect(coerced.humans).toBe(15);
   });
 });
