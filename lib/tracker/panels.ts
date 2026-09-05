@@ -10,12 +10,14 @@
 // client and the route handler's, both RLS-scoped to the signed-in user).
 //
 // Each panel picks its RPC from the range: raw tracker_events twins under a
-// day, *_daily_stats rollups above it. See lib/tracker/ranges.ts.
+// day, *_daily_stats rollups above it. See lib/tracker/ranges.ts. Every RPC
+// also takes `p_kind` (null / "human" / "bot"), which is how the page-wide
+// Humans / Bots / All toggle reaches each card; see lib/tracker/who.ts.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { bucketLabel } from "@/lib/tracker/categorize";
 import { countryNameFromCode } from "@/lib/tracker/country";
-import { humansFrom } from "@/lib/tracker/humans";
+import { humansFrom, type TrackerKind } from "@/lib/tracker/humans";
 import { buildDailyAxis, toSeriesRow } from "@/lib/tracker/series";
 import {
   isRawRange,
@@ -115,6 +117,8 @@ export async function fetchPanel(
   panel: PanelKey,
   range: TrackerRange,
   days: number,
+  /** null = every row; "human" / "bot" = that side only. See lib/tracker/who.ts. */
+  kind: TrackerKind | null = null,
 ): Promise<PanelPayload> {
   const raw = isRawRange(range);
   const minutes = range.minutes ?? 1440;
@@ -124,6 +128,7 @@ export async function fetchPanel(
       if (raw) {
         const { data } = await sb.rpc("tracker_recent_series", {
           p_project: projectId,
+          p_kind: kind,
           p_minutes: minutes,
           p_bucket_seconds: range.bucketSeconds ?? 300,
         });
@@ -138,23 +143,34 @@ export async function fetchPanel(
       }
       const { data } = await sb.rpc("tracker_daily_series", {
         p_project: projectId,
+        p_kind: kind,
         days,
       });
       const series = ((data ?? []) as Parameters<typeof toSeriesRow>[0][]).map(
         toSeriesRow,
       );
-      return { points: buildDailyAxis(series, days), granularity: "day" };
+      return {
+        // The legacy events backfill is for an unfiltered series only: on a
+        // filtered one a zero day is the honest answer, and the event-table
+        // legs it would fill from may hold the other side's rows.
+        points: buildDailyAxis(series, days, new Date(), {
+          legacyEventsBackfill: kind === null,
+        }),
+        granularity: "day",
+      };
     }
 
     case "sources": {
       const { data } = raw
         ? await sb.rpc("tracker_recent_bucket_totals", {
             p_project: projectId,
+            p_kind: kind,
             p_minutes: minutes,
             lim: TOP_N,
           })
         : await sb.rpc("tracker_bucket_totals", {
             p_project: projectId,
+            p_kind: kind,
             days,
             lim: TOP_N,
           });
@@ -167,9 +183,14 @@ export async function fetchPanel(
       const { data } = raw
         ? await sb.rpc("tracker_recent_event_mix", {
             p_project: projectId,
+            p_kind: kind,
             p_minutes: minutes,
           })
-        : await sb.rpc("tracker_event_mix", { p_project: projectId, days });
+        : await sb.rpc("tracker_event_mix", {
+            p_project: projectId,
+            days,
+            p_kind: kind,
+          });
       return ((data ?? []) as Array<{ event: string; total: number | string }>)
         .map((r) => ({ label: eventLabel(r.event), value: Number(r.total) }))
         .sort((a, b) => b.value - a.value)
@@ -180,11 +201,13 @@ export async function fetchPanel(
       const { data } = raw
         ? await sb.rpc("tracker_recent_top_pages", {
             p_project: projectId,
+            p_kind: kind,
             p_minutes: minutes,
             lim: TOP_N,
           })
         : await sb.rpc("tracker_top_pages", {
             p_project: projectId,
+            p_kind: kind,
             days,
             lim: TOP_N,
           });
@@ -197,6 +220,7 @@ export async function fetchPanel(
       // Rollup-only: tracker_exit_sessions keys on a date, not a timestamp.
       const { data } = await sb.rpc("tracker_top_exit_pages", {
         p_project: projectId,
+        p_kind: kind,
         days: rollupDays(range, days),
         lim: TOP_N,
       });
@@ -209,11 +233,13 @@ export async function fetchPanel(
       const { data } = raw
         ? await sb.rpc("tracker_recent_top_referrers", {
             p_project: projectId,
+            p_kind: kind,
             p_minutes: minutes,
             lim: TOP_N,
           })
         : await sb.rpc("tracker_top_referrers", {
             p_project: projectId,
+            p_kind: kind,
             days,
             lim: TOP_N,
           });
@@ -226,11 +252,13 @@ export async function fetchPanel(
       const { data } = raw
         ? await sb.rpc("tracker_recent_top_actions", {
             p_project: projectId,
+            p_kind: kind,
             p_minutes: minutes,
             lim: TOP_N,
           })
         : await sb.rpc("tracker_top_actions", {
             p_project: projectId,
+            p_kind: kind,
             days,
             lim: TOP_N,
           });
@@ -250,11 +278,13 @@ export async function fetchPanel(
       const { data } = raw
         ? await sb.rpc("tracker_recent_top_countries", {
             p_project: projectId,
+            p_kind: kind,
             p_minutes: minutes,
             lim: TOP_N,
           })
         : await sb.rpc("tracker_top_countries", {
             p_project: projectId,
+            p_kind: kind,
             days,
             lim: TOP_N,
           });
@@ -279,11 +309,13 @@ export async function fetchPanel(
       const { data } = raw
         ? await sb.rpc("tracker_recent_top_cities", {
             p_project: projectId,
+            p_kind: kind,
             p_minutes: minutes,
             lim: TOP_N,
           })
         : await sb.rpc("tracker_top_cities", {
             p_project: projectId,
+            p_kind: kind,
             days,
             lim: TOP_N,
           });
@@ -315,6 +347,7 @@ export async function fetchPanel(
       // device_type / browser / os columns.
       const { data } = await sb.rpc("tracker_device_totals", {
         p_project: projectId,
+        p_kind: kind,
         days: rollupDays(range, days),
       });
       const rows = (
@@ -345,10 +378,11 @@ export async function fetchPanels(
   projectId: string,
   panels: PanelKey[],
   range: TrackerRange,
+  kind: TrackerKind | null = null,
 ): Promise<Record<string, PanelPayload>> {
   const days = await resolveDays(sb, projectId, range);
   const results = await Promise.all(
-    panels.map((p) => fetchPanel(sb, projectId, p, range, days)),
+    panels.map((p) => fetchPanel(sb, projectId, p, range, days, kind)),
   );
   return Object.fromEntries(panels.map((p, i) => [p, results[i]]));
 }

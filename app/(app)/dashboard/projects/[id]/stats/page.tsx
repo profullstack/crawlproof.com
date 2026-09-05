@@ -9,20 +9,15 @@ import {
   type TrackerPanels,
 } from "@/components/charts/tracker-analytics";
 import { fetchPanels, PANEL_KEYS } from "@/lib/tracker/panels";
-import {
-  AI_REFERRALS_DEFINITION,
-  BOTS_DEFINITION,
-  BOTS_LABEL,
-  HUMANS_DEFINITION,
-  HUMANS_LABEL,
-} from "@/lib/tracker/humans";
 import { DEFAULT_TRACKER_RANGE, trackerRange } from "@/lib/tracker/ranges";
+import { headlineTiles, whoOrDefault, whoToKind } from "@/lib/tracker/who";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { CareersToggle } from "./careers-toggle";
 import { AutoInstall } from "./auto-install";
 import { LiveVisitors } from "./live-visitors";
 import { StatsSubnav } from "./stats-subnav";
+import { WhoToggle } from "./who-toggle";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
@@ -36,10 +31,17 @@ type BoundRepo = {
 
 export default async function ProjectStatsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ who?: string }>;
 }) {
   const { id } = await params;
+  // The page-wide Humans / Bots / All toggle. Lives in the URL so a link to
+  // the page carries the reader's choice; junk falls back to humans, the
+  // side the page leads with. See lib/tracker/who.ts.
+  const who = whoOrDefault((await searchParams).who);
+  const kind = whoToKind(who);
   const supabase = await createClient();
   const { data: project } = await supabase
     .from("projects")
@@ -59,25 +61,35 @@ export default async function ProjectStatsPage({
   // timeframe tabs and re-fetches just itself from
   // /api/projects/:id/tracker-stats, so narrowing one chart to the last hour
   // does not re-run the other eleven.
+  //
+  // Every panel is fetched at the toggle's `kind`, so a card and the tiles
+  // above it never disagree on who they are counting.
   const range = trackerRange(DEFAULT_TRACKER_RANGE);
   const panels = (await fetchPanels(
     supabase,
     id,
     PANEL_KEYS,
     range,
+    kind,
   )) as unknown as TrackerPanels;
 
   // Headline metrics come straight from the series so they stay exact even
   // though Top sources below is truncated to the top 10 buckets. The page
   // leads with humans (every bucket that is not `bot:`, AI referrals
   // included) and shows bot crawls apart — see lib/tracker/humans.ts for why
-  // the old bot-inclusive total is no longer a headline.
+  // the old bot-inclusive total is no longer a headline. Under Humans or
+  // Bots only that side's tiles are shown (lib/tracker/who.ts).
   const points = panels.series.points;
   const totalAi = points.reduce((s, p) => s + p.ai, 0);
   const totalBot = points.reduce((s, p) => s + p.bots, 0);
   const totalHuman = points.reduce((s, p) => s + p.humans, 0);
   const grandTotal = points.reduce((s, p) => s + p.events, 0);
   const eventTotal = points.reduce((s, p) => s + p.pageviews + p.interactions, 0);
+  const tiles = headlineTiles(who, {
+    humans: totalHuman,
+    ai: totalAi,
+    bots: totalBot,
+  });
 
   // Older projects have rollup rows in tracker_daily_stats but nothing in
   // tracker_event_daily_stats, which would leave Event mix empty on a page
@@ -160,7 +172,7 @@ export default async function ProjectStatsPage({
       <div className="space-y-6">
         <StatsSubnav projectId={id} />
 
-        <LiveVisitors projectId={id} />
+        <LiveVisitors projectId={id} who={who} />
 
         <section className="card p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
@@ -237,40 +249,54 @@ export default async function ProjectStatsPage({
           </section>
         )}
 
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold">Traffic</h2>
+            <p className="text-sm text-[var(--color-muted)]">
+              {range.description}. Every figure below counts{" "}
+              {who === "humans"
+                ? "people only"
+                : who === "bots"
+                  ? "crawlers only"
+                  : "people and crawlers together"}
+              .
+            </p>
+          </div>
+          <WhoToggle value={who} />
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-3">
-          <Metric
-            label={HUMANS_LABEL}
-            value={totalHuman}
-            tone="accent"
-            hint={HUMANS_DEFINITION}
-          />
-          <Metric
-            label="AI referrals"
-            value={totalAi}
-            tone="pass"
-            hint={AI_REFERRALS_DEFINITION}
-          />
-          <Metric
-            label={BOTS_LABEL}
-            value={totalBot}
-            tone="warn"
-            hint={BOTS_DEFINITION}
-          />
+          {tiles.map((tile) => (
+            <Metric
+              key={tile.key}
+              label={tile.label}
+              value={tile.value}
+              tone={tile.tone}
+              hint={tile.hint}
+            />
+          ))}
         </div>
 
         {grandTotal === 0 && eventTotal === 0 ? (
           <section className="card p-4">
             <p className="text-sm text-[var(--color-muted)]">
               {trackerEnabled
-                ? "No events yet. Once the snippet is installed and your site gets traffic, sources will appear here."
+                ? who === "all"
+                  ? "No events yet. Once the snippet is installed and your site gets traffic, sources will appear here."
+                  : `No ${who === "humans" ? "human" : "bot"} events in this window. Switch to All to see everything the tracker has recorded.`
                 : "Enable the tracker to start collecting events."}
             </p>
           </section>
         ) : (
+          /* Keyed on the toggle: a change re-renders this page with panels
+             fetched at the new filter, and the remount hands every card that
+             fresh initial data instead of a stale cache. */
           <TrackerAnalytics
+            key={who}
             projectId={id}
             initial={panels}
             initialRange={range.key}
+            who={who}
           />
         )}
       </div>

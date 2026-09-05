@@ -29,6 +29,12 @@ import {
   BOTS_DEFINITION,
   HUMANS_DEFINITION,
 } from "@/lib/tracker/humans";
+import {
+  DEFAULT_WHO,
+  pulseHeadline,
+  pulseLayers,
+  type Who,
+} from "@/lib/tracker/who";
 
 export type TrackerDailyPoint = {
   date: string;
@@ -73,13 +79,20 @@ export function TrackerAnalytics({
   projectId,
   initial,
   initialRange = DEFAULT_TRACKER_RANGE,
+  who = DEFAULT_WHO,
 }: {
   /** Omitted by the portfolio page, which has no single-project endpoint. */
   projectId?: string;
   initial: TrackerPanels;
   initialRange?: TrackerRangeKey;
+  /**
+   * The page-wide Humans / Bots / All toggle `initial` was rendered at. Every
+   * card sends it with its range requests; the page keys this component on
+   * it so a toggle remounts the cards on fresh initial data.
+   */
+  who?: Who;
 }) {
-  const common = { projectId, initialRange };
+  const common = { projectId, initialRange, who };
 
   return (
     <div className="space-y-4">
@@ -265,10 +278,12 @@ function TrafficPulse({
   projectId,
   initialData,
   initialRange,
+  who,
 }: {
   projectId?: string;
   initialData: SeriesPayload;
   initialRange: TrackerRangeKey;
+  who: Who;
 }) {
   const { ranges, range, setRange, data, loading, error, showTabs } =
     usePanelRange<SeriesPayload>(
@@ -276,24 +291,27 @@ function TrafficPulse({
       "series",
       initialData,
       initialRange,
+      who,
     );
 
   const points = data?.points ?? [];
   // Lead with people. Older rollup days predate the bucket table and carry
   // humans: 0, so the frame total is the human figure, not the old
   // bot-inclusive event count — which is exactly the number this chart used
-  // to mislead with.
+  // to mislead with. Under the Bots toggle the frame leads with bots instead.
   const humans = points.reduce((sum, point) => sum + point.humans, 0);
   const bots = points.reduce((sum, point) => sum + point.bots, 0);
   const byTime = data?.granularity === "time";
+  const headline = pulseHeadline(who, { humans, bots });
+  const layers = pulseLayers(who);
 
   return (
     <PanelFrame
       title="Traffic pulse"
-      subtitle={`Human visits and bot crawls, stacked. AI referrals are the share of humans arriving from an AI assistant; interactions are clicks and form events. ${bots.toLocaleString()} bot ${bots === 1 ? "hit" : "hits"} in this window.`}
-      total={humans}
-      unit={["human visit", "human visits"]}
-      totalHint={HUMANS_DEFINITION}
+      subtitle={pulseSubtitle(who, bots)}
+      total={headline.total}
+      unit={headline.unit}
+      totalHint={headline.hint}
       ranges={ranges}
       range={range}
       onRange={setRange}
@@ -331,69 +349,63 @@ function TrafficPulse({
               labelFormatter={byTime ? formatLongTime : formatLongDate}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            {/* The stack is humans + bots = every event, split honestly.
-                The bot-inclusive pageview series is gone: on a crawled site it
+            {/* Under All the stack is humans + bots = every event, split
+                honestly; Humans and Bots draw their own band alone. The
+                bot-inclusive pageview series is gone: on a crawled site it
                 was indistinguishable from the bot band and double-counted it.
                 AI referrals (a subset of humans) and interactions (clicks and
-                forms, whoever fired them) are unstacked overlays. */}
-            <Area
-              type="monotone"
-              dataKey="humans"
-              name="Human visits"
-              stackId="1"
-              stroke="var(--color-accent)"
-              fill="var(--color-accent)"
-              fillOpacity={0.28}
-              isAnimationActive={false}
-            />
-            <Area
-              type="monotone"
-              dataKey="bots"
-              name="Bot crawls"
-              stackId="1"
-              stroke="var(--color-warn)"
-              fill="var(--color-warn)"
-              fillOpacity={0.14}
-              isAnimationActive={false}
-            />
-            <Area
-              type="monotone"
-              dataKey="ai"
-              name="AI referrals (within humans)"
-              stroke="var(--color-pass)"
-              fill="var(--color-pass)"
-              fillOpacity={0.16}
-              isAnimationActive={false}
-            />
-            <Area
-              type="monotone"
-              dataKey="interactions"
-              name="Interactions"
-              stroke="#60a5fa"
-              strokeDasharray="4 3"
-              fill="#60a5fa"
-              fillOpacity={0}
-              isAnimationActive={false}
-            />
+                forms, on the same side as the band) are unstacked overlays.
+                Which layers appear is decided in lib/tracker/who.ts. */}
+            {layers.map((layer) => (
+              <Area
+                key={layer.dataKey}
+                type="monotone"
+                dataKey={layer.dataKey}
+                name={layer.name}
+                stackId={layer.stackId}
+                stroke={layer.color}
+                strokeDasharray={layer.dashed ? "4 3" : undefined}
+                fill={layer.color}
+                fillOpacity={layer.fillOpacity}
+                isAnimationActive={false}
+              />
+            ))}
           </AreaChart>
         </ResponsiveContainer>
       </div>
       <dl className="mt-2 grid gap-x-4 gap-y-1 text-[11px] text-[var(--color-muted)] sm:grid-cols-3">
-        <div>
-          <dt className="inline font-medium text-[var(--color-fg)]">Human visits: </dt>
-          <dd className="inline">{HUMANS_DEFINITION}</dd>
-        </div>
-        <div>
-          <dt className="inline font-medium text-[var(--color-fg)]">Bot crawls: </dt>
-          <dd className="inline">{BOTS_DEFINITION}</dd>
-        </div>
-        <div>
-          <dt className="inline font-medium text-[var(--color-fg)]">AI referrals: </dt>
-          <dd className="inline">{AI_REFERRALS_DEFINITION}</dd>
-        </div>
+        {who !== "bots" && (
+          <div>
+            <dt className="inline font-medium text-[var(--color-fg)]">Human visits: </dt>
+            <dd className="inline">{HUMANS_DEFINITION}</dd>
+          </div>
+        )}
+        {who !== "humans" && (
+          <div>
+            <dt className="inline font-medium text-[var(--color-fg)]">Bot crawls: </dt>
+            <dd className="inline">{BOTS_DEFINITION}</dd>
+          </div>
+        )}
+        {who !== "bots" && (
+          <div>
+            <dt className="inline font-medium text-[var(--color-fg)]">AI referrals: </dt>
+            <dd className="inline">{AI_REFERRALS_DEFINITION}</dd>
+          </div>
+        )}
       </dl>
     </PanelFrame>
   );
+}
+
+function pulseSubtitle(who: Who, bots: number) {
+  switch (who) {
+    case "humans":
+      return "Human visits only. AI referrals are the share arriving from an AI assistant; interactions are clicks and form events by people.";
+    case "bots":
+      return "Bot crawls only: AI training and retrieval bots, search engine bots and other automated clients. Interactions are the rare click or form event a bot fires.";
+    default:
+      return `Human visits and bot crawls, stacked. AI referrals are the share of humans arriving from an AI assistant; interactions are clicks and form events. ${bots.toLocaleString()} bot ${bots === 1 ? "hit" : "hits"} in this window.`;
+  }
 }
 
 function BreakdownPanel({
@@ -402,15 +414,17 @@ function BreakdownPanel({
   title,
   initialData,
   initialRange,
+  who,
 }: {
   projectId?: string;
   panel: string;
   title: string;
   initialData: ListItem[];
   initialRange: TrackerRangeKey;
+  who: Who;
 }) {
   const { ranges, range, setRange, data, loading, error, showTabs } =
-    usePanelRange<ListItem[]>(projectId, panel, initialData, initialRange);
+    usePanelRange<ListItem[]>(projectId, panel, initialData, initialRange, who);
 
   const rows = data ?? [];
   const total = rows.reduce((sum, row) => sum + row.value, 0);
@@ -478,6 +492,7 @@ function RankedPanel({
   empty,
   initialData,
   initialRange,
+  who,
 }: {
   projectId?: string;
   panel: string;
@@ -485,9 +500,10 @@ function RankedPanel({
   empty: string;
   initialData: ListItem[];
   initialRange: TrackerRangeKey;
+  who: Who;
 }) {
   const { ranges, range, setRange, data, loading, error, showTabs } =
-    usePanelRange<ListItem[]>(projectId, panel, initialData, initialRange);
+    usePanelRange<ListItem[]>(projectId, panel, initialData, initialRange, who);
 
   const rows = data ?? [];
   const total = rows.reduce((sum, row) => sum + row.value, 0);
