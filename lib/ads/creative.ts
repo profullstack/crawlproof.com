@@ -186,6 +186,49 @@ function buildUserPrompt(brand: SiteBrand): string {
     .join("\n");
 }
 
+/**
+ * Copy written from the page alone, with no model in the loop.
+ *
+ * The generator needs an AI provider with credit, and when both providers are
+ * out (a spend cap, an empty balance) every campaign created from the API or
+ * the CLI would fail — which for a campaign that opens itself the moment a
+ * blog post is published means the post runs no ad at all. A page's own title
+ * and description are honest copy: they are what the page says about itself.
+ * Not as sharp as generated copy, and editable in the dashboard like any
+ * other creative.
+ */
+export function templateCopy(brand: SiteBrand): AdCopy {
+  const clean = (s: string) => (s ?? "").replace(/\s+/g, " ").trim();
+  // "NicheDB — sources in, feeds out" → "NicheDB"; the tail is usually the site name or a tagline.
+  const title = clean(brand.title).split(/\s+[—–|·]\s+/)[0] || clean(brand.title) || brand.domain;
+  const headline = title.length > 48 ? `${title.slice(0, 47).replace(/\s+\S*$/, "")}` : title;
+  const shortWords = headline.split(" ").slice(0, 4).join(" ");
+  const shortHeadline = shortWords.length > 28 ? shortWords.slice(0, 28).replace(/\s+\S*$/, "") : shortWords;
+  const description = clean(brand.description) || clean(brand.text).split(/(?<=[.!?])\s+/)[0] || `Read more on ${brand.domain}.`;
+  const body = description.length > 130 ? `${description.slice(0, 129).replace(/\s+\S*$/, "")}…` : description;
+  const bgColor = brand.themeColor && HEX.test(brand.themeColor) ? brand.themeColor.toLowerCase() : "#0b0d10";
+  const accentColor = brand.palette.find((c) => HEX.test(c) && c.toLowerCase() !== bgColor) ?? "#6ee7b7";
+  return {
+    headline: headline || brand.domain,
+    shortHeadline: shortHeadline || headline.slice(0, 28) || brand.domain,
+    body,
+    ctaText: "Learn more",
+    bgColor,
+    fgColor: "#e7e9ee",
+    accentColor,
+    lightBgColor: null,
+    lightFgColor: null,
+    lightAccentColor: null,
+    summaryShort: clean(brand.description).slice(0, 400),
+    summaryLong: "",
+  } as unknown as AdCopy;
+}
+
+/** The generator's creative set from a copy set; exported for the template path. */
+export function creativesFromCopy(brand: SiteBrand, copy: AdCopy, heroUrl: string | null): AdCreative[] {
+  return copyToCreatives(brand, copy, heroUrl);
+}
+
 function copyToCreatives(brand: SiteBrand, copy: AdCopy, heroUrl: string | null): AdCreative[] {
   const bg = safeHex(copy.bgColor, brand.themeColor && HEX.test(brand.themeColor) ? brand.themeColor : "#0b0d10");
   const fg = safeHex(copy.fgColor, "#e7e9ee");
