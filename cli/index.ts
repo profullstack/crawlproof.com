@@ -177,6 +177,157 @@ async function cmdSweep(args: Args): Promise<number> {
   return 0;
 }
 
+// ---------------------------------------------------------------- ads / slots
+//
+// Both talk to /api/ads/v1/* with a CrawlProof API token (Social → API
+// tokens), the same token the MCP server and the myna plugin use.
+
+function apiToken(args: Args): string | null {
+  const token = (args.flags.token as string | undefined) ?? process.env.CRAWLPROOF_TOKEN ?? null;
+  return token && token.trim() ? token.trim() : null;
+}
+
+function apiBase(args: Args): string {
+  const base =
+    (args.flags.base as string | undefined) ??
+    process.env.CRAWLPROOF_SITE_URL ??
+    "https://crawlproof.com";
+  return base.replace(/\/$/, "");
+}
+
+async function apiCall(
+  args: Args,
+  method: "GET" | "POST",
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  const token = apiToken(args);
+  if (!token) {
+    throw new Error("No API token. Set CRAWLPROOF_TOKEN or pass --token (Social → API tokens in the app).");
+  }
+  const res = await fetch(`${apiBase(args)}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/json",
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json: Record<string, unknown> = {};
+  try {
+    json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    json = { error: text.slice(0, 200) };
+  }
+  return { status: res.status, json };
+}
+
+/** The request body `crawlproof ads create` sends, from its flags. Pure, for tests. */
+export function campaignBodyFromArgs(args: Args): Record<string, unknown> {
+  const body: Record<string, unknown> = { url: args.positional[1] };
+  if (typeof args.flags.name === "string") body.name = args.flags.name;
+  if (typeof args.flags.budget === "string") body.daily_budget_cents = Number(args.flags.budget);
+  if (typeof args.flags.bid === "string") body.bid_credits = Number(args.flags.bid);
+  body.status = args.flags.draft ? "draft" : "active";
+  return body;
+}
+
+/** The request body `crawlproof slots create` sends, from its flags. Pure, for tests. */
+export function slotBodyFromArgs(args: Args): Record<string, unknown> {
+  const body: Record<string, unknown> = { site: args.positional[1] };
+  if (typeof args.flags.placement === "string") body.placement = args.flags.placement;
+  if (typeof args.flags.format === "string") body.format = args.flags.format;
+  if (typeof args.flags.formats === "string") body.formats = args.flags.formats.split(",").map((f) => f.trim());
+  if (args.flags.inactive) body.status = "inactive";
+  if (args.flags["no-tracking"]) body.enable_tracking = false;
+  return body;
+}
+
+async function cmdAds(args: Args): Promise<number> {
+  const sub = args.positional[0];
+  if (sub === "create") {
+    if (!args.positional[1]) {
+      console.error("usage: crawlproof ads create <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--draft] [--json]");
+      return 2;
+    }
+    const { status, json } = await apiCall(args, "POST", "/api/ads/v1/campaigns", campaignBodyFromArgs(args));
+    if (status >= 400) {
+      console.error(`ads create failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+    } else {
+      const existing = json.existing ? " (already existed)" : "";
+      process.stdout.write(`${json.status} ${json.ref_slug} ${json.name}${existing}\n  ${json.destination_url}\n  ${json.dashboard_url ?? ""}\n`);
+    }
+    return 0;
+  }
+  if (sub === "list" || sub === undefined) {
+    const limit = (args.flags.limit as string | undefined) ?? "20";
+    const { status, json } = await apiCall(args, "GET", `/api/ads/v1/campaigns?limit=${encodeURIComponent(limit)}`);
+    if (status >= 400) {
+      console.error(`ads list failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    const campaigns = (json.campaigns as Record<string, unknown>[]) ?? [];
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(campaigns, null, 2)}\n`);
+      return 0;
+    }
+    if (!campaigns.length) process.stdout.write("No campaigns yet.\n");
+    for (const c of campaigns) {
+      process.stdout.write(`${String(c.status).padEnd(8)} ${String(c.ref_slug).padEnd(20)} ${c.name}  ${c.destination_url}\n`);
+    }
+    return 0;
+  }
+  console.error(`unknown: crawlproof ads ${sub} (expected: create | list)`);
+  return 2;
+}
+
+async function cmdSlots(args: Args): Promise<number> {
+  const sub = args.positional[0];
+  if (sub === "create") {
+    if (!args.positional[1]) {
+      console.error("usage: crawlproof slots create <site> [--placement=inline] [--format=text_link] [--formats=a,b] [--inactive] [--no-tracking] [--json]");
+      return 2;
+    }
+    const { status, json } = await apiCall(args, "POST", "/api/ads/v1/slots", slotBodyFromArgs(args));
+    if (status >= 400) {
+      console.error(`slots create failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+    } else {
+      const existing = json.existing ? " (already existed)" : "";
+      process.stdout.write(`${json.status} slot ${json.id} on ${json.site}${existing}\n\nPaste before </body>:\n\n${json.embed}\n`);
+    }
+    return 0;
+  }
+  if (sub === "list" || sub === undefined) {
+    const { status, json } = await apiCall(args, "GET", "/api/ads/v1/slots");
+    if (status >= 400) {
+      console.error(`slots list failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    const slots = (json.slots as Record<string, unknown>[]) ?? [];
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(slots, null, 2)}\n`);
+      return 0;
+    }
+    if (!slots.length) process.stdout.write("No slots yet.\n");
+    for (const s of slots) {
+      process.stdout.write(`${String(s.status).padEnd(9)} ${s.id}  ${s.site}  ${s.placement}\n`);
+    }
+    return 0;
+  }
+  console.error(`unknown: crawlproof slots ${sub} (expected: create | list)`);
+  return 2;
+}
+
 function help() {
   console.log(`crawlproof — AEO audit CLI (stub)
 
@@ -207,13 +358,31 @@ COMMANDS
       Defaults --event to "pageview". Project id can also come from
       CRAWLPROOF_PROJECT. Override host with CRAWLPROOF_SITE_URL.
 
+  ads create <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--draft] [--json]
+      Run an ad campaign for a URL: CrawlProof reads the page, writes the
+      creatives and starts serving (active unless --draft). A URL that
+      already has a live campaign gets that campaign back. Needs an API
+      token (CRAWLPROOF_TOKEN, from Social → API tokens).
+
+  ads list [--limit=20] [--json]
+      Your campaigns, newest first.
+
+  slots create <site> [--placement=inline] [--format=text_link] [--formats=a,b] [--inactive] [--no-tracking] [--json]
+      A publisher slot on a site you own, named by hostname or URL. The
+      site's project is found or created with the stats tracker on, and
+      the output is the two tags to paste before </body>.
+
+  slots list [--json]
+      Your slots.
+
   help
       Print this message.
 
 ENV
   ANTHROPIC_API_KEY      Required for --engine=claude.
-  CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', and 'track'.
+  CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', 'track', 'ads' and 'slots'.
   CRAWLPROOF_PROJECT     Default project UUID for 'track'.
+  CRAWLPROOF_TOKEN       API token (crp_…) for 'ads' and 'slots'; --token overrides.
   CRON_SECRET            Required for 'sweep'.
 
 EXAMPLES
@@ -223,6 +392,8 @@ EXAMPLES
   CRAWLPROOF_SITE_URL=http://localhost:3000 crawlproof sweep
   CRAWLPROOF_SITE_URL=http://localhost:3000 crawlproof sweep --target=autoblog
   crawlproof track --project=ac4e0a7d-... --event=signup --target=hero_cta
+  CRAWLPROOF_TOKEN=crp_... crawlproof ads create https://nichedb.dev --name "NicheDB"
+  CRAWLPROOF_TOKEN=crp_... crawlproof slots create nichedb.dev
 `);
 }
 
@@ -238,6 +409,10 @@ async function main() {
         return await cmdSweep(args);
       case "track":
         return await cmdTrack(args);
+      case "ads":
+        return await cmdAds(args);
+      case "slots":
+        return await cmdSlots(args);
       case "help":
       case "--help":
       case "-h":

@@ -182,7 +182,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   const gate = await gateAgent(sb, site, userAgent);
   if (gate.action !== "allow") return refuse(gate);
 
-  const { bucket, isAi } = categorize({ referrer, userAgent });
+  const { bucket, isAi } = categorize({ referrer, userAgent, url: pageUrl });
   // Which side of the human / bot line this hit counts on. The bucket table
   // carries the whole bucket; the other rollups record only this, so the
   // stats page can split every breakdown, not just the headline.
