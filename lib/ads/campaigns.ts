@@ -16,7 +16,8 @@ import { parseCampaignRequest, domainOf, type CampaignRequest, type CampaignStat
 
 export { parseCampaignRequest, domainOf, type CampaignRequest, type CampaignStatus };
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
-import { generateAdCreatives, cleanSummary, type AdCreative, type AdSummary } from "@/lib/ads/creative";
+import { generateAdCreatives, cleanSummary, creativesFromCopy, templateCopy, summaryDomain, type AdCreative, type AdSummary } from "@/lib/ads/creative";
+import { extractSiteBrand, type SiteBrand } from "@/lib/ads/brand";
 import { DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
 
 export type CampaignSummary = {
@@ -116,11 +117,24 @@ export async function createCampaignForUrl(input: {
     };
   }
 
-  let generated: Awaited<ReturnType<typeof generateAdCreatives>>;
+  let generated: { brand: SiteBrand; creatives: AdCreative[]; summary: AdSummary | null; provider: string };
   try {
     generated = await generateAdCreatives(request.url, { supabase: sb });
   } catch (err) {
-    return { ok: false, status: 502, error: err instanceof Error ? `Could not write ads for that URL: ${err.message}` : "Could not write ads for that URL." };
+    // No model with credit, or one that failed: the page's own words are the
+    // copy. A campaign that could not open would mean a post with no ad.
+    try {
+      const brand = await extractSiteBrand(request.url);
+      const copy = templateCopy(brand);
+      generated = {
+        brand,
+        creatives: creativesFromCopy(brand, copy, brand.ogImage),
+        summary: copy.summaryShort ? { short: cleanSummary(copy.summaryShort, 400), long: "", domain: summaryDomain(brand.url || request.url) } : null,
+        provider: `template (${err instanceof Error ? err.message.slice(0, 80) : "generator failed"})`,
+      };
+    } catch (inner) {
+      return { ok: false, status: 502, error: inner instanceof Error ? `Could not read that URL: ${inner.message}` : "Could not read that URL." };
+    }
   }
   if (!generated.creatives.length) return { ok: false, status: 502, error: "No creatives could be written for that URL." };
 
