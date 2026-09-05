@@ -58,6 +58,8 @@ describe("rollup-only panels at the 1D tab", () => {
       await fetchPanel(sb as never, "p1", panel as never, trackerRange("1d"), 412);
       expect(sb.calls).toHaveLength(1);
       expect(sb.calls[0].args.days, `${panel} at 1D`).toBe(1);
+      // The Humans / Bots / All toggle reaches these too; unset means All.
+      expect(sb.calls[0].args, `${panel} at 1D`).toHaveProperty("p_kind", null);
     }
   });
 
@@ -66,6 +68,15 @@ describe("rollup-only panels at the 1D tab", () => {
       const sb = spySb();
       await fetchPanel(sb as never, "p1", panel as never, trackerRange("1m"), 30);
       expect(sb.calls[0].args.days, `${panel} at 1M`).toBe(30);
+    }
+  });
+
+  it("collapses 1D to one day under a kind filter as well", async () => {
+    for (const panel of rollupOnly) {
+      const sb = spySb();
+      await fetchPanel(sb as never, "p1", panel as never, trackerRange("1d"), 412, "human");
+      expect(sb.calls[0].args.days, `${panel} at 1D humans`).toBe(1);
+      expect(sb.calls[0].args.p_kind, `${panel} at 1D humans`).toBe("human");
     }
   });
 

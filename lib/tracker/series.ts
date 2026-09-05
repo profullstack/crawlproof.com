@@ -65,10 +65,22 @@ export function utcDayAxis(days: number, now = new Date()): string[] {
 
 // Map the per-day series onto a zero-filled `days`-wide axis. Rows outside the
 // window (should be none — the RPC applies the same window) are ignored.
+export type BuildDailyAxisOptions = {
+  /**
+   * Fill a zero `events` day from pageviews + interactions. Right for an
+   * unfiltered series (old rollups predate the bucket table); wrong for one
+   * filtered to humans or bots, where a zero is the honest answer and the
+   * event-table legs may be the other side's, or pre-split `unknown`, rows.
+   * Defaults to on so existing callers keep their behaviour.
+   */
+  legacyEventsBackfill?: boolean;
+};
+
 export function buildDailyAxis(
   series: TrackerSeriesRow[],
   days: number,
   now = new Date(),
+  { legacyEventsBackfill = true }: BuildDailyAxisOptions = {},
 ): TrackerDailyPointShape[] {
   const byDay = new Map<string, TrackerDailyPointShape>();
   for (const date of utcDayAxis(days, now)) {
@@ -98,8 +110,10 @@ export function buildDailyAxis(
   // clearly had traffic. Fall back to the event table's own totals. `humans`
   // is deliberately left alone: those event-table totals are bot-inclusive,
   // so there is no honest human figure for such a day.
-  for (const point of byDay.values()) {
-    if (point.events === 0) point.events = point.pageviews + point.interactions;
+  if (legacyEventsBackfill) {
+    for (const point of byDay.values()) {
+      if (point.events === 0) point.events = point.pageviews + point.interactions;
+    }
   }
 
   return Array.from(byDay.values());

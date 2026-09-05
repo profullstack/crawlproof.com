@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
+import { kindFromBucket } from "@/lib/tracker/humans";
 import { parseDevice } from "@/lib/tracker/device";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { enqueuePostHogEvent } from "@/lib/posthog/events";
@@ -182,6 +183,10 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   if (gate.action !== "allow") return refuse(gate);
 
   const { bucket, isAi } = categorize({ referrer, userAgent });
+  // Which side of the human / bot line this hit counts on. The bucket table
+  // carries the whole bucket; the other rollups record only this, so the
+  // stats page can split every breakdown, not just the headline.
+  const kind = kindFromBucket(bucket);
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
 
   // UPSERT increment. Supabase JS doesn't expose a raw .increment() helper
@@ -221,6 +226,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
     .eq("page_path", pagePath)
     .eq("referrer_host", referrerHost)
     .eq("event_target", eventTarget)
+    .eq("kind", kind)
     .maybeSingle();
 
   if (eventExisting) {
@@ -235,7 +241,8 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       .eq("event", event)
       .eq("page_path", pagePath)
       .eq("referrer_host", referrerHost)
-      .eq("event_target", eventTarget);
+      .eq("event_target", eventTarget)
+      .eq("kind", kind);
   } else {
     await sb.from("tracker_event_daily_stats").insert({
       project_id: site,
@@ -244,6 +251,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       page_path: pagePath,
       referrer_host: referrerHost,
       event_target: eventTarget,
+      kind,
       count: 1,
     });
   }
@@ -252,7 +260,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   // Best-effort — analytics writes must never break the beacon response.
   if (event === "pageview" && parsed.data.sessionId) {
     try {
-      await updateExitRollup(sb, site, parsed.data.sessionId, pagePath, today);
+      await updateExitRollup(sb, site, parsed.data.sessionId, pagePath, today, kind);
       await pruneExitSessions(sb, site);
     } catch {
       // Silent — never affect the 204.
@@ -271,6 +279,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       .eq("device_type", device.deviceType)
       .eq("browser", device.browser)
       .eq("os", device.os)
+      .eq("kind", kind)
       .maybeSingle();
 
     if (deviceExisting) {
@@ -284,7 +293,8 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         .eq("day", today)
         .eq("device_type", device.deviceType)
         .eq("browser", device.browser)
-        .eq("os", device.os);
+        .eq("os", device.os)
+        .eq("kind", kind);
     } else {
       await sb.from("tracker_device_daily_stats").insert({
         project_id: site,
@@ -292,6 +302,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         device_type: device.deviceType,
         browser: device.browser,
         os: device.os,
+        kind,
         count: 1,
       });
     }
@@ -344,6 +355,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       .eq("region_code", geo.regionCode)
       .eq("city", geo.city)
       .eq("timezone", geo.timezone)
+      .eq("kind", kind)
       .maybeSingle();
 
     if (geoExisting) {
@@ -360,7 +372,8 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         .eq("country_code", geo.countryCode)
         .eq("region_code", geo.regionCode)
         .eq("city", geo.city)
-        .eq("timezone", geo.timezone);
+        .eq("timezone", geo.timezone)
+        .eq("kind", kind);
     } else {
       await sb.from("tracker_geo_daily_stats").insert({
         project_id: site,
@@ -371,6 +384,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         region_name: geo.regionName,
         city: geo.city,
         timezone: geo.timezone,
+        kind,
         count: 1,
       });
     }

@@ -1,4 +1,4 @@
-// GET /api/projects/[id]/tracker-stats?range=1h&panel=pages
+// GET /api/projects/[id]/tracker-stats?range=1h&panel=pages&who=humans
 //
 // Re-renders one stats panel at a different timeframe. The stats page
 // server-renders every panel at the default range; each card's timeframe tabs
@@ -6,6 +6,9 @@
 // aggregate instead of a full page reload.
 //
 // `panel` may be repeated (or comma-separated) to fetch several at once.
+// `who` is the page-wide Humans / Bots / All toggle (lib/tracker/who.ts);
+// absent means the page default, anything else than the three values is a
+// 400 rather than a silent fall-back to a different answer.
 // Requires project owner or member auth, same as the other project routes.
 
 import { NextRequest, NextResponse } from "next/server";
@@ -13,6 +16,7 @@ import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { serviceClient } from "@/lib/supabase/service";
 import { trackerRange, rangesForPanel } from "@/lib/tracker/ranges";
 import { fetchPanels, PANEL_KEYS, type PanelKey } from "@/lib/tracker/panels";
+import { DEFAULT_WHO, parseWho, WHO_PARAM, whoToKind } from "@/lib/tracker/who";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +35,15 @@ export async function GET(
 
   const sp = request.nextUrl.searchParams;
   const range = trackerRange(sp.get("range"));
+
+  const whoParam = sp.get(WHO_PARAM);
+  const who = whoParam === null ? DEFAULT_WHO : parseWho(whoParam);
+  if (!who) {
+    return NextResponse.json(
+      { error: "Unknown who. Expected humans, bots or all." },
+      { status: 400 },
+    );
+  }
 
   const requested = sp
     .getAll("panel")
@@ -61,8 +74,14 @@ export async function GET(
   }
 
   try {
-    const data = await fetchPanels(serviceClient(), projectId, panels, range);
-    return NextResponse.json({ range: range.key, panels: data });
+    const data = await fetchPanels(
+      serviceClient(),
+      projectId,
+      panels,
+      range,
+      whoToKind(who),
+    );
+    return NextResponse.json({ range: range.key, who, panels: data });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Stats query failed." },

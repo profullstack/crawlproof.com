@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { VisitorGlobe, type GlobePoint } from "./visitor-globe";
 import { LiveChart } from "./live-chart";
+import { DEFAULT_WHO, WHO_PARAM, type Who } from "@/lib/tracker/who";
 
 type LiveEvent = {
   id: number;
@@ -48,7 +49,14 @@ function flagEmoji(code: string) {
   );
 }
 
-export function LiveVisitors({ projectId }: { projectId: string }) {
+export function LiveVisitors({
+  projectId,
+  who = DEFAULT_WHO,
+}: {
+  projectId: string;
+  /** The page-wide Humans / Bots / All toggle; the feed is filtered to it. */
+  who?: Who;
+}) {
   const [data, setData] = useState<LiveData | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -68,7 +76,7 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch(
-        `/api/projects/${projectId}/live-events?minutes=${minutes}`,
+        `/api/projects/${projectId}/live-events?minutes=${minutes}&${WHO_PARAM}=${who}`,
         { cache: "no-store" },
       );
       if (!res.ok) return;
@@ -80,7 +88,7 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [projectId, minutes]);
+  }, [projectId, minutes, who]);
 
   useEffect(() => {
     fetchData();
@@ -102,6 +110,11 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
           </span>
           <h2 className="text-lg font-semibold">Live</h2>
+          {who !== "all" && (
+            <span className="rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted)]">
+              {who}
+            </span>
+          )}
           {lastUpdated && (
             <span className="text-xs text-[var(--color-muted)]">
               · refreshes every 30s · {relTime(lastUpdated.toISOString())}
@@ -148,7 +161,10 @@ export function LiveVisitors({ projectId }: { projectId: string }) {
         <p className="text-xs text-[var(--color-muted)] px-3 pb-2">Loading…</p>
       ) : totalEvents === 0 ? (
         <p className="text-xs text-[var(--color-muted)] px-3 pb-2">
-          No events in the last {minutes} min. Traffic will appear once the tracker script fires.
+          No {who === "all" ? "" : who === "humans" ? "human " : "bot "}events in the last {minutes} min.{" "}
+          {who === "all"
+            ? "Traffic will appear once the tracker script fires."
+            : "Switch to All to see everything the tracker has recorded."}
         </p>
       ) : (
         <>

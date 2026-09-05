@@ -1,11 +1,14 @@
-// GET /api/projects/[id]/live-events?minutes=30
-// Returns recent raw tracker events for the real-time stats panel.
+// GET /api/projects/[id]/live-events?minutes=30&who=humans
+// Returns recent raw tracker events for the real-time stats panel. `who` is
+// the page-wide Humans / Bots / All toggle (lib/tracker/who.ts) and filters
+// on the bucket prefix, which the raw row has always carried; junk is a 400.
 // Requires project owner or member auth.
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { serviceClient } from "@/lib/supabase/service";
 import { bucketLabel } from "@/lib/tracker/categorize";
+import { DEFAULT_WHO, parseWho, WHO_PARAM, whoToKind } from "@/lib/tracker/who";
 
 // Approximate country centroids — fallback when precise lat/lng is missing.
 const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
@@ -47,14 +50,28 @@ export async function GET(
   );
   const since = new Date(Date.now() - minutes * 60 * 1000).toISOString();
 
+  const whoParam = request.nextUrl.searchParams.get(WHO_PARAM);
+  const who = whoParam === null ? DEFAULT_WHO : parseWho(whoParam);
+  if (!who) {
+    return NextResponse.json(
+      { error: "Unknown who. Expected humans, bots or all." },
+      { status: 400 },
+    );
+  }
+  const kind = whoToKind(who);
+
   const svc = serviceClient();
-  const { data: rows, error } = await svc
+  let query = svc
     .from("tracker_events")
     .select(
       "id, occurred_at, event, page_path, referrer_host, event_target, bucket, country_code, country_name, city, lat, lng, visitor_id, session_id",
     )
     .eq("project_id", projectId)
-    .gte("occurred_at", since)
+    .gte("occurred_at", since);
+  // Same rule as the RPCs' p_kind: bot iff the bucket starts with "bot:".
+  if (kind === "bot") query = query.like("bucket", "bot:%");
+  if (kind === "human") query = query.not("bucket", "like", "bot:%");
+  const { data: rows, error } = await query
     .order("occurred_at", { ascending: false })
     .limit(500);
 
@@ -131,6 +148,7 @@ export async function GET(
 
   return NextResponse.json({
     minutes,
+    who,
     total_events: events.length,
     unique_sessions: sessionsSeen.size,
     // Up to 300 so the live chart can bucket a fuller slice of the window;

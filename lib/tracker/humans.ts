@@ -28,6 +28,19 @@ export const AI_REFERRALS_DEFINITION =
 export const ALL_EVENTS_DEFINITION =
   "Every tracked event, human and bot together. This is the old headline number; bots can dominate it.";
 
+/**
+ * The side of the line a single hit falls on, as recorded in the `kind`
+ * column of the bucket-less rollups (tracker_event/device/geo/exit_daily_stats)
+ * by 20260905190000_tracker_kind_split.sql. Rows written before that
+ * migration are 'unknown' in the database and are never produced here.
+ */
+export type TrackerKind = "human" | "bot";
+
+/** Same rule as the SQL: bot iff the bucket starts with "bot:". */
+export function kindFromBucket(bucket: string): TrackerKind {
+  return bucket.startsWith("bot:") ? "bot" : "human";
+}
+
 type Countable = number | string | null | undefined;
 
 /** Coerce a PostgREST count (bigint columns arrive as strings). null when absent. */
