@@ -6,6 +6,13 @@
 interface CategorizeInput {
   referrer: string | null;
   userAgent: string | null;
+  /**
+   * The page the hit landed on, query string included. A visit that arrived
+   * through an ad announces itself there, not in the referrer: our click
+   * redirect appends `?ref=crawlproof-ad-NNN`, and paid links elsewhere carry
+   * utm_medium=cpc and friends.
+   */
+  url?: string | null;
 }
 
 interface CategorizeResult {
@@ -120,9 +127,43 @@ function matchHost(
   return null;
 }
 
+/** utm_medium values that mean "somebody paid for this click". */
+const PAID_MEDIUMS = new Set(["cpc", "ppc", "cpm", "paid", "paidsocial", "paid_social", "display", "ad", "ads", "banner", "sponsored"]);
+
+/** A CrawlProof campaign ref, as appendRef() writes it onto the destination. */
+const CRAWLPROOF_REF = /^crawlproof-ad-\d+$/;
+
+/**
+ * The ad this hit came from, if it came from one. `ad:crawlproof-ad-072` for
+ * our own campaigns — the value is the campaign's ref slug, so a campaign's
+ * visits can be counted on the site it points at — and `ad:<utm_source>` for
+ * paid links tagged the conventional way.
+ */
+export function adFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  let params: URLSearchParams;
+  try {
+    params = new URL(url, "https://placeholder.invalid").searchParams;
+  } catch {
+    return null;
+  }
+  const ref = params.get("ref")?.trim().toLowerCase() ?? "";
+  if (CRAWLPROOF_REF.test(ref)) return ref;
+
+  const medium = params.get("utm_medium")?.trim().toLowerCase() ?? "";
+  if (PAID_MEDIUMS.has(medium)) {
+    const source = (params.get("utm_source") ?? "").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "_").slice(0, 40);
+    return source || "unknown";
+  }
+  if (params.has("gclid")) return "google";
+  if (params.has("msclkid")) return "bing";
+  return null;
+}
+
 export function categorize({
   referrer,
   userAgent,
+  url,
 }: CategorizeInput): CategorizeResult {
   const ua = userAgent || "";
 
@@ -142,6 +183,11 @@ export function categorize({
   if (/bot\b|crawler|spider|scraper|headless/i.test(ua)) {
     return { bucket: "bot:other", isAi: false };
   }
+
+  // An ad click beats the referrer: the referrer of a paid visit is whatever
+  // page carried the unit, which says where the ad ran, not why they came.
+  const ad = adFromUrl(url);
+  if (ad) return { bucket: `ad:${ad}`, isAi: false };
 
   const host = hostnameFromReferrer(referrer);
 
@@ -175,6 +221,8 @@ export function bucketLabel(bucket: string): string {
       return `Social · ${value}`;
     case "referral":
       return `Referral · ${value}`;
+    case "ad":
+      return `Ad · ${value}`;
     case "human":
       return value === "direct" ? "Direct" : value;
     default:
