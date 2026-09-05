@@ -197,7 +197,7 @@ function apiBase(args: Args): string {
 
 async function apiCall(
   args: Args,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: Record<string, unknown>,
 ): Promise<{ status: number; json: Record<string, unknown> }> {
@@ -265,6 +265,55 @@ async function cmdAds(args: Args): Promise<number> {
     }
     return 0;
   }
+  if (sub === "show" || sub === "pause" || sub === "resume" || sub === "budget" || sub === "delete") {
+    const ref = args.positional[1];
+    if (!ref) {
+      console.error(`usage: crawlproof ads ${sub} <ref-or-id>${sub === "budget" ? " <cents>" : ""}`);
+      return 2;
+    }
+    const path = `/api/ads/v1/campaigns/${encodeURIComponent(ref)}`;
+    let method: "GET" | "PATCH" | "DELETE" = "GET";
+    let body: Record<string, unknown> | undefined;
+    if (sub === "pause") (method = "PATCH"), (body = { status: "paused" });
+    if (sub === "resume") (method = "PATCH"), (body = { status: "active" });
+    if (sub === "budget") {
+      const cents = Number(args.positional[2]);
+      if (!Number.isInteger(cents) || cents < 0) {
+        console.error("usage: crawlproof ads budget <ref-or-id> <cents per day>");
+        return 2;
+      }
+      (method = "PATCH"), (body = { daily_budget_cents: cents });
+    }
+    if (sub === "delete") {
+      if (!args.flags.yes) {
+        console.error("delete removes the campaign and its metering; pass --yes. Pause keeps the history.");
+        return 2;
+      }
+      method = "DELETE";
+    }
+    const { status, json } = await apiCall(args, method, path, body);
+    if (status >= 400) {
+      console.error(`ads ${sub} failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+      return 0;
+    }
+    if (sub === "delete") {
+      process.stdout.write(`deleted ${json.deleted}\n`);
+      return 0;
+    }
+    const stats = json.stats as Record<string, unknown> | undefined;
+    process.stdout.write(`${json.status} ${json.ref_slug} ${json.name}\n  ${json.destination_url}\n  ${json.daily_budget_cents}¢/day, bid ${json.bid_credits ?? "default"}\n`);
+    if (stats) {
+      const visits = stats.visits as { total: number } | undefined;
+      process.stdout.write(
+        `  impressions ${stats.impressions} (+${stats.free_impressions} free) · clicks ${stats.clicks} (+${stats.free_clicks} free) · spent ${stats.spent_cents}¢ · visits attributed ${visits?.total ?? 0}\n`,
+      );
+    }
+    return 0;
+  }
   if (sub === "list" || sub === undefined) {
     const limit = (args.flags.limit as string | undefined) ?? "20";
     const { status, json } = await apiCall(args, "GET", `/api/ads/v1/campaigns?limit=${encodeURIComponent(limit)}`);
@@ -283,7 +332,7 @@ async function cmdAds(args: Args): Promise<number> {
     }
     return 0;
   }
-  console.error(`unknown: crawlproof ads ${sub} (expected: create | list)`);
+  console.error(`unknown: crawlproof ads ${sub} (expected: create | list | show | pause | resume | budget | delete)`);
   return 2;
 }
 
@@ -366,6 +415,16 @@ COMMANDS
 
   ads list [--limit=20] [--json]
       Your campaigns, newest first.
+
+  ads show <ref-or-id> [--json]
+      One campaign with its delivery: impressions, clicks, spend, and the
+      visits the tracker attributed to it on your own sites.
+
+  ads pause <ref-or-id> | ads resume <ref-or-id> | ads budget <ref-or-id> <cents>
+      Change a campaign in place. A ref looks like crawlproof-ad-144.
+
+  ads delete <ref-or-id> --yes
+      Remove it, metering included. Pause keeps the history.
 
   slots create <site> [--placement=inline] [--format=text_link] [--formats=a,b] [--inactive] [--no-tracking] [--json]
       A publisher slot on a site you own, named by hostname or URL. The

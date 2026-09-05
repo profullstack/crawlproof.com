@@ -80,3 +80,20 @@ describe("crawlproof ads / slots CLI", () => {
     expect(slotBodyFromArgs(parseArgs(["slots", "create", "x.dev", "--formats=a,b", "--inactive"]))).toEqual({ site: "x.dev", formats: ["a", "b"], status: "inactive" });
   });
 });
+
+describe("PATCH /api/ads/v1/campaigns/[id] body", () => {
+  it("normalises a partial update and refuses an empty one", async () => {
+    const { parseCampaignPatch, isRefSlug } = await import("@/lib/ads/campaign-request");
+    expect(parseCampaignPatch({ status: "paused" })).toEqual({ ok: true, patch: { status: "paused" } });
+    expect(parseCampaignPatch({ daily_budget_cents: 250.6, bid_credits: 900, name: " New " })).toEqual({
+      ok: true,
+      patch: { dailyBudgetCents: 251, bidCredits: 200, name: "New" },
+    });
+    expect(parseCampaignPatch({})).toMatchObject({ ok: false, error: expect.stringContaining("Nothing to change") });
+    expect(parseCampaignPatch({ status: "exhausted" })).toMatchObject({ ok: false });
+    expect(parseCampaignPatch({ name: "" })).toMatchObject({ ok: false });
+    expect(parseCampaignPatch({ bid_credits: 0 })).toMatchObject({ ok: false });
+    expect(isRefSlug("crawlproof-ad-144")).toBe(true);
+    expect(isRefSlug("1a2fc904-a5b2-4c5d-a5bd-cda5ff471692")).toBe(false);
+  });
+});

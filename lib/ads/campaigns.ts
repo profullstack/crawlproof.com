@@ -12,9 +12,9 @@
 // announced twice should not be paying for two campaigns.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseCampaignRequest, domainOf, type CampaignRequest, type CampaignStatus } from "@/lib/ads/campaign-request";
+import { parseCampaignRequest, parseCampaignPatch, isRefSlug, domainOf, type CampaignRequest, type CampaignStatus, type CampaignPatch } from "@/lib/ads/campaign-request";
 
-export { parseCampaignRequest, domainOf, type CampaignRequest, type CampaignStatus };
+export { parseCampaignRequest, parseCampaignPatch, isRefSlug, domainOf, type CampaignRequest, type CampaignStatus, type CampaignPatch };
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import { generateAdCreatives, cleanSummary, creativesFromCopy, templateCopy, summaryDomain, type AdCreative, type AdSummary } from "@/lib/ads/creative";
 import { extractSiteBrand, type SiteBrand } from "@/lib/ads/brand";
@@ -192,4 +192,94 @@ export async function listCampaigns(input: { sb: SupabaseClient; userId: string;
     .order("created_at", { ascending: false })
     .limit(Math.min(200, Math.max(1, input.limit)));
   return ((data as CampaignSummary[]) ?? []).map((c) => ({ ...c, dashboard_url: `${input.siteUrl}/dashboard/ads/${c.id}` }));
+}
+
+// ------------------------------------------------------------ one campaign
+
+const CAMPAIGN_COLUMNS = "id, ref_slug, name, status, destination_url, daily_budget_cents, bid_credits, created_at";
+
+/** The caller's campaign by id or ref slug, or null. */
+export async function findCampaign(sb: SupabaseClient, userId: string, idOrRef: string): Promise<CampaignSummary | null> {
+  const key = idOrRef.trim();
+  let query = sb.from("ad_campaigns").select(CAMPAIGN_COLUMNS).eq("owner_id", userId);
+  query = isRefSlug(key) ? query.eq("ref_slug", key.toLowerCase()) : query.eq("id", key);
+  const { data } = await query.maybeSingle();
+  return (data as CampaignSummary | null) ?? null;
+}
+
+export type CampaignStats = {
+  impressions: number;
+  clicks: number;
+  spent_cents: number;
+  spend_today_cents: number;
+  free_impressions: number;
+  free_clicks: number;
+  /** Visits the tracker attributed to this campaign on the caller's own sites, by day. */
+  visits: { total: number; days: { day: string; visits: number }[] };
+};
+
+const n = (v: unknown): number => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+};
+
+/** Delivery from the stats view, plus ad:<ref> visits on the caller's tracked sites. */
+export async function campaignStats(sb: SupabaseClient, userId: string, campaign: CampaignSummary): Promise<CampaignStats> {
+  const { data: row } = await sb.from("ad_campaign_stats").select("*").eq("campaign_id", campaign.id).maybeSingle();
+  const r = (row as Record<string, unknown> | null) ?? {};
+
+  const { data: projects } = await sb.from("projects").select("id").eq("owner_id", userId);
+  const ids = ((projects as { id: string }[]) ?? []).map((p) => p.id);
+  const days: { day: string; visits: number }[] = [];
+  if (ids.length) {
+    const { data: rows } = await sb
+      .from("tracker_daily_stats")
+      .select("day, count")
+      .in("project_id", ids)
+      .eq("bucket", `ad:${campaign.ref_slug}`)
+      .order("day", { ascending: false })
+      .limit(60);
+    const byDay = new Map<string, number>();
+    for (const item of (rows as { day: string; count: number }[]) ?? []) byDay.set(item.day, (byDay.get(item.day) ?? 0) + n(item.count));
+    for (const [day, visits] of byDay) days.push({ day, visits });
+  }
+  return {
+    impressions: n(r.impressions),
+    clicks: n(r.clicks),
+    spent_cents: n(r.spent_cents),
+    spend_today_cents: n(r.spend_today_cents),
+    free_impressions: n(r.free_impressions),
+    free_clicks: n(r.free_clicks),
+    visits: { total: days.reduce((sum, d) => sum + d.visits, 0), days },
+  };
+}
+
+export async function patchCampaign(
+  sb: SupabaseClient,
+  userId: string,
+  campaign: CampaignSummary,
+  patch: CampaignPatch,
+): Promise<{ ok: true; campaign: CampaignSummary } | { ok: false; status: number; error: string }> {
+  const update: Record<string, unknown> = {};
+  if (patch.name !== undefined) update.name = patch.name;
+  if (patch.dailyBudgetCents !== undefined) update.daily_budget_cents = patch.dailyBudgetCents;
+  if (patch.bidCredits !== undefined) update.bid_credits = patch.bidCredits;
+  if (patch.status !== undefined) {
+    if (patch.status === "active") {
+      // The dashboard's rule: nothing goes live without a creative to show.
+      const { count } = await sb.from("ad_creatives").select("id", { count: "exact", head: true }).eq("campaign_id", campaign.id).eq("status", "ready");
+      if (!count) return { ok: false, status: 409, error: "This campaign has no ready creative; add one in the dashboard before activating." };
+    }
+    update.status = patch.status;
+  }
+  const { data, error } = await sb.from("ad_campaigns").update(update).eq("id", campaign.id).eq("owner_id", userId).select(CAMPAIGN_COLUMNS).single();
+  if (error || !data) return { ok: false, status: 500, error: error?.message ?? "Failed to update the campaign." };
+  return { ok: true, campaign: data as CampaignSummary };
+}
+
+/** Delete outright. Impressions and clicks cascade with it; pausing keeps them. */
+export async function deleteCampaign(sb: SupabaseClient, userId: string, campaign: CampaignSummary): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const { error } = await sb.from("ad_campaigns").delete().eq("id", campaign.id).eq("owner_id", userId);
+  if (error) return { ok: false, status: 500, error: error.message };
+  return { ok: true };
 }

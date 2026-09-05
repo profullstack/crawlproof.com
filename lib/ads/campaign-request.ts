@@ -55,3 +55,42 @@ export function parseCampaignRequest(body: Record<string, unknown>): { ok: true;
   if (statusRaw === "active" || statusRaw === "draft") request.status = statusRaw;
   return { ok: true, request, url: check.url };
 }
+
+export type CampaignPatch = {
+  name?: string;
+  dailyBudgetCents?: number;
+  bidCredits?: number;
+  status?: "active" | "paused" | "draft";
+};
+
+/** Pure: a PATCH body, normalised with the dashboard's clamps. Empty is an error. */
+export function parseCampaignPatch(body: Record<string, unknown>): { ok: true; patch: CampaignPatch } | { ok: false; error: string } {
+  const patch: CampaignPatch = {};
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string" || !body.name.trim()) return { ok: false, error: "name must be a non-empty string." };
+    patch.name = body.name.trim().slice(0, 120);
+  }
+  const budgetRaw = body.daily_budget_cents ?? body.dailyBudgetCents;
+  if (budgetRaw !== undefined) {
+    const n = Number(budgetRaw);
+    if (!Number.isFinite(n) || n < 0) return { ok: false, error: "daily_budget_cents must be a non-negative number." };
+    patch.dailyBudgetCents = Math.round(n);
+  }
+  const bidRaw = body.bid_credits ?? body.bidCredits;
+  if (bidRaw !== undefined) {
+    const n = Number(bidRaw);
+    if (!Number.isFinite(n) || n < 1) return { ok: false, error: "bid_credits must be at least 1." };
+    patch.bidCredits = Math.min(200, Math.round(n));
+  }
+  if (body.status !== undefined) {
+    if (body.status !== "active" && body.status !== "paused" && body.status !== "draft") {
+      return { ok: false, error: 'status must be "active", "paused" or "draft".' };
+    }
+    patch.status = body.status;
+  }
+  if (!Object.keys(patch).length) return { ok: false, error: "Nothing to change: send name, daily_budget_cents, bid_credits or status." };
+  return { ok: true, patch };
+}
+
+/** A campaign is named by its id or by its ref slug (crawlproof-ad-144). */
+export const isRefSlug = (value: string): boolean => /^crawlproof-ad-\d+$/i.test(value.trim());
