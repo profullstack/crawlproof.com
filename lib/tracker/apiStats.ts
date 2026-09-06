@@ -12,7 +12,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { hostOf } from "@/lib/ads/slots";
 import { fetchPanels, type ListItem, type PanelKey, type PanelPayload } from "@/lib/tracker/panels";
 import type { TrackerRange } from "@/lib/tracker/ranges";
-import type { TrackerKind } from "@/lib/tracker/who";
+import type { TrackerKind } from "@/lib/tracker/humans";
 
 type Sb = SupabaseClient;
 
