@@ -61,8 +61,9 @@ export default async function SettingsPage() {
         displayName={profile?.display_name ?? ""}
         retainRawHtml={!!profile?.retain_raw_html}
         perfReportCadence={
-          (profile?.perf_report_cadence ?? "weekly") as
+          (profile?.perf_report_cadence ?? "daily") as
             | "off"
+            | "daily"
             | "weekly"
             | "monthly"
         }
