@@ -10,6 +10,7 @@
 import type { Container, RenderArgs, Theme } from "@profullstack/hqtui";
 
 import { collectDashboard, type CoinPayAuth, type DashboardSnapshot } from "../lib/dashboard/collect";
+import { AD_TARGET_CTR, AD_TARGET_IMPRESSIONS, adTargets } from "../lib/dashboard/roi";
 
 export const TABS = ["ROI", "Traffic", "Ads", "Money", "Spend"] as const;
 export const RANGES = ["1h", "4h", "1d", "1w", "1m"] as const;
@@ -85,6 +86,8 @@ type State = {
   paused: boolean;
   showHelp: boolean;
   panes: Record<string, Pane>;
+  targetImpressions: number;
+  targetCtr: number;
 };
 
 function pane(state: State, name: string, total: number): Pane {
@@ -128,14 +131,19 @@ function roiScreen(ui: Container, state: State, theme: Theme): void {
     grid.panel(
       {
         title: "The number",
-        subtitle: r.cost.scopeMissing ? "whole bank feed" : "business scope",
+        // Three different time bases meet on this panel, so each says which.
+        subtitle: `${r.cost.scopeMissing ? "whole bank feed" : "business scope"} · ${r.cost.lookbackDays}d avg`,
         subtitleColor: r.cost.scopeMissing ? theme.warning : theme.muted,
       },
       (p) => {
         p.keyValues(
           [
             { label: "Cost", value: `${money(r.cost.perMonthUsd)}/mo`, color: theme.danger },
-            { label: "Revenue", value: `${money(r.revenue.perMonthUsd)}/mo`, color: theme.success },
+            {
+              label: `Revenue (${r.revenue.observedDays}d)`,
+              value: `${money(r.revenue.perMonthUsd)}/mo`,
+              color: theme.success,
+            },
             {
               label: "Net",
               value: `${money(r.derived.netPerMonthUsd)}/mo`,
@@ -202,7 +210,7 @@ function roiScreen(ui: Container, state: State, theme: Theme): void {
     });
 
     grid.panel(
-      { title: "Internal", subtitle: "one account, both sides", subtitleColor: theme.muted },
+      { title: "Internal", subtitle: "one account, both sides · lifetime", subtitleColor: theme.muted },
       (p) => {
         p.text("Ad money moving between our own products.", { fg: theme.muted });
         p.text("Counted as neither cost nor revenue.", { fg: theme.muted });
@@ -222,7 +230,16 @@ function roiScreen(ui: Container, state: State, theme: Theme): void {
       },
     );
 
-    grid.panel({ title: "Where the money goes", colSpan: 2 }, (p) => {
+    grid.panel(
+      {
+        title: "Where the money goes",
+        // The bank window, which is NOT the traffic range in the header. Bank
+        // data has no hourly resolution, so these differ on every range below
+        // a month and an unlabelled panel invites the wrong reading.
+        subtitle: `last ${s.window.financeDays}d · business accounts`,
+        colSpan: 2,
+      },
+      (p) => {
       const vendors = r.cost.vendors.slice(0, 8);
       if (!vendors.length) {
         p.text("No business debits in the window.", { fg: theme.muted });
@@ -238,19 +255,33 @@ function roiScreen(ui: Container, state: State, theme: Theme): void {
         })),
         { labelWidth: 19, valueWidth: 8 },
       );
-    });
+      },
+    );
 
-    grid.panel({ title: "Reach" }, (p) => {
+    grid.panel({ title: "Reach", subtitle: `ads ${s.ads?.rangeDays ?? "?"}d · money ${r.revenue.observedDays}d` }, (p) => {
       p.keyValues(
         [
           { label: "Impressions", value: count(r.attention.impressions) },
           { label: "Clicks", value: count(r.attention.clicks) },
           { label: "CTR", value: pct(r.attention.ctr, 2) },
           { label: "", value: "" },
+          // Both are rates built from the day series. The lifetime totals sit
+          // underneath them precisely so the large number is visible without
+          // being mistaken for a run rate.
           { label: "Merchant volume", value: `${money(r.revenue.grossVolumePerMonthUsd, { compact: true })}/mo` },
           { label: "Our commission", value: `${money(r.revenue.commissionPerMonthUsd)}/mo`, color: theme.success },
+          {
+            label: "  lifetime volume",
+            value: money(r.revenue.lifetimeGrossVolumeUsd, { compact: true }),
+            color: theme.muted,
+          },
+          {
+            label: "  lifetime commission",
+            value: money(r.revenue.lifetimeCommissionUsd),
+            color: theme.muted,
+          },
         ],
-        { labelWidth: 17 },
+        { labelWidth: 21 },
       );
     });
 
@@ -356,48 +387,70 @@ function adsScreen(ui: Container, state: State, theme: Theme): void {
     return;
   }
 
-  const t = ads.totals ?? {};
-  const spent = num(t.spentCents) / 100;
-  const earned = num(t.earnedCents) / 100;
+  const t = adTargets(ads, { targetImpressions: state.targetImpressions, targetCtr: state.targetCtr });
+  const spent = num(ads.totals?.spentCents) / 100;
+  const earned = num(ads.totals?.earnedCents) / 100;
+  const window =
+    (ads as { deliveryWindow?: string }).deliveryWindow === "lifetime" ? "lifetime" : `${ads.rangeDays ?? "?"}d`;
 
   ui.grid({ columns: ["1fr", "1fr", "1fr"], rows: [13, "1fr"], gap: 1 }, (grid) => {
-    grid.panel({ title: "As advertiser", subtitle: `${ads.rangeDays ?? "?"}d delivery` }, (p) => {
+    // Free first, because the network is free backfill today and leading with
+    // the paid columns reports a working network as a dead one.
+    grid.panel({ title: "Delivered", subtitle: window }, (p) => {
       p.keyValues(
         [
-          { label: "Impressions", value: count(t.advImpressions) },
-          { label: "Clicks", value: count(t.advClicks) },
-          {
-            label: "CTR",
-            value: pct(num(t.advImpressions) > 0 ? num(t.advClicks) / num(t.advImpressions) : null, 2),
-          },
-          { label: "Spend (lifetime)", value: money(spent), color: theme.warning },
-        ],
-        { labelWidth: 19 },
-      );
-    });
-
-    grid.panel({ title: "As publisher", subtitle: `${ads.rangeDays ?? "?"}d delivery` }, (p) => {
-      p.keyValues(
-        [
-          { label: "Impressions", value: count(t.pubImpressions) },
-          { label: "Clicks", value: count(t.pubClicks) },
-          {
-            label: "CTR",
-            value: pct(num(t.pubImpressions) > 0 ? num(t.pubClicks) / num(t.pubImpressions) : null, 2),
-          },
+          { label: "Impressions", value: count(t.impressions), color: theme.primary },
+          { label: "  free", value: count(t.freeImpressions), color: theme.success },
+          { label: "  paid", value: count(t.paidImpressions), color: theme.muted },
+          { label: "Clicks", value: count(t.clicks) },
+          { label: "CTR", value: pct(t.ctr, 3) },
           {
             label: "Invalid clicks",
             value: count(t.invalidClicks),
-            color: num(t.invalidClicks) > 0 ? theme.warning : theme.muted,
+            color: t.invalidClicks > t.clicks ? theme.danger : theme.warning,
           },
-          { label: "Earned (lifetime)", value: money(earned), color: theme.success },
-          { label: "Available", value: money(num(t.availableCents) / 100) },
         ],
-        { labelWidth: 19 },
+        { labelWidth: 16 },
       );
+      if (t.invalidClicks > t.clicks && t.clicks > 0) {
+        p.text(`${Math.round(t.invalidClicks / t.clicks)}x more invalid than valid.`, { fg: theme.danger });
+      }
     });
 
-    grid.panel({ title: "Net of the network" }, (p) => {
+    grid.panel(
+      { title: "Toward the target", subtitle: `${count(t.targetImpressions)}/mo · ${pct(t.targetCtr, 0)} CTR` },
+      (p) => {
+        p.meters(
+          [
+            {
+              label: "impressions",
+              value: Math.min(1, t.impressionProgress),
+              max: 1,
+              text: pct(t.impressionProgress, 1),
+            },
+            { label: "CTR", value: Math.min(1, t.ctrProgress), max: 1, text: pct(t.ctrProgress, 1) },
+          ],
+          { labelWidth: 12, valueWidth: 8 },
+        );
+        p.keyValues(
+          [
+            { label: "Short by", value: count(Math.max(0, t.targetImpressions - t.impressions)) },
+            {
+              label: "Cost per click",
+              value: t.cpcCents === null ? "nothing charged yet" : `${t.cpcCents.toFixed(1)}c`,
+            },
+            {
+              label: "At target",
+              value: t.projectedMonthlyUsd === null ? "-" : `${money(t.projectedMonthlyUsd)}/mo`,
+              color: theme.success,
+            },
+          ],
+          { labelWidth: 16 },
+        );
+      },
+    );
+
+    grid.panel({ title: "Net of the network", subtitle: "one account, both sides" }, (p) => {
       p.text("We advertise on our own slots, so these", { fg: theme.muted });
       p.text("two sides are the same dollar.", { fg: theme.muted });
       p.keyValues(
@@ -409,16 +462,17 @@ function adsScreen(ui: Container, state: State, theme: Theme): void {
             value: money(earned - spent),
             color: Math.abs(earned - spent) < 1 ? theme.muted : theme.warning,
           },
+          { label: "Available", value: money(num(ads.totals?.availableCents) / 100) },
         ],
         { labelWidth: 12 },
       );
       if (ads.statsUnavailable) {
-        p.text("A delivery query failed; counts are zero-filled.", { fg: theme.danger });
+        p.text("A delivery query failed; counts are low.", { fg: theme.danger });
       }
     });
 
-    grid.panel({ title: "Ad-driven arrivals", colSpan: 3, subtitle: "sources bucketed as Ad · …" }, (p) => {
-      const adSources = s.fleet.sources.filter((x) => x.label.startsWith("Ad ·"));
+    grid.panel({ title: "Ad-driven arrivals", colSpan: 3, subtitle: "sources bucketed as Ad" }, (p) => {
+      const adSources = s.fleet.sources.filter((x) => x.label.startsWith("Ad "));
       if (!adSources.length) {
         p.text("No arrivals attributed to an ad in this window.", { fg: theme.muted });
         return;
@@ -426,7 +480,7 @@ function adsScreen(ui: Container, state: State, theme: Theme): void {
       const max = Math.max(1, ...adSources.map((x) => x.value));
       p.meters(
         adSources.slice(0, 10).map((x) => ({
-          label: x.label.replace(/^Ad · /, "").slice(0, 24),
+          label: x.label.replace(/^Ad . /, "").slice(0, 24),
           value: x.value,
           max,
           text: count(x.value),
@@ -546,7 +600,9 @@ function spendScreen(ui: Container, state: State, theme: Theme): void {
     grid.panel(
       {
         title: "Who we pay",
-        subtitle: r.cost.vendorsPartial ? "newest page of the ledger" : "the whole window",
+        subtitle: r.cost.vendorsPartial
+          ? `last ${s.window.financeDays}d · newest page of the ledger`
+          : `last ${s.window.financeDays}d`,
         subtitleColor: r.cost.vendorsPartial ? theme.warning : theme.muted,
         footer: "business accounts only",
       },
@@ -643,6 +699,9 @@ export type DashboardOptions = {
   coinpay: CoinPayAuth | null;
   only?: string[] | null;
   theme?: string;
+  /** Where the ad network is trying to get to; see lib/dashboard/roi.ts. */
+  targetImpressions?: number;
+  targetCtr?: number;
 };
 
 export async function runDashboard(opts: DashboardOptions): Promise<void> {
@@ -664,6 +723,8 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     paused: false,
     showHelp: false,
     panes: {},
+    targetImpressions: opts.targetImpressions ?? AD_TARGET_IMPRESSIONS,
+    targetCtr: opts.targetCtr ?? AD_TARGET_CTR,
   };
 
   let refreshing = false;
