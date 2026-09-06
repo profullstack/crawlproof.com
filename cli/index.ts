@@ -6,6 +6,7 @@
 //   crawlproof report <token>
 //   crawlproof sweep
 //   crawlproof track --project=<uuid> --event=<name>
+//   crawlproof stats [site] [--range=1d] [--who=humans]
 //   crawlproof help
 //
 // Currently `audit` runs the rule-based engine locally with no DB/credit
@@ -336,6 +337,57 @@ async function cmdAds(args: Args): Promise<number> {
   return 2;
 }
 
+/**
+ * `crawlproof stats [site]` — who arrived, and from where.
+ *
+ * The question this exists for is "did that post do anything", so the default
+ * window is short and the default audience is humans: over a month, with bots
+ * counted, a launch is invisible inside the crawler traffic.
+ */
+async function cmdStats(args: Args): Promise<number> {
+  const site = args.positional[0] ?? (args.flags.site as string | undefined) ?? process.env.CRAWLPROOF_PROJECT;
+  const range = (args.flags.range as string | undefined) ?? "1d";
+  const who = (args.flags.who as string | undefined) ?? "humans";
+
+  const query = new URLSearchParams({ range, who });
+  if (site) query.set("site", site);
+
+  const { status, json } = await apiCall(args, "GET", `/api/tracker/v1/stats?${query.toString()}`);
+  if (status >= 400) {
+    console.error(`error: ${String(json.error ?? status)}`);
+    return 1;
+  }
+  if (args.flags.json) {
+    console.log(JSON.stringify(json, null, 2));
+    return 0;
+  }
+
+  const project = json.project as { name?: string; url?: string } | undefined;
+  const totals = json.totals as { visitors?: number; pageviews?: number } | undefined;
+  const list = (key: string) => (Array.isArray(json[key]) ? (json[key] as { label: string; value: number }[]) : []);
+
+  process.stdout.write(`${project?.name ?? "project"}  ${range}  ${who}\n`);
+  process.stdout.write(`${totals?.visitors ?? 0} visitors, ${totals?.pageviews ?? 0} pageviews\n`);
+
+  const section = (title: string, items: { label: string; value: number }[]) => {
+    if (!items.length) return;
+    process.stdout.write(`\n${title}\n`);
+    const width = Math.min(46, Math.max(...items.map((i) => i.label.length)));
+    for (const item of items.slice(0, 10)) {
+      process.stdout.write(`  ${item.label.slice(0, width).padEnd(width)}  ${item.value}\n`);
+    }
+  };
+  section("Sources", list("sources"));
+  section("Referrers", list("referrers"));
+  section("Pages", list("pages"));
+
+  // Nothing at all is a real answer, and the likeliest cause is worth naming.
+  if (!(totals?.pageviews ?? 0) && !list("sources").length) {
+    process.stdout.write(`\nNothing in this window. Check the tag is on the page, or widen --range.\n`);
+  }
+  return 0;
+}
+
 async function cmdSlots(args: Args): Promise<number> {
   const sub = args.positional[0];
   if (sub === "create") {
@@ -434,6 +486,12 @@ COMMANDS
   slots list [--json]
       Your slots.
 
+  stats [site] [--range=1h|4h|1d|1w|1m] [--who=humans|bots|all] [--json]
+      Who arrived and from where: sources, referrers and top pages. Defaults
+      to the last day and humans only, because a launch is invisible inside a
+      month of crawler traffic. The site is a hostname, a project id or a
+      project name; with one project it can be left out. Needs an API token.
+
   help
       Print this message.
 
@@ -472,6 +530,8 @@ async function main() {
         return await cmdAds(args);
       case "slots":
         return await cmdSlots(args);
+      case "stats":
+        return await cmdStats(args);
       case "help":
       case "--help":
       case "-h":
