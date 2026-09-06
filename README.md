@@ -127,6 +127,43 @@ https://<your-domain>/api/coinpay/webhook
 
 Credit purchases are created through `/api/credits/create-invoice`; successful webhook delivery finalizes the purchase and increments `profiles.credits_balance`.
 
+## CLI
+
+`crawlproof` reads the account from a terminal: traffic across every site you
+own, ad delivery, and the bank feed behind it. Published from
+[`packages/cli`](packages/cli) as `@profullstack/crawlproof`, and documented at
+[/docs/cli](https://crawlproof.com/docs/cli).
+
+```sh
+npm install -g @profullstack/crawlproof
+echo '{ "token": "crp_…" }' > ~/.crawlproof.json && chmod 600 ~/.crawlproof.json
+
+crawlproof dashboard                # five live screens: ROI, Traffic, Ads, Money, Spend
+crawlproof dashboard --range=1m --json | jq .roi.derived
+crawlproof stats example.com        # sources, referrers, top pages as text
+crawlproof ad https://example.com/launch
+crawlproof ads pause crawlproof-ad-144
+```
+
+The package ships only the commands that are pure HTTP against a bearer token.
+`audit` needs the audit engines and their model SDKs and `sweep` needs a cron
+secret, so both stay in-repo behind `npm run cli --`.
+
+It is a **build artifact**, not a second copy: `packages/cli/build.mjs`
+esbuild-bundles `lib/dashboard/*` and `cli/dashboard.ts` where they already
+live and where the test suite already covers them, leaving hqtui and the
+CoinPay SDK external. Rebuild with `node packages/cli/build.mjs`.
+
+The endpoints underneath are the same ones anything else can call:
+
+| Route | Answers |
+| --- | --- |
+| `GET /api/tracker/v1/sites` | the projects this token can read |
+| `GET /api/tracker/v1/stats?site=&range=&who=` | who arrived and from where |
+| `GET /api/ads/v1/earnings?days=` | ad delivery and money, both sides |
+| `GET/POST /api/ads/v1/campaigns` | list and run campaigns |
+| `GET/POST /api/ads/v1/slots` | list and create publisher slots |
+
 ## Product flows
 
 ### Free audit

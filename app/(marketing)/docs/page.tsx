@@ -3,7 +3,7 @@ import Link from "next/link";
 export const metadata = {
   title: "Docs",
   description:
-    "CrawlProof developer documentation: AEO Score, drop-in stats tracker, autoblog webhook integration.",
+    "CrawlProof developer documentation: AEO Score, drop-in stats tracker, the crawlproof CLI, autoblog webhook integration.",
   alternates: { canonical: "/docs" },
 };
 
@@ -27,6 +27,12 @@ const DOCS: DocCard[] = [
       "Install the cookieless tracker, collect pageviews and interactions, and send custom events from any frontend stack. Also reachable at /docs/stats-tracker.",
   },
   {
+    href: "/docs/cli",
+    title: "CLI",
+    description:
+      "Read your traffic, ad delivery and spend from a terminal. Live five-screen dashboard, plain-text stats, and one-command ad campaigns over the same bearer-token API.",
+  },
+  {
     href: "/docs/autoblog-webhook",
     title: "Autoblog webhook",
     description:
@@ -41,8 +47,8 @@ export default function DocsIndexPage() {
       <p className="mt-3 text-[var(--color-muted)]">
         Developer-facing guides for the parts of CrawlProof you integrate
         with — the score that ranks your AEO health, the tracker that
-        watches your live AI traffic, and the webhook that delivers
-        autoblog posts to your CMS.
+        watches your live AI traffic, the CLI that reads all of it from a
+        terminal, and the webhook that delivers autoblog posts to your CMS.
       </p>
 
       <div className="mt-10 grid gap-4">
