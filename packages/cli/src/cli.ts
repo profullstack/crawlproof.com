@@ -15,7 +15,7 @@ import { collectDashboard } from "../../../lib/dashboard/collect";
 import { renderStats } from "../../../lib/dashboard/stats-text";
 import { FINANCE_DAYS, runDashboard } from "../../../cli/dashboard";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 type Args = {
   command: string;

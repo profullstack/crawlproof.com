@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/crawlproof",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "What the fleet costs and what it returns: a live terminal dashboard over CrawlProof traffic, ad delivery and CoinPay banking.",
   "license": "MIT",
   "type": "module",
