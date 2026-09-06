@@ -1,0 +1,74 @@
+# @profullstack/crawlproof
+
+What the fleet costs and what it returns, in a terminal.
+
+```
+npm install -g @profullstack/crawlproof
+crawlproof dashboard
+```
+
+Five live screens over three feeds that are not otherwise in the same place:
+CrawlProof's tracker for who arrived, its ad network for what was delivered,
+and CoinPay for what the bank actually did.
+
+| Screen | Answers |
+| --- | --- |
+| ROI | Monthly burn against revenue, cost per reader, break-even |
+| Traffic | Every site on the account, ranked, with its share of the cost |
+| Ads | Delivery as advertiser and as publisher, and ad-driven arrivals |
+| Money | Earnings, bank position, invoices, income vs spending by month |
+| Spend | Who we pay, largest first, and burn by category |
+
+`1`–`5` or Tab switches screens, `w` cycles the window, `b` cycles humans /
+all / bots, `r` refreshes, `?` explains the arithmetic, `q` quits.
+
+## Two rules the numbers keep
+
+**Self-deal is not revenue.** Where an account advertises on its own slots, ad
+spend and ad earnings are one dollar moving between two pockets. They are shown
+under *Internal* and counted as neither cost nor revenue.
+
+**Personal money is not business cost.** A bank feed carries groceries next to
+servers, so cost is the business scope only — joined from each transaction's
+account to that account's scope.
+
+Everything is normalised to a monthly rate and then prorated onto the traffic
+window, because burn is a rate: the traffic side can be asked for an hour while
+the bank side only answers in weeks.
+
+The dashboard also reports what it cannot know. A site that did not answer is
+missing rather than zero. A vendor list built from one page of a longer ledger
+says so. A fleet whose visits run far above its pageviews — a "visitor" is any
+non-crawler hit, which on a site with a machine-readable endpoint runs orders of
+magnitude above pages anyone read — says that next to the number, and offers the
+per-pageview figure instead.
+
+## Commands
+
+```
+crawlproof dashboard [--range=1h|4h|1d|1w|1m] [--who=humans|bots|all]
+                     [--interval=60] [--sites=a.com,b.com] [--concurrency=8]
+                     [--no-coinpay] [--json]
+crawlproof stats [site] [--range=1d] [--who=humans] [--json]
+```
+
+`--json` prints the same snapshot the screens render, for a script or a box
+with no terminal. Aliases for `dashboard`: `roi`, `tui`.
+
+## Auth
+
+| | |
+| --- | --- |
+| `CRAWLPROOF_TOKEN` | API token (`crp_…`) from Social → API tokens. Also read from the `token` field of `~/.crawlproof.json`. `--token` wins. |
+| `CRAWLPROOF_SITE_URL` | API base, default `https://crawlproof.com`. |
+| `COINPAY_SESSION_TOKEN` | CoinPay merchant JWT for the money screens. Defaults to `jwtToken` in `~/.coinpay.json`, which `coinpay auth login` writes. |
+
+Without a CoinPay session the traffic and ads screens still work and the money
+panels say what is missing, rather than showing zero.
+
+Needs Node 22.6 or newer, and a terminal for the dashboard. `--json` needs
+neither.
+
+## License
+
+MIT

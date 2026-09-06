@@ -185,9 +185,25 @@ async function cmdSweep(args: Args): Promise<number> {
 // Both talk to /api/ads/v1/* with a CrawlProof API token (Social → API
 // tokens), the same token the MCP server and the myna plugin use.
 
+/**
+ * The API token, from the flag, the environment, or ~/.crawlproof.json.
+ *
+ * The config file is last and exists so that using the CLI is not conditional
+ * on remembering to export a secret first. Same shape and same reasoning as
+ * ~/.coinpay.json, which `coinpayAuth` below reads.
+ */
 function apiToken(args: Args): string | null {
-  const token = (args.flags.token as string | undefined) ?? process.env.CRAWLPROOF_TOKEN ?? null;
-  return token && token.trim() ? token.trim() : null;
+  const direct = (args.flags.token as string | undefined) ?? process.env.CRAWLPROOF_TOKEN;
+  if (direct && direct.trim()) return direct.trim();
+
+  try {
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    const file = process.env.CRAWLPROOF_CONFIG ?? `${home}/.crawlproof.json`;
+    const token = (JSON.parse(readFileSync(file, "utf8")) as { token?: string }).token;
+    return token && token.trim() ? token.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 function apiBase(args: Args): string {
@@ -364,29 +380,8 @@ async function cmdStats(args: Args): Promise<number> {
     return 0;
   }
 
-  const project = json.project as { name?: string; url?: string } | undefined;
-  const totals = json.totals as { visitors?: number; pageviews?: number } | undefined;
-  const list = (key: string) => (Array.isArray(json[key]) ? (json[key] as { label: string; value: number }[]) : []);
-
-  process.stdout.write(`${project?.name ?? "project"}  ${range}  ${who}\n`);
-  process.stdout.write(`${totals?.visitors ?? 0} visitors, ${totals?.pageviews ?? 0} pageviews\n`);
-
-  const section = (title: string, items: { label: string; value: number }[]) => {
-    if (!items.length) return;
-    process.stdout.write(`\n${title}\n`);
-    const width = Math.min(46, Math.max(...items.map((i) => i.label.length)));
-    for (const item of items.slice(0, 10)) {
-      process.stdout.write(`  ${item.label.slice(0, width).padEnd(width)}  ${item.value}\n`);
-    }
-  };
-  section("Sources", list("sources"));
-  section("Referrers", list("referrers"));
-  section("Pages", list("pages"));
-
-  // Nothing at all is a real answer, and the likeliest cause is worth naming.
-  if (!(totals?.pageviews ?? 0) && !list("sources").length) {
-    process.stdout.write(`\nNothing in this window. Check the tag is on the page, or widen --range.\n`);
-  }
+  const { renderStats } = await import("../lib/dashboard/stats-text");
+  process.stdout.write(renderStats(json as Parameters<typeof renderStats>[0], { range, who }));
   return 0;
 }
 
@@ -593,7 +588,8 @@ ENV
   CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', 'track', 'ads' and 'slots'.
   CRAWLPROOF_PROJECT     Default project UUID for 'track'.
   CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'stats' and
-                         'dashboard'; --token overrides.
+                         'dashboard'; --token overrides. Falls back to the
+                         'token' field of ~/.crawlproof.json.
   COINPAY_SESSION_TOKEN  CoinPay merchant JWT for the money half of
                          'dashboard'. Defaults to jwtToken in ~/.coinpay.json,
                          which 'coinpay auth login' writes.
