@@ -39,15 +39,24 @@ export type ResolveResult =
  * matches it, so `crawlproof stats nichedb.dev` and `crawlproof slots create
  * nichedb.dev` mean the same site.
  */
-export async function resolveProject(sb: Sb, userId: string, site: string | null): Promise<ResolveResult> {
+export async function listProjects(
+  sb: Sb,
+  userId: string,
+): Promise<{ ok: true; projects: ProjectRow[] } | { ok: false; status: number; error: string }> {
   const { data, error } = await sb
     .from("projects")
     .select("id, name, url, tracker_enabled")
     .eq("owner_id", userId)
     .is("archived_at", null);
   if (error) return { ok: false, status: 500, error: error.message };
+  return { ok: true, projects: (data ?? []) as ProjectRow[] };
+}
 
-  const projects = (data ?? []) as ProjectRow[];
+export async function resolveProject(sb: Sb, userId: string, site: string | null): Promise<ResolveResult> {
+  const listed = await listProjects(sb, userId);
+  if (!listed.ok) return listed;
+
+  const projects = listed.projects;
   if (!projects.length) return { ok: false, status: 404, error: "No projects on this account yet." };
 
   if (!site) {
