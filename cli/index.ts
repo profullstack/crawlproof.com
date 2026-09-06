@@ -380,29 +380,8 @@ async function cmdStats(args: Args): Promise<number> {
     return 0;
   }
 
-  const project = json.project as { name?: string; url?: string } | undefined;
-  const totals = json.totals as { visitors?: number; pageviews?: number } | undefined;
-  const list = (key: string) => (Array.isArray(json[key]) ? (json[key] as { label: string; value: number }[]) : []);
-
-  process.stdout.write(`${project?.name ?? "project"}  ${range}  ${who}\n`);
-  process.stdout.write(`${totals?.visitors ?? 0} visitors, ${totals?.pageviews ?? 0} pageviews\n`);
-
-  const section = (title: string, items: { label: string; value: number }[]) => {
-    if (!items.length) return;
-    process.stdout.write(`\n${title}\n`);
-    const width = Math.min(46, Math.max(...items.map((i) => i.label.length)));
-    for (const item of items.slice(0, 10)) {
-      process.stdout.write(`  ${item.label.slice(0, width).padEnd(width)}  ${item.value}\n`);
-    }
-  };
-  section("Sources", list("sources"));
-  section("Referrers", list("referrers"));
-  section("Pages", list("pages"));
-
-  // Nothing at all is a real answer, and the likeliest cause is worth naming.
-  if (!(totals?.pageviews ?? 0) && !list("sources").length) {
-    process.stdout.write(`\nNothing in this window. Check the tag is on the page, or widen --range.\n`);
-  }
+  const { renderStats } = await import("../lib/dashboard/stats-text");
+  process.stdout.write(renderStats(json as Parameters<typeof renderStats>[0], { range, who }));
   return 0;
 }
 

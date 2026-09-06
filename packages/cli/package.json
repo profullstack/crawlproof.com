@@ -1,0 +1,44 @@
+{
+  "name": "@profullstack/crawlproof",
+  "version": "0.1.0",
+  "description": "What the fleet costs and what it returns: a live terminal dashboard over CrawlProof traffic, ad delivery and CoinPay banking.",
+  "license": "MIT",
+  "type": "module",
+  "homepage": "https://crawlproof.com",
+  "bin": {
+    "crawlproof": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "node build.mjs"
+  },
+  "dependencies": {
+    "@profullstack/coinpay": "^0.9.0",
+    "@profullstack/hqtui": "^0.1.11"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "crawlproof",
+    "tui",
+    "dashboard",
+    "analytics",
+    "roi"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/profullstack/crawlproof.com.git",
+    "directory": "packages/cli"
+  }
+}
