@@ -10,7 +10,7 @@ import { env } from "./env";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type Cadence = "weekly" | "monthly";
+export type Cadence = "daily" | "weekly" | "monthly";
 
 export type ProjectRow = {
   id: string;
@@ -29,6 +29,27 @@ export type AutoblogSummary = {
   nextPublishAt: string | null;
 } | null;
 
+/**
+ * A property's last-24h traffic, split the way the tracker splits it: a
+ * bucket starting `bot:` is a crawler, everything else is a human. AI
+ * referrals count as humans on purpose — someone asked a model and came.
+ */
+export type TrafficRow = {
+  projectId: string;
+  name: string;
+  humans: number;
+  bots: number;
+  total: number;
+};
+
+export type TrafficSummary = {
+  humans: number;
+  bots: number;
+  total: number;
+  /** Most to least traffic. */
+  properties: TrafficRow[];
+};
+
 export type PerfReport = {
   userId: string;
   userEmail: string;
@@ -38,9 +59,12 @@ export type PerfReport = {
   windowEnd: Date;
   projects: ProjectRow[];
   autoblog: AutoblogSummary;
+  /** Present on every cadence; it is the point of the nightly one. */
+  traffic: TrafficSummary;
 };
 
 function windowDays(cadence: Cadence): number {
+  if (cadence === "daily") return 1;
   return cadence === "weekly" ? 7 : 30;
 }
 
@@ -96,6 +120,15 @@ export function isReportDue(
   }
   if (local.hour !== 9) return false;
 
+  if (cadence === "daily") {
+    // One tick a day is eligible, and 20h of dedupe covers a DST shift
+    // without ever letting two sends land in the same local day.
+    if (lastSentAt && now.getTime() - lastSentAt.getTime() < 20 * 60 * 60 * 1000) {
+      return false;
+    }
+    return true;
+  }
+
   if (cadence === "weekly") {
     if (local.weekday !== 1) return false; // Mon
     if (
@@ -119,6 +152,64 @@ export function isReportDue(
   }
 
   return false;
+}
+
+/**
+ * Traffic per property over the window, most to least.
+ *
+ * `tracker_daily_stats` is already bucketed per day, so this is a read of
+ * whole days rather than a rolling window — a nightly report at 09:00 local
+ * wants "yesterday and today so far", which is what `days` back from today
+ * gives. Counting is by bucket because that is the only place the human/bot
+ * split exists: `tracker_event_daily_stats` has no bucket column and its
+ * pageview counts include crawlers.
+ */
+async function aggregateTraffic(
+  supabase: SupabaseClient<any>,
+  projects: { id: string; name: string }[],
+  days: number,
+  now: Date,
+): Promise<TrafficSummary> {
+  const empty: TrafficSummary = { humans: 0, bots: 0, total: 0, properties: [] };
+  if (!projects.length) return empty;
+
+  const since = new Date(now.getTime() - days * DAY_MS).toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from("tracker_daily_stats")
+    .select("project_id, bucket, count")
+    .in(
+      "project_id",
+      projects.map((project) => project.id),
+    )
+    .gte("day", since);
+
+  const byProject = new Map<string, { humans: number; bots: number }>();
+  for (const row of (data ?? []) as { project_id: string; bucket: string; count: number }[]) {
+    const tally = byProject.get(row.project_id) ?? { humans: 0, bots: 0 };
+    if (row.bucket?.startsWith("bot:")) tally.bots += row.count ?? 0;
+    else tally.humans += row.count ?? 0;
+    byProject.set(row.project_id, tally);
+  }
+
+  const properties: TrafficRow[] = projects
+    .map((project) => {
+      const tally = byProject.get(project.id) ?? { humans: 0, bots: 0 };
+      return {
+        projectId: project.id,
+        name: project.name,
+        humans: tally.humans,
+        bots: tally.bots,
+        total: tally.humans + tally.bots,
+      };
+    })
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+  return {
+    humans: properties.reduce((sum, row) => sum + row.humans, 0),
+    bots: properties.reduce((sum, row) => sum + row.bots, 0),
+    total: properties.reduce((sum, row) => sum + row.total, 0),
+    properties,
+  };
 }
 
 export async function aggregatePerfReport(
@@ -228,6 +319,12 @@ export async function aggregatePerfReport(
     windowEnd: now,
     projects: projectRows,
     autoblog,
+    traffic: await aggregateTraffic(
+      supabase,
+      (projects ?? []).map((project: any) => ({ id: project.id, name: project.name })),
+      days,
+      now,
+    ),
   };
 }
 
@@ -254,11 +351,15 @@ export function renderPerfReportEmail(r: PerfReport): {
   subject: string;
   html: string;
 } {
-  const window = r.cadence === "weekly" ? "this week" : "this month";
+  const window =
+    r.cadence === "daily" ? "today" : r.cadence === "weekly" ? "this week" : "this month";
+  // The nightly one leads with the number the reader actually wants.
   const subject =
-    r.projects.length === 0 && !r.autoblog
-      ? `Your CrawlProof ${r.cadence} digest`
-      : `CrawlProof ${r.cadence} digest — ${r.projects.length} project${r.projects.length === 1 ? "" : "s"}${r.autoblog ? " + Autoblog" : ""}`;
+    r.cadence === "daily"
+      ? `CrawlProof nightly — ${fmt(r.traffic.humans)} human visit${r.traffic.humans === 1 ? "" : "s"}, ${fmt(r.traffic.bots)} bot`
+      : r.projects.length === 0 && !r.autoblog
+        ? `Your CrawlProof ${r.cadence} digest`
+        : `CrawlProof ${r.cadence} digest — ${r.projects.length} project${r.projects.length === 1 ? "" : "s"}${r.autoblog ? " + Autoblog" : ""}`;
 
   const projectRowsHtml = r.projects.length
     ? r.projects
@@ -310,10 +411,52 @@ export function renderPerfReportEmail(r: PerfReport): {
       </table>`
     : "";
 
+  const trafficRowsHtml = r.traffic.properties.length
+    ? r.traffic.properties
+        .map((row) => {
+          const share = row.total ? Math.round((row.bots / row.total) * 100) : 0;
+          return `<tr>
+            <td style="padding:10px 0;border-top:1px solid #1f2630;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:top;">
+                    <div style="color:#e7e9ee;font-size:14px;font-weight:600;">${escapeHtml(row.name)}</div>
+                    <div style="color:#94a3b8;font-size:12px;margin-top:4px;">${fmt(row.humans)} human · ${fmt(row.bots)} bot (${share}%)</div>
+                  </td>
+                  <td align="right" style="vertical-align:top;white-space:nowrap;padding-left:12px;color:#e7e9ee;font-size:16px;font-weight:700;">
+                    ${fmt(row.total)}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td style="padding:10px 0;color:#64748b;font-size:13px;">No traffic recorded. Is the tracker tag on the site?</td></tr>`;
+
+  const trafficBlock = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+      <tr>
+        <td style="padding:0 0 8px;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;">Traffic · last ${r.cadence === "daily" ? "24 hours" : window.replace(/^this /, "")}</td>
+      </tr>
+      <tr>
+        <td>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border-spacing:8px 0;">
+            <tr>
+              ${statCell("Humans", r.traffic.humans, "#6ee7b7")}
+              ${statCell("Bots", r.traffic.bots)}
+              ${statCell("All hits", r.traffic.total)}
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">${trafficRowsHtml}</table></td></tr>
+    </table>`;
+
   const innerHtml = `<tr>
     <td style="padding:16px 32px 24px;">
       <h1 style="margin:0 0 4px;font-size:20px;font-weight:700;color:#e7e9ee;">Your ${r.cadence} digest</h1>
-      <p style="margin:0 0 16px;color:#64748b;font-size:13px;">${window.replace(/^this /, "")} of audit + Autoblog activity.</p>
+      <p style="margin:0 0 16px;color:#64748b;font-size:13px;">Traffic, audits and Autoblog for ${window.replace(/^this /, "")}, busiest property first.</p>
+      ${trafficBlock}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         ${projectRowsHtml}
       </table>
@@ -328,6 +471,10 @@ export function renderPerfReportEmail(r: PerfReport): {
 
   const html = perfShell({ title: subject, innerHtml });
   return { subject, html };
+}
+
+function fmt(n: number): string {
+  return n.toLocaleString("en-US");
 }
 
 function statCell(label: string, value: number, accent?: string): string {

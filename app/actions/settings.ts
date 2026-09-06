@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { isValidTimezone } from "@/lib/timezones";
 
-const ALLOWED_CADENCES = ["off", "weekly", "monthly"] as const;
+const ALLOWED_CADENCES = ["off", "daily", "weekly", "monthly"] as const;
 type Cadence = (typeof ALLOWED_CADENCES)[number];
 
 export async function saveSettings(input: {

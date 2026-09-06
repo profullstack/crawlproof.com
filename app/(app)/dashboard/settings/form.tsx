@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { saveSettings } from "@/app/actions/settings";
 
-type Cadence = "off" | "weekly" | "monthly";
+type Cadence = "off" | "daily" | "weekly" | "monthly";
 
 export function SettingsForm({
   displayName,
@@ -69,8 +69,9 @@ export function SettingsForm({
         <legend className="text-sm font-semibold">Email reports</legend>
         <p className="text-xs text-[var(--color-muted)]">
           A combined digest of your audit scores and Autoblog activity.
-          Sent on Monday 09:00 (weekly) or the 1st of the month at 09:00
-          (monthly), in the timezone below.
+          Sent at 09:00 in the timezone below — every day (nightly), on
+          Monday (weekly), or on the 1st (monthly). The nightly one leads
+          with traffic over the last 24 hours, busiest property first.
         </p>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -82,6 +83,7 @@ export function SettingsForm({
               onChange={(e) => setCadence(e.target.value as Cadence)}
             >
               <option value="off">Off — no email reports</option>
+              <option value="daily">Nightly</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
             </select>
