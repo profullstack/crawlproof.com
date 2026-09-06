@@ -13,6 +13,8 @@
 // involvement — handy for local debugging. `report` fetches a public report
 // by share-token from the production API.
 
+import { readFileSync } from "node:fs";
+
 import { isAllowedTargetUrl } from "../lib/rateLimit";
 
 type Args = {
@@ -429,6 +431,89 @@ async function cmdSlots(args: Args): Promise<number> {
   return 2;
 }
 
+/**
+ * The CoinPay merchant session the finance half of the dashboard needs.
+ *
+ * Same file `coinpay auth login` writes, because asking someone to paste a JWT
+ * they already have on disk is not a login flow. Absent is fine: the dashboard
+ * runs without it and says which panels are missing.
+ */
+function coinpayAuth(args: Args): { token: string; baseUrl: string } | null {
+  // CoinPay's SDK wants a base that includes /api, but COINPAY_API_URL is the
+  // site origin everywhere else in this repo (it is set that way in the
+  // production environment). Accept either and normalise, because the failure
+  // otherwise is an HTML page parsed as JSON, which names neither cause.
+  const configured = (
+    (args.flags["coinpay-url"] as string | undefined) ??
+    process.env.COINPAY_API_URL ??
+    "https://coinpayportal.com/api"
+  ).replace(/\/$/, "");
+  const baseUrl = /\/api$/.test(configured) ? configured : `${configured}/api`;
+
+  const fromEnv = process.env.COINPAY_SESSION_TOKEN?.trim();
+  if (fromEnv) return { token: fromEnv, baseUrl };
+
+  try {
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    const file = process.env.COINPAY_CONFIG ?? `${home}/.coinpay.json`;
+    const token = (JSON.parse(readFileSync(file, "utf8")) as { jwtToken?: string }).jwtToken;
+    return token ? { token: token.trim(), baseUrl } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cmdDashboard(args: Args): Promise<number> {
+  const token = apiToken(args);
+  if (!token) {
+    console.error("Set CRAWLPROOF_TOKEN (or --token) to a crp_… API token from Social → API tokens.");
+    return 2;
+  }
+
+  const range = (args.flags.range as string | undefined) ?? "1d";
+  const who = (args.flags.who as string | undefined) ?? "humans";
+  const only = typeof args.flags.sites === "string" ? args.flags.sites.split(",").map((s) => s.trim()).filter(Boolean) : null;
+  const coinpay = args.flags["no-coinpay"] ? null : coinpayAuth(args);
+
+  // --json is the same snapshot the screens render, for a script or a check
+  // that cannot open a terminal.
+  if (args.flags.json) {
+    const { collectDashboard } = await import("../lib/dashboard/collect");
+    const { FINANCE_DAYS } = await import("./dashboard");
+    const snapshot = await collectDashboard({
+      baseUrl: apiBase(args),
+      token,
+      range,
+      who,
+      financeDays: FINANCE_DAYS[range] ?? 30,
+      concurrency: Number(args.flags.concurrency) || 8,
+      coinpay,
+      only,
+    });
+    process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+    return 0;
+  }
+
+  if (!process.stdout.isTTY) {
+    console.error("The dashboard needs a terminal. Use --json for a snapshot, or `crawlproof stats` for one site.");
+    return 2;
+  }
+
+  const { runDashboard } = await import("./dashboard");
+  await runDashboard({
+    baseUrl: apiBase(args),
+    token,
+    range,
+    who,
+    interval: Number(args.flags.interval) || 60,
+    concurrency: Number(args.flags.concurrency) || 8,
+    coinpay,
+    only,
+    theme: args.flags.theme as string | undefined,
+  });
+  return 0;
+}
+
 function help() {
   console.log(`crawlproof — AEO audit CLI (stub)
 
@@ -492,6 +577,14 @@ COMMANDS
       month of crawler traffic. The site is a hostname, a project id or a
       project name; with one project it can be left out. Needs an API token.
 
+  dashboard [--range=1h|4h|1d|1w|1m] [--who=humans|bots|all] [--interval=60]
+            [--sites=a.com,b.com] [--concurrency=8] [--no-coinpay] [--json]
+      A live terminal dashboard of what the fleet costs and what it returns:
+      traffic across every site you own, ad delivery, and — when a CoinPay
+      merchant session is on the box — the bank feed behind it. Five screens:
+      ROI, Traffic, Ads, Money, Spend. Needs an API token and a terminal;
+      --json prints the same snapshot for a script. Aliases: roi, tui.
+
   help
       Print this message.
 
@@ -499,7 +592,12 @@ ENV
   ANTHROPIC_API_KEY      Required for --engine=claude.
   CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', 'track', 'ads' and 'slots'.
   CRAWLPROOF_PROJECT     Default project UUID for 'track'.
-  CRAWLPROOF_TOKEN       API token (crp_…) for 'ads' and 'slots'; --token overrides.
+  CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'stats' and
+                         'dashboard'; --token overrides.
+  COINPAY_SESSION_TOKEN  CoinPay merchant JWT for the money half of
+                         'dashboard'. Defaults to jwtToken in ~/.coinpay.json,
+                         which 'coinpay auth login' writes.
+  COINPAY_API_URL        CoinPay API base (default https://coinpayportal.com/api).
   CRON_SECRET            Required for 'sweep'.
 
 EXAMPLES
@@ -511,6 +609,8 @@ EXAMPLES
   crawlproof track --project=ac4e0a7d-... --event=signup --target=hero_cta
   CRAWLPROOF_TOKEN=crp_... crawlproof ads create https://nichedb.dev --name "NicheDB"
   CRAWLPROOF_TOKEN=crp_... crawlproof slots create nichedb.dev
+  CRAWLPROOF_TOKEN=crp_... crawlproof dashboard --range=1w
+  CRAWLPROOF_TOKEN=crp_... crawlproof dashboard --json | jq .roi.derived
 `);
 }
 
@@ -532,6 +632,10 @@ async function main() {
         return await cmdSlots(args);
       case "stats":
         return await cmdStats(args);
+      case "dashboard":
+      case "roi":
+      case "tui":
+        return await cmdDashboard(args);
       case "help":
       case "--help":
       case "-h":

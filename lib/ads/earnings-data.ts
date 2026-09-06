@@ -14,8 +14,12 @@ import {
 
 // Unified money model for one account — a single user is both an advertiser
 // (ad_campaigns.owner_id) and a publisher (ad_slots.owner_id), so the earnings
-// page shows BOTH spend and earnings. Everything is RLS-scoped to the caller;
-// pass a request-scoped Supabase client whose auth.uid() is the account.
+// page shows BOTH spend and earnings.
+//
+// Every query is filtered by `owner_id` explicitly rather than leaning on RLS.
+// The dashboard passes a request-scoped client where that filter is a no-op
+// narrowing of what RLS already allows; /api/ads/v1/earnings passes the service
+// client, which has no RLS at all, and there the filter IS the boundary.
 
 export type MoneyDailyPoint = { date: string; spentCents: number; earnedCents: number };
 
@@ -132,7 +136,10 @@ export async function loadEarnings(
     { data: ledgerData },
     { data: payoutsData },
   ] = await Promise.all([
-    supabase.from("ad_campaigns").select("id, name, status, total_spent_cents, spend_today_cents, spend_date"),
+    supabase
+      .from("ad_campaigns")
+      .select("id, name, status, total_spent_cents, spend_today_cents, spend_date")
+      .eq("owner_id", userId),
     // Not ad_campaign_stats / ad_slot_stats: those views are lifetime and count
     // only tier 'paid', so on a network running entirely on free backfill they
     // report zero for every campaign and every site. The RPCs take a window and
@@ -140,12 +147,13 @@ export async function loadEarnings(
     getCampaignTotalsSince(supabase, since),
     // Monetization is owner-only (payouts go to the slot owner), like /ads/slots.
     supabase.from("projects").select("id, name").eq("owner_id", userId),
-    supabase.from("ad_slots").select("id, project_id, status"),
+    supabase.from("ad_slots").select("id, project_id, status").eq("owner_id", userId),
     getSlotTotalsSince(supabase, since),
-    supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual"),
+    supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual").eq("owner_id", userId),
     supabase
       .from("ad_payouts")
       .select("amount_cents, currency, status, tx_hash, created_at")
+      .eq("owner_id", userId)
       .order("created_at", { ascending: false }),
   ]);
 
