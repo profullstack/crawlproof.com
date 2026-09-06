@@ -76,7 +76,21 @@ export type AdsInput = {
 /** The subset of the CoinPay finance snapshot this module reads. */
 export type FinanceInput = {
   windowDays?: number;
+  /**
+   * The headline earnings figures, which are **lifetime and not windowed**.
+   *
+   * Verified against production 2026-09-06: asking CoinPay for 7 days and for
+   * 30 returns byte-identical `grossVolumeUsd`, `commissionUsd` and
+   * `transactions`, while the bank half of the same response does change. So
+   * these are a balance, not a rate, and dividing them by a window they do not
+   * cover invents revenue. They are reported as lifetime and never rescaled.
+   */
   earnings?: { commissionUsd?: number; grossVolumeUsd?: number; netUsd?: number };
+  /**
+   * Volume by day, which IS windowed. This is the only honest basis for a
+   * revenue rate, so it is what `revenue` is built from.
+   */
+  series?: Array<{ label?: string; volumeUsd?: number; commissionUsd?: number; count?: number }>;
   position?: {
     lookbackDays?: number;
     monthsObserved?: number;
@@ -126,6 +140,8 @@ export type RoiModel = {
     vendors: VendorSpend[];
     /** True when `vendors` was built from one page of a longer ledger. */
     vendorsPartial: boolean;
+    /** Days of bank history the burn rate is averaged over. */
+    lookbackDays: number;
   };
   revenue: {
     /** Money from outside the fleet: the only kind that counts. */
@@ -133,6 +149,13 @@ export type RoiModel = {
     windowUsd: number;
     commissionPerMonthUsd: number;
     grossVolumePerMonthUsd: number;
+    /** Days the series actually covers, which is what the rate is built on. */
+    observedDays: number;
+    /** Lifetime totals, shown for context and never used as a rate. */
+    lifetimeCommissionUsd: number;
+    lifetimeGrossVolumeUsd: number;
+    /** True when there was no series and the rate had to be guessed. */
+    estimated: boolean;
   };
   /** Money moving between our own products. Never revenue; see rule 1. */
   internal: {
@@ -264,6 +287,74 @@ export function toMonthly(total: number, days: number): number {
   return (n(total) * 30) / days;
 }
 
+/** Where the ad network is trying to get to. Overridable from the CLI. */
+export const AD_TARGET_IMPRESSIONS = 3_000_000;
+export const AD_TARGET_CTR = 0.05;
+
+export type AdTargets = {
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  invalidClicks: number;
+  freeImpressions: number;
+  paidImpressions: number;
+  /** Share of the impression target reached, 0..1+ */
+  impressionProgress: number;
+  ctrProgress: number;
+  targetImpressions: number;
+  targetCtr: number;
+  /** Cents earned per valid click today, if any money has moved at all. */
+  cpcCents: number | null;
+  /**
+   * What a month at target would earn at today's cost per click.
+   *
+   * Null when nothing has ever been charged, because a revenue projection
+   * built on a made-up price is a forecast of the assumption, not of the
+   * business.
+   */
+  projectedMonthlyUsd: number | null;
+};
+
+/**
+ * Progress toward a working ad network, and what it would be worth.
+ *
+ * The network runs entirely on free backfill right now, so the paid columns
+ * are near zero and leading with them would report a working network as a dead
+ * one. Free delivery is delivery: it is the inventory being proved.
+ */
+export function adTargets(
+  ads: AdsInput | null,
+  {
+    targetImpressions = AD_TARGET_IMPRESSIONS,
+    targetCtr = AD_TARGET_CTR,
+    cpcCents,
+  }: { targetImpressions?: number; targetCtr?: number; cpcCents?: number | null } = {},
+): AdTargets {
+  const t = ads?.totals ?? {};
+  const impressions = n(t.pubImpressions);
+  const clicks = n(t.pubClicks);
+  const spent = n(t.spentCents);
+  const ctr = impressions > 0 ? clicks / impressions : null;
+
+  const derivedCpc = clicks > 0 && spent > 0 ? spent / clicks : null;
+  const cpc = cpcCents ?? derivedCpc;
+
+  return {
+    impressions,
+    clicks,
+    ctr,
+    invalidClicks: n(t.invalidClicks),
+    freeImpressions: n((t as { pubFreeImpressions?: number }).pubFreeImpressions),
+    paidImpressions: n((t as { pubPaidImpressions?: number }).pubPaidImpressions),
+    impressionProgress: targetImpressions > 0 ? impressions / targetImpressions : 0,
+    ctrProgress: ctr !== null && targetCtr > 0 ? ctr / targetCtr : 0,
+    targetImpressions,
+    targetCtr,
+    cpcCents: cpc,
+    projectedMonthlyUsd: cpc === null ? null : (targetImpressions * targetCtr * cpc) / 100,
+  };
+}
+
 export function buildRoi(input: {
   traffic: TrafficInput;
   ads: AdsInput | null;
@@ -285,9 +376,24 @@ export function buildRoi(input: {
 
   // Commission is our cut of merchant volume and the only line here that is
   // money from outside the fleet.
+  //
+  // It comes from the day series, not from `earnings`. The headline earnings
+  // figures do not move when the window changes (see the type), so they are
+  // lifetime; rescaling them by a window they never covered is how a dead
+  // merchant's historical volume becomes a six-figure monthly run rate.
   const financeDays = n(finance.windowDays) || 30;
-  const commissionPerMonth = toMonthly(n(finance.earnings?.commissionUsd), financeDays);
-  const grossPerMonth = toMonthly(n(finance.earnings?.grossVolumeUsd), financeDays);
+  const series = finance.series ?? [];
+  const seriesDays = series.length;
+  const seriesCommission = series.reduce((t, p) => t + n(p.commissionUsd), 0);
+  const seriesVolume = series.reduce((t, p) => t + n(p.volumeUsd), 0);
+
+  const haveSeries = seriesDays > 0;
+  const commissionPerMonth = haveSeries
+    ? toMonthly(seriesCommission, seriesDays)
+    : toMonthly(n(finance.earnings?.commissionUsd), financeDays);
+  const grossPerMonth = haveSeries
+    ? toMonthly(seriesVolume, seriesDays)
+    : toMonthly(n(finance.earnings?.grossVolumeUsd), financeDays);
   const revenuePerMonth = commissionPerMonth;
   const revenueWindow = (revenuePerMonth * days) / 30;
 
@@ -337,8 +443,18 @@ export function buildRoi(input: {
       "Ad spend and ad earnings are the same account on both sides of the network, so neither is counted as cost or revenue.",
     );
   }
-  if (financeDays !== 30) {
-    caveats.push(`CoinPay figures cover ${financeDays}d, rescaled to a monthly rate.`);
+  if (!haveSeries) {
+    caveats.push(
+      `No day series from CoinPay, so revenue is a lifetime total rescaled from ${financeDays}d and is probably far too high.`,
+    );
+  }
+  // The gap between the two is the whole reason the series is used. Naming it
+  // keeps the big number visible without letting it be read as a rate.
+  const lifetimeCommission = n(finance.earnings?.commissionUsd);
+  if (haveSeries && lifetimeCommission > commissionPerMonth * 2) {
+    caveats.push(
+      `Lifetime commission is ${lifetimeCommission.toFixed(2)} against ${commissionPerMonth.toFixed(2)} in the last ${seriesDays}d. The rate here is the recent one; the lifetime figure is not a run rate.`,
+    );
   }
   const ledgerRows = finance.bank?.ledger?.length ?? 0;
   const ledgerTotal = n(finance.bank?.ledgerTotal);
@@ -358,12 +474,17 @@ export function buildRoi(input: {
       allScopesPerMonthUsd: burn.allScopesPerMonthUsd,
       vendors: vendorSpend(finance),
       vendorsPartial,
+      lookbackDays: n(finance.position?.lookbackDays),
     },
     revenue: {
       perMonthUsd: revenuePerMonth,
       windowUsd: revenueWindow,
       commissionPerMonthUsd: commissionPerMonth,
       grossVolumePerMonthUsd: grossPerMonth,
+      observedDays: haveSeries ? seriesDays : financeDays,
+      lifetimeCommissionUsd: n(finance.earnings?.commissionUsd),
+      lifetimeGrossVolumeUsd: n(finance.earnings?.grossVolumeUsd),
+      estimated: !haveSeries,
     },
     internal: {
       adSpendUsd,

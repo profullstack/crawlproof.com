@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  adTargets,
   businessAccountIds,
   businessBurn,
   buildRoi,
@@ -17,7 +18,16 @@ import {
 
 const finance = (): FinanceInput => ({
   windowDays: 30,
-  earnings: { commissionUsd: 120, grossVolumeUsd: 12_000, netUsd: 11_880 },
+  // Lifetime, and deliberately far above the series below: this is the shape
+  // production actually returns, and the gap is what used to be mistaken for
+  // a run rate.
+  earnings: { commissionUsd: 5_000, grossVolumeUsd: 500_000, netUsd: 495_000 },
+  // 30 points summing to 120 commission and 12,000 volume: the real rate.
+  series: Array.from({ length: 30 }, (_, i) => ({
+    label: `2026-08-${String(i + 1).padStart(2, "0")}`,
+    volumeUsd: 400,
+    commissionUsd: 4,
+  })),
   position: {
     lookbackDays: 180,
     monthsObserved: 4,
@@ -134,6 +144,52 @@ describe("vendors", () => {
   });
 });
 
+describe("adTargets", () => {
+  const delivered = {
+    totals: {
+      pubImpressions: 220_000,
+      pubPaidImpressions: 17_000,
+      pubFreeImpressions: 203_000,
+      pubClicks: 80,
+      invalidClicks: 9_700,
+      spentCents: 1_500,
+    },
+  };
+
+  it("counts free delivery as delivery, because that is what the network runs on", () => {
+    const t = adTargets(delivered);
+    expect(t.impressions).toBe(220_000);
+    expect(t.freeImpressions).toBe(203_000);
+    expect(t.paidImpressions).toBe(17_000);
+  });
+
+  it("measures progress against the target rather than reporting a bare total", () => {
+    const t = adTargets(delivered);
+    expect(t.impressionProgress).toBeCloseTo(220_000 / 3_000_000);
+    expect(t.ctr).toBeCloseTo(80 / 220_000);
+    expect(t.ctrProgress).toBeCloseTo(80 / 220_000 / 0.05);
+  });
+
+  it("projects revenue at target from the price actually charged", () => {
+    const t = adTargets(delivered);
+    // 1,500c over 80 valid clicks.
+    expect(t.cpcCents).toBeCloseTo(18.75);
+    expect(t.projectedMonthlyUsd).toBeCloseTo((3_000_000 * 0.05 * 18.75) / 100);
+  });
+
+  it("refuses to project from a price nothing was ever sold at", () => {
+    const t = adTargets({ totals: { pubImpressions: 100, pubClicks: 1, spentCents: 0 } });
+    expect(t.cpcCents).toBeNull();
+    expect(t.projectedMonthlyUsd).toBeNull();
+  });
+
+  it("takes overridden targets", () => {
+    const t = adTargets(delivered, { targetImpressions: 1_000_000, targetCtr: 0.06 });
+    expect(t.impressionProgress).toBeCloseTo(0.22);
+    expect(t.targetCtr).toBe(0.06);
+  });
+});
+
 describe("buildRoi", () => {
   it("never counts self-deal ad money as revenue or as cost", () => {
     const model = buildRoi({ traffic: traffic(), ads: ads(), finance: finance() });
@@ -145,6 +201,44 @@ describe("buildRoi", () => {
     // Cost is the business burn alone, with no ad spend added on top.
     expect(model.cost.perMonthUsd).toBe(2_000);
     expect(model.caveats.some((c) => c.includes("both sides of the network"))).toBe(true);
+  });
+
+  it("builds revenue from the day series, never from the lifetime headline", () => {
+    // The regression this pins: `earnings` does not move when the window
+    // changes, so it is lifetime. Rescaling it turned a dead merchant's
+    // historical volume into a six-figure monthly run rate in production.
+    const model = buildRoi({ traffic: traffic(), ads: ads(), finance: finance() });
+    expect(model.revenue.commissionPerMonthUsd).toBeCloseTo(120);
+    expect(model.revenue.grossVolumePerMonthUsd).toBeCloseTo(12_000);
+    expect(model.revenue.lifetimeCommissionUsd).toBe(5_000);
+    expect(model.revenue.observedDays).toBe(30);
+    expect(model.revenue.estimated).toBe(false);
+    expect(model.caveats.some((c) => c.includes("not a run rate"))).toBe(true);
+  });
+
+  it("does not change the revenue rate when the traffic window changes", () => {
+    const month = buildRoi({ traffic: traffic(), ads: ads(), finance: finance() });
+    const hour = buildRoi({
+      traffic: { range: "1h", who: "humans", sites: [{ site: "a.com", visitors: 1, pageviews: 1 }] },
+      ads: ads(),
+      finance: { ...finance(), windowDays: 7 },
+    });
+    // Same underlying series, so the same rate. Before the fix a 7 day window
+    // multiplied it by 30/7.
+    expect(hour.revenue.perMonthUsd).toBeCloseTo(month.revenue.perMonthUsd);
+  });
+
+  it("says so loudly when there is no series to build a rate from", () => {
+    const f = finance();
+    delete f.series;
+    const model = buildRoi({ traffic: traffic(), ads: ads(), finance: f });
+    expect(model.revenue.estimated).toBe(true);
+    expect(model.caveats.some((c) => c.includes("probably far too high"))).toBe(true);
+  });
+
+  it("names the window the burn is averaged over", () => {
+    const model = buildRoi({ traffic: traffic(), ads: ads(), finance: finance() });
+    expect(model.cost.lookbackDays).toBe(180);
   });
 
   it("computes the ratios a spend decision actually needs", () => {

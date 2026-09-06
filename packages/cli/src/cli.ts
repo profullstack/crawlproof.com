@@ -53,6 +53,11 @@ function fromConfig(file: string, field: string): string | null {
 
 const home = () => process.env.HOME ?? process.env.USERPROFILE ?? "";
 
+const num = (v: unknown): number => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+};
+
 export function apiToken(args: Args): string | null {
   const direct = (args.flags.token as string | undefined) ?? process.env.CRAWLPROOF_TOKEN;
   if (direct && direct.trim()) return direct.trim();
@@ -103,6 +108,20 @@ COMMANDS
       Who arrived and from where: sources, referrers and top pages. Defaults
       to the last day and humans only, because a launch is invisible inside a
       month of crawler traffic. With one project the site can be left out.
+
+  ad <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--draft] [--json]
+      Run an ad for a URL. CrawlProof reads the page, writes the creatives and
+      starts serving. A URL that already has a live campaign gets that campaign
+      back, so running it twice is safe.
+
+  Ad network targets on the Ads screen default to 3,000,000 impressions a
+  month at 5% CTR. Override with --target-impressions=N and --target-ctr=5.
+
+  ads [list] [--limit=20] [--json]
+  ads show|pause|resume <ref-or-id>
+  ads budget <ref-or-id> <cents-per-day>
+  ads delete <ref-or-id> --yes
+      Look at and change what is running. A ref looks like crawlproof-ad-144.
 
   help | version
 
@@ -187,12 +206,171 @@ async function cmdDashboard(args: Args): Promise<number> {
     token,
     range,
     who,
+    ...(Number(args.flags["target-impressions"]) > 0
+      ? { targetImpressions: Number(args.flags["target-impressions"]) }
+      : {}),
+    // Given as a percentage, kept as a fraction: nobody types 0.05 for 5%.
+    ...(Number(args.flags["target-ctr"]) > 0 ? { targetCtr: Number(args.flags["target-ctr"]) / 100 } : {}),
     interval: Number(args.flags.interval) || 60,
     concurrency: Number(args.flags.concurrency) || 8,
     coinpay,
     only,
     theme: args.flags.theme as string | undefined,
   });
+  return 0;
+}
+
+
+/** One authenticated call against the CrawlProof API. */
+async function apiCall(
+  args: Args,
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  const token = apiToken(args);
+  if (!token) return { status: 401, json: { error: "no API token" } };
+  const res = await fetch(`${apiBase(args)}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  let json: Record<string, unknown> = {};
+  try {
+    json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    json = { error: `${res.status} ${res.statusText}: not JSON` };
+  }
+  return { status: res.status, json };
+}
+
+/** The body `crawlproof ad` sends. Pure, so the flag handling is testable. */
+export function campaignBody(url: string, args: Args): Record<string, unknown> {
+  const body: Record<string, unknown> = { url };
+  if (typeof args.flags.name === "string") body.name = args.flags.name;
+  if (typeof args.flags.budget === "string") body.daily_budget_cents = Number(args.flags.budget);
+  if (typeof args.flags.bid === "string") body.bid_credits = Number(args.flags.bid);
+  // Active unless asked otherwise: `ad <url>` is a verb, and a campaign that
+  // does not run is not what the word means.
+  body.status = args.flags.draft ? "draft" : "active";
+  return body;
+}
+
+/**
+ * `crawlproof ad <url>` — read the page, write the creatives, start serving.
+ *
+ * The whole point is that it is one word and one URL. A URL that already has a
+ * live campaign gets that campaign back rather than a twin, so running it twice
+ * is safe.
+ */
+async function cmdAd(args: Args): Promise<number> {
+  const url = args.positional[0];
+  if (!url) {
+    console.error("usage: crawlproof ad <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--draft] [--json]");
+    return 2;
+  }
+  const { status, json } = await apiCall(args, "POST", "/api/ads/v1/campaigns", campaignBody(url, args));
+  if (status >= 400) {
+    console.error(`ad failed: ${status} ${json.error ?? ""}`);
+    return 1;
+  }
+  if (args.flags.json) {
+    process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+    return 0;
+  }
+  const existing = json.existing ? " (already running)" : "";
+  process.stdout.write(
+    `${json.status} ${json.ref_slug} ${json.name}${existing}\n  ${json.destination_url}\n  ${json.dashboard_url ?? ""}\n`,
+  );
+  return 0;
+}
+
+async function cmdAds(args: Args): Promise<number> {
+  const sub = args.positional[0] ?? "list";
+
+  if (sub === "list") {
+    const limit = (args.flags.limit as string | undefined) ?? "20";
+    const { status, json } = await apiCall(args, "GET", `/api/ads/v1/campaigns?limit=${encodeURIComponent(limit)}`);
+    if (status >= 400) {
+      console.error(`ads list failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    const campaigns = (json.campaigns as Record<string, unknown>[]) ?? [];
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(campaigns, null, 2)}\n`);
+      return 0;
+    }
+    if (!campaigns.length) {
+      process.stdout.write("No campaigns yet. `crawlproof ad <url>` starts one.\n");
+      return 0;
+    }
+    for (const c of campaigns) {
+      process.stdout.write(`${String(c.status).padEnd(9)} ${c.ref_slug}  ${c.name}\n`);
+    }
+    return 0;
+  }
+
+  const ref = args.positional[1];
+  if (!["show", "pause", "resume", "budget", "delete"].includes(sub)) {
+    console.error(`unknown: crawlproof ads ${sub}`);
+    return 2;
+  }
+  if (!ref) {
+    console.error(`usage: crawlproof ads ${sub} <ref-or-id>${sub === "budget" ? " <cents>" : ""}`);
+    return 2;
+  }
+
+  const path = `/api/ads/v1/campaigns/${encodeURIComponent(ref)}`;
+  let method: "GET" | "PATCH" | "DELETE" = "GET";
+  let body: Record<string, unknown> | undefined;
+  if (sub === "pause") ((method = "PATCH"), (body = { status: "paused" }));
+  if (sub === "resume") ((method = "PATCH"), (body = { status: "active" }));
+  if (sub === "budget") {
+    const cents = Number(args.positional[2]);
+    if (!Number.isInteger(cents) || cents < 0) {
+      console.error("usage: crawlproof ads budget <ref-or-id> <cents per day>");
+      return 2;
+    }
+    ((method = "PATCH"), (body = { daily_budget_cents: cents }));
+  }
+  if (sub === "delete") {
+    if (!args.flags.yes) {
+      console.error("delete removes the campaign and its metering; pass --yes. Pause keeps the history.");
+      return 2;
+    }
+    method = "DELETE";
+  }
+
+  const { status, json } = await apiCall(args, method, path, body);
+  if (status >= 400) {
+    console.error(`ads ${sub} failed: ${status} ${json.error ?? ""}`);
+    return 1;
+  }
+  if (args.flags.json) {
+    process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+    return 0;
+  }
+  if (sub === "delete") {
+    process.stdout.write(`deleted ${json.deleted}\n`);
+    return 0;
+  }
+  const stats = json.stats as Record<string, unknown> | undefined;
+  process.stdout.write(`${json.status} ${json.ref_slug} ${json.name}\n  ${json.destination_url}\n`);
+  if (stats) {
+    // Free delivery first: on a network running entirely on free backfill the
+    // paid columns are zero, and leading with them reads as "nothing happened".
+    const visits = stats.visits as { total?: number } | undefined;
+    process.stdout.write(
+      `  ${num(stats.free_impressions) + num(stats.impressions)} impressions (${num(stats.free_impressions)} free) · ` +
+        `${num(stats.free_clicks) + num(stats.clicks)} clicks (${num(stats.free_clicks)} free) · ` +
+        `${num(stats.spent_cents)}\u00a2 spent · ${visits?.total ?? 0} visits attributed\n`,
+    );
+  }
   return 0;
 }
 
@@ -206,6 +384,10 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdDashboard(args);
       case "stats":
         return await cmdStats(args);
+      case "ad":
+        return await cmdAd(args);
+      case "ads":
+        return await cmdAds(args);
       case "version":
       case "--version":
       case "-v":
