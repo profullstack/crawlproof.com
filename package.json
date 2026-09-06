@@ -1,6 +1,9 @@
 {
   "name": "crawlproof",
   "version": "0.3.0",
+  "bin": {
+    "crawlproof": "./bin/crawlproof.mjs"
+  },
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
