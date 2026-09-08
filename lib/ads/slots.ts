@@ -140,6 +140,27 @@ export async function createSlotForSite(input: {
   }
   if (!project) return { ok: false, status: 500, error: "Failed to resolve the site." };
 
+  // A project with no organization is invisible in the dashboard: both the
+  // portfolio and the analytics page scope their query with
+  // `.eq("organization_id", selectedOrg.id).or(accessFilter)`, and PostgREST
+  // ANDs those, so an org-less row is dropped for its own owner the moment an
+  // org is picked. It still collects traffic perfectly — it just cannot be
+  // read — and the next "add site" mints a duplicate that shadows it in every
+  // lookup by hostname. Attach one on the way in, for the project we just
+  // created and for any older org-less row we found.
+  //
+  // Imported dynamically: `@/lib/orgs` pulls in `server-only`, which vitest
+  // cannot load, and this module's pure helpers are unit-tested.
+  if (!project.organization_id) {
+    try {
+      const { ensureProjectOrg } = await import("@/lib/orgs");
+      const orgId = await ensureProjectOrg({ projectId: project.id, userId });
+      if (orgId) project.organization_id = orgId;
+    } catch {
+      // An install without the org schema still gets a working slot.
+    }
+  }
+
   const select = "id, status, placement, formats, project_id, created_at";
   const { data: existing } = await sb
     .from("ad_slots")
