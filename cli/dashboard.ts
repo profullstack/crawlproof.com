@@ -9,11 +9,17 @@
 
 import type { Container, RenderArgs, Theme } from "@profullstack/hqtui";
 
-import { collectDashboard, type CoinPayAuth, type DashboardSnapshot } from "../lib/dashboard/collect";
+import { collectDashboard, type CoinPayAuth, type DashboardSnapshot, type SiteStats } from "../lib/dashboard/collect";
 import { AD_TARGET_CTR, AD_TARGET_IMPRESSIONS, adTargets } from "../lib/dashboard/roi";
+import { buildSiteDetail, type SiteDetail } from "../lib/dashboard/site";
+import type { Component } from "../lib/dashboard/score";
 
 export const TABS = ["ROI", "Traffic", "Ads", "Money", "Spend"] as const;
 export const RANGES = ["1h", "4h", "1d", "1w", "1m"] as const;
+
+/** How the Traffic list is ordered. `s` cycles it. */
+export const SORTS = ["score", "visitors", "pageviews"] as const;
+export type Sort = (typeof SORTS)[number];
 
 /** Which tracker range pairs with which CoinPay window. */
 export const FINANCE_DAYS: Record<string, number> = {
@@ -75,7 +81,7 @@ const clock = () => new Date().toLocaleTimeString("en-US", { hour12: false });
 
 type Pane = { selected: number; offset: number; total: number };
 
-type State = {
+export type State = {
   tab: number;
   range: string;
   who: string;
@@ -88,6 +94,15 @@ type State = {
   panes: Record<string, Pane>;
   targetImpressions: number;
   targetCtr: number;
+  /**
+   * The property the Traffic screen has drilled into, by name.
+   *
+   * By name rather than by index, because the list reorders on every refresh
+   * and on every sort — an index would silently open a different domain the
+   * moment anything moved.
+   */
+  domain: string | null;
+  sort: Sort;
 };
 
 function pane(state: State, name: string, total: number): Pane {
@@ -295,47 +310,123 @@ function roiScreen(ui: Container, state: State, theme: Theme): void {
   });
 }
 
+/**
+ * The properties, in whatever order was asked for.
+ *
+ * Sites that did not answer sort last whatever the key, because a site with no
+ * numbers is not a site with low numbers; and a null score sorts below a real
+ * one rather than above it, which is what `?? 0` would have done.
+ */
+export function sortSites(sites: SiteStats[], sort: Sort): SiteStats[] {
+  const key = (row: SiteStats): number => {
+    if (sort === "visitors") return num(row.visitors);
+    if (sort === "pageviews") return num(row.pageviews);
+    return row.score?.score ?? -1;
+  };
+  return [...sites].sort((a, b) => {
+    if (Boolean(a.error) !== Boolean(b.error)) return a.error ? 1 : -1;
+    return key(b) - key(a) || a.site.localeCompare(b.site);
+  });
+}
+
+type ThemeColor = Theme["success"];
+
+/** Score bands, so a glance at the column means something without reading it. */
+export function scoreColor(theme: Theme, score: number | null | undefined): ThemeColor | undefined {
+  if (score === null || score === undefined) return theme.muted;
+  if (score >= 60) return theme.success;
+  if (score >= 35) return theme.primary;
+  if (score >= 15) return theme.warning;
+  return theme.muted;
+}
+
+export function scoreText(row: SiteStats): string {
+  const value = row.score?.score;
+  if (value === null || value === undefined) return "—";
+  // A trailing ~ marks a score from too small a sample to lean on. The number
+  // is still shown: hiding it would only move the guess into someone's head.
+  return `${value.toFixed(0)}${row.score?.provisional ? "~" : ""}`;
+}
+
 function trafficScreen(ui: Container, state: State, theme: Theme): void {
   const s = state.snapshot as DashboardSnapshot;
-  const rows = s.sites;
+  const rows = sortSites(s.sites, state.sort);
 
   ui.grid({ columns: ["3fr", "2fr"], gap: 1 }, (grid) => {
     grid.panel(
       {
         title: `Sites · ${state.range} · ${state.who}`,
-        subtitle: `${s.roi.attention.sitesReporting} of ${rows.length} reporting`,
-        footer: "j/k scroll",
+        subtitle: `${s.roi.attention.sitesReporting} of ${rows.length} reporting · by ${state.sort}`,
+        footer: "↑/↓ select · Enter opens · s sorts",
       },
       (p) => {
         const view = pane(state, "sites", rows.length);
-        p.table({
+        /** Absolute row indexes the table drew this frame, in screen order. */
+        const drawn: number[] = [];
+        type SiteRow = {
+          site: string;
+          score: string;
+          scoreValue: number | null;
+          visitors: string;
+          pageviews: string;
+          cost: string;
+          note: string;
+        };
+        p.table<SiteRow>({
           columns: [
             {
               key: "site",
               title: "Site",
-              width: 28,
+              width: 26,
               // A site that did not answer is coloured, not silently ordinary.
-              color: (row: { note?: string }) => (row.note ? theme.danger : undefined),
+              color: (row: SiteRow) => (row.note ? theme.danger : undefined),
+            },
+            {
+              key: "score",
+              title: "Score",
+              align: "right",
+              width: 6,
+              color: (row: SiteRow) => scoreColor(theme, row.scoreValue),
             },
             { key: "visitors", title: "Visitors", align: "right", width: 10 },
             { key: "pageviews", title: "Views", align: "right", width: 9 },
             { key: "cost", title: "Cost", align: "right", width: 10 },
-            { key: "note", title: "", width: 16, color: theme.danger },
+            { key: "note", title: "", width: 14, color: theme.danger },
           ],
           rows: rows.map((row) => {
             const share = s.roi.attention.visitors > 0 ? row.visitors / s.roi.attention.visitors : 0;
             return {
               site: row.site,
+              score: row.error ? "—" : scoreText(row),
+              scoreValue: row.error ? null : (row.score?.score ?? null),
               visitors: row.error ? "—" : count(row.visitors),
               pageviews: row.error ? "—" : count(row.pageviews),
               cost: row.error ? "—" : money(s.roi.cost.windowUsd * share, { cents: true }),
-              note: row.error ? row.error.slice(0, 16) : "",
+              note: row.error ? row.error.slice(0, 14) : "",
             };
           }),
           offset: view.offset,
           selected: view.selected,
+          // The table scrolls itself to keep the selection visible, which means
+          // it — not this — knows where the window actually starts. `onRow`
+          // reports that back, both so the stored offset stays truthful and so
+          // a click can be mapped to a row rather than to an assumption.
+          followSelection: true,
           scrollbar: true,
+          onRow: (_row: SiteRow, index: number) => {
+            if (!drawn.length) view.offset = index;
+            drawn.push(index);
+          },
           onScroll: (delta: number) => scrollPane(view, delta, 3),
+          // A click is a selection and an open, the way a click on a row in any
+          // other list is. Row 0 is the first body row; the header only focuses.
+          onSelectRow: (visibleRow: number) => {
+            const index = drawn[visibleRow];
+            const row = index === undefined ? undefined : rows[index];
+            if (!row || index === undefined) return;
+            view.selected = index;
+            state.domain = row.site;
+          },
         });
       },
     );
@@ -369,6 +460,214 @@ function trafficScreen(ui: Container, state: State, theme: Theme): void {
             value: count(x.value),
           })),
           { labelWidth: 31 },
+        );
+      });
+    });
+  });
+}
+
+/** The site the Traffic screen has opened, if it is still in the snapshot. */
+export function selectedSite(state: State): SiteStats | null {
+  if (!state.domain || !state.snapshot) return null;
+  return state.snapshot.sites.find((s) => s.site === state.domain) ?? null;
+}
+
+/** Rebuild one property's whole picture from the snapshot already in hand. */
+export function detailFor(state: State): SiteDetail | null {
+  const site = selectedSite(state);
+  const s = state.snapshot;
+  if (!site || !s) return null;
+  return buildSiteDetail({
+    site,
+    roi: s.roi,
+    ads: s.ads,
+    finance: s.finance,
+    window: { range: s.window.range, who: s.window.who, financeDays: s.window.financeDays },
+  });
+}
+
+type ComponentRow = { part: string; value: string; why: string; color: ThemeColor | undefined };
+
+const componentRows = (components: Component[], theme: Theme): ComponentRow[] =>
+  components.map((c) => ({
+    part: `${c.label} ·${(c.weight * 100).toFixed(0)}`,
+    value: c.value === null ? "—" : pct(c.value, 0),
+    why: c.detail,
+    color: c.value === null ? theme.muted : undefined,
+  }));
+
+/**
+ * One property, on its own: what arrived, what it cost and earned, and why it
+ * scores what it scores.
+ *
+ * Every figure comes from the snapshot the list was drawn from, so opening a
+ * domain cannot show a number the row behind it disagreed with, and Esc goes
+ * back to exactly the list that was there.
+ */
+function domainScreen(ui: Container, state: State, theme: Theme): void {
+  const detail = detailFor(state);
+  if (!detail) {
+    ui.panel({ title: state.domain ?? "Site" }, (p) => {
+      p.text("That site is not in the current snapshot.", { fg: theme.warning });
+      p.text("Esc goes back to the list.", { fg: theme.muted });
+    });
+    return;
+  }
+
+  const t = detail.traffic;
+  const m = detail.money;
+  const score = detail.score;
+
+  ui.grid({ columns: ["1fr", "1fr", "1fr"], rows: [12, "1fr"], gap: 1 }, (grid) => {
+    grid.panel(
+      {
+        title: detail.site,
+        subtitle: `${detail.window.range} · ${detail.window.who}`,
+        titleColor: theme.title,
+      },
+      (p) => {
+        if (detail.error) {
+          p.text(detail.error, { fg: theme.danger });
+          p.text("Its numbers are missing, not zero.", { fg: theme.muted });
+          return;
+        }
+        p.keyValues(
+          [
+            { label: "Pageviews", value: count(t.pageviews), color: theme.primary },
+            { label: "Visits", value: count(t.visitors) },
+            { label: "Humans", value: t.mixKnown ? count(t.humans) : "—", color: theme.success },
+            { label: "Bots", value: t.mixKnown ? count(t.bots) : "—", color: theme.warning },
+            {
+              label: "Human share",
+              value: pct(t.humanShare, 0),
+              color: (t.humanShare ?? 1) < 0.5 ? theme.warning : theme.success,
+            },
+            { label: "AI referrals", value: count(t.aiReferrals) },
+            { label: "", value: "" },
+            { label: "Share of views", value: pct(t.viewShare, 1) },
+            { label: "Share of visits", value: pct(t.visitShare, 1) },
+          ],
+          { labelWidth: 15 },
+        );
+        const line = t.series.map((point) => num(point.humans));
+        if (line.length > 1) {
+          p.sparkline({ values: line, color: theme.success, label: "humans", text: count(t.humans) });
+        }
+      },
+    );
+
+    // Short subtitles on purpose: hqtui draws the title and the subtitle in the
+    // same border row and the subtitle wins, so a long one costs the panel its
+    // own name at a narrow width.
+    grid.panel({ title: "Money", subtitle: `${detail.window.range} · ${detail.window.financeDays}d bank` }, (p) => {
+      p.keyValues(
+        [
+          {
+            label: "Cost · by views",
+            value: m.costByViewsUsd === null ? "—" : money(m.costByViewsUsd, { cents: true }),
+            color: theme.danger,
+          },
+          {
+            label: "Cost · by visits",
+            value: m.costByVisitsUsd === null ? "—" : money(m.costByVisitsUsd, { cents: true }),
+            color: theme.muted,
+          },
+          {
+            label: "Revenue",
+            value: m.revenueUsd === null ? "—" : money(m.revenueUsd, { cents: true }),
+            color: theme.success,
+          },
+          {
+            label: "Net",
+            value: m.netUsd === null ? "—" : money(m.netUsd, { cents: true }),
+            color: m.netUsd === null ? theme.muted : signed(theme, m.netUsd),
+          },
+          {
+            label: "Per 1k humans",
+            value: m.rpmUsd === null ? "—" : money(m.rpmUsd, { cents: true }),
+          },
+          { label: "", value: "" },
+          // Internal by construction: one account owns the slot and the
+          // campaign, so this is the same dollar in two pockets.
+          { label: "Ad earned (int.)", value: money(m.adEarnedUsd, { cents: true }), color: theme.muted },
+          { label: "Ad spent (int.)", value: money(m.adSpentUsd, { cents: true }), color: theme.muted },
+          { label: "Impressions", value: count(m.adImpressions), color: theme.muted },
+        ],
+        { labelWidth: 17 },
+      );
+    });
+
+    grid.panel(
+      {
+        title: "Risk-to-viral",
+        subtitle: score.provisional ? "provisional" : `${pct(score.coverage, 0)} scored`,
+        subtitleColor: score.provisional ? theme.warning : theme.muted,
+      },
+      (p) => {
+        p.text(score.score === null ? "  —" : `  ${score.score.toFixed(0)}`, {
+          bold: true,
+          fg: scoreColor(theme, score.score),
+        });
+        p.meters(
+          [
+            { label: "viral", value: score.viral, max: 1, text: pct(score.viral, 0) },
+            { label: "risk", value: score.risk, max: 1, text: pct(score.risk, 0) },
+          ],
+          { labelWidth: 7, valueWidth: 6 },
+        );
+        p.text("100 × viral × (1 − risk/2)", { fg: theme.muted });
+        for (const note of score.notes.slice(0, 2)) p.text(`· ${note}`, { fg: theme.warning, wrap: true });
+      },
+    );
+
+    grid.panel({ title: "Why it scores that", subtitle: "weights", colSpan: 2 }, (p) => {
+      p.table<ComponentRow>({
+        columns: [
+          { key: "part", title: "Viral", width: 23 },
+          { key: "value", title: "", align: "right", width: 6 },
+          { key: "why", title: "", width: 41, color: theme.muted },
+        ],
+        rows: componentRows(score.viralComponents, theme),
+        rowColor: (row: ComponentRow) => row.color,
+      });
+      p.table<ComponentRow>({
+        columns: [
+          { key: "part", title: "Risk", width: 23 },
+          { key: "value", title: "", align: "right", width: 6 },
+          { key: "why", title: "", width: 41, color: theme.muted },
+        ],
+        rows: componentRows(score.riskComponents, theme),
+        rowColor: (row: ComponentRow) => row.color,
+      });
+      for (const gap of detail.gaps.slice(0, 3)) p.text(`· ${gap}`, { fg: theme.muted, wrap: true });
+    });
+
+    grid.cell({ gap: 1 }, (col) => {
+      col.panel({ title: "Where they came from" }, (p) => {
+        if (!t.sources.length) {
+          p.text("Nobody arrived in this window.", { fg: theme.muted });
+          return;
+        }
+        const max = Math.max(1, ...t.sources.map((x) => num(x.value)));
+        p.meters(
+          t.sources.slice(0, 6).map((x) => ({
+            label: x.label.slice(0, 20),
+            value: num(x.value),
+            max,
+            text: count(x.value),
+          })),
+          { labelWidth: 21, valueWidth: 7 },
+        );
+      });
+
+      col.panel({ title: "Most-read pages" }, (p) => {
+        if (!t.pages.length) {
+          p.text("No pages read in this window.", { fg: theme.muted });
+          return;
+        }
+        p.keyValues(
+          t.pages.slice(0, 6).map((x) => ({ label: x.label.slice(0, 26), value: count(x.value) })),
+          { labelWidth: 27 },
         );
       });
     });
@@ -674,6 +973,193 @@ function spendScreen(ui: Container, state: State, theme: Theme): void {
 
 const SCREENS = [roiScreen, trafficScreen, adsScreen, moneyScreen, spendScreen];
 
+/**
+ * Draw whichever screen the state is on.
+ *
+ * One function rather than an index into SCREENS at the call site, because the
+ * Traffic tab has two screens — the list and one property — and the choice
+ * between them is state, not a tab. Exported so the render tests draw exactly
+ * what the app draws.
+ */
+export function renderBody(ui: Container, state: State, theme: Theme): void {
+  if (!state.snapshot) {
+    ui.panel({ title: "Spend & ROI" }, (p) => {
+      if (state.error) {
+        p.text(`Could not load: ${state.error}`, { fg: theme.danger });
+        p.text("Press r to retry, q to quit.", { fg: theme.muted });
+      } else {
+        p.text("Reading the fleet…", { fg: theme.muted });
+        p.text("One tracker call per site, plus ad earnings and CoinPay.", { fg: theme.muted });
+      }
+    });
+    return;
+  }
+  if (state.tab === 1 && state.domain) {
+    domainScreen(ui, state, theme);
+    return;
+  }
+  (SCREENS[state.tab] ?? roiScreen)(ui, state, theme);
+}
+
+/** A fresh state, for `runDashboard` and for the render tests alike. */
+export function initialState(overrides: Partial<State> = {}): State {
+  return {
+    tab: 0,
+    range: "1d",
+    who: "humans",
+    snapshot: null,
+    loading: false,
+    lastRefresh: null,
+    error: null,
+    paused: false,
+    showHelp: false,
+    panes: {},
+    targetImpressions: AD_TARGET_IMPRESSIONS,
+    targetCtr: AD_TARGET_CTR,
+    domain: null,
+    sort: "score",
+    ...overrides,
+  };
+}
+
+/** Move the highlighted row, letting the table work out the scroll. */
+function moveSelection(p: Pane, delta: number): void {
+  const max = Math.max(0, p.total - 1);
+  p.selected = Math.max(0, Math.min(p.selected + delta, max));
+}
+
+export type KeyLike = { name: string; shift?: boolean };
+
+/**
+ * Every key the dashboard answers to, as a pure function of the state.
+ *
+ * Pulled out of the app so the navigation that matters — opening a domain,
+ * coming back from it, re-sorting without losing your place — can be tested
+ * without a terminal. Returns true when something changed and the frame is
+ * worth redrawing.
+ */
+export function handleKey(state: State, event: KeyLike, actions: { refresh: () => void }): boolean {
+  if (state.showHelp) {
+    state.showHelp = false;
+    return true;
+  }
+
+  const onTraffic = state.tab === 1;
+  const sites = state.snapshot ? sortSites(state.snapshot.sites, state.sort) : [];
+  const view = pane(state, TAB_PANE[state.tab] as string, state.panes[TAB_PANE[state.tab] as string]?.total ?? 0);
+
+  // A number is always the top-level screen it names, so 2 is the way back to
+  // the list from a domain as well as the way to the Traffic tab from anywhere.
+  const digit = Number(event.name);
+  if (Number.isInteger(digit) && event.name.length === 1 && digit >= 1 && digit <= TABS.length) {
+    state.tab = digit - 1;
+    state.domain = null;
+    return true;
+  }
+
+  switch (event.name) {
+    case "escape":
+    case "backspace":
+      if (!state.domain) return false;
+      state.domain = null;
+      return true;
+
+    case "enter":
+    case "return":
+    case "right": {
+      // → opens a domain from the list, and otherwise keeps its old job of
+      // moving to the next screen.
+      if (onTraffic && !state.domain && sites.length) {
+        const row = sites[Math.min(view.selected, sites.length - 1)];
+        if (row) {
+          state.domain = row.site;
+          return true;
+        }
+      }
+      if (event.name !== "right") return false;
+      state.tab = event.shift ? (state.tab + TABS.length - 1) % TABS.length : (state.tab + 1) % TABS.length;
+      return true;
+    }
+
+    case "tab":
+    case "l":
+      state.tab = event.shift ? (state.tab + TABS.length - 1) % TABS.length : (state.tab + 1) % TABS.length;
+      return true;
+
+    case "left":
+    case "h":
+      // ← is the way back out of a domain too, since that is where it came from.
+      if (state.domain) {
+        state.domain = null;
+        return true;
+      }
+      state.tab = (state.tab + TABS.length - 1) % TABS.length;
+      return true;
+
+    case "s": {
+      // Re-sorting keeps the highlight on the same property rather than on the
+      // same row number, which is the only version of this that is not annoying.
+      const held = sites[view.selected]?.site ?? null;
+      state.sort = SORTS[(SORTS.indexOf(state.sort) + 1) % SORTS.length] as Sort;
+      if (held && state.snapshot) {
+        const next = sortSites(state.snapshot.sites, state.sort).findIndex((row) => row.site === held);
+        if (next >= 0) view.selected = next;
+      }
+      return true;
+    }
+
+    case "r":
+    case "f5":
+      actions.refresh();
+      return true;
+
+    case "w":
+      state.range = RANGES[(RANGES.indexOf(state.range as never) + 1) % RANGES.length] as string;
+      actions.refresh();
+      return true;
+
+    case "b":
+      state.who = state.who === "humans" ? "all" : state.who === "all" ? "bots" : "humans";
+      actions.refresh();
+      return true;
+
+    case "p":
+    case "space":
+      state.paused = !state.paused;
+      return true;
+
+    case "?":
+    case "f1":
+      state.showHelp = true;
+      return true;
+
+    case "up":
+    case "k":
+      if (onTraffic && !state.domain) moveSelection(view, -1);
+      else scrollPane(view, -1);
+      return true;
+
+    case "down":
+    case "j":
+      if (onTraffic && !state.domain) moveSelection(view, 1);
+      else scrollPane(view, 1);
+      return true;
+
+    case "pageup":
+      if (onTraffic && !state.domain) moveSelection(view, -10);
+      else scrollPane(view, -1, 10);
+      return true;
+
+    case "pagedown":
+      if (onTraffic && !state.domain) moveSelection(view, 10);
+      else scrollPane(view, 1, 10);
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 // ── app ──
 
 async function loadHqtui(): Promise<typeof import("@profullstack/hqtui")> {
@@ -702,6 +1188,8 @@ export type DashboardOptions = {
   /** Where the ad network is trying to get to; see lib/dashboard/roi.ts. */
   targetImpressions?: number;
   targetCtr?: number;
+  /** Initial order of the Traffic list: score, visitors or pageviews. */
+  sort?: string;
 };
 
 export async function runDashboard(opts: DashboardOptions): Promise<void> {
@@ -712,20 +1200,13 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     quitKeys: ["ctrl+c", "q"],
   });
 
-  const state: State = {
-    tab: 0,
+  const state: State = initialState({
     range: opts.range && RANGES.includes(opts.range as never) ? opts.range : "1d",
     who: opts.who ?? "humans",
-    snapshot: null,
-    loading: false,
-    lastRefresh: null,
-    error: null,
-    paused: false,
-    showHelp: false,
-    panes: {},
     targetImpressions: opts.targetImpressions ?? AD_TARGET_IMPRESSIONS,
     targetCtr: opts.targetCtr ?? AD_TARGET_CTR,
-  };
+    ...(opts.sort && SORTS.includes(opts.sort as never) ? { sort: opts.sort as Sort } : {}),
+  });
 
   let refreshing = false;
 
@@ -765,67 +1246,8 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
   const tick = setInterval(() => app.invalidate(), 1000);
   tick.unref?.();
 
-  app.on("key", (event: { name: string; shift?: boolean }) => {
-    if (state.showHelp) {
-      state.showHelp = false;
-      app.invalidate();
-      return;
-    }
-    const digit = Number(event.name);
-    if (Number.isInteger(digit) && event.name.length === 1 && digit >= 1 && digit <= TABS.length) {
-      state.tab = digit - 1;
-      app.invalidate();
-      return;
-    }
-    const view = pane(state, TAB_PANE[state.tab] as string, state.panes[TAB_PANE[state.tab] as string]?.total ?? 0);
-    switch (event.name) {
-      case "tab":
-      case "right":
-      case "l":
-        state.tab = event.shift ? (state.tab + TABS.length - 1) % TABS.length : (state.tab + 1) % TABS.length;
-        break;
-      case "left":
-      case "h":
-        state.tab = (state.tab + TABS.length - 1) % TABS.length;
-        break;
-      case "r":
-      case "f5":
-        void refresh();
-        break;
-      case "w":
-        state.range = RANGES[(RANGES.indexOf(state.range as never) + 1) % RANGES.length] as string;
-        void refresh();
-        break;
-      case "b":
-        state.who = state.who === "humans" ? "all" : state.who === "all" ? "bots" : "humans";
-        void refresh();
-        break;
-      case "p":
-      case "space":
-        state.paused = !state.paused;
-        break;
-      case "?":
-      case "f1":
-        state.showHelp = true;
-        break;
-      case "up":
-      case "k":
-        scrollPane(view, -1);
-        break;
-      case "down":
-      case "j":
-        scrollPane(view, 1);
-        break;
-      case "pageup":
-        scrollPane(view, -1, 10);
-        break;
-      case "pagedown":
-        scrollPane(view, 1, 10);
-        break;
-      default:
-        return;
-    }
-    app.invalidate();
+  app.on("key", (event: KeyLike) => {
+    if (handleKey(state, event, { refresh })) app.invalidate();
   });
 
   app.render(({ ui, theme, height }: RenderArgs) => {
@@ -850,27 +1272,17 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     });
     ui.spacer(1);
 
-    ui.column({ size: height - 4 }, (body) => {
-      if (!state.snapshot) {
-        body.panel({ title: "Spend & ROI" }, (p) => {
-          if (state.error) {
-            p.text(`Could not load: ${state.error}`, { fg: theme.danger });
-            p.text("Press r to retry, q to quit.", { fg: theme.muted });
-          } else {
-            p.text("Reading the fleet…", { fg: theme.muted });
-            p.text("One tracker call per site, plus ad earnings and CoinPay.", { fg: theme.muted });
-          }
-        });
-        return;
-      }
-      (SCREENS[state.tab] ?? roiScreen)(body, state, theme);
-    });
+    ui.column({ size: height - 4 }, (body) => renderBody(body, state, theme));
 
     ui.spacer(1);
     const errorCount = state.snapshot ? Object.keys(state.snapshot.errors).length : 0;
+    const onList = state.tab === 1 && !state.domain;
     ui.statusBar({
       items: [
         { key: "1-5", label: "Screen" },
+        ...(onList ? [{ key: "↵", label: "Open site" }] : []),
+        ...(state.domain ? [{ key: "esc", label: "Back", active: true }] : []),
+        ...(onList ? [{ key: "s", label: `Sort ${state.sort}` }] : []),
         { key: "r", label: "Refresh" },
         { key: "w", label: `Window ${state.range}` },
         { key: "b", label: state.who },
@@ -886,21 +1298,28 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     if (state.showHelp) {
       ui.modal({
         title: "CrawlProof — Spend & ROI",
-        width: 70,
-        height: 22,
+        width: 76,
+        height: 28,
         message:
           "1-5, Tab, ←/→ switch screens.\n" +
           `r refreshes now; it also refreshes every ${interval}s.\n` +
           "w cycles the window: 1h → 4h → 1d → 1w → 1m.\n" +
           "b cycles who counts: humans → all → bots.\n" +
-          "p pauses the timer. ↑/↓ j/k, PgUp/PgDn scroll a table.\n\n" +
+          "p pauses the timer. ↑/↓ j/k, PgUp/PgDn move in a table.\n\n" +
+          "On Traffic: ↑/↓ pick a site, Enter or a click opens it,\n" +
+          "  Esc / ← / 2 comes back, s cycles the order:\n" +
+          "  score → visitors → pageviews.\n\n" +
+          "Risk-to-viral scores a property out of 100:\n" +
+          "  score = 100 × viral × (1 − risk/2)\n" +
+          "  viral = momentum .40 + discovery .30 + humanity .20 + money .10\n" +
+          "  risk  = volatility .40 + concentration .30 + bots .20 + unmonetised .10\n" +
+          "  A component with no data is dropped, not counted as zero;\n" +
+          "  ~ marks too small a sample. The domain screen shows every part.\n\n" +
           "Cost is business-scope bank spend as a monthly rate, so it\n" +
           "  does not move when you change the traffic window.\n" +
           "Revenue is CoinPay commission only. Ad spend and ad earnings\n" +
           "  are the same account on both sides of our own network, so\n" +
-          "  they are reported under Internal and counted as neither.\n" +
-          "Cost each = the monthly burn prorated onto the window,\n" +
-          "  divided by the visitors who arrived in it.\n\n" +
+          "  they are reported under Internal and counted as neither.\n\n" +
           "Press any key to close.",
         buttons: [{ label: "Close", focused: true }],
       });

@@ -504,6 +504,7 @@ async function cmdDashboard(args: Args): Promise<number> {
     concurrency: Number(args.flags.concurrency) || 8,
     coinpay,
     only,
+    sort: args.flags.sort as string | undefined,
     theme: args.flags.theme as string | undefined,
   });
   return 0;
@@ -573,12 +574,23 @@ COMMANDS
       project name; with one project it can be left out. Needs an API token.
 
   dashboard [--range=1h|4h|1d|1w|1m] [--who=humans|bots|all] [--interval=60]
-            [--sites=a.com,b.com] [--concurrency=8] [--no-coinpay] [--json]
+            [--sites=a.com,b.com] [--sort=score|visitors|pageviews]
+            [--concurrency=8] [--no-coinpay] [--json]
       A live terminal dashboard of what the fleet costs and what it returns:
       traffic across every site you own, ad delivery, and — when a CoinPay
       merchant session is on the box — the bank feed behind it. Five screens:
       ROI, Traffic, Ads, Money, Spend. Needs an API token and a terminal;
       --json prints the same snapshot for a script. Aliases: roi, tui.
+
+      On Traffic, ↑/↓ pick a property and Enter (or a click) opens it: that
+      domain's traffic and money on their own, with its risk-to-viral score
+      broken into the parts it was built from. Esc / ← / 2 comes back, s
+      cycles the order. The score is
+        100 × viral × (1 − risk/2), viral = momentum .40 + discovery .30 +
+        humanity .20 + money .10, risk = volatility .40 + concentration .30 +
+        bot dependence .20 + unmonetised .10.
+      A component with no data is dropped, not counted as zero; ~ marks a
+      sample under 25 human visits.
 
   help
       Print this message.
@@ -607,6 +619,7 @@ EXAMPLES
   CRAWLPROOF_TOKEN=crp_... crawlproof slots create nichedb.dev
   CRAWLPROOF_TOKEN=crp_... crawlproof dashboard --range=1w
   CRAWLPROOF_TOKEN=crp_... crawlproof dashboard --json | jq .roi.derived
+  CRAWLPROOF_TOKEN=crp_... crawlproof dashboard --json | jq '.sites[] | {site, score: .score.score}'
 `);
 }
 

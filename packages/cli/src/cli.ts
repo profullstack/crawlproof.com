@@ -98,11 +98,33 @@ USAGE
 
 COMMANDS
   dashboard [--range=1h|4h|1d|1w|1m] [--who=humans|bots|all] [--interval=60]
-            [--sites=a.com,b.com] [--concurrency=8] [--no-coinpay] [--json]
+            [--sites=a.com,b.com] [--sort=score|visitors|pageviews]
+            [--concurrency=8] [--no-coinpay] [--json]
       A live dashboard of traffic across every site on the account, ad
       delivery, and — when a CoinPay merchant session is on the box — the bank
       feed behind it. Five screens: ROI, Traffic, Ads, Money, Spend.
       Aliases: roi, tui. --json prints the same snapshot for a script.
+
+      On Traffic, ↑/↓ pick a property and Enter — or a click — opens it: that
+      one domain's traffic and money, and every part of its score. Esc, ← or 2
+      comes back. s cycles the order: score, visitors, pageviews.
+
+  Risk-to-viral score
+      Each property is scored out of 100 from data already on the screen:
+
+        score = 100 × viral × (1 − risk/2)
+        viral = momentum .40 + discovery .30 + humanity .20 + money .10
+        risk  = volatility .40 + concentration .30 + bots .20 + unmonetised .10
+
+      momentum is human visits in the recent half of the window against the
+      earlier half; discovery is the share arriving through search, social, AI,
+      an ad or a link rather than direct; humanity is humans over humans plus
+      bots; money is revenue per 1,000 human visits against $2. volatility is
+      the series' coefficient of variation, concentration is the largest single
+      channel's share. A component with no data is dropped and its weight
+      redistributed — never counted as a zero — and a trailing ~ marks a sample
+      under 25 human visits. The domain screen shows every component and the
+      number behind it.
 
   stats [site] [--range=1h|4h|1d|1w|1m] [--who=humans|bots|all] [--json]
       Who arrived and from where: sources, referrers and top pages. Defaults
@@ -215,6 +237,7 @@ async function cmdDashboard(args: Args): Promise<number> {
     concurrency: Number(args.flags.concurrency) || 8,
     coinpay,
     only,
+    sort: args.flags.sort as string | undefined,
     theme: args.flags.theme as string | undefined,
   });
   return 0;

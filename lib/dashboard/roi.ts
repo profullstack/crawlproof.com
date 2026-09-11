@@ -61,6 +61,30 @@ export type TrafficInput = {
 export type AdsInput = {
   rangeDays?: number;
   statsUnavailable?: boolean;
+  /**
+   * Per-slot delivery and earnings. Read by lib/dashboard/site.ts rather than
+   * here — the fleet arithmetic wants the totals, one property wants its own
+   * row — and joined to a project by `projectId`.
+   */
+  slots?: Array<{
+    id?: string;
+    name?: string;
+    projectId?: string;
+    status?: string;
+    impressions?: number;
+    clicks?: number;
+    earnedCents?: number;
+  }>;
+  /** Per-campaign spend. `url` is the only field that names a domain. */
+  campaigns?: Array<{
+    id?: string;
+    name?: string;
+    status?: string;
+    url?: string | null;
+    impressions?: number;
+    clicks?: number;
+    spentCents?: number;
+  }>;
   totals?: {
     spentCents?: number;
     earnedCents?: number;
@@ -76,6 +100,11 @@ export type AdsInput = {
 /** The subset of the CoinPay finance snapshot this module reads. */
 export type FinanceInput = {
   windowDays?: number;
+  /**
+   * The merchant's businesses. Read by lib/dashboard/site.ts, which can only
+   * attribute commission to a domain when there is exactly one of them.
+   */
+  businesses?: Array<{ id?: string; name?: string }>;
   /**
    * The headline earnings figures, which are **lifetime and not windowed**.
    *
