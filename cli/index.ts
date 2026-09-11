@@ -249,8 +249,24 @@ export function campaignBodyFromArgs(args: Args): Record<string, unknown> {
   if (typeof args.flags.name === "string") body.name = args.flags.name;
   if (typeof args.flags.budget === "string") body.daily_budget_cents = Number(args.flags.budget);
   if (typeof args.flags.bid === "string") body.bid_credits = Number(args.flags.bid);
+  // --trending both turns the targeting on and is what earns the 90 days.
+  if (args.flags.trending) body.trending_topics = true;
+  if (typeof args.flags.topics === "string") body.topics = args.flags.topics.split(",").map((topic) => topic.trim());
   body.status = args.flags.draft ? "draft" : "active";
   return body;
+}
+
+/** One line about a campaign's promo, or nothing at all. Pure, for tests. */
+export function promoLine(promo: unknown): string {
+  const state = (promo ?? null) as { active?: boolean; daysRemaining?: number; endsAt?: string | null; cpcCents?: number } | null;
+  if (!state) return "";
+  if (state.active) {
+    const days = Number(state.daysRemaining) || 0;
+    const rate = Number(state.cpcCents) ? ` (then $${(Number(state.cpcCents) / 100).toFixed(2)}/click)` : "";
+    return `  promo: ${days} day${days === 1 ? "" : "s"} left, clicks billed at $0.00${rate}\n`;
+  }
+  const ended = state.endsAt ? ` (ended ${String(state.endsAt).slice(0, 10)})` : "";
+  return `  promo: over${ended}, clicks bill normally\n`;
 }
 
 /** The request body `crawlproof slots create` sends, from its flags. Pure, for tests. */
@@ -268,7 +284,7 @@ async function cmdAds(args: Args): Promise<number> {
   const sub = args.positional[0];
   if (sub === "create") {
     if (!args.positional[1]) {
-      console.error("usage: crawlproof ads create <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--draft] [--json]");
+      console.error("usage: crawlproof ads create <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--trending] [--topics=a,b] [--draft] [--json]");
       return 2;
     }
     const { status, json } = await apiCall(args, "POST", "/api/ads/v1/campaigns", campaignBodyFromArgs(args));
@@ -282,6 +298,64 @@ async function cmdAds(args: Args): Promise<number> {
       const existing = json.existing ? " (already existed)" : "";
       process.stdout.write(`${json.status} ${json.ref_slug} ${json.name}${existing}\n  ${json.destination_url}\n  ${json.dashboard_url ?? ""}\n`);
     }
+    return 0;
+  }
+  if (sub === "trends") {
+    const windowDays = (args.flags.window as string | undefined) ?? "7";
+    const limit = (args.flags.limit as string | undefined) ?? "20";
+    const stale = args.flags.stale ? "&stale=1" : "";
+    const { status, json } = await apiCall(args, "GET", `/api/ads/v1/trends?window=${encodeURIComponent(windowDays)}&limit=${encodeURIComponent(limit)}${stale}`);
+    if (status >= 400) {
+      console.error(`ads trends failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+      return 0;
+    }
+    const topics = (json.topics as Record<string, unknown>[]) ?? [];
+    const promo = (json.promo ?? {}) as { days?: number; cpc_cents?: number };
+    // A stale list steers nothing, and saying so is the difference between
+    // "nothing is trending" and "the puller has been down since Tuesday".
+    if (json.stale) {
+      process.stdout.write(
+        `The trend list is stale (last ingest ${json.ingested_at ?? "never"}); nothing is being boosted on it.\n`,
+      );
+    }
+    if (!topics.length) process.stdout.write("No trending topics stored.\n");
+    for (const topic of topics) {
+      process.stdout.write(
+        `${String(topic.score).padStart(8)}  ${String(topic.topic).padEnd(28)} ${topic.mentions} mention(s), was ${topic.prior_mentions}\n`,
+      );
+    }
+    if (topics.length) {
+      process.stdout.write(
+        `\nTarget these with: crawlproof ads create <url> --trending  (${promo.days ?? 90} days free, then $${((promo.cpc_cents ?? 2) / 100).toFixed(2)}/click)\n`,
+      );
+    }
+    return 0;
+  }
+  if (sub === "trending") {
+    const ref = args.positional[1];
+    const want = (args.positional[2] ?? "on").toLowerCase();
+    if (!ref || !["on", "off"].includes(want)) {
+      console.error("usage: crawlproof ads trending <ref-or-id> on|off [--topics=a,b]");
+      return 2;
+    }
+    const body: Record<string, unknown> = { trending_topics: want === "on" };
+    if (typeof args.flags.topics === "string") body.topics = args.flags.topics.split(",").map((topic) => topic.trim());
+    const { status, json } = await apiCall(args, "PATCH", `/api/ads/v1/campaigns/${encodeURIComponent(ref)}`, body);
+    if (status >= 400) {
+      console.error(`ads trending failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+      return 0;
+    }
+    const topics = (json.topics as string[]) ?? [];
+    process.stdout.write(`${json.ref_slug} trending targeting ${json.trending_topics ? "on" : "off"}${topics.length ? ` — ${topics.join(", ")}` : ""}\n`);
+    process.stdout.write(promoLine(json.promo));
     return 0;
   }
   if (sub === "show" || sub === "pause" || sub === "resume" || sub === "budget" || sub === "delete") {
@@ -325,6 +399,11 @@ async function cmdAds(args: Args): Promise<number> {
     }
     const stats = json.stats as Record<string, unknown> | undefined;
     process.stdout.write(`${json.status} ${json.ref_slug} ${json.name}\n  ${json.destination_url}\n  ${json.daily_budget_cents}¢/day, bid ${json.bid_credits ?? "default"}\n`);
+    if (json.trending_topics) {
+      const topics = (json.topics as string[]) ?? [];
+      process.stdout.write(`  trending targeting on${topics.length ? ` — ${topics.join(", ")}` : ""}\n`);
+    }
+    process.stdout.write(promoLine(json.promo));
     if (stats) {
       const visits = stats.visits as { total: number } | undefined;
       process.stdout.write(
@@ -347,11 +426,13 @@ async function cmdAds(args: Args): Promise<number> {
     }
     if (!campaigns.length) process.stdout.write("No campaigns yet.\n");
     for (const c of campaigns) {
-      process.stdout.write(`${String(c.status).padEnd(8)} ${String(c.ref_slug).padEnd(20)} ${c.name}  ${c.destination_url}\n`);
+      const promo = (c.promo ?? null) as { active?: boolean; daysRemaining?: number } | null;
+      const mark = c.trending_topics ? (promo?.active ? ` [trending · ${promo.daysRemaining}d free]` : " [trending]") : "";
+      process.stdout.write(`${String(c.status).padEnd(8)} ${String(c.ref_slug).padEnd(20)} ${c.name}  ${c.destination_url}${mark}\n`);
     }
     return 0;
   }
-  console.error(`unknown: crawlproof ads ${sub} (expected: create | list | show | pause | resume | budget | delete)`);
+  console.error(`unknown: crawlproof ads ${sub} (expected: create | list | show | pause | resume | budget | delete | trending | trends)`);
   return 2;
 }
 
@@ -540,18 +621,33 @@ COMMANDS
       Defaults --event to "pageview". Project id can also come from
       CRAWLPROOF_PROJECT. Override host with CRAWLPROOF_SITE_URL.
 
-  ads create <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--draft] [--json]
+  ads create <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--trending]
+            [--topics=a,b] [--draft] [--json]
       Run an ad campaign for a URL: CrawlProof reads the page, writes the
       creatives and starts serving (active unless --draft). A URL that
       already has a live campaign gets that campaign back. Needs an API
       token (CRAWLPROOF_TOKEN, from Social → API tokens).
+      --trending prefers this campaign on pages whose subject is what
+      people are asking about right now, and earns 90 days during which
+      every click is billed at $0.00 (the rate after that is $0.02/click).
+
+  ads trends [--window=7] [--limit=20] [--stale] [--json]
+      What is trending, highest score first, with how many separate
+      parties used each subject this window and last. --stale shows a
+      list too old to steer delivery instead of hiding it.
+
+  ads trending <ref-or-id> on|off [--topics=a,b] [--json]
+      Turn trending targeting on or off for a campaign. Turning it on is
+      what grants the 90 days, once; turning it off later does not take
+      the remaining days away.
 
   ads list [--limit=20] [--json]
       Your campaigns, newest first.
 
   ads show <ref-or-id> [--json]
-      One campaign with its delivery: impressions, clicks, spend, and the
-      visits the tracker attributed to it on your own sites.
+      One campaign with its delivery: impressions, clicks, spend, the
+      visits the tracker attributed to it on your own sites, and the days
+      left on its promo.
 
   ads pause <ref-or-id> | ads resume <ref-or-id> | ads budget <ref-or-id> <cents>
       Change a campaign in place. A ref looks like crawlproof-ad-144.

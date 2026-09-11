@@ -55,6 +55,13 @@ export const env = {
   // Tor SOCKS5 proxy for reaching .onion targets, e.g. socks5h://127.0.0.1:9050.
   // Empty = .onion audits/ads are unreachable (fail with a clear message).
   torSocksUrl: process.env.TOR_SOCKS_URL ?? "",
+  // SameBrain — chovy.com's read on what founders are asking to build this
+  // week, which the ad network targets on. The secret is the same value the
+  // source has; both live in the vault (logicsrc team `crawlproof-com--prod`)
+  // and are set on the Railway service, never in a committed .env file.
+  // Unset means no trend ingestion, which degrades to no trend targeting.
+  samebrainUrl: process.env.SAMEBRAIN_URL ?? "https://chovy.com",
+  samebrainSecret: process.env.SAMEBRAIN_SECRET ?? "",
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",

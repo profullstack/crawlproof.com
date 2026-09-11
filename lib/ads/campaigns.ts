@@ -19,6 +19,8 @@ import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import { generateAdCreatives, cleanSummary, creativesFromCopy, templateCopy, summaryDomain, type AdCreative, type AdSummary } from "@/lib/ads/creative";
 import { extractSiteBrand, type SiteBrand } from "@/lib/ads/brand";
 import { DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
+import { cleanTopics, promoState, type PromoState } from "@/lib/ads/trending";
+import { grantTrendingPromo, promoForCampaign, promosForCampaigns } from "@/lib/ads/promos";
 
 export type CampaignSummary = {
   id: string;
@@ -33,6 +35,12 @@ export type CampaignSummary = {
   dashboard_url?: string;
   /** True when a live campaign for this URL already existed and was returned instead. */
   existing?: boolean;
+  /** Opted into trending-topic targeting. */
+  trending_topics?: boolean;
+  /** The subjects this campaign is about. */
+  topics?: string[];
+  /** The 90-day premium promo, when there is one. */
+  promo?: PromoState & { kind: string } | null;
 };
 
 export type CampaignResult =
@@ -76,7 +84,55 @@ function summaryColumns(summary: AdSummary | null | undefined, domain: string): 
   };
 }
 
-const schemaLag = (message: string | undefined) => /organization_id|summary_|schema cache|column/i.test(message ?? "");
+const schemaLag = (message: string | undefined) => /organization_id|summary_|trending_topics|topics|schema cache|column/i.test(message ?? "");
+
+/** Columns a hand-applied migration may not have created yet. Dropped on retry. */
+const OPTIONAL_COLUMNS = ["organization_id", "trending_topics", "topics"];
+const isOptionalColumn = (key: string) => OPTIONAL_COLUMNS.includes(key) || key.startsWith("summary_");
+
+/**
+ * Trending targeting and promo state for campaigns, read separately.
+ *
+ * A separate query rather than two more columns on every campaign select, for
+ * the same reason `campaignSummary` is separate in lib/ads/serve.ts: these
+ * columns ride behind a migration applied by hand, and a select naming a
+ * column that does not exist yet returns nothing at all — which would empty
+ * the campaign list rather than hide one field of it.
+ */
+async function targetingFor(
+  sb: SupabaseClient,
+  campaignIds: string[],
+): Promise<Map<string, { trending: boolean; topics: string[] }>> {
+  const out = new Map<string, { trending: boolean; topics: string[] }>();
+  const ids = [...new Set(campaignIds.filter(Boolean))];
+  if (!ids.length) return out;
+  try {
+    const { data, error } = await sb.from("ad_campaigns").select("id, trending_topics, topics").in("id", ids);
+    if (error || !data) return out;
+    for (const row of data as { id: string; trending_topics: boolean | null; topics: string[] | null }[]) {
+      out.set(row.id, { trending: !!row.trending_topics, topics: cleanTopics(row.topics ?? []) });
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+/** A campaign with its targeting and its promo attached, for an API answer. */
+export async function withTargeting(
+  sb: SupabaseClient,
+  campaign: CampaignSummary,
+  now = Date.now(),
+): Promise<CampaignSummary> {
+  const targeting = (await targetingFor(sb, [campaign.id])).get(campaign.id);
+  const promo = targeting?.trending ? promoState(await promoForCampaign(sb, campaign.id), now) : null;
+  return {
+    ...campaign,
+    trending_topics: targeting?.trending ?? false,
+    topics: targeting?.topics ?? [],
+    promo: promo && promo.startsAt ? { ...promo, kind: "trending_premium_90" } : null,
+  };
+}
 
 export async function createCampaignForUrl(input: {
   sb: SupabaseClient;
@@ -106,14 +162,26 @@ export async function createCampaignForUrl(input: {
       const { error } = await sb.from("ad_campaigns").update({ status: "active" }).eq("id", twin.id).eq("owner_id", userId);
       if (!error) current = "active";
     }
+    // Asking for trending targeting on a URL that already has a campaign turns
+    // it on there rather than being ignored — the caller asked for a state,
+    // not for a new row. The promo grant is idempotent, so a second call
+    // re-reads the first ninety days instead of starting another.
+    if (request.trendingTopics) {
+      const { error } = await sb
+        .from("ad_campaigns")
+        .update({ trending_topics: true, ...(request.topics?.length ? { topics: request.topics } : {}) })
+        .eq("id", twin.id)
+        .eq("owner_id", userId);
+      if (!error) await grantTrendingPromo(sb, { userId, campaignId: twin.id as string, note: "trending targeting enabled on an existing campaign" });
+    }
     return {
       ok: true,
-      campaign: {
+      campaign: await withTargeting(sb, {
         ...(twin as CampaignSummary),
         status: current,
         existing: true,
         dashboard_url: `${input.siteUrl}/dashboard/ads/${twin.id}`,
-      },
+      }),
     };
   }
 
@@ -151,13 +219,21 @@ export async function createCampaignForUrl(input: {
     ...summaryColumns(generated.summary, domain),
   };
   if (org.id) payload.organization_id = org.id;
+  if (request.trendingTopics) payload.trending_topics = true;
+  // The subjects: what the caller said, else what the page is about. The
+  // brand's own words are the honest source — a campaign whose claimed topics
+  // have nothing to do with its landing page is how targeting gets gamed.
+  const topics = request.topics?.length
+    ? request.topics
+    : cleanTopics([generated.brand?.title, generated.brand?.description, domain.split(".")[0]]);
+  if (topics.length) payload.topics = topics;
 
   const select = "id, ref_slug, name, status, destination_url, daily_budget_cents, bid_credits, created_at";
   let inserted = await sb.from("ad_campaigns").insert(payload).select(select).single();
   // Migrations here are applied by hand, so a deploy can run ahead of the
   // schema; the optional columns are dropped rather than refusing the campaign.
   if (inserted.error && schemaLag(inserted.error.message)) {
-    for (const key of Object.keys(payload)) if (key === "organization_id" || key.startsWith("summary_")) delete payload[key];
+    for (const key of Object.keys(payload)) if (isOptionalColumn(key)) delete payload[key];
     inserted = await sb.from("ad_campaigns").insert(payload).select(select).single();
   }
   if (inserted.error || !inserted.data) {
@@ -174,13 +250,21 @@ export async function createCampaignForUrl(input: {
     return { ok: false, status: 500, error: creativeError.message };
   }
 
+  // Turning trending targeting on is what earns the 90 days. Granted after the
+  // campaign exists so the entitlement can name it, and a failure to grant
+  // never fails the campaign: the ads still run, they simply bill normally,
+  // and the dashboard shows no promo rather than a promo that is not there.
+  if (request.trendingTopics) {
+    await grantTrendingPromo(sb, { userId, campaignId: campaign.id, note: "trending targeting enabled at creation" });
+  }
+
   return {
     ok: true,
-    campaign: {
+    campaign: await withTargeting(sb, {
       ...campaign,
       creatives: generated.creatives.length,
       dashboard_url: `${input.siteUrl}/dashboard/ads/${campaign.id}`,
-    },
+    }),
   };
 }
 
@@ -191,7 +275,24 @@ export async function listCampaigns(input: { sb: SupabaseClient; userId: string;
     .eq("owner_id", input.userId)
     .order("created_at", { ascending: false })
     .limit(Math.min(200, Math.max(1, input.limit)));
-  return ((data as CampaignSummary[]) ?? []).map((c) => ({ ...c, dashboard_url: `${input.siteUrl}/dashboard/ads/${c.id}` }));
+  const campaigns = ((data as CampaignSummary[]) ?? []).map((c) => ({ ...c, dashboard_url: `${input.siteUrl}/dashboard/ads/${c.id}` }));
+
+  // Two extra reads for the whole page, not two per campaign: the targeting
+  // columns in one query, then the promos of whichever campaigns opted in.
+  const targeting = await targetingFor(input.sb, campaigns.map((c) => c.id));
+  const trendingIds = campaigns.filter((c) => targeting.get(c.id)?.trending).map((c) => c.id);
+  const promos = trendingIds.length ? await promosForCampaigns(input.sb, trendingIds) : new Map();
+  const now = Date.now();
+  return campaigns.map((campaign) => {
+    const own = targeting.get(campaign.id);
+    const state = own?.trending ? promoState(promos.get(campaign.id) ?? null, now) : null;
+    return {
+      ...campaign,
+      trending_topics: own?.trending ?? false,
+      topics: own?.topics ?? [],
+      promo: state && state.startsAt ? { ...state, kind: "trending_premium_90" } : null,
+    };
+  });
 }
 
 // ------------------------------------------------------------ one campaign
@@ -272,9 +373,26 @@ export async function patchCampaign(
     }
     update.status = patch.status;
   }
-  const { data, error } = await sb.from("ad_campaigns").update(update).eq("id", campaign.id).eq("owner_id", userId).select(CAMPAIGN_COLUMNS).single();
+  if (patch.trendingTopics !== undefined) update.trending_topics = patch.trendingTopics;
+  if (patch.topics !== undefined) update.topics = patch.topics;
+
+  let { data, error } = await sb.from("ad_campaigns").update(update).eq("id", campaign.id).eq("owner_id", userId).select(CAMPAIGN_COLUMNS).single();
+  // The targeting columns ride behind a hand-applied migration; a deploy that
+  // lands first must not make every ordinary edit fail.
+  if (error && schemaLag(error.message) && (update.trending_topics !== undefined || update.topics !== undefined)) {
+    for (const key of Object.keys(update)) if (isOptionalColumn(key)) delete update[key];
+    if (!Object.keys(update).length) return { ok: false, status: 503, error: "Trending targeting is not available on this deployment yet." };
+    ({ data, error } = await sb.from("ad_campaigns").update(update).eq("id", campaign.id).eq("owner_id", userId).select(CAMPAIGN_COLUMNS).single());
+  }
   if (error || !data) return { ok: false, status: 500, error: error?.message ?? "Failed to update the campaign." };
-  return { ok: true, campaign: data as CampaignSummary };
+
+  // Turning it on earns the ninety days — once. Turning it off later does not
+  // revoke them: the advertiser was promised a window, not a subscription, and
+  // nothing about a promo whose clicks cost nothing is worth clawing back.
+  if (patch.trendingTopics === true) {
+    await grantTrendingPromo(sb, { userId, campaignId: campaign.id, note: "trending targeting enabled" });
+  }
+  return { ok: true, campaign: await withTargeting(sb, data as CampaignSummary) };
 }
 
 /** Delete outright. Impressions and clicks cascade with it; pausing keeps them. */

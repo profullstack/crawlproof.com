@@ -19,6 +19,9 @@ export function NewAdForm() {
   const [budget, setBudget] = useState(5); // dollars/day
   const [bid, setBid] = useState(0.2); // dollars/click (max bid)
   const [name, setName] = useState("");
+  // Trending targeting, and with it the 90 days. Off by default: it changes
+  // where the ads run, and that is the advertiser's decision to make.
+  const [trending, setTrending] = useState(false);
   const [brand, setBrand] = useState<SiteBrand | null>(null);
   const [creatives, setCreatives] = useState<AdCreative[]>([]);
   const [active, setActive] = useState<AdFormatId>("banner_300x250");
@@ -111,6 +114,7 @@ export function NewAdForm() {
         bidCredits: Math.max(1, Math.round((bid * 100) / 5)),
         brand,
         creatives,
+        trendingTopics: trending,
       });
       if (!res.ok) {
         setError(res.error);
@@ -182,6 +186,22 @@ export function NewAdForm() {
             {generating ? "Designing ads…" : hasAds ? "Regenerate" : "Generate ads"}
           </button>
         </div>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={trending}
+            onChange={(e) => setTrending(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Target trending topics</span>
+            <span className="block text-xs text-[var(--color-muted)]">
+              Show this campaign where its subject is what people are asking about right now, on
+              pages about that subject. Includes 90 days of premium delivery with every click
+              billed at $0.00 — the rate after that is $0.02 per click.
+            </span>
+          </span>
+        </label>
       </form>
 
       {error && (

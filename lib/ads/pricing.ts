@@ -25,6 +25,25 @@ export const CPC_CREDITS = 4;
 export const DEFAULT_BID_CREDITS = CPC_CREDITS;
 export const CPC_CENTS = CPC_CREDITS * CREDIT_CENTS;
 
+// Trending-topic premium: the rate a trending-targeted click is quoted at,
+// in CENTS, and the rate the 90-day promo is free of. Two cents, stated here
+// rather than in a marketing page so the dashboard, the CLI and the promo row
+// all quote the same number.
+//
+// It is deliberately expressed in cents and not in credits, because it is
+// SMALLER than one credit: a credit is 5c, so $0.02 is 0.4 of one. Nothing
+// bills a fraction of a credit today — ad_charge_click moves whole integer
+// credits — so a campaign at this rate cannot be metered through the credit
+// path once its promo ends. `trendingCpcCredits()` is what that would round
+// to; until sub-credit metering exists, a trending campaign after its promo
+// bills at the ordinary bid instead, and the gap is a known one rather than a
+// silent one.
+export const TRENDING_CPC_CENTS = 2;
+
+export function trendingCpcCredits(): number {
+  return TRENDING_CPC_CENTS / CREDIT_CENTS;
+}
+
 // Platform take rate; the rest accrues to the publisher (at the floor rate).
 export const PLATFORM_RATE = 0.3;
 

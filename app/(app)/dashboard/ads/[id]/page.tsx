@@ -7,6 +7,8 @@ import { CampaignActions, RegenerateButton } from "@/components/ads/campaign-act
 import { CampaignTrend } from "@/components/ads/campaign-trend";
 import { getCampaignDailySeries } from "@/lib/ads/series";
 import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
+import { promoStateForCampaign } from "@/lib/ads/promos";
+import { TRENDING_CPC_CENTS } from "@/lib/ads/pricing";
 
 export const metadata = { title: "Campaign" };
 
@@ -79,6 +81,11 @@ export default async function CampaignDetailPage({
       .maybeSingle(),
   ]);
 
+  // The promo is its own read: it lives in ad_promos, and the row may not
+  // exist at all (nobody has enabled trending targeting, or the migration has
+  // not been applied here yet). Both read as "no promo".
+  const promo = await promoStateForCampaign(supabase, id);
+
   const impressions = (stats?.impressions as number) ?? 0;
   const clicks = (stats?.clicks as number) ?? 0;
   const freeImpressions = (stats?.free_impressions as number) ?? 0;
@@ -149,6 +156,28 @@ export default async function CampaignDetailPage({
       {display.tier !== "paid" && (
         <p className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface,transparent)] p-3 text-sm text-[var(--color-muted)]">
           {display.hint}
+        </p>
+      )}
+
+      {/* The 90 days. Shown whether or not it is still running, because
+          "your clicks started costing money last Tuesday" is the single most
+          useful thing this page can say to somebody on the promo. */}
+      {promo.endsAt && (
+        <p className="mt-4 rounded-md border border-[var(--color-border)] p-3 text-sm">
+          {promo.active ? (
+            <>
+              <span className="font-semibold">Trending promo: </span>
+              {promo.daysRemaining} day{promo.daysRemaining === 1 ? "" : "s"} left. Clicks are
+              billed at <span className="font-mono">$0.00</span> until{" "}
+              {promo.endsAt.slice(0, 10)}, then{" "}
+              <span className="font-mono">${(TRENDING_CPC_CENTS / 100).toFixed(2)}</span> per click.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">Trending promo ended </span>
+              {promo.endsAt.slice(0, 10)}. Clicks bill normally.
+            </>
+          )}
         </p>
       )}
 
