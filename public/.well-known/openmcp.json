@@ -1,0 +1,20 @@
+{
+  "openmcp": "0.1",
+  "mcp": "https://crawlproof.com/api/mcp",
+  "name": "CrawlProof",
+  "description": "Audit how AI crawlers see a site, and run ads that reach them.",
+  "url": "https://crawlproof.com",
+  "auth": {
+    "kind": "bearer",
+    "url": "https://crawlproof.com/settings"
+  },
+  "tags": [
+    "seo",
+    "crawlers",
+    "ads"
+  ],
+  "operator": "https://logicsrc.com/.well-known/openprofile.md",
+  "catalogs": [
+    "https://openmcp.logicsrc.com"
+  ]
+}
