@@ -1,0 +1,29 @@
+{
+  "openaccess": "0.1",
+  "name": "CrawlProof",
+  "url": "https://crawlproof.com",
+  "operator": "https://logicsrc.com/.well-known/openprofile.md",
+  "redirect_uris": [
+    "https://crawlproof.com/api/v1/openaccess/callback"
+  ],
+  "jwks": {
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "aS1cwUudNdCE",
+        "x": "k2qP91bbmp1MogPJvhxwVDfcISnL8x1UWsDMktXqt3I",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    ]
+  },
+  "scopes": {},
+  "honours": [
+    "profullstack.com/all-access"
+  ],
+  "webhooks": "https://crawlproof.com/api/v1/openaccess/events",
+  "hubs": [
+    "https://openaccess.logicsrc.com"
+  ]
+}
