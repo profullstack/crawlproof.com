@@ -23,6 +23,10 @@ import {
 import { hashIpRotating, rotatingIpHashCandidates } from "@/lib/ipHash";
 import { runAuction } from "./auction";
 import { generateShortCode } from "./shortcode";
+import { competesForPaid, fillTier, matchTrend, trendWeight, type TrendMatch } from "./trending";
+import { promoActiveFor, trendContextFor } from "./trendContext";
+import { promoForCampaign } from "./promos";
+import { promoState, clickChargeCents } from "./trending";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
@@ -52,6 +56,13 @@ export type Fill = {
   /** ASCII rendering of the same creative, for terminal/MOTD consumers. */
   text: string;
   tier: AdTier;
+  /**
+   * The trending subjects this fill was chosen for, if it was. Empty on every
+   * ordinary fill, which is most of them.
+   */
+  trendTopics?: string[];
+  /** True when the advertiser's 90-day promo is what made this click free. */
+  promo?: boolean;
 };
 
 export function isAdFormat(v: string | null | undefined): v is AdFormatId {
@@ -177,9 +188,12 @@ export async function serveAd(
 ): Promise<Fill | null> {
   const sb = serviceClient();
 
+  // `project_id` and `niche` are original columns on ad_slots, so naming them
+  // here cannot be what a hand-applied migration has not caught up with. They
+  // are what tells us what the page being filled is about.
   const { data: slot } = await sb
     .from("ad_slots")
-    .select("id, status, formats, owner_id, theme")
+    .select("id, status, formats, owner_id, theme, project_id, niche")
     .eq("id", slotId)
     .maybeSingle();
   if (!slot || slot.status !== "active") return null;
@@ -264,8 +278,26 @@ export async function serveAd(
     ]),
   );
 
+  // Trending targeting, if anybody is using it. Costs one cached query on a
+  // network where nobody is; see lib/ads/trendContext.ts.
+  const trend = await trendContextFor(
+    sb,
+    slot as { project_id?: string | null; niche?: string | null },
+    candidates.map((row) => oneCampaign(row.ad_campaigns).id),
+  );
+  const matches = new Map<string, TrendMatch>();
+  const matchFor = (campaignId: string): TrendMatch => {
+    if (!trend.any) return { topics: [], matched: false, score: 0 };
+    const cached = matches.get(campaignId);
+    if (cached) return cached;
+    const computed = matchTrend(trend.optIns.get(campaignId) ?? [], trend.page, trend.trends);
+    matches.set(campaignId, computed);
+    return computed;
+  };
+
   const paid: Row[] = [];
   const free: Row[] = [];
+  const tierByCampaign = new Map<string, AdTier>();
   for (const row of candidates) {
     const c = oneCampaign(row.ad_campaigns);
     const bid = c.bid_credits ?? DEFAULT_BID_CREDITS;
@@ -275,11 +307,23 @@ export async function serveAd(
     // Same owner on both sides of the transaction: the click can't be billed,
     // so it must never win paid inventory ahead of an advertiser who would
     // actually pay. Free tier is exactly the right home for it — same place a
-    // campaign that has run out of funds goes.
-    const isSelfDeal = !!(slot.owner_id && c.owner_id === slot.owner_id);
+    // campaign that has run out of funds goes. A campaign inside its 90-day
+    // promo lands there for the same reason: nothing is being charged, so
+    // nothing can be earned, and booking it as paid would write spend and
+    // publisher earnings that never happened.
     // Legacy 'exhausted' rows never compete for paid inventory on that status
     // alone — funds decide, and a top-up puts them straight back in the auction.
-    (hasBudget && hasFunds && !isSelfDeal ? paid : free).push(row);
+    const money = {
+      selfDeal: !!(slot.owner_id && c.owner_id === slot.owner_id),
+      promoActive: trend.any && promoActiveFor(trend, c.id),
+      hasBudget,
+      hasFunds,
+    };
+    // Two separate questions: which pool this competes in, and what the
+    // impression books as. A promo campaign competes for the placement it was
+    // promised and books under a tier that can never move money.
+    tierByCampaign.set(c.id, fillTier(money));
+    (competesForPaid(money) ? paid : free).push(row);
   }
 
   // Paid inventory first, always. Free-tier campaigns only ever fill requests no
@@ -294,26 +338,42 @@ export async function serveAd(
     if (Math.random() < HOUSE_AD_ROTATION_RATE) return houseFill(format, theme);
 
     // Bid-weighted lottery: every eligible campaign can win, with probability
-    // proportional to its bid, so all active ads rotate (higher bids more often).
+    // proportional to its bid, so all active ads rotate (higher bids more
+    // often). A campaign whose subject is trending AND is what this page is
+    // about carries a multiple of its own weight — a preference, not a rule,
+    // so everything else still rotates.
     pick = runAuction(
       paid.map((row) => ({
-        bidCredits: oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
+        bidCredits: trendWeight(
+          oneCampaign(row.ad_campaigns).bid_credits ?? DEFAULT_BID_CREDITS,
+          matchFor(oneCampaign(row.ad_campaigns).id),
+        ),
         item: row,
       })),
     )?.winner;
   }
 
   // Nothing paid to show: backfill with a real advertiser's ad instead of the
-  // house ad. Uniform pick, not bid-weighted — nobody is paying, so a high bid
-  // buys no priority here.
+  // house ad. Not bid-weighted — nobody is paying, so a high bid buys no
+  // priority here. A trending match does, because that is about relevance to
+  // the page rather than about money, and this is the tier every promo
+  // campaign serves from.
   if (!pick && free.length > 0) {
     tier = "free";
-    pick = free[Math.floor(Math.random() * free.length)];
+    pick = runAuction(
+      free.map((row) => ({
+        bidCredits: trendWeight(1, matchFor(oneCampaign(row.ad_campaigns).id)),
+        item: row,
+      })),
+    )?.winner;
   }
 
   if (!pick) return houseFill(format, theme);
   const campaign = oneCampaign(pick.ad_campaigns);
   if (!campaign) return null;
+  // The winner's own answer wins over which pool it came from: a promo
+  // campaign can win the paid auction and must still book as free.
+  tier = tierByCampaign.get(campaign.id) ?? tier;
 
   // Record the impression first so we have an id to bind the click to.
   const ipHash = hashIpRotating(ctx.ip ?? null);
@@ -390,6 +450,8 @@ export async function serveAd(
     html: renderCreativeHtml(creative, clickUrl, { theme }),
     text: renderCreativeText(creative, clickUrl),
     tier,
+    trendTopics: matchFor(campaign.id).topics,
+    promo: trend.any && promoActiveFor(trend, campaign.id),
   };
 }
 
@@ -506,7 +568,42 @@ export async function resolveClick(input: {
       device: input.ctx?.device,
     });
 
-    if (validity.valid) {
+    // The 90-day promo, settled here rather than inside ad_charge_click.
+    //
+    // The charge function is the hottest piece of SQL in the product and its
+    // migrations are applied by hand; teaching it about promos would put a
+    // whole new failure mode in front of every click on the network. Doing it
+    // here keeps that function untouched, and the rule is simple enough to
+    // read in one sitting: a promo click is a real click, recorded exactly
+    // like any other, billed at nothing.
+    //
+    // It books as `tier='free'` — the bucket that already means "real
+    // delivery, nobody could be charged" — so it shows on the dashboard as
+    // delivery and never as spend. And because nothing is charged, nothing is
+    // accrued to the publisher either: paying a publisher out of a payment
+    // that is not happening is how a promo turns into a cash loss, and on this
+    // network (where the same account owns both sides of nearly every fill) it
+    // would also read as revenue on the ROI dashboard. It is not revenue.
+    const promo = promoState(await promoForCampaign(sb, campaign.id));
+    const charge = clickChargeCents({ promo, cpcCents: (campaign.bid_credits ?? DEFAULT_BID_CREDITS) * CREDIT_CENTS });
+
+    if (validity.valid && promo.active && charge === 0) {
+      await sb.from("ad_clicks").insert({
+        impression_id: input.impressionId ?? null,
+        slot_id: input.slotId,
+        campaign_id: campaign.id,
+        creative_id: input.creativeId ?? null,
+        visitor_id: visitorId,
+        ip_hash: ipHash,
+        geo_country: input.ctx?.country ?? null,
+        device: input.ctx?.device ?? null,
+        charged_cents: 0,
+        publisher_earn_cents: 0,
+        platform_cut_cents: 0,
+        valid: false,
+        tier: "free",
+      });
+    } else if (validity.valid) {
       // Atomic charge: debit advertiser credits, meter the click, accrue the
       // publisher share + platform fee (unbilled if out of budget/funds).
       await sb.rpc("ad_charge_click", {

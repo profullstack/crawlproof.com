@@ -3,8 +3,9 @@
 //   GET     the campaign and its delivery: impressions, clicks, spend, and the
 //           visits the tracker attributed to it (bucket ad:<ref>) on the
 //           caller's own sites.
-//   PATCH   { name?, daily_budget_cents?, bid_credits?, status? }
+//   PATCH   { name?, daily_budget_cents?, bid_credits?, status?, trending_topics?, topics? }
 //           status is active | paused | draft. Going active needs a creative.
+//           trending_topics true is also what grants the 90-day promo, once.
 //   DELETE  removes it, metering included. Pause keeps the history.
 //
 // Same auth as the collection route. This is what `crawlproof ads show|pause|
@@ -13,7 +14,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { authenticateBearer } from "@/lib/sp/apiAuth";
-import { campaignStats, deleteCampaign, findCampaign, parseCampaignPatch, patchCampaign } from "@/lib/ads/campaigns";
+import { campaignStats, deleteCampaign, findCampaign, parseCampaignPatch, patchCampaign, withTargeting } from "@/lib/ads/campaigns";
 import { env } from "@/lib/env";
 
 export const runtime = "nodejs";
@@ -38,7 +39,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const loaded = await load(req, ctx);
   if ("error" in loaded) return loaded.error;
   const stats = await campaignStats(loaded.sb, loaded.userId, loaded.campaign);
-  return NextResponse.json({ ...withUrl(loaded.campaign), stats });
+  // Targeting and the promo come from their own reads; see withTargeting for
+  // why they are not columns on the campaign select.
+  const campaign = await withTargeting(loaded.sb, loaded.campaign);
+  return NextResponse.json({ ...withUrl(campaign), stats });
 }
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {

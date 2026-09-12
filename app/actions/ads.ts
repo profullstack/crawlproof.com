@@ -16,6 +16,8 @@ import {
 } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
 import { MIN_PAYOUT_CENTS, DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
+import { cleanTopics } from "@/lib/ads/trending";
+import { grantTrendingPromo } from "@/lib/ads/promos";
 import { createCryptoPayout } from "@/lib/coinpay";
 
 const ASSET_BUCKET = "ad-assets";
@@ -149,7 +151,9 @@ export async function saveCampaign(input: {
   brand?: SiteBrand | null;
   creatives: Partial<AdCreative>[];
   summary?: Partial<AdSummary> | null;
-}): Promise<{ ok: true; id: string; refSlug: string } | { ok: false; error: string }> {
+  /** Prefer this campaign where its subject is trending, and take the 90 days. */
+  trendingTopics?: boolean;
+}): Promise<{ ok: true; id: string; refSlug: string; promoDays?: number } | { ok: false; error: string }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -185,6 +189,15 @@ export async function saveCampaign(input: {
     brand: input.brand ?? {},
   };
   if (org.id) payload.organization_id = org.id;
+  // Trending targeting, and the subjects it targets on. The subjects come from
+  // the page's own words rather than anything typed here: a campaign claiming
+  // topics its landing page never mentions is how contextual targeting gets
+  // gamed, and this form has the page in front of it already.
+  if (input.trendingTopics) {
+    payload.trending_topics = true;
+    const topics = cleanTopics([input.brand?.title, input.brand?.description, domainOf(check.url).split(".")[0]]);
+    if (topics.length) payload.topics = topics;
+  }
 
   // Editorial prose for placements that live inside content. Only stored when
   // it actually describes where the campaign points: the user can edit the URL
@@ -217,8 +230,10 @@ export async function saveCampaign(input: {
   // of the schema. Retry without them rather than refusing to create the
   // campaign: prose is an enhancement, a campaign that cannot be saved is the
   // whole product failing. Same trade the impression short_code makes.
-  if (campaign.error && /summary_|schema cache|column/i.test(campaign.error.message ?? "")) {
+  if (campaign.error && /summary_|trending_topics|topics|schema cache|column/i.test(campaign.error.message ?? "")) {
     for (const key of Object.keys(summaryFields)) delete payload[key];
+    delete payload.trending_topics;
+    delete payload.topics;
     campaign = await supabase
       .from("ad_campaigns")
       .insert(payload)
@@ -249,8 +264,18 @@ export async function saveCampaign(input: {
   const { error: cErr } = await supabase.from("ad_creatives").insert(rows);
   if (cErr) return { ok: false, error: cErr.message };
 
+  // Turning trending targeting on is what earns the 90 days, and the grant is
+  // idempotent — a campaign saved twice does not get a second window. A
+  // failure to grant never fails the save: the campaign runs and bills
+  // normally, which the detail page shows by having no promo line at all.
+  let promoDays: number | undefined;
+  if (input.trendingTopics) {
+    const granted = await grantTrendingPromo(supabase, { userId: user.id, campaignId: campaign.data.id, note: "trending targeting enabled in the dashboard" });
+    promoDays = granted.state.active ? granted.state.daysRemaining : undefined;
+  }
+
   revalidatePath("/dashboard/ads");
-  return { ok: true, id: campaign.data.id, refSlug: campaign.data.ref_slug };
+  return { ok: true, id: campaign.data.id, refSlug: campaign.data.ref_slug, promoDays };
 }
 
 // --- Campaign editing (advertiser) ---

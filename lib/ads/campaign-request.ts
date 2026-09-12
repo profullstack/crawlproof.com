@@ -5,6 +5,7 @@
 // by tests and could be by a client.
 
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
+import { cleanTopics } from "@/lib/ads/trending";
 
 export type CampaignStatus = "active" | "draft";
 
@@ -14,7 +15,26 @@ export type CampaignRequest = {
   dailyBudgetCents?: number;
   bidCredits?: number;
   status?: CampaignStatus;
+  /** Prefer this campaign where its subject is what people are asking about. */
+  trendingTopics?: boolean;
+  /** The subjects it is about. Derived from the page when the caller says nothing. */
+  topics?: string[];
 };
+
+/**
+ * A boolean as somebody typed it.
+ *
+ * `--trending` from a shell arrives as the string "true", a JSON caller sends
+ * a real boolean, and a form sends "on". Anything else is not a yes.
+ */
+function asBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "boolean") return value;
+  const text = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(text)) return true;
+  if (["false", "0", "no", "off", ""].includes(text)) return false;
+  return undefined;
+}
 
 export function domainOf(url: string): string {
   try {
@@ -53,6 +73,11 @@ export function parseCampaignRequest(body: Record<string, unknown>): { ok: true;
     request.bidCredits = Math.min(200, Math.round(n));
   }
   if (statusRaw === "active" || statusRaw === "draft") request.status = statusRaw;
+
+  const trending = asBoolean(body.trending_topics ?? body.trendingTopics ?? body.trending);
+  if (trending !== undefined) request.trendingTopics = trending;
+  const topics = cleanTopics(body.topics);
+  if (topics.length) request.topics = topics;
   return { ok: true, request, url: check.url };
 }
 
@@ -61,6 +86,8 @@ export type CampaignPatch = {
   dailyBudgetCents?: number;
   bidCredits?: number;
   status?: "active" | "paused" | "draft";
+  trendingTopics?: boolean;
+  topics?: string[];
 };
 
 /** Pure: a PATCH body, normalised with the dashboard's clamps. Empty is an error. */
@@ -88,7 +115,12 @@ export function parseCampaignPatch(body: Record<string, unknown>): { ok: true; p
     }
     patch.status = body.status;
   }
-  if (!Object.keys(patch).length) return { ok: false, error: "Nothing to change: send name, daily_budget_cents, bid_credits or status." };
+  const trending = asBoolean(body.trending_topics ?? body.trendingTopics ?? body.trending);
+  if (trending !== undefined) patch.trendingTopics = trending;
+  if (body.topics !== undefined) patch.topics = cleanTopics(body.topics);
+  if (!Object.keys(patch).length) {
+    return { ok: false, error: "Nothing to change: send name, daily_budget_cents, bid_credits, status, trending_topics or topics." };
+  }
   return { ok: true, patch };
 }
 

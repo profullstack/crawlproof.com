@@ -173,6 +173,38 @@ The endpoints underneath are the same ones anything else can call:
 | `GET /api/ads/v1/earnings?days=` | ad delivery and money, both sides |
 | `GET/POST /api/ads/v1/campaigns` | list and run campaigns |
 | `GET/POST /api/ads/v1/slots` | list and create publisher slots |
+| `GET /api/ads/v1/trends` | what is trending, and how old the list is |
+
+### Trending-topic targeting
+
+An advertiser can run where the subject is what people are asking about right
+now:
+
+```sh
+crawlproof ads trends
+crawlproof ads create https://example.com/launch --trending
+crawlproof ads trending crawlproof-ad-144 on
+```
+
+Two halves have to agree before a campaign is preferred: its own subject has to
+be trending **and** the page being filled has to be about that subject. Either
+half alone is how an ad network ends up putting a crypto ad on a recipe blog.
+The page's subject comes from what CrawlProof already knows about the site —
+the autoblog's `lx_site.master_keywords`, its niche, the slot's niche.
+
+The signals come from **SameBrain** on chovy.com (what founders are asking to
+build this week), pulled hourly by `POST /api/cron/ad-trends` with the cron
+secret and stored in `ad_trend_topics`. A list older than 36 hours stops
+steering delivery entirely rather than targeting last week's subjects forever,
+and a failed pull is never an outage: delivery falls back to the ordinary
+auction.
+
+Turning it on grants **90 days** during which the campaign serves and meters
+exactly as usual and every click is billed at **$0.00** (`ad_promos`; the rate
+afterwards is $0.02/click). A promo fill competes for real placement but books
+under `tier='free'`, because nothing is charged — so no spend and no publisher
+earnings are written for a payment that did not happen, and on a network where
+one account owns both sides it can never read as revenue.
 
 ## Product flows
 
