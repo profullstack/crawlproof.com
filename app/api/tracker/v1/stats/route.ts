@@ -18,6 +18,11 @@ import { DEFAULT_WHO, parseWho, WHO_PARAM, whoToKind } from "@/lib/tracker/who";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Anything but an affirmative is off, so a typo cannot buy an extra query. */
+export function parseDetail(raw: string | null): boolean {
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 export async function GET(req: NextRequest) {
   const auth = await authenticateBearer(req);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -36,7 +41,13 @@ export async function GET(req: NextRequest) {
   const resolved = await resolveProject(sb, auth.userId, sp.get("site"));
   if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
 
+  // `detail=1` adds the series and the unfiltered human / bot mix, which is
+  // what the dashboard's per-domain screen and its risk-to-viral score are
+  // built from. Off by default: `crawlproof stats` prints neither, and a
+  // fleet-wide fan-out should not pay for a panel nobody renders.
+  const detail = parseDetail(sp.get("detail"));
+
   const range = trackerRange(sp.get("range"));
-  const stats = await projectStats(sb, resolved.project, range, whoToKind(who), who);
+  const stats = await projectStats(sb, resolved.project, range, whoToKind(who), who, detail);
   return NextResponse.json(stats);
 }

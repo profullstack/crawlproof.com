@@ -140,6 +140,7 @@ echo '{ "token": "crp_…" }' > ~/.crawlproof.json && chmod 600 ~/.crawlproof.js
 
 crawlproof dashboard                # five live screens: ROI, Traffic, Ads, Money, Spend
 crawlproof dashboard --range=1m --json | jq .roi.derived
+crawlproof dashboard --json | jq '.sites[] | {site, score: .score.score}'   # ranked properties
 crawlproof stats example.com        # sources, referrers, top pages as text
 crawlproof ad https://example.com/launch
 crawlproof ads pause crawlproof-ad-144
@@ -154,12 +155,21 @@ esbuild-bundles `lib/dashboard/*` and `cli/dashboard.ts` where they already
 live and where the test suite already covers them, leaving hqtui and the
 CoinPay SDK external. Rebuild with `node packages/cli/build.mjs`.
 
+On the Traffic screen, `↑`/`↓` pick a property and `Enter` (or a click) opens
+it: that domain's traffic and money on their own, and its **risk-to-viral
+score** taken apart into the components it was built from —
+`100 × viral × (1 − risk/2)`, where viral is momentum, discovery, humanity and
+money, and risk is volatility, channel concentration, bot dependence and being
+unmonetised. A component with no data is dropped rather than counted as a zero.
+The full table is in [`packages/cli/README.md`](packages/cli/README.md) and the
+formula lives in [`lib/dashboard/score.ts`](lib/dashboard/score.ts).
+
 The endpoints underneath are the same ones anything else can call:
 
 | Route | Answers |
 | --- | --- |
 | `GET /api/tracker/v1/sites` | the projects this token can read |
-| `GET /api/tracker/v1/stats?site=&range=&who=` | who arrived and from where |
+| `GET /api/tracker/v1/stats?site=&range=&who=&detail=1` | who arrived and from where; `detail=1` adds the series and the unfiltered human / bot mix |
 | `GET /api/ads/v1/earnings?days=` | ad delivery and money, both sides |
 | `GET/POST /api/ads/v1/campaigns` | list and run campaigns |
 | `GET/POST /api/ads/v1/slots` | list and create publisher slots |

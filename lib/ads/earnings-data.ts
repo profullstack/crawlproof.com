@@ -27,6 +27,12 @@ export type EarningsCampaignRow = {
   id: string;
   name: string;
   status: string;
+  /**
+   * Where the campaign points. Carried so a client can attribute spend to one
+   * of its own properties: a campaign is only ever "for" a site by way of the
+   * page it sends people to, and nothing else in this model names a domain.
+   */
+  url: string | null;
   impressions: number;
   clicks: number;
   spentCents: number;
@@ -35,6 +41,8 @@ export type EarningsCampaignRow = {
 export type EarningsSlotRow = {
   id: string;
   name: string;
+  /** The project the slot sits on, so earnings can be read per property. */
+  projectId: string;
   status: string;
   impressions: number;
   clicks: number;
@@ -103,6 +111,7 @@ type CampaignRow = {
   id: string;
   name: string;
   status: string;
+  destination_url: string | null;
   total_spent_cents: number | null;
   spend_today_cents: number | null;
   spend_date: string | null;
@@ -138,7 +147,7 @@ export async function loadEarnings(
   ] = await Promise.all([
     supabase
       .from("ad_campaigns")
-      .select("id, name, status, total_spent_cents, spend_today_cents, spend_date")
+      .select("id, name, status, destination_url, total_spent_cents, spend_today_cents, spend_date")
       .eq("owner_id", userId),
     // Not ad_campaign_stats / ad_slot_stats: those views are lifetime and count
     // only tier 'paid', so on a network running entirely on free backfill they
@@ -179,6 +188,7 @@ export async function loadEarnings(
       id: c.id,
       name: c.name,
       status: c.status,
+      url: c.destination_url ?? null,
       impressions: deliveredImpressions(s),
       clicks: deliveredClicks(s),
       spentCents: s.spentCents,
@@ -190,6 +200,7 @@ export async function loadEarnings(
     return {
       id: sl.id,
       name: projectsById.get(sl.project_id)?.name ?? "Site",
+      projectId: sl.project_id,
       status: sl.status,
       impressions: deliveredImpressions(s),
       clicks: deliveredClicks(s),

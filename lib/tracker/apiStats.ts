@@ -10,7 +10,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { hostOf } from "@/lib/ads/slots";
-import { fetchPanels, type ListItem, type PanelKey, type PanelPayload } from "@/lib/tracker/panels";
+import {
+  fetchPanel,
+  fetchPanels,
+  resolveDays,
+  type ListItem,
+  type PanelKey,
+  type PanelPayload,
+} from "@/lib/tracker/panels";
 import type { TrackerRange } from "@/lib/tracker/ranges";
 import type { TrackerKind } from "@/lib/tracker/humans";
 
@@ -88,6 +95,15 @@ export async function resolveProject(sb: Sb, userId: string, site: string | null
   return { ok: false, status: 404, error: `No project for "${site}". Yours: ${projects.map((p) => p.name).join(", ")}` };
 }
 
+/** One bucket of the series, trimmed to what a client can plot or score. */
+export type StatsPoint = {
+  date: string;
+  pageviews: number;
+  humans: number;
+  bots: number;
+  ai: number;
+};
+
 export type StatsAnswer = {
   project: { id: string; name: string; url: string };
   range: string;
@@ -96,9 +112,60 @@ export type StatsAnswer = {
   sources: ListItem[];
   referrers: ListItem[];
   pages: ListItem[];
+  /**
+   * The shape over time, present only with `detail`. It is what the totals were
+   * summed from, so asking for it costs nothing extra.
+   */
+  series?: StatsPoint[];
+  /**
+   * Humans against bots over the same window, unfiltered.
+   *
+   * A filtered answer cannot carry this: asking for `who=humans` filters the
+   * RPC to `p_kind = 'human'`, so its bot column is zero by construction rather
+   * than by observation, and a share computed from it would read 100% human on
+   * a site that is 99% crawler. So this is a second, unfiltered read — skipped
+   * when the caller already asked for everything, where the main series IS it.
+   */
+  mix?: { humans: number; bots: number; ai: number; events: number };
 };
 
 const asList = (payload: PanelPayload | undefined): ListItem[] => (Array.isArray(payload) ? payload : []);
+
+const count = (v: unknown): number => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+};
+
+/** The series payload as plottable points. Empty for a list payload or nothing. */
+export function seriesPoints(payload: PanelPayload | undefined): StatsPoint[] {
+  if (!payload || Array.isArray(payload)) return [];
+  const points = (payload as { points?: Record<string, unknown>[] }).points ?? [];
+  return points.map((p) => ({
+    date: String(p.date ?? ""),
+    pageviews: count(p.pageviews),
+    humans: count(p.humans),
+    bots: count(p.bots),
+    ai: count(p.ai),
+  }));
+}
+
+/** Sum a series payload into the human / bot split. */
+export function mixFromSeries(payload: PanelPayload | undefined): {
+  humans: number;
+  bots: number;
+  ai: number;
+  events: number;
+} {
+  const mix = { humans: 0, bots: 0, ai: 0, events: 0 };
+  if (!payload || Array.isArray(payload)) return mix;
+  for (const p of (payload as { points?: Record<string, unknown>[] }).points ?? []) {
+    mix.humans += count(p.humans);
+    mix.bots += count(p.bots);
+    mix.ai += count(p.ai);
+    mix.events += count(p.events);
+  }
+  return mix;
+}
 
 /** Sum a series payload's points into the two numbers a summary line needs. */
 export function totalsFromSeries(payload: PanelPayload | undefined): { visitors: number; pageviews: number } {
@@ -119,9 +186,19 @@ export async function projectStats(
   range: TrackerRange,
   kind: TrackerKind | null,
   who: string,
+  /** Add the series and the unfiltered human / bot mix. One extra RPC at most. */
+  detail = false,
 ): Promise<StatsAnswer> {
-  const panels = await fetchPanels(sb, project.id, STATS_PANELS, range, kind);
-  return {
+  const [panels, mixSeries] = await Promise.all([
+    fetchPanels(sb, project.id, STATS_PANELS, range, kind),
+    // Only when the answer is filtered: at kind null the main series already is
+    // the unfiltered one, and a second identical query would be a second query.
+    detail && kind !== null
+      ? fetchPanel(sb, project.id, "series", range, await resolveDays(sb, project.id, range), null)
+      : Promise.resolve(undefined),
+  ]);
+
+  const answer: StatsAnswer = {
     project: { id: project.id, name: project.name, url: project.url },
     range: range.key,
     who,
@@ -129,5 +206,12 @@ export async function projectStats(
     sources: asList(panels.sources),
     referrers: asList(panels.referrers),
     pages: asList(panels.pages),
+  };
+  if (!detail) return answer;
+
+  return {
+    ...answer,
+    series: seriesPoints(panels.series),
+    mix: mixFromSeries(kind === null ? panels.series : mixSeries),
   };
 }

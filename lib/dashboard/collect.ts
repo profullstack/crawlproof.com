@@ -20,6 +20,8 @@ import {
   type RoiModel,
   type SiteTraffic,
 } from "./roi";
+import type { ScoreModel } from "./score";
+import { buildSiteDetail, type SiteMix, type SitePoint } from "./site";
 
 export type ListItem = { label: string; value: number };
 
@@ -29,6 +31,16 @@ export type SiteStats = SiteTraffic & {
   sources: ListItem[];
   referrers: ListItem[];
   pages: ListItem[];
+  /** The shape over the window, for the domain screen and the score. */
+  series?: SitePoint[];
+  /** Humans against bots, unfiltered. Absent when the API did not answer it. */
+  mix?: SiteMix;
+  /**
+   * The risk-to-viral score for this property; see lib/dashboard/score.ts.
+   * Attached here so the Traffic list can rank by it without every screen
+   * recomputing it, and so `--json` carries it for a script.
+   */
+  score?: ScoreModel;
 };
 
 export type DashboardSnapshot = {
@@ -119,13 +131,19 @@ async function statsForSite(
   range: string,
   who: string,
 ): Promise<SiteStats> {
-  const url = `${baseUrl}/api/tracker/v1/stats?site=${encodeURIComponent(site.id)}&range=${encodeURIComponent(range)}&who=${encodeURIComponent(who)}`;
+  // `detail=1` asks for the series and the unfiltered human / bot mix. Both are
+  // per-domain questions — the fleet screens need neither — and the mix is the
+  // only honest source for "how much of this is a crawler", because a filtered
+  // series has a zero bot column by construction.
+  const url = `${baseUrl}/api/tracker/v1/stats?site=${encodeURIComponent(site.id)}&range=${encodeURIComponent(range)}&who=${encodeURIComponent(who)}&detail=1`;
   try {
     const body = await fetchJson<{
       totals?: { visitors?: number; pageviews?: number };
       sources?: ListItem[];
       referrers?: ListItem[];
       pages?: ListItem[];
+      series?: SitePoint[];
+      mix?: SiteMix;
     }>(url, token);
     return {
       site: site.name,
@@ -136,6 +154,8 @@ async function statsForSite(
       sources: body.sources ?? [],
       referrers: body.referrers ?? [],
       pages: body.pages ?? [],
+      ...(body.series ? { series: body.series } : {}),
+      ...(body.mix ? { mix: body.mix } : {}),
     };
   } catch (err) {
     return {
@@ -233,6 +253,14 @@ export async function collectDashboard(opts: CollectOptions): Promise<DashboardS
     ads,
     finance,
   });
+
+  // Scored after the fleet totals exist, because a property's share of the
+  // burn is part of what it is being scored on. Pure and cheap: the domain
+  // screen rebuilds the whole detail from the same snapshot on demand.
+  const window = { range: opts.range, who: opts.who, financeDays: opts.financeDays };
+  for (const site of sites) {
+    site.score = buildSiteDetail({ site, roi, ads, finance, window }).score;
+  }
 
   return {
     generatedAt: new Date().toISOString(),

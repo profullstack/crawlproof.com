@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { resolveProject, totalsFromSeries } from "@/lib/tracker/apiStats";
+import { mixFromSeries, resolveProject, seriesPoints, totalsFromSeries } from "@/lib/tracker/apiStats";
+import { parseDetail } from "@/app/api/tracker/v1/stats/route";
 
 type Row = { id: string; name: string; url: string };
 
@@ -95,5 +96,47 @@ describe("totalsFromSeries", () => {
     expect(totalsFromSeries(undefined)).toEqual({ visitors: 0, pageviews: 0 });
     expect(totalsFromSeries([] as never)).toEqual({ visitors: 0, pageviews: 0 });
     expect(totalsFromSeries({ points: [{ pageviews: "4" }] } as never)).toEqual({ visitors: 0, pageviews: 4 });
+  });
+});
+
+describe("seriesPoints", () => {
+  it("trims a series payload to what a client can plot", () => {
+    expect(
+      seriesPoints({
+        points: [{ date: "2026-09-01", pageviews: "4", humans: 3, bots: 1, ai: 2, interactions: 9 }],
+      } as never),
+    ).toEqual([{ date: "2026-09-01", pageviews: 4, humans: 3, bots: 1, ai: 2 }]);
+  });
+
+  it("is empty for a list payload or nothing, rather than throwing", () => {
+    expect(seriesPoints(undefined)).toEqual([]);
+    expect(seriesPoints([] as never)).toEqual([]);
+  });
+});
+
+describe("mixFromSeries", () => {
+  it("sums both sides, which is the only honest place a human share comes from", () => {
+    expect(
+      mixFromSeries({
+        points: [
+          { humans: 3, bots: 7, ai: 1, events: 10 },
+          { humans: 2, bots: 8, ai: 0, events: 10 },
+        ],
+      } as never),
+    ).toEqual({ humans: 5, bots: 15, ai: 1, events: 20 });
+  });
+
+  it("is zeros for nothing at all, never NaN", () => {
+    expect(mixFromSeries(undefined)).toEqual({ humans: 0, bots: 0, ai: 0, events: 0 });
+  });
+});
+
+describe("parseDetail", () => {
+  it("only an affirmative buys the extra query", () => {
+    expect(parseDetail("1")).toBe(true);
+    expect(parseDetail("true")).toBe(true);
+    expect(parseDetail(null)).toBe(false);
+    expect(parseDetail("0")).toBe(false);
+    expect(parseDetail("; drop table")).toBe(false);
   });
 });

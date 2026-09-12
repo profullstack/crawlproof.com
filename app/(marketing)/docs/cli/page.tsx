@@ -76,6 +76,75 @@ crawlproof dashboard --json | jq '.sites[] | {site, visitors}'`}</Cmd>
       </section>
 
       <section className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">One property at a time</h2>
+        <p className="text-sm leading-relaxed">
+          On <strong>Traffic</strong>, <kbd className="font-mono">↑</kbd>/
+          <kbd className="font-mono">↓</kbd> pick a site and{" "}
+          <kbd className="font-mono">Enter</kbd> — or a click on the row — opens
+          it. That screen is only that domain: pageviews, visits, humans against
+          bots, AI referrals and where they arrived from, next to the burn
+          prorated onto it, its ad earnings and spend, and the commission when
+          there is exactly one merchant business to attribute it to.{" "}
+          <kbd className="font-mono">Esc</kbd> comes back.
+        </p>
+        <Cmd note="s cycles the order: score, visitors, pageviews.">
+          {`crawlproof dashboard --sort=score
+crawlproof dashboard --json | jq '.sites[] | {site, score: .score.score}'`}
+        </Cmd>
+      </section>
+
+      <section className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">The risk-to-viral score</h2>
+        <p className="text-sm leading-relaxed">
+          Every property is scored out of 100, shown as a column on the Traffic
+          list and taken apart on the domain screen. It is arithmetic over
+          numbers already on the screen, not a model, so a high score can always
+          be traced to the figure that caused it.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`score = 100 × viral × (1 − risk/2)
+
+viral = momentum .40 + discovery .30 + humanity .20 + money .10
+risk  = volatility .40 + concentration .30 + bot dependence .20 + unmonetised .10`}</pre>
+        <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
+          <li>
+            <strong>momentum</strong> — human visits in the recent half of the
+            window against the earlier half. Flat is 0.5, doubling is 1.
+          </li>
+          <li>
+            <strong>discovery</strong> — the share arriving through search,
+            social, an AI assistant, an ad or another site&apos;s link, rather
+            than direct.
+          </li>
+          <li>
+            <strong>humanity</strong> — humans over humans plus bots, read
+            unfiltered. A filtered read has a zero bot column by construction
+            and would call a crawler farm 100% human.
+          </li>
+          <li>
+            <strong>money</strong> — revenue per 1,000 human visits against a $2
+            target.
+          </li>
+          <li>
+            <strong>volatility</strong> — the coefficient of variation of the
+            human series; scale-free, so a small site is not penalised for being
+            small.
+          </li>
+          <li>
+            <strong>concentration</strong> — the largest single arrival
+            channel&apos;s share. An even spread is not a risk; one channel
+            being everything is.
+          </li>
+        </ul>
+        <p className="text-sm leading-relaxed">
+          A component with no data behind it is dropped and its weight
+          redistributed, never counted as a zero. A trailing{" "}
+          <code className="font-mono">~</code> marks fewer than 25 human visits
+          in the window, and a site whose stats call failed is not scored at
+          all — missing is not the same as bad.
+        </p>
+      </section>
+
+      <section className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Traffic, as text</h2>
         <p className="text-sm leading-relaxed">
           Sources, referrers and top pages for one site. Defaults to the last
