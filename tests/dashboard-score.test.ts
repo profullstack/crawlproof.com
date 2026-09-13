@@ -60,6 +60,11 @@ describe("growthRate", () => {
     expect(g).toBeGreaterThan(0);
   });
 
+  it("compares equal durations when the series has an odd number of buckets", () => {
+    expect(growthRate([5, 5, 5, 5, 5])).toBe(0);
+    expect(growthRate([2, 2, 99, 4, 4])).toBe(1);
+  });
+
   it("is null with too few buckets, or with no traffic at all", () => {
     expect(growthRate([1, 2, 3])).toBeNull();
     expect(growthRate([])).toBeNull();
@@ -206,6 +211,18 @@ describe("scoreSite", () => {
     expect(component(atTarget.viralComponents, "money")?.value).toBeCloseTo(1, 1);
     expect(component(over.viralComponents, "money")?.value).toBe(1);
     expect(component(over.riskComponents, "unmonetised")?.value).toBe(0);
+  });
+
+  it("leaves missing revenue unscored, while measured zero is unmonetised", () => {
+    for (const revenueUsd of [undefined, null, Number.NaN]) {
+      const unknown = scoreSite({ ...growing(), revenueUsd });
+      expect(component(unknown.viralComponents, "money")?.value).toBeNull();
+      expect(component(unknown.riskComponents, "unmonetised")?.value).toBeNull();
+      expect(unknown.coverage).toBeCloseTo(0.9);
+    }
+    const zero = scoreSite({ ...growing(), revenueUsd: 0 });
+    expect(component(zero.viralComponents, "money")?.value).toBe(0);
+    expect(component(zero.riskComponents, "unmonetised")?.value).toBe(1);
   });
 
   it("flags a sample too small to lean on without hiding the number", () => {

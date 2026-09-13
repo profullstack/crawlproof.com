@@ -9,7 +9,7 @@
 
 import type { Container, RenderArgs, Theme } from "@profullstack/hqtui";
 
-import { collectDashboard, type CoinPayAuth, type DashboardSnapshot, type SiteStats } from "../lib/dashboard/collect";
+import { collectDashboard, type CoinPayAuth, type DashboardSnapshot, type SiteStats, type FeedName, type FeedProgress } from "../lib/dashboard/collect";
 import { AD_TARGET_CTR, AD_TARGET_IMPRESSIONS, adTargets } from "../lib/dashboard/roi";
 import { buildSiteDetail, type SiteDetail } from "../lib/dashboard/site";
 import type { Component } from "../lib/dashboard/score";
@@ -87,6 +87,10 @@ export type State = {
   who: string;
   snapshot: DashboardSnapshot | null;
   loading: boolean;
+  feeds: Record<FeedName, FeedProgress>;
+  refreshStartedAt: Date | null;
+  refreshQueued: boolean;
+  refreshMessage: string | null;
   lastRefresh: Date | null;
   error: string | null;
   paused: boolean;
@@ -357,7 +361,7 @@ function trafficScreen(ui: Container, state: State, theme: Theme): void {
       {
         title: `Sites · ${state.range} · ${state.who}`,
         subtitle: `${s.roi.attention.sitesReporting} of ${rows.length} reporting · by ${state.sort}`,
-        footer: "↑/↓ select · Enter opens · s sorts",
+        footer: "Click / Enter opens · ↑/↓ select · s sorts",
       },
       (p) => {
         const view = pane(state, "sites", rows.length);
@@ -517,8 +521,9 @@ function domainScreen(ui: Container, state: State, theme: Theme): void {
   const t = detail.traffic;
   const m = detail.money;
   const score = detail.score;
+  const adsKnown = Boolean(state.snapshot?.ads && !state.snapshot.ads.statsUnavailable);
 
-  ui.grid({ columns: ["1fr", "1fr", "1fr"], rows: [12, "1fr"], gap: 1 }, (grid) => {
+  ui.grid({ columns: ["1fr", "1fr", "1fr"], rows: [14, "1fr"], gap: 1 }, (grid) => {
     grid.panel(
       {
         title: detail.site,
@@ -559,16 +564,16 @@ function domainScreen(ui: Container, state: State, theme: Theme): void {
     // Short subtitles on purpose: hqtui draws the title and the subtitle in the
     // same border row and the subtitle wins, so a long one costs the panel its
     // own name at a narrow width.
-    grid.panel({ title: "Money", subtitle: `${detail.window.range} · ${detail.window.financeDays}d bank` }, (p) => {
+    grid.panel({ title: "Money", subtitle: `${detail.window.range} · ${detail.window.financeDays}d bank`, footer: adsKnown ? `Ads · ${state.snapshot?.ads?.rangeDays ?? detail.window.financeDays}d · internal` : "Ads unavailable · r retries" }, (p) => {
       p.keyValues(
         [
           {
-            label: "Cost · by views",
+            label: "Est. cost/views",
             value: m.costByViewsUsd === null ? "—" : money(m.costByViewsUsd, { cents: true }),
             color: theme.danger,
           },
           {
-            label: "Cost · by visits",
+            label: "Est. cost/visits",
             value: m.costByVisitsUsd === null ? "—" : money(m.costByVisitsUsd, { cents: true }),
             color: theme.muted,
           },
@@ -586,12 +591,17 @@ function domainScreen(ui: Container, state: State, theme: Theme): void {
             label: "Per 1k humans",
             value: m.rpmUsd === null ? "—" : money(m.rpmUsd, { cents: true }),
           },
+          {
+            label: `Volume · ${m.observedDays ?? detail.window.financeDays}d`,
+            value: m.grossVolumeUsd === null ? "—" : money(m.grossVolumeUsd),
+          },
+          { label: "Payments", value: m.transactions === null ? "—" : count(m.transactions) },
           { label: "", value: "" },
           // Internal by construction: one account owns the slot and the
           // campaign, so this is the same dollar in two pockets.
-          { label: "Ad earned (int.)", value: money(m.adEarnedUsd, { cents: true }), color: theme.muted },
-          { label: "Ad spent (int.)", value: money(m.adSpentUsd, { cents: true }), color: theme.muted },
-          { label: "Impressions", value: count(m.adImpressions), color: theme.muted },
+          { label: "Ad earned (int.)", value: adsKnown ? money(m.adEarnedUsd, { cents: true }) : "—", color: theme.muted },
+          { label: "Ad spent (int.)", value: adsKnown ? money(m.adSpentUsd, { cents: true }) : "—", color: theme.muted },
+          { label: "Impressions", value: adsKnown ? count(m.adImpressions) : "—", color: theme.muted },
         ],
         { labelWidth: 17 },
       );
@@ -604,10 +614,14 @@ function domainScreen(ui: Container, state: State, theme: Theme): void {
         subtitleColor: score.provisional ? theme.warning : theme.muted,
       },
       (p) => {
-        p.text(score.score === null ? "  —" : `  ${score.score.toFixed(0)}`, {
+        p.text(score.score === null ? "  —" : `  ${score.score.toFixed(0)} / 100`, {
           bold: true,
           fg: scoreColor(theme, score.score),
         });
+        p.text(score.score === null ? "No signal yet" : score.provisional ? "Early signal · small sample" : score.score >= 60 ? "Promising" : score.score >= 35 ? "Worth watching" : "Limited signal", {
+          fg: scoreColor(theme, score.score),
+        });
+        p.text("Higher = more potential · heuristic", { fg: theme.muted });
         p.meters(
           [
             { label: "viral", value: score.viral, max: 1, text: pct(score.viral, 0) },
@@ -622,6 +636,7 @@ function domainScreen(ui: Container, state: State, theme: Theme): void {
 
     grid.panel({ title: "Why it scores that", subtitle: "weights", colSpan: 2 }, (p) => {
       p.table<ComponentRow>({
+        size: 5,
         columns: [
           { key: "part", title: "Viral", width: 23 },
           { key: "value", title: "", align: "right", width: 6 },
@@ -631,6 +646,7 @@ function domainScreen(ui: Container, state: State, theme: Theme): void {
         rowColor: (row: ComponentRow) => row.color,
       });
       p.table<ComponentRow>({
+        size: 5,
         columns: [
           { key: "part", title: "Risk", width: 23 },
           { key: "value", title: "", align: "right", width: 6 },
@@ -680,6 +696,11 @@ function adsScreen(ui: Container, state: State, theme: Theme): void {
 
   if (!ads) {
     ui.panel({ title: "Ads" }, (p) => {
+      if (feedBusy(state.feeds.ads)) {
+        p.spinner({ label: state.feeds.ads.detail, color: theme.primary });
+        p.text("Waiting for ad earnings and delivery…", { fg: theme.muted });
+        return;
+      }
       p.text(s.errors.ads ?? "Ad earnings unavailable.", { fg: theme.danger });
       p.text("Press r to retry.", { fg: theme.muted });
     });
@@ -701,23 +722,23 @@ function adsScreen(ui: Container, state: State, theme: Theme): void {
           { label: "Impressions", value: count(t.impressions), color: theme.primary },
           { label: "  free", value: count(t.freeImpressions), color: theme.success },
           { label: "  paid", value: count(t.paidImpressions), color: theme.muted },
-          { label: "Clicks", value: count(t.clicks) },
+          { label: "Accepted clicks", value: count(t.clicks) },
+          { label: "  billed", value: count(t.billedClicks) },
+          { label: "  free", value: count(t.freeClicks) },
           { label: "CTR", value: pct(t.ctr, 3) },
           {
-            label: "Invalid clicks",
+            label: "Rejected clicks",
             value: count(t.invalidClicks),
             color: t.invalidClicks > t.clicks ? theme.danger : theme.warning,
           },
         ],
         { labelWidth: 16 },
       );
-      if (t.invalidClicks > t.clicks && t.clicks > 0) {
-        p.text(`${Math.round(t.invalidClicks / t.clicks)}x more invalid than valid.`, { fg: theme.danger });
-      }
+      p.text("Rejected: historical bots + refused clicks.", { fg: theme.muted });
     });
 
     grid.panel(
-      { title: "Toward the target", subtitle: `${count(t.targetImpressions)}/mo · ${pct(t.targetCtr, 0)} CTR` },
+      { title: "Toward the target", subtitle: `${count(t.windowTargetImpressions)}/${window} · ${pct(t.targetCtr, 0)} CTR` },
       (p) => {
         p.meters(
           [
@@ -733,13 +754,13 @@ function adsScreen(ui: Container, state: State, theme: Theme): void {
         );
         p.keyValues(
           [
-            { label: "Short by", value: count(Math.max(0, t.targetImpressions - t.impressions)) },
+            { label: "Short by", value: count(Math.max(0, t.windowTargetImpressions - t.impressions)) },
             {
               label: "Cost per click",
-              value: t.cpcCents === null ? "nothing charged yet" : `${t.cpcCents.toFixed(1)}c`,
+              value: t.cpcCents === null ? "no billed clicks in range" : `${t.cpcCents.toFixed(1)}c`,
             },
             {
-              label: "At target",
+              label: "If all paid",
               value: t.projectedMonthlyUsd === null ? "-" : `${money(t.projectedMonthlyUsd)}/mo`,
               color: theme.success,
             },
@@ -796,6 +817,10 @@ function moneyScreen(ui: Container, state: State, theme: Theme): void {
 
   if (!f) {
     ui.panel({ title: "Money" }, (p) => {
+      if (feedBusy(state.feeds.finance)) {
+        p.spinner({ label: state.feeds.finance.detail, color: theme.primary });
+        return;
+      }
       p.text(s.errors.finance ?? "CoinPay unavailable.", { fg: theme.danger });
       p.text("`coinpay auth login` writes the session this reads.", { fg: theme.muted });
     });
@@ -981,7 +1006,41 @@ const SCREENS = [roiScreen, trafficScreen, adsScreen, moneyScreen, spendScreen];
  * between them is state, not a tab. Exported so the render tests draw exactly
  * what the app draws.
  */
+function feedBusy(feed: FeedProgress): boolean {
+  return feed.status === "loading" || feed.status === "retrying";
+}
+
+/** Each request has a visible lifecycle on every screen, including the first load. */
+export function renderFetchStatus(ui: Container, state: State, theme: Theme): void {
+  ui.row({ size: 1, gap: 2 }, (row) => {
+    for (const name of ["traffic", "ads", "finance"] as const) {
+      const feed = state.feeds[name];
+      const label = name === "finance" ? "CoinPay" : name === "ads" ? "Ads" : "Traffic";
+      row.column({}, (cell) => {
+        if (feedBusy(feed)) cell.spinner({ label: feed.detail, color: theme.primary });
+        else cell.text(`${feed.status === "error" ? "!" : feed.status === "success" ? "✓" : "·"} ${feed.status === "idle" ? `${label} ${state.snapshot ? "ready" : "waiting"}` : feed.detail}`, {
+          fg: feed.status === "error" ? theme.warning : feed.status === "success" ? theme.success : theme.muted,
+        });
+      });
+    }
+  });
+  if (state.loading) {
+    const elapsed = state.refreshStartedAt ? Math.floor((Date.now() - state.refreshStartedAt.getTime()) / 1000) : 0;
+    ui.text(`Refreshing… ${elapsed}s${state.refreshQueued ? " · next refresh queued" : ""}${state.snapshot ? " · showing previous snapshot until complete" : ""}`, { size: 1, fg: theme.primary });
+  } else if (state.refreshMessage) {
+    ui.text(state.refreshMessage, { size: 1, fg: state.error || Object.keys(state.snapshot?.errors ?? {}).length ? theme.warning : theme.success });
+  }
+  if (state.snapshot?.adsStale) {
+    ui.text(`Ads: saved data from ${state.snapshot.adsUpdatedAt ?? state.snapshot.generatedAt} · r retries`, { size: 1, fg: theme.warning });
+  }
+}
+
 export function renderBody(ui: Container, state: State, theme: Theme): void {
+  renderFetchStatus(ui, state, theme);
+  ui.column({ size: "fill" }, (body) => renderContent(body, state, theme));
+}
+
+function renderContent(ui: Container, state: State, theme: Theme): void {
   if (!state.snapshot) {
     ui.panel({ title: "Spend & ROI" }, (p) => {
       if (state.error) {
@@ -1009,6 +1068,14 @@ export function initialState(overrides: Partial<State> = {}): State {
     who: "humans",
     snapshot: null,
     loading: false,
+    feeds: {
+      traffic: { status: "idle", detail: "Traffic waiting" },
+      ads: { status: "idle", detail: "Ads waiting" },
+      finance: { status: "idle", detail: "CoinPay waiting" },
+    },
+    refreshStartedAt: null,
+    refreshQueued: false,
+    refreshMessage: null,
     lastRefresh: null,
     error: null,
     paused: false,
@@ -1192,6 +1259,73 @@ export type DashboardOptions = {
   sort?: string;
 };
 
+/** Manual retries queue once during an active read, including range/filter changes. */
+export function createRefreshController(
+  state: State,
+  opts: DashboardOptions,
+  invalidate: () => void,
+  collect: typeof collectDashboard = collectDashboard,
+): () => Promise<void> {
+  let active: Promise<void> | null = null;
+  return function refresh(): Promise<void> {
+    if (active) {
+      state.refreshQueued = true;
+      invalidate();
+      return active;
+    }
+    active = (async () => {
+      do {
+        state.refreshQueued = false;
+        state.loading = true;
+        state.error = null;
+        state.refreshStartedAt = new Date();
+        state.refreshMessage = null;
+        state.feeds = {
+          traffic: { status: "loading", detail: "Fetching traffic" },
+          ads: { status: "loading", detail: "Fetching ads" },
+          finance: { status: "loading", detail: "Fetching CoinPay" },
+        };
+        invalidate();
+        try {
+          state.snapshot = await collect({
+            baseUrl: opts.baseUrl,
+            token: opts.token,
+            range: state.range,
+            who: state.who,
+            financeDays: FINANCE_DAYS[state.range] ?? 30,
+            concurrency: opts.concurrency ?? 8,
+            coinpay: opts.coinpay,
+            only: opts.only ?? null,
+            previous: state.snapshot,
+            onProgress: (feed, progress) => {
+              state.feeds[feed] = progress;
+              invalidate();
+            },
+          });
+          state.lastRefresh = new Date();
+          const failures = Object.keys(state.snapshot.errors);
+          state.refreshMessage = failures.length
+            ? `Refresh finished · ${failures.join(", ")} unavailable · r retries`
+            : `Refresh complete at ${state.lastRefresh.toLocaleTimeString("en-US", { hour12: false })} · all sources loaded`;
+        } catch (err) {
+          state.error = err instanceof Error ? err.message : String(err);
+          state.refreshMessage = `Refresh failed: ${state.error} · r retries`;
+        } finally {
+          // Stop every spinner even when collection itself failed unexpectedly.
+          for (const name of ["traffic", "ads", "finance"] as const) {
+            if (feedBusy(state.feeds[name])) {
+              state.feeds[name] = { status: state.error ? "error" : "success", detail: state.error ? `${name} failed` : `${name} refreshed` };
+            }
+          }
+          state.loading = false;
+          invalidate();
+        }
+      } while (state.refreshQueued);
+    })().finally(() => { active = null; });
+    return active;
+  };
+}
+
 export async function runDashboard(opts: DashboardOptions): Promise<void> {
   const hqtui = await loadHqtui();
   const app = await hqtui.createApp({
@@ -1208,38 +1342,11 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     ...(opts.sort && SORTS.includes(opts.sort as never) ? { sort: opts.sort as Sort } : {}),
   });
 
-  let refreshing = false;
-
-  async function refresh(): Promise<void> {
-    if (refreshing) return;
-    refreshing = true;
-    state.loading = true;
-    app.invalidate();
-    try {
-      state.snapshot = await collectDashboard({
-        baseUrl: opts.baseUrl,
-        token: opts.token,
-        range: state.range,
-        who: state.who,
-        financeDays: FINANCE_DAYS[state.range] ?? 30,
-        concurrency: opts.concurrency ?? 8,
-        coinpay: opts.coinpay,
-        only: opts.only ?? null,
-      });
-      state.error = null;
-      state.lastRefresh = new Date();
-    } catch (err) {
-      state.error = err instanceof Error ? err.message : String(err);
-    } finally {
-      state.loading = false;
-      refreshing = false;
-      app.invalidate();
-    }
-  }
+  const refresh = createRefreshController(state, opts, () => app.invalidate());
 
   const interval = Math.max(10, opts.interval ?? 60);
   const poll = setInterval(() => {
-    if (!state.paused) void refresh();
+    if (!state.paused && !state.loading) void refresh();
   }, interval * 1000);
   poll.unref?.();
 
@@ -1258,6 +1365,7 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
         active: state.tab,
         onSelect: (index: number) => {
           state.tab = index;
+          state.domain = null;
         },
       });
       const right = [
@@ -1283,14 +1391,14 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
         ...(onList ? [{ key: "↵", label: "Open site" }] : []),
         ...(state.domain ? [{ key: "esc", label: "Back", active: true }] : []),
         ...(onList ? [{ key: "s", label: `Sort ${state.sort}` }] : []),
-        { key: "r", label: "Refresh" },
+        { key: "r", label: state.loading ? state.refreshQueued ? "Queued" : "Refreshing" : "Refresh", active: state.loading },
         { key: "w", label: `Window ${state.range}` },
         { key: "b", label: state.who },
         { key: "p", label: state.paused ? "Resume" : "Pause", active: state.paused },
         { key: "?", label: "Help" },
         { key: "q", label: "Quit" },
       ],
-      right: errorCount
+      right: state.loading ? [{ label: state.refreshQueued ? "refresh queued" : "refreshing…", color: theme.primary }] : state.error ? [{ label: "refresh failed", color: theme.danger }] : errorCount
         ? [{ label: `${errorCount} source${errorCount > 1 ? "s" : ""} unavailable`, color: theme.warning }]
         : [{ label: "all sources live", color: theme.success }],
     });

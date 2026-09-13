@@ -21,6 +21,8 @@ const EMPTY: EarningsModel = {
   // Signed out: nothing was attempted, so nothing failed.
   statsUnavailable: false,
   totals: {
+    advBilledClicks: 0, advFreeClicks: 0, pubBilledClicks: 0, pubFreeClicks: 0,
+    advPaidImpressions: 0, advFreeImpressions: 0, pubPaidImpressions: 0, pubFreeImpressions: 0,
     spentCents: 0,
     earnedCents: 0,
     netCents: 0,

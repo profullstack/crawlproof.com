@@ -400,6 +400,7 @@ export async function serveAd(
   if (!pick) return houseFill(format, theme);
   const campaign = oneCampaign(pick.ad_campaigns);
   if (!campaign) return null;
+
   // The winner's own answer wins over which pool it came from: a promo
   // campaign can win the paid auction and must still book as free.
   tier = tierByCampaign.get(campaign.id) ?? tier;
@@ -621,6 +622,8 @@ export async function resolveClick(input: {
   if (!campaign) return null;
 
   // slot_id must be present (ad_clicks.slot_id NOT NULL) to record a click.
+  // Paid crawlers may resolve links, but never create cash/paper ad activity.
+  if (input.ctx?.device === "bot") return campaign.destination_url;
   if (input.slotId) {
     const visitorId = await resolveClickVisitor(sb, input.impressionId, input.ctx?.visitorId);
     // The row is stored under today's salt; the dedupe lookup has to consider

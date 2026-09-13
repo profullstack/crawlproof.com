@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { TokenDelivery } from "./token-earnings";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -93,6 +94,14 @@ export type EarningsModel = {
     advClicks: number;
     pubImpressions: number;
     pubClicks: number;
+    advBilledClicks: number;
+    advFreeClicks: number;
+    pubBilledClicks: number;
+    pubFreeClicks: number;
+    advPaidImpressions: number;
+    advFreeImpressions: number;
+    pubPaidImpressions: number;
+    pubFreeImpressions: number;
     /**
      * Clicks recorded in the range and deliberately not counted as delivery:
      * bot, duplicate, forged, or against a campaign that was not servable.
@@ -131,19 +140,20 @@ export async function loadEarnings(
   supabase: SupabaseClient,
   userId: string,
   days = 30,
+  tokenDelivery?: Promise<TokenDelivery>,
 ): Promise<EarningsModel> {
   // The window the tables and the impression/click totals cover. Money is not
   // scoped to it — see the note on EarningsModel.totals.
   const since = sinceForDays(days);
 
   const [
-    { data: campaignsData },
+    { data: campaignsData, error: campaignsError },
     campaignTotals,
-    { data: projectsData },
-    { data: slotsData },
+    { data: projectsData, error: projectsError },
+    { data: slotsData, error: slotsError },
     slotTotals,
-    { data: ledgerData },
-    { data: payoutsData },
+    { data: ledgerData, error: ledgerError },
+    { data: payoutsData, error: payoutsError },
   ] = await Promise.all([
     supabase
       .from("ad_campaigns")
@@ -153,11 +163,11 @@ export async function loadEarnings(
     // only tier 'paid', so on a network running entirely on free backfill they
     // report zero for every campaign and every site. The RPCs take a window and
     // return both tiers.
-    getCampaignTotalsSince(supabase, since),
+    tokenDelivery ? tokenDelivery.then((d) => d.campaignTotals) : getCampaignTotalsSince(supabase, since),
     // Monetization is owner-only (payouts go to the slot owner), like /ads/slots.
     supabase.from("projects").select("id, name").eq("owner_id", userId),
     supabase.from("ad_slots").select("id, project_id, status").eq("owner_id", userId),
-    getSlotTotalsSince(supabase, since),
+    tokenDelivery ? tokenDelivery.then((d) => d.slotTotals) : getSlotTotalsSince(supabase, since),
     supabase.from("ad_ledger").select("slot_id, amount_cents").eq("kind", "publisher_accrual").eq("owner_id", userId),
     supabase
       .from("ad_payouts")
@@ -223,20 +233,20 @@ export async function loadEarnings(
     .reduce((a, c) => a + (c.spend_today_cents ?? 0), 0);
 
   // Daily series (spend from campaigns, earnings from slots), merged by day.
-  const [campaignSeries, slotSeries] = await Promise.all([
+  const [campaignSeries, slotSeries] = tokenDelivery ? [null, null] : await Promise.all([
     getCampaignDailySeries(supabase, campaignRows.map((c) => c.id), days),
     getSlotDailySeries(supabase, slotRows.map((s) => s.id), days),
   ]);
-  const daily = mergeMoneySeries(campaignSeries.data, slotSeries.data, days);
+  const daily = tokenDelivery ? (await tokenDelivery).daily : mergeMoneySeries(campaignSeries!.data, slotSeries!.data, days);
   const earnedTodayCents = daily.length ? daily[daily.length - 1].earnedCents : 0;
 
   return {
     rangeDays: days,
     statsUnavailable:
+      Boolean(campaignsError || projectsError || slotsError || ledgerError || payoutsError) ||
       campaignTotals.failed ||
       slotTotals.failed ||
-      campaignSeries.failed ||
-      slotSeries.failed,
+      Boolean(campaignSeries?.failed || slotSeries?.failed),
     totals: {
       spentCents,
       earnedCents,
@@ -249,6 +259,14 @@ export async function loadEarnings(
       advClicks: campaignRows.reduce((a, c) => a + c.clicks, 0),
       pubImpressions: slotRows.reduce((a, s) => a + s.impressions, 0),
       pubClicks: slotRows.reduce((a, s) => a + s.clicks, 0),
+      advBilledClicks: campaigns.reduce((a, c) => a + (campaignTotals.data.get(c.id)?.clicks ?? 0), 0),
+      advFreeClicks: campaigns.reduce((a, c) => a + (campaignTotals.data.get(c.id)?.freeClicks ?? 0), 0),
+      pubBilledClicks: slots.reduce((a, s) => a + (slotTotals.data.get(s.id)?.clicks ?? 0), 0),
+      pubFreeClicks: slots.reduce((a, s) => a + (slotTotals.data.get(s.id)?.freeClicks ?? 0), 0),
+      advPaidImpressions: campaigns.reduce((a, c) => a + (campaignTotals.data.get(c.id)?.impressions ?? 0), 0),
+      advFreeImpressions: campaigns.reduce((a, c) => a + (campaignTotals.data.get(c.id)?.freeImpressions ?? 0), 0),
+      pubPaidImpressions: slots.reduce((a, s) => a + (slotTotals.data.get(s.id)?.impressions ?? 0), 0),
+      pubFreeImpressions: slots.reduce((a, s) => a + (slotTotals.data.get(s.id)?.freeImpressions ?? 0), 0),
       invalidClicks: slots.reduce(
         (a, sl) => a + (slotTotals.data.get(sl.id)?.invalidClicks ?? 0),
         0,

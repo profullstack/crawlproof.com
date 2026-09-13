@@ -123,7 +123,7 @@ export type ScoreInput = {
   /** Arrival channels for the window, as the dashboard already carries them. */
   sources?: ScoreItem[];
   /** Money attributable to this property over the window, in dollars. */
-  revenueUsd?: number;
+  revenueUsd?: number | null;
   /**
    * Human visits over the window, when a truer total than the series sum is
    * known. The series is filtered to whichever side was asked for, so under
@@ -185,7 +185,8 @@ export function growthRate(series: number[]): number | null {
   if (points.length < 4) return null;
   const mid = Math.floor(points.length / 2);
   const prior = sum(points.slice(0, mid));
-  const recent = sum(points.slice(mid));
+  // Equal-sized halves: an extra bucket must not turn flat traffic into growth.
+  const recent = sum(points.slice(-mid));
   if (prior <= 0 && recent <= 0) return null;
   // max(prior, 1) rather than a guard: from nothing to something is growth, and
   // dividing by zero to say so is not.
@@ -271,8 +272,10 @@ export function scoreSite(input: ScoreInput): ScoreModel {
   const concentrationRaw = topSourceShare(input.sources);
   const cv = coefficientOfVariation(humansSeries);
 
+  const revenueKnown = input.revenueUsd != null && Number.isFinite(input.revenueUsd);
   const revenueUsd = num(input.revenueUsd);
-  const rpm = safeDiv(revenueUsd * 1000, humans);
+  const rpm = revenueKnown ? safeDiv(revenueUsd * 1000, humans) : null;
+  if (!revenueKnown) notes.push("Revenue is unavailable; money and monetisation risk are unscored.");
   const money = rpm === null ? null : clamp01(rpm / TARGET_RPM_USD);
 
   const viralComponents: Component[] = [
@@ -310,7 +313,7 @@ export function scoreSite(input: ScoreInput): ScoreModel {
       weight: VIRAL_WEIGHTS.money,
       detail:
         rpm === null
-          ? "no human visits to divide by"
+          ? revenueKnown ? "no human visits to divide by" : "revenue unavailable"
           : `$${rpm.toFixed(2)} per 1k human visits (target $${TARGET_RPM_USD.toFixed(2)})`,
     },
   ];

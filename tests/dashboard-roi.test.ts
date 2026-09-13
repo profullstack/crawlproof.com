@@ -146,11 +146,13 @@ describe("vendors", () => {
 
 describe("adTargets", () => {
   const delivered = {
+    campaigns: [{ spentCents: 1500 }],
     totals: {
       pubImpressions: 220_000,
       pubPaidImpressions: 17_000,
       pubFreeImpressions: 203_000,
       pubClicks: 80,
+      advBilledClicks: 80,
       invalidClicks: 9_700,
       spentCents: 1_500,
     },
@@ -179,6 +181,25 @@ describe("adTargets", () => {
 
   it("refuses to project from a price nothing was ever sold at", () => {
     const t = adTargets({ totals: { pubImpressions: 100, pubClicks: 1, spentCents: 0 } });
+    expect(t.cpcCents).toBeNull();
+    expect(t.projectedMonthlyUsd).toBeNull();
+  });
+
+  it("uses a matching window and advertiser population for paid CPC", () => {
+    const t = adTargets({ rangeDays: 7, campaigns: [{ spentCents: 90 }], totals: {
+      spentCents: 1550, advBilledClicks: 3, pubImpressions: 700000,
+      pubClicks: 500, pubBilledClicks: 0, pubFreeClicks: 500,
+    } });
+    expect(t.cpcCents).toBe(30);
+    expect(t.windowTargetImpressions).toBe(700000);
+    expect(t.impressionProgress).toBe(1);
+    expect(t.freeClicks).toBe(500);
+  });
+
+  it("does not divide lifetime spend by this week's free clicks", () => {
+    const t = adTargets({ rangeDays: 7, campaigns: [{ spentCents: 0 }], totals: {
+      spentCents: 1550, advBilledClicks: 0, pubClicks: 13484, pubFreeClicks: 13484,
+    } });
     expect(t.cpcCents).toBeNull();
     expect(t.projectedMonthlyUsd).toBeNull();
   });

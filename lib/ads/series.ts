@@ -310,7 +310,7 @@ function dayKey(iso: string): string {
 }
 
 /** Build a zero-filled list of the last `days` UTC calendar days, oldest first. */
-function dayAxis(days: number): string[] {
+export function dayAxis(days: number): string[] {
   const out: string[] = [];
   const now = new Date();
   for (let i = days - 1; i >= 0; i--) {

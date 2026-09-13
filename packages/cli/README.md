@@ -22,14 +22,32 @@ and CoinPay for what the bank actually did.
 `1`–`5` or Tab switches screens, `w` cycles the window, `b` cycles humans /
 all / bots, `r` refreshes, `?` explains the arithmetic, `q` quits.
 
+Traffic, ads and CoinPay each show an animated spinner while fetching, with
+domain/business progress and a visible completion or failure result. Pressing
+`r` during a fetch queues one more refresh; changing the window during a fetch
+also queues the newly selected window. The previous snapshot stays visible
+until collection finishes.
+
+Ads get a 60-second request deadline and one automatic retry for timeouts,
+transient errors or partial responses. If that still fails, the dashboard keeps
+the last successful ads data for the same finance window and displays its saved
+timestamp. A different window never inherits those cached figures.
+
 ## One property at a time
 
 On **Traffic**, `↑`/`↓` pick a site and `Enter` — or a click on the row — opens
 it. That screen is only that domain: its pageviews, visits, humans against
 bots, AI referrals and where they arrived from; the burn prorated onto it by
 both denominators; its ad earnings and spend, joined by project and by where
-the campaign points; and the commission, when there is exactly one merchant
-business to attribute it to. `Esc`, `←` or `2` comes back to the list.
+the campaign points; and CoinPay payment volume, payment count and commission
+for businesses whose names match the domain (ignoring `www`). Analytics are
+fetched separately for each business, so another property's earnings stay out
+of this view. Unmatched businesses and failed requests show `—` with a reason.
+`Esc`, `←` or `2` comes back to the list.
+
+Shared bank costs are estimates allocated by traffic share. CoinPay volume and
+payment count cover the labeled bank window; commission is prorated onto the
+traffic window. Ad earnings, spend and impressions cover the labeled ad window.
 
 ## The risk-to-viral score
 
@@ -46,8 +64,8 @@ risk  = volatility .40 + concentration .30 + bot dependence .20 + unmonetised .1
 
 | Component | What it is |
 | --- | --- |
-| momentum | Human visits in the recent half of the window against the earlier half. Flat scores 0.5, doubling scores 1. |
-| discovery | Share of arrivals through search, social, an AI assistant, an ad or another site's link, rather than direct. |
+| momentum | Human visits in equal-sized recent and earlier halves of the window, skipping the middle bucket when needed. Flat scores 0.5, doubling scores 1. |
+| discovery | Share of arrivals through search, social, an AI assistant, an ad or another site's link. Direct traffic, self-referrals and localhost referrals do not count as discovery; bots-only windows leave it unscored. |
 | humanity | Humans over humans plus bots, from an unfiltered read — never from a filtered one, whose bot column is zero by construction. |
 | money | Revenue per 1,000 human visits against a $2 target. |
 | volatility | Coefficient of variation of the human series. Scale-free, so a small site is not penalised for being small. |
@@ -59,6 +77,11 @@ A component with no data behind it is **dropped and its weight redistributed**,
 never counted as a zero, and the domain screen prints the raw figure under each
 one. A trailing `~` marks fewer than 25 human visits in the window — too small a
 sample to lean on. A site whose stats call failed is not scored at all.
+Missing revenue leaves money and monetisation risk unscored; observed zero
+revenue counts as unmonetised. Higher scores mean more potential under this
+heuristic, not a probability of going viral. The domain view labels scores of
+60+ as Promising, 35–59 as Worth watching, and lower scores as Limited signal;
+small samples are labeled Early signal.
 
 `s` cycles the order: score, visitors, pageviews. `--sort=score` starts there.
 `--json` carries `.sites[].score` with every component, for a script.
