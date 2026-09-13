@@ -41,6 +41,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/dashboard/projects/new">New</Link>
             <Link href="/dashboard/ads">Ads</Link>
             <Link href="/dashboard/promote">Promote</Link>
+            <Link href="/dashboard/affiliate">Affiliate</Link>
             <Link href="/dashboard/settings/integrations/github">GitHub</Link>
             <a href="/blog" target="_blank" rel="noreferrer">Blog ↗</a>
             {profile?.is_admin && <Link href="/dashboard/admin">Admin</Link>}
