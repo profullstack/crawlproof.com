@@ -11,7 +11,7 @@ import {
   getOrMintInstallationToken,
 } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
-import { DEFAULT_PROJECT_ENGINES, type Engine } from "@/lib/credits";
+import { DEFAULT_PROJECT_ENGINES, SCAN_CREDITS, SCAN_RACK_CENTS, dollars, type Engine } from "@/lib/credits";
 import type { ProjectStatus } from "@/app/actions/projects";
 import { AddRepoModal } from "./add-repo-modal";
 import { RemoveButton } from "./remove-button";
@@ -190,8 +190,8 @@ export default async function ProjectReposPage({
             </li>
             <li>
               <strong>Apply Fix</strong> (audit findings) opens a Claude-
-              authored PR that patches one specific check. Costs 20 credits
-              (~$1) per run; refunded on failure.
+              authored PR that patches one specific check. Costs {SCAN_CREDITS} credits
+              ({dollars(SCAN_RACK_CENTS)} before volume discounts) per run; refunded on failure.
             </li>
             <li>
               <strong>Future:</strong> webhook-triggered audits on push to

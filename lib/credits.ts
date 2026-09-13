@@ -1,15 +1,8 @@
-// Credit pack catalog.
-// 1 credit ≈ $0.05 (a "nickel credit") at full rack rate. Larger packs come
-// with a sliding-scale discount off that rate. Credits are the universal,
-// integer-only spend unit: cheap actions (outreach) cost 1 credit, expensive
-// AI actions (a scan, an article, a guest post, a GitHub auto-fix) cost
-// SCAN_CREDITS each — which keeps an AI action at ~$1 rack like before.
+import { MAX_VOLUME_DISCOUNT_PERCENT, SERVICE_COST_CENTS, quoteServiceCostMarkup } from "./pricing-policy";
 
-// Rack price of one credit, in cents. Drives discount math + UI strikethroughs.
-export const CREDIT_RACK_CENTS = 5;
-
-// Credits charged for one expensive AI action (scan / article / guest post /
-// auto-fix). 20 × $0.05 = $1.00 rack, unchanged from the old 1-credit-=-$1 era.
+// Credits remain the integer spend unit across scans, articles, fixes and
+// outreach. New purchase prices cover the documented service-cost estimates
+// even at the deepest volume discount; affiliate/payment fees are separate.
 export const SCAN_CREDITS = 20;
 
 /**
@@ -48,7 +41,7 @@ export const OUTREACH_CREDITS = 1;
  * listing isn't billed twice for the same hire.
  *
  * Serving costs us almost nothing (the jobs feed is a cached read), so this is
- * priced as a listing fee rather than off cost: 5c a posting at rack, against
+ * priced as a listing fee rather than off cost, against
  * $200-and-up to list the same role on a real job board.
  */
 export const JOB_POSTING_CREDITS = 1;
@@ -63,9 +56,9 @@ export const JOB_POSTING_CREDITS = 1;
  * the AI is under a fifth of it, so pricing off model cost alone would
  * undercharge by roughly five times.
  *
- * Three credits is 15c at rack and 7.5c on the deepest pack, which keeps a
- * margin at every tier. Two would have been exactly break-even for anyone on
- * the 100-scan pack.
+ * The credit catalog includes this service estimate when setting its price
+ * floor, so the deepest volume discount still covers five times that estimate.
+ * These estimates do not bound custom drafts, retries or future provider rates.
  *
  * Charged only when a tick actually spends: the cron fires every fifteen
  * minutes, so billing an idle campaign per tick would cost a user 288 credits
@@ -115,18 +108,41 @@ export type CreditPack = {
   popular?: boolean;
 };
 
-// credits = scan-equivalents × SCAN_CREDITS; amountCents unchanged from the
-// $1/scan era, so the same dollars now buy 20× the (smaller) credits.
+/** Documented cost basis per billable action; variable jobs can cost more. */
+export const CREDIT_SERVICE_BASIS = [
+  { action: "scan", serviceCents: SERVICE_COST_CENTS.scan, credits: SCAN_CREDITS },
+  { action: "lead run", serviceCents: SERVICE_COST_CENTS.leadRun, credits: LEAD_RUN_CREDITS },
+  { action: "outreach", serviceCents: SERVICE_COST_CENTS.outreach, credits: OUTREACH_CREDITS },
+] as const;
+
+export const MIN_CREDIT_CENTS = Math.max(
+  ...CREDIT_SERVICE_BASIS.map((basis) => quoteServiceCostMarkup(basis.serviceCents) / basis.credits),
+);
+
+// The biggest discount must still meet the cost floor. Current estimates set
+// a 15c floor and 30c rack rate. This prices new purchases, not past receipts.
+export const CREDIT_RACK_CENTS = Math.ceil(
+  MIN_CREDIT_CENTS / (1 - MAX_VOLUME_DISCOUNT_PERCENT / 100),
+);
+
+function pricedPack(id: string, label: string, scans: number, discount: number, popular?: boolean): CreditPack {
+  const credits = scans * SCAN_CREDITS;
+  const amountCents = Math.ceil(credits * CREDIT_RACK_CENTS * (1 - discount / 100));
+  if (amountCents < credits * MIN_CREDIT_CENTS) {
+    throw new RangeError("Credit pack discount falls below the service-cost markup floor.");
+  }
+  return { id, label, credits, amountCents, ...(popular ? { popular } : {}) };
+}
+
 export const CREDIT_PACKS: CreditPack[] = [
-  { id: "pack-1", label: "Starter", credits: 20, amountCents: 100 }, // $1.00/scan — full rack rate
-  { id: "pack-10", label: "10 scans", credits: 200, amountCents: 900 }, // $0.90/scan — 10% off
-  { id: "pack-50", label: "50 scans", credits: 1000, amountCents: 3500, popular: true }, // $0.70/scan — 30% off
-  // Deepest bundle is anchored at ~2× the worst-case per-scan cost
-  // (Claude Sonnet 4.6 ~$0.26 → cap of $0.52). Rounded to $0.50/scan
-  // so Claude lands at ~92% markup and the floor stays at or below
-  // the 100% markup ceiling.
-  { id: "pack-100", label: "100 scans", credits: 2000, amountCents: 5000 }, // $0.50/scan — 50% off
+  pricedPack("pack-1", "Starter", 1, 0),
+  pricedPack("pack-10", "10 scans", 10, 10),
+  pricedPack("pack-50", "50 scans", 50, 30, true),
+  pricedPack("pack-100", "100 scans", 100, MAX_VOLUME_DISCOUNT_PERCENT),
 ];
+
+export const SCAN_RACK_CENTS = SCAN_CREDITS * CREDIT_RACK_CENTS;
+export const SCAN_MIN_CENTS = Math.min(...CREDIT_PACKS.map(perScanCents));
 
 export function findPack(id: string): CreditPack | undefined {
   return CREDIT_PACKS.find((p) => p.id === id);
@@ -152,20 +168,7 @@ export function perCreditCents(pack: CreditPack): number {
   return Math.round(pack.amountCents / pack.credits);
 }
 
-/**
- * Exact per-credit price, as displayed.
- *
- * Every pack's true per-credit price lands on a half-cent — $9/200 = $0.045,
- * $35/1000 = $0.035, $50/2000 = $0.025 — and rounding half-up sent all three
- * *upward*, so the page advertised $0.05, $0.04 and $0.03. Overstating your own
- * price on the pricing page is a strange way to lose an argument with a
- * customer who can do the division.
- *
- * Three decimals, with a trailing zero trimmed only down to two, so a pack that
- * really is a round number ($1.00/20 = $0.05) reads "$0.05" rather than
- * "$0.050" — and a hypothetical $0.10 never degrades to "$0.1", which reads as
- * a typo rather than a price.
- */
+/** Exact per-credit prices retain fractional cents instead of rounding upward. */
 export function perCreditLabel(pack: CreditPack): string {
   const exact = pack.amountCents / pack.credits / 100;
   const three = exact.toFixed(3);

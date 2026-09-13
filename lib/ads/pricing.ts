@@ -1,18 +1,19 @@
-// Ad network pricing. Advertiser spend is denominated in the existing credit
-// unit (1 credit = 5¢, see lib/credits.ts CREDIT_RACK_CENTS) so one currency
-// governs the app. v1 is a flat CPC; auction pricing is a later phase.
+// Ad budget accounting retains its established 5c redemption denomination.
+// This is separate from the purchase price of credits in lib/credits.ts.
+// Changing purchase prices must not revalue existing campaign budgets, ledger
+// rows, publisher claims or deposit-match promises. Matches the ad SQL RPCs.
 
-// Advertiser spend value per credit (rack). Matches CREDIT_RACK_CENTS.
+// Advertiser budget value per credit; this is not its cash purchase price.
 export const CREDIT_CENTS = 5;
 
 // Publisher cash-out value per credit.
 //
-// Deliberately BELOW the cheapest credit pack (2.5c on the 100-scan tier), not
-// equal to it. Setting it at the floor price left the deepest pack with a 1:1
+// Deliberately below even the old cheapest credit pack (2.5c per credit), not
+// tied to the current purchase price. Setting it at the floor price left the deepest pack with a 1:1
 // spread, and a deposit match on top of that pushed cash in per credit under
 // the payout rate — see 20260731120000_ad_solvency.sql. At 2.0c the publisher
 // earns 1.4c/credit after the platform rate, which keeps a margin on every
-// pack (72% at rack, 44% on the deepest) with room for the match.
+// historical pack with room for the match; repricing new packs does not raise payouts.
 export const CREDIT_FLOOR_CENTS = 2.0;
 
 // Minimum real cash that must sit behind every credit granted, in cents. The
@@ -20,7 +21,7 @@ export const CREDIT_FLOOR_CENTS = 2.0;
 // margin over the 1.4c publisher payout rate. Mirrors ad_apply_deposit_bonus().
 export const MIN_CASH_PER_CREDIT_CENTS = 1.75;
 
-// Default bid / cost-per-click, in credits. 4 credits = $0.20 at rack.
+// Default bid / cost-per-click, in credits. 4 credits uses $0.20 of ad budget.
 export const CPC_CREDITS = 4;
 export const DEFAULT_BID_CREDITS = CPC_CREDITS;
 export const CPC_CENTS = CPC_CREDITS * CREDIT_CENTS;
@@ -52,7 +53,7 @@ export const MIN_PAYOUT_CENTS = 500; // $5.00
 
 // Deposit-match promo: the first deposit is matched 100% of the credits
 // BOUGHT (not of the dollar amount at rack — that over-granted on discounted
-// packs), capped at $100 of rack value and further capped so the deposit never
+// packs), capped at $100 of ad budget value and further capped so the deposit never
 // dilutes below MIN_CASH_PER_CREDIT_CENTS. ad_apply_deposit_bonus() in
 // 20260731120000_ad_solvency.sql is the source of truth.
 export const DEPOSIT_MATCH_RATE = 1.0;

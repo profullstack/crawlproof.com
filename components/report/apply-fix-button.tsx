@@ -1,5 +1,6 @@
 "use client";
 
+import { SCAN_CREDITS, SCAN_RACK_CENTS, dollars } from "@/lib/credits";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -281,7 +282,7 @@ export function ApplyFixButton({
               {findingTitle}
             </p>
             <p className="mt-2 text-xs text-[var(--color-muted)]">
-              Costs <strong>20 credits (~$1)</strong>. Claude reads the relevant
+              Costs <strong>{SCAN_CREDITS} credits ({dollars(SCAN_RACK_CENTS)} before volume discounts)</strong>. Claude reads the relevant
               files, proposes a minimal patch, and opens a PR. We refund
               the credits if the run fails.
             </p>
