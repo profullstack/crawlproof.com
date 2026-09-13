@@ -1,0 +1,18 @@
+{
+  "openwebring": "0.1",
+  "site": {
+    "url": "https://crawlproof.com/blog",
+    "name": "CrawlProof blog",
+    "lang": "en",
+    "author": "https://logicsrc.com/.well-known/openprofile.md"
+  },
+  "made_by": "both",
+  "disclosure": "ai-generated",
+  "rings": [
+    {
+      "ring": "https://rssamplifier.com/ring/profullstack",
+      "slug": "crawlproof-blog"
+    }
+  ],
+  "updated": "2026-09-13T09:55:00Z"
+}
