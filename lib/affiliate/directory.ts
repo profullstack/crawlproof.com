@@ -214,14 +214,12 @@ export async function joinExternal(
   const mine = await ensureMembershipForUser(user);
   if (!mine) return { ok: false, error: "Could not create your CrawlProof affiliate profile." };
 
-  const { data: inserted, error: insErr } = await svc
-    .from("affiliate_joins")
-    .upsert(
-      { owner_id: user.id, origin: row.origin, program_id: program.id, status: "pending", terms: program.pays, updated_at: new Date().toISOString() },
-      { onConflict: "owner_id,origin,program_id", ignoreDuplicates: false },
-    )
-    .select(JOIN_COLUMNS)
-    .single();
+  // Same lower(origin) index as the directory: a refused or ended twin is
+  // reopened in place, otherwise a fresh row is inserted.
+  const fresh = { owner_id: user.id, origin: row.origin, program_id: program.id, status: "pending", terms: program.pays, error: null, updated_at: new Date().toISOString() };
+  const { data: inserted, error: insErr } = twin
+    ? await svc.from("affiliate_joins").update(fresh).eq("id", twin.id).select(JOIN_COLUMNS).single()
+    : await svc.from("affiliate_joins").insert(fresh).select(JOIN_COLUMNS).single();
   if (insErr || !inserted) return { ok: false, error: insErr?.message ?? "Could not start the join." };
 
   const site = env.siteUrl.replace(/\/$/, "");
