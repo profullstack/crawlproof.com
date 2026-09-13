@@ -8,6 +8,7 @@
 // Built on @profullstack/hqtui, the same library behind `coinpay finances`.
 
 import type { Container, RenderArgs, Theme } from "@profullstack/hqtui";
+import { markdownText } from "@profullstack/hqtui";
 
 import { collectDashboard, type CoinPayAuth, type DashboardSnapshot, type SiteStats, type FeedName, type FeedProgress } from "../lib/dashboard/collect";
 import { AD_TARGET_CTR, AD_TARGET_IMPRESSIONS, adTargets } from "../lib/dashboard/roi";
@@ -1010,6 +1011,39 @@ function feedBusy(feed: FeedProgress): boolean {
   return feed.status === "loading" || feed.status === "retrying";
 }
 
+/** Context travels with every copied pane, including partial/stale source warnings. */
+export function dashboardMarkdownContext(state: State): string {
+  const snapshot = state.snapshot;
+  const sourceErrors = [
+    ...Object.entries(snapshot?.errors ?? {}).map(([source, error]) => `${source}: ${error}`),
+    ...Object.entries(snapshot?.finance?.errors ?? {}).map(([source, error]) => `CoinPay ${source}: ${error}`),
+  ];
+  return [
+    `CrawlProof · ${state.domain ?? "Fleet"} · ${TABS[state.tab]}`,
+    `Displayed range: ${snapshot?.window.range ?? state.range} · ${snapshot?.window.who ?? state.who}`,
+    ...(snapshot && (snapshot.window.range !== state.range || snapshot.window.who !== state.who) ? [`Requested range: ${state.range} · ${state.who} (refresh pending)`] : []),
+    `CoinPay window: ${snapshot?.window.financeDays ?? FINANCE_DAYS[state.range] ?? 30} days`,
+    `Snapshot: ${snapshot?.generatedAt ?? "not loaded"}`,
+    `Status: ${state.loading ? "refreshing" : state.paused ? "paused" : "live"}`,
+    ...(state.error ? [`Refresh failed: ${state.error}`] : []),
+    ...(snapshot?.adsStale ? [`Ads are stale: last successful read ${snapshot.adsUpdatedAt ?? snapshot.generatedAt}`] : []),
+    ...sourceErrors,
+    ...(snapshot?.roi.caveats ?? []).map((caveat) => `Note: ${caveat}`),
+  ].join("\n");
+}
+
+export function dashboardStatusMarkdown(state: State): string {
+  return [
+    "## CrawlProof status",
+    markdownText(dashboardMarkdownContext(state)),
+    ...(["traffic", "ads", "finance"] as const).map((name) => {
+      const feed = state.feeds[name];
+      return `- **${name === "finance" ? "CoinPay" : name === "ads" ? "Ads" : "Traffic"}:** ${markdownText(feed.status)} — ${markdownText(feed.detail)}`;
+    }),
+    ...(state.refreshMessage ? [markdownText(state.refreshMessage)] : []),
+  ].join("\n\n") + "\n";
+}
+
 /** Each request has a visible lifecycle on every screen, including the first load. */
 export function renderFetchStatus(ui: Container, state: State, theme: Theme): void {
   ui.row({ size: 1, gap: 2 }, (row) => {
@@ -1023,6 +1057,7 @@ export function renderFetchStatus(ui: Container, state: State, theme: Theme): vo
         });
       });
     }
+    row.copyButton({ markdown: () => dashboardStatusMarkdown(state), width: 6 });
   });
   if (state.loading) {
     const elapsed = state.refreshStartedAt ? Math.floor((Date.now() - state.refreshStartedAt.getTime()) / 1000) : 0;
@@ -1329,6 +1364,8 @@ export function createRefreshController(
 export async function runDashboard(opts: DashboardOptions): Promise<void> {
   const hqtui = await loadHqtui();
   const app = await hqtui.createApp({
+    copyMarkdown: true,
+    markdownContext: () => dashboardMarkdownContext(state),
     fps: 30,
     theme: (opts.theme as never) || "dark",
     quitKeys: ["ctrl+c", "q"],
@@ -1409,7 +1446,8 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
         width: 76,
         height: 28,
         message:
-          "1-5, Tab, ←/→ switch screens.\n" +
+          "1-5, ←/→ switch screens.\n" +
+          "⧉ MD copies a summary; Tab focuses, Enter copies.\n" +
           `r refreshes now; it also refreshes every ${interval}s.\n` +
           "w cycles the window: 1h → 4h → 1d → 1w → 1m.\n" +
           "b cycles who counts: humans → all → bots.\n" +
@@ -1429,7 +1467,8 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
           "  are the same account on both sides of our own network, so\n" +
           "  they are reported under Internal and counted as neither.\n\n" +
           "Press any key to close.",
-        buttons: [{ label: "Close", focused: true }],
+        buttons: [{ label: "Close", onPress: () => { state.showHelp = false; } }],
+        onDismiss: () => { state.showHelp = false; },
       });
     }
   });

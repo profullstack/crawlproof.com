@@ -19,7 +19,7 @@ and CoinPay for what the bank actually did.
 | Money | Earnings, bank position, invoices, income vs spending by month |
 | Spend | Who we pay, largest first, and burn by category |
 
-`1`–`5` or Tab switches screens, `w` cycles the window, `b` cycles humans /
+`1`–`5` or the left/right arrows switch screens, `w` cycles the window, `b` cycles humans /
 all / bots, `r` refreshes, `?` explains the arithmetic, `q` quits.
 
 Traffic, ads and CoinPay each show an animated spinner while fetching, with
@@ -136,3 +136,12 @@ neither.
 ## License
 
 MIT
+
+### Copy summaries as Markdown
+
+Click **⧉ MD** on a summary pane or the feed-status strip. Tab / Shift+Tab
+focus controls; Enter / Space copies the focused summary. Copied Markdown includes
+the screen/domain, displayed range, CoinPay window, snapshot time, stale-source
+warnings and source errors. The status export names failures such as CoinPay
+payouts instead of just reporting the unavailable-source count. Data rows are
+excluded. Clipboard delivery uses the terminal's OSC 52 support, including over SSH.
