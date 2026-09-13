@@ -4,6 +4,7 @@ import { verifyWebhookSignature } from "@/lib/coinpay";
 import { sendPurchaseReceiptEmail } from "@/lib/email";
 import { env } from "@/lib/env";
 import { findPack } from "@/lib/credits";
+import { recordPurchaseConversion } from "@/lib/affiliate/attribution";
 
 export const runtime = "nodejs";
 
@@ -114,6 +115,11 @@ export async function POST(req: Request) {
     // chain fast; the promise keeps running on the Node process.
     void mailReceiptIfNeeded(svc, paymentId, payload).catch((err) => {
       console.error("[coinpay] receipt mail failed", err);
+    });
+    // OpenAffiliate conversion, also off-band: it reads the buyer's attribution
+    // and is idempotent on the purchase, so a retry cannot record it twice.
+    void recordPurchaseConversion(svc, paymentId).catch((err) => {
+      console.error("[affiliate] conversion failed", err);
     });
     return NextResponse.json({ ok: true });
   }

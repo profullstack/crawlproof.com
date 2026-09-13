@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+import { attributeUser } from "@/lib/affiliate/attribution";
+import { cookieFromHeader } from "@/lib/affiliate/cookie";
 
 // Resolve the URL Supabase should send users back to. Inside the Railway
 // container Next.js's `request.url` carries the bind address (e.g.
@@ -31,6 +33,18 @@ export async function GET(request: Request) {
       const redirectUrl = new URL("/login", origin);
       redirectUrl.searchParams.set("error", error.message);
       return NextResponse.redirect(redirectUrl);
+    }
+    // OpenAffiliate: bind the signed-in user to the affiliate in their cookie.
+    try {
+      const oa = cookieFromHeader(request.headers.get("cookie"));
+      if (oa) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) await attributeUser(user.id, oa);
+      }
+    } catch (err) {
+      console.error("[affiliate] attribute at sign-in", err);
     }
   }
 

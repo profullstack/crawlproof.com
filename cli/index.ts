@@ -631,6 +631,163 @@ async function cmdDashboard(args: Args): Promise<number> {
   return 0;
 }
 
+/** The request body `crawlproof affiliate join` sends, from its flags and positionals. Pure, for tests. */
+export function affiliateJoinBodyFromArgs(args: Args): Record<string, unknown> {
+  const target = args.positional[1] ?? "";
+  const body: Record<string, unknown> = { origin: target };
+  if (typeof args.flags.program === "string" && args.flags.program) body.program = args.flags.program;
+  if (typeof args.flags.code === "string" && args.flags.code) body.code = args.flags.code;
+  return body;
+}
+
+/** One line per conversion for the ledger table. Pure, for tests. */
+export function conversionLine(c: { at: string; event: string; amount: number; commission: number; status: string; held_until?: string; reason?: string }): string {
+  const when = String(c.at).slice(0, 10);
+  const hold = c.status === "pending" && c.held_until ? ` until ${String(c.held_until).slice(0, 10)}` : "";
+  const why = c.reason ? ` (${c.reason})` : "";
+  return `${when}  ${c.event.padEnd(12)} $${c.amount.toFixed(2).padStart(8)}  → $${c.commission.toFixed(2).padStart(7)}  ${c.status}${hold}${why}`;
+}
+
+async function cmdAffiliate(args: Args): Promise<number> {
+  const sub = args.positional[0] ?? "link";
+  const json = !!args.flags.json;
+
+  if (sub === "link" || sub === "me") {
+    const { status, json: me } = await apiCall(args, "GET", "/api/affiliate/v1/me");
+    if (status !== 200) throw new Error(String(me.error ?? `HTTP ${status}`));
+    if (json) {
+      process.stdout.write(`${JSON.stringify(me, null, 2)}\n`);
+      return 0;
+    }
+    const m = me.membership as Record<string, unknown>;
+    const terms = me.terms as Record<string, unknown>;
+    const ledger = me.ledger as Record<string, unknown>;
+    const balance = ledger.balance as Record<string, number>;
+    const clicks = ledger.clicks as Record<string, number>;
+    console.log(`link     ${m.link}`);
+    console.log(`code     ${m.code}`);
+    console.log(`profile  ${m.profile}`);
+    console.log(`pays     ${terms.line}`);
+    console.log(`clicks   ${clicks.total} all time, ${clicks.window} in the window`);
+    console.log(`balance  pending $${balance.pending.toFixed(2)}  approved $${balance.approved.toFixed(2)}  paid $${balance.paid.toFixed(2)}`);
+    console.log(`payout   ${m.pay_address ?? "(no address set: crawlproof affiliate pay --address 0x…)"}`);
+    return 0;
+  }
+
+  if (sub === "ledger") {
+    const since = typeof args.flags.since === "string" ? `?since=${encodeURIComponent(args.flags.since)}` : "";
+    const { status, json: ledger } = await apiCall(args, "GET", `/api/affiliate/v1/ledger${since}`);
+    if (status !== 200) throw new Error(String(ledger.error ?? `HTTP ${status}`));
+    if (json) {
+      process.stdout.write(`${JSON.stringify(ledger, null, 2)}\n`);
+      return 0;
+    }
+    const balance = ledger.balance as Record<string, number>;
+    console.log(`pending $${balance.pending.toFixed(2)}  approved $${balance.approved.toFixed(2)}  paid $${balance.paid.toFixed(2)}`);
+    const rows = (ledger.conversions as Array<Parameters<typeof conversionLine>[0]>) ?? [];
+    if (!rows.length) console.log("no conversions yet");
+    for (const c of rows) console.log(conversionLine(c));
+    const payouts = (ledger.payouts as Array<{ at: string; amount: number; status: string; tx: string | null }>) ?? [];
+    for (const p of payouts) console.log(`payout ${String(p.at).slice(0, 10)}  $${p.amount.toFixed(2)}  ${p.status}${p.tx ? `  ${p.tx}` : ""}`);
+    return 0;
+  }
+
+  if (sub === "pay") {
+    const address = typeof args.flags.address === "string" ? args.flags.address : args.positional[1];
+    if (!address) throw new Error("Usage: crawlproof affiliate pay --address 0x…");
+    const { status, json: me } = await apiCall(args, "POST", "/api/affiliate/v1/me", { pay: address });
+    if (status !== 200) throw new Error(String(me.error ?? `HTTP ${status}`));
+    console.log(`payout address set: ${(me.membership as Record<string, unknown>).pay_address}`);
+    return 0;
+  }
+
+  if (sub === "webhook") {
+    const url = typeof args.flags.url === "string" ? args.flags.url : args.positional[1] ?? "";
+    if (!url && !args.flags.clear) throw new Error("Usage: crawlproof affiliate webhook <https-url> | --clear");
+    const { status, json: me } = await apiCall(args, "POST", "/api/affiliate/v1/me", { webhook: args.flags.clear ? null : url });
+    if (status !== 200) throw new Error(String(me.error ?? `HTTP ${status}`));
+    console.log(`webhook: ${(me.membership as Record<string, unknown>).webhook ?? "(none)"}`);
+    return 0;
+  }
+
+  if (sub === "token") {
+    if (!args.flags.yes) throw new Error("This replaces your affiliate token at once. Re-run with --yes.");
+    const { status, json: out } = await apiCall(args, "POST", "/api/affiliate/v1/token");
+    if (status !== 200) throw new Error(String(out.error ?? `HTTP ${status}`));
+    console.log(json ? JSON.stringify(out, null, 2) : `new affiliate token (shown once): ${out.token}`);
+    return 0;
+  }
+
+  if (sub === "payout") {
+    const { status, json: out } = await apiCall(args, "POST", "/api/affiliate/v1/payout");
+    if (status !== 200) throw new Error(String(out.error ?? `HTTP ${status}`));
+    const p = out.payout as Record<string, unknown>;
+    console.log(json ? JSON.stringify(out, null, 2) : `sent $${Number(p.amount).toFixed(2)} ${p.tx ? `tx ${p.tx}` : `(${p.status})`}`);
+    return 0;
+  }
+
+  if (sub === "programs") {
+    const action = args.positional[1];
+    if (action === "add") {
+      const url = args.positional[2];
+      if (!url) throw new Error("Usage: crawlproof affiliate programs add <merchant-url>");
+      const { status, json: out } = await apiCall(args, "POST", "/api/affiliate/v1/programs", { url });
+      if (status !== 201) throw new Error(String(out.error ?? `HTTP ${status}`));
+      if (json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+      else {
+        console.log(`${out.merchant} at ${out.origin} (${out.verified ? "verified" : "claimed"})`);
+        for (const p of out.programs as Array<Record<string, unknown>>) console.log(`  ${p.id}: ${p.title} [${p.approval}]`);
+        for (const w of out.warnings as string[]) console.log(`  warning: ${w}`);
+      }
+      return 0;
+    }
+    const { status, json: out } = await apiCall(args, "GET", "/api/affiliate/v1/programs");
+    if (status !== 200) throw new Error(String(out.error ?? `HTTP ${status}`));
+    if (json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    else {
+      const rows = out.programs as Array<Record<string, unknown>>;
+      if (!rows.length) console.log("no programs read yet: crawlproof affiliate programs add <merchant-url>");
+      for (const p of rows) {
+        const pays = (p.pays as Array<{ event: string; kind: string; value: number; months?: number }>)
+          .map((x) => `${x.kind === "percent" ? `${x.value}%` : `$${x.value}`}/${x.event}${x.months ? `×${x.months}mo` : ""}`)
+          .join(" ");
+        console.log(`${String(p.origin).replace(/^https?:\/\//, "").padEnd(28)} ${String(p.id).padEnd(14)} ${pays.padEnd(24)} window ${p.window ?? "?"}d hold ${p.hold_days ?? "?"}d  ${p.approval}${p.verified ? "" : "  (claimed)"}`);
+      }
+    }
+    return 0;
+  }
+
+  if (sub === "join") {
+    if (!args.positional[1]) throw new Error("Usage: crawlproof affiliate join <merchant-url> [--program=id] [--code=yours]");
+    const { status, json: out } = await apiCall(args, "POST", "/api/affiliate/v1/programs/join", affiliateJoinBodyFromArgs(args));
+    if (status !== 200 && status !== 201) throw new Error(String(out.error ?? `HTTP ${status}`));
+    const j = out.join as Record<string, unknown>;
+    console.log(json ? JSON.stringify(out, null, 2) : `${out.existing ? "already joined" : "joined"} ${j.origin} ${j.program}: ${j.status}${j.link ? `\nlink ${j.link}` : ""}`);
+    return 0;
+  }
+
+  if (sub === "joined") {
+    if (args.flags.sync) {
+      const { json: list } = await apiCall(args, "GET", "/api/affiliate/v1/joined");
+      for (const j of (list.joined as Array<Record<string, unknown>>) ?? []) await apiCall(args, "POST", `/api/affiliate/v1/joined/${j.id}/sync`);
+    }
+    const { status, json: out } = await apiCall(args, "GET", "/api/affiliate/v1/joined");
+    if (status !== 200) throw new Error(String(out.error ?? `HTTP ${status}`));
+    if (json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    else {
+      const rows = out.joined as Array<Record<string, unknown>>;
+      if (!rows.length) console.log("no programs joined yet: crawlproof affiliate join <merchant-url>");
+      for (const j of rows) {
+        const bal = (j.ledger as { balance?: Record<string, number> } | null)?.balance;
+        console.log(`${String(j.origin).replace(/^https?:\/\//, "").padEnd(28)} ${String(j.program).padEnd(14)} ${String(j.status).padEnd(8)} ${bal ? `pending $${bal.pending.toFixed(2)} approved $${bal.approved.toFixed(2)} paid $${bal.paid.toFixed(2)}` : "no ledger yet"}${j.link ? `  ${j.link}` : ""}`);
+      }
+    }
+    return 0;
+  }
+
+  throw new Error(`unknown affiliate command: ${sub}. One of link, ledger, pay, payout, webhook, token, programs, join, joined.`);
+}
+
 function help() {
   console.log(`crawlproof — AEO audit CLI (stub)
 
@@ -701,6 +858,34 @@ COMMANDS
   ads delete <ref-or-id> --yes
       Remove it, metering included. Pause keeps the history.
 
+  affiliate [link] [--json]
+      Your affiliate link, code, profile URL, terms and balances in the
+      program CrawlProof runs (30% of a purchase within 30 days of a click,
+      paid in USDC on Polygon after a 30-day hold). Needs an API token.
+
+  affiliate ledger [--since=ISO] [--json]
+      Every conversion with its status, hold and reason, and every payout
+      with its tx. The same rows a third party reads with an oa_ token.
+
+  affiliate pay --address 0x… | affiliate payout
+      Set where the money goes; send the approved balance now.
+
+  affiliate webhook <https-url> | affiliate webhook --clear
+      Where conversion, reversal and payout events are POSTed (signed).
+
+  affiliate token --yes
+      A new oa_ ledger token, shown once; the old one stops at once.
+
+  affiliate programs [add <merchant-url>] [--json]
+      The directory of other merchants' OpenAffiliate programs, read from
+      each merchant's own /.well-known/openaffiliate.json; add one by URL.
+
+  affiliate join <merchant-url> [--program=id] [--code=yours] [--json]
+      Join a merchant's program with your CrawlProof profile and pay address.
+
+  affiliate joined [--sync] [--json]
+      The programs you have joined elsewhere, with their last ledger read.
+
   slots create <site> [--placement=inline] [--format=text_link] [--formats=a,b] [--inactive] [--no-tracking] [--json]
       A publisher slot on a site you own, named by hostname or URL. The
       site's project is found or created with the stats tracker on, and
@@ -741,7 +926,7 @@ ENV
   ANTHROPIC_API_KEY      Required for --engine=claude.
   CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', 'track', 'ads' and 'slots'.
   CRAWLPROOF_PROJECT     Default project UUID for 'track'.
-  CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'stats' and
+  CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'affiliate', 'stats' and
                          'dashboard'; --token overrides. Falls back to the
                          'token' field of ~/.crawlproof.json.
   COINPAY_SESSION_TOKEN  CoinPay merchant JWT for the money half of
@@ -781,6 +966,8 @@ async function main() {
         return await cmdAds(args);
       case "slots":
         return await cmdSlots(args);
+      case "affiliate":
+        return await cmdAffiliate(args);
       case "stats":
         return await cmdStats(args);
       case "dashboard":

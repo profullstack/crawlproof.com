@@ -181,6 +181,12 @@ export const env = {
   // alone cannot exploit any token without this server-side value.
   // Generate with `openssl rand -base64 32`.
   spTokenPepper: process.env.SP_TOKEN_PEPPER ?? "",
+  // OpenAffiliate webhook signing key: 32 random bytes, base64url, the seed
+  // of an Ed25519 key. The public half is served at
+  // /.well-known/openaffiliate-jwks.json. Unset means webhooks go unsigned,
+  // which the spec allows (the affiliate confirms against the ledger).
+  // Generate with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
+  openaffiliateSigningKey: process.env.OPENAFFILIATE_SIGNING_KEY ?? "",
   // GitHub App — for connecting customer repos and opening automated PRs
   // (stats.js install, applying audit fixes). Register at
   // https://github.com/settings/apps with:

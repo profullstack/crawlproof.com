@@ -2,6 +2,7 @@ import { gate } from "@/lib/crawl-gateway";
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { trackReferralCode } from "@profullstack/stack/referrals";
+import { isNavigation } from "@/lib/affiliate/cookie";
 
 type Cookie = { name: string; value: string; options?: CookieOptions };
 
@@ -20,6 +21,27 @@ export async function proxy(request: NextRequest) {
     target.protocol = "https";
     target.port = "";
     return NextResponse.redirect(target, 308);
+  }
+
+  // OpenAffiliate: a navigation that carries ?oa=<code> goes through the click
+  // route, which records the click, sets the attribution cookie and comes back
+  // to the same path without the parameter. Only a navigation: an image, a
+  // frame, a script or a prefetch carrying the parameter sets nothing, which
+  // is the whole defence against cookie stuffing. The click route itself and
+  // the API are excluded so the redirect cannot loop.
+  {
+    const oa = request.nextUrl.searchParams.get("oa");
+    const p = request.nextUrl.pathname;
+    if (oa && !p.startsWith("/api/") && !p.startsWith("/_next/") && isNavigation(request.headers)) {
+      const clean = request.nextUrl.clone();
+      clean.searchParams.delete("oa");
+      const click = request.nextUrl.clone();
+      click.pathname = "/api/affiliate/v1/click";
+      click.search = "";
+      click.searchParams.set("oa", oa.toLowerCase());
+      click.searchParams.set("to", `${clean.pathname}${clean.search}`);
+      return NextResponse.redirect(click, 302);
+    }
   }
 
   let response = NextResponse.next({ request });

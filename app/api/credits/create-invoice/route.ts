@@ -5,6 +5,8 @@ import { serviceClient } from "@/lib/supabase/service";
 import { findPack } from "@/lib/credits";
 import { createPayment } from "@/lib/coinpay";
 import { env } from "@/lib/env";
+import { attributeUser } from "@/lib/affiliate/attribution";
+import { cookieFromHeader } from "@/lib/affiliate/cookie";
 
 export const runtime = "nodejs";
 
@@ -35,6 +37,14 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ ok: false, error: "Not authenticated." }, { status: 401 });
+  }
+
+  // OpenAffiliate: a buyer carrying the attribution cookie is bound to that
+  // affiliate now, so the completion webhook (which has no cookie) can find it.
+  try {
+    await attributeUser(user.id, cookieFromHeader(req.headers.get("cookie")));
+  } catch (err) {
+    console.error("[affiliate] attribute at invoice", err);
   }
 
   const svc = serviceClient();

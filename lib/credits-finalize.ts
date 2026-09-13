@@ -3,6 +3,7 @@ import { getPaymentStatus } from "./coinpay";
 import { sendPurchaseReceiptEmail } from "./email";
 import { env } from "./env";
 import { findPack } from "./credits";
+import { recordPurchaseConversion } from "./affiliate/attribution";
 
 // CoinPay status / event vocabulary that maps to our local state machine.
 // Both the webhook and the polling endpoint reference these sets so a single
@@ -64,6 +65,10 @@ export async function completePurchase(input: {
     console.error("[coinpay] credit_purchase_complete failed", error);
     throw new Error(error.message);
   }
+
+  // OpenAffiliate: if the buyer arrived through an affiliate link, record the
+  // conversion (idempotent on the purchase id; never fails the purchase).
+  await recordPurchaseConversion(svc, paymentId);
 
   // Deposit-match promo: first deposit gets bonus ad credits (idempotent RPC).
   try {
