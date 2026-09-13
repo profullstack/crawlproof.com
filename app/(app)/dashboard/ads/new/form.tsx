@@ -17,7 +17,8 @@ export function NewAdForm() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [budget, setBudget] = useState(5); // dollars/day
-  const [bid, setBid] = useState(0.2); // dollars/click (max bid)
+  // No bid field: the bid is automatic (see lib/ads/autobid.ts). The budget is
+  // the one number an advertiser sets; the edit page can switch to a typed bid.
   const [name, setName] = useState("");
   // Trending targeting, and with it the 90 days. Off by default: it changes
   // where the ads run, and that is the advertiser's decision to make.
@@ -110,8 +111,7 @@ export function NewAdForm() {
         name,
         url,
         dailyBudgetCents: Math.round(budget * 100),
-        // $ per click → credits (5¢/credit). Higher bids win more auctions.
-        bidCredits: Math.max(1, Math.round((bid * 100) / 5)),
+        // No bid: autobid (the default) sets it from the budget within the hour.
         brand,
         creatives,
         trendingTopics: trending,
@@ -165,21 +165,15 @@ export function NewAdForm() {
               <span className="text-sm text-[var(--color-muted)]">/day</span>
             </div>
           </div>
-          <div className="w-40">
+          <div className="w-56">
             <label className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-              Max bid / click
+              Bid / click
             </label>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="text-[var(--color-muted)]">$</span>
-              <input
-                className="input"
-                type="number"
-                min={0.05}
-                step={0.05}
-                value={bid}
-                onChange={(e) => setBid(Math.max(0.05, Number(e.target.value)))}
-              />
-              <span className="text-sm text-[var(--color-muted)]">/click</span>
+            <div className="mt-1 text-sm">
+              <span className="font-medium">Autobid</span>
+              <span className="block text-xs text-[var(--color-muted)]">
+                Set for you from the budget, hourly. Change it later on the campaign.
+              </span>
             </div>
           </div>
           <button type="submit" className="btn btn-primary" disabled={generating}>

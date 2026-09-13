@@ -112,8 +112,8 @@ export default async function AdsMarketingPage() {
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <Card
-            title="You are not bidding against a wall"
-            body="Placement is a bid-weighted lottery, not winner-takes-all. A higher bid wins more often, but it never corners the inventory — every live campaign keeps serving, so a modest budget still gets delivery instead of silence."
+            title="You set a budget. The bid sets itself."
+            body="Placement is a bid-weighted lottery, not winner-takes-all, and the bid is automatic: a pacing controller raises it when a campaign is behind its daily budget and lowers it when ahead, capped by what the budget can cover. Every live campaign keeps serving, so a modest budget still gets delivery instead of silence, and the campaign page shows every bid it made beside the clicks it got."
           />
           <Card
             title="Clicks, counted conservatively"

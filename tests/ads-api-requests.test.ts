@@ -9,7 +9,8 @@ describe("POST /api/ads/v1/campaigns body", () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.url).toBe("https://nichedb.dev/i/17");
-    expect(parsed.request).toEqual({ url: "https://nichedb.dev/i/17", name: "NicheDB", dailyBudgetCents: 250, bidCredits: 200 });
+    // A bid sent on its own is a bid to keep, so it turns autobid off.
+    expect(parsed.request).toEqual({ url: "https://nichedb.dev/i/17", name: "NicheDB", dailyBudgetCents: 250, bidCredits: 200, autobid: false });
   });
 
   it("refuses what the audit target guard refuses, and a made-up status", () => {
@@ -87,7 +88,7 @@ describe("PATCH /api/ads/v1/campaigns/[id] body", () => {
     expect(parseCampaignPatch({ status: "paused" })).toEqual({ ok: true, patch: { status: "paused" } });
     expect(parseCampaignPatch({ daily_budget_cents: 250.6, bid_credits: 900, name: " New " })).toEqual({
       ok: true,
-      patch: { dailyBudgetCents: 251, bidCredits: 200, name: "New" },
+      patch: { dailyBudgetCents: 251, bidCredits: 200, name: "New", autobid: false },
     });
     expect(parseCampaignPatch({})).toMatchObject({ ok: false, error: expect.stringContaining("Nothing to change") });
     expect(parseCampaignPatch({ status: "exhausted" })).toMatchObject({ ok: false });

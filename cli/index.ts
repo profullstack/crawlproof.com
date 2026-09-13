@@ -358,10 +358,10 @@ async function cmdAds(args: Args): Promise<number> {
     process.stdout.write(promoLine(json.promo));
     return 0;
   }
-  if (sub === "show" || sub === "pause" || sub === "resume" || sub === "budget" || sub === "delete") {
+  if (sub === "show" || sub === "pause" || sub === "resume" || sub === "budget" || sub === "bid" || sub === "delete") {
     const ref = args.positional[1];
     if (!ref) {
-      console.error(`usage: crawlproof ads ${sub} <ref-or-id>${sub === "budget" ? " <cents>" : ""}`);
+      console.error(`usage: crawlproof ads ${sub} <ref-or-id>${sub === "budget" ? " <cents>" : sub === "bid" ? " auto|<credits>" : ""}`);
       return 2;
     }
     const path = `/api/ads/v1/campaigns/${encodeURIComponent(ref)}`;
@@ -376,6 +376,17 @@ async function cmdAds(args: Args): Promise<number> {
         return 2;
       }
       (method = "PATCH"), (body = { daily_budget_cents: cents });
+    }
+    if (sub === "bid") {
+      // `auto` hands the bid back to the controller; a number keeps that bid.
+      const want = (args.positional[2] ?? "").toLowerCase();
+      const credits = Number(want);
+      if (want === "auto") (method = "PATCH"), (body = { autobid: true });
+      else if (Number.isInteger(credits) && credits >= 1) (method = "PATCH"), (body = { bid_credits: credits, autobid: false });
+      else {
+        console.error("usage: crawlproof ads bid <ref-or-id> auto|<credits per click>");
+        return 2;
+      }
     }
     if (sub === "delete") {
       if (!args.flags.yes) {
@@ -398,7 +409,8 @@ async function cmdAds(args: Args): Promise<number> {
       return 0;
     }
     const stats = json.stats as Record<string, unknown> | undefined;
-    process.stdout.write(`${json.status} ${json.ref_slug} ${json.name}\n  ${json.destination_url}\n  ${json.daily_budget_cents}¢/day, bid ${json.bid_credits ?? "default"}\n`);
+    const bidMode = json.autobid === false ? "set by hand" : "autobid";
+    process.stdout.write(`${json.status} ${json.ref_slug} ${json.name}\n  ${json.destination_url}\n  ${json.daily_budget_cents}¢/day, bid ${json.bid_credits ?? "default"} credits (${bidMode})\n`);
     if (json.trending_topics) {
       const topics = (json.topics as string[]) ?? [];
       process.stdout.write(`  trending targeting on${topics.length ? ` — ${topics.join(", ")}` : ""}\n`);
@@ -409,6 +421,34 @@ async function cmdAds(args: Args): Promise<number> {
       process.stdout.write(
         `  impressions ${stats.impressions} (+${stats.free_impressions} free) · clicks ${stats.clicks} (+${stats.free_clicks} free) · spent ${stats.spent_cents}¢ · visits attributed ${visits?.total ?? 0}\n`,
       );
+      // The paper ledger and the bid history: what the free-tier clicks would
+      // have cost, and the last few bid decisions with why they were made.
+      const bid = stats.bid as
+        | {
+            paper_spend_today_cents?: number;
+            paper_total_cents?: number;
+            events?: { ts: string; bidCredits: number; prevBidCredits: number | null; source: string; reason: string }[];
+            history?: { date: string; bidCredits: number | null; impressions: number; clicks: number; visits: number }[];
+          }
+        | undefined;
+      if (bid) {
+        process.stdout.write(`  paper spend today ${bid.paper_spend_today_cents ?? 0}¢ · paper total ${bid.paper_total_cents ?? 0}¢ (no credits moved)\n`);
+        const events = (bid.events ?? []).slice(0, 5);
+        if (events.length) {
+          process.stdout.write("  bid history (newest first):\n");
+          for (const e of events) {
+            const from = e.prevBidCredits == null ? "" : `${e.prevBidCredits} → `;
+            process.stdout.write(`    ${String(e.ts).slice(0, 16).replace("T", " ")}  ${from}${e.bidCredits}  ${e.source}: ${e.reason}\n`);
+          }
+        }
+        const days = (bid.history ?? []).slice(-7);
+        if (days.some((d) => d.impressions || d.clicks || d.visits)) {
+          process.stdout.write("  last 7 days (bid / impressions / clicks / visits):\n");
+          for (const d of days) {
+            process.stdout.write(`    ${d.date}  ${String(d.bidCredits ?? "-").padStart(3)}  ${String(d.impressions).padStart(6)}  ${String(d.clicks).padStart(5)}  ${String(d.visits).padStart(5)}\n`);
+          }
+        }
+      }
     }
     return 0;
   }
@@ -432,7 +472,7 @@ async function cmdAds(args: Args): Promise<number> {
     }
     return 0;
   }
-  console.error(`unknown: crawlproof ads ${sub} (expected: create | list | show | pause | resume | budget | delete | trending | trends)`);
+  console.error(`unknown: crawlproof ads ${sub} (expected: create | list | show | pause | resume | budget | bid | delete | trending | trends)`);
   return 2;
 }
 
@@ -651,6 +691,12 @@ COMMANDS
 
   ads pause <ref-or-id> | ads resume <ref-or-id> | ads budget <ref-or-id> <cents>
       Change a campaign in place. A ref looks like crawlproof-ad-144.
+
+  ads bid <ref-or-id> auto|<credits>
+      Bids are automatic by default: a pacing controller sets each campaign's
+      bid from its daily budget and its delivery, hourly. "auto" hands a
+      campaign back to it; a number keeps that bid until you say otherwise.
+      "ads show" prints the bid, who set it, and its recent history.
 
   ads delete <ref-or-id> --yes
       Remove it, metering included. Pause keeps the history.

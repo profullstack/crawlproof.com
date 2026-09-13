@@ -5,10 +5,14 @@ import { formatSpec, type AdCreative, type AdFormatId } from "@/lib/ads/formats"
 import { AdPreview } from "@/components/ads/ad-preview";
 import { CampaignActions, RegenerateButton } from "@/components/ads/campaign-actions";
 import { CampaignTrend } from "@/components/ads/campaign-trend";
+import { BidHistory } from "@/components/ads/bid-history";
 import { getCampaignDailySeries } from "@/lib/ads/series";
+import { getBidHistory } from "@/lib/ads/bids";
+import { paperSpendTodayCents } from "@/lib/ads/autobid";
+import { serviceClient } from "@/lib/supabase/service";
 import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 import { promoStateForCampaign } from "@/lib/ads/promos";
-import { TRENDING_CPC_CENTS } from "@/lib/ads/pricing";
+import { CREDIT_CENTS, DEFAULT_BID_CREDITS, TRENDING_CPC_CENTS } from "@/lib/ads/pricing";
 
 export const metadata = { title: "Campaign" };
 
@@ -85,6 +89,38 @@ export default async function CampaignDetailPage({
   // exist at all (nobody has enabled trending targeting, or the migration has
   // not been applied here yet). Both read as "no promo".
   const promo = await promoStateForCampaign(supabase, id);
+
+  // The bid, who sets it, and its paper ledger: their own read too, for the
+  // same reason — the columns ride behind a hand-applied migration and a
+  // missing one must not 404 the campaign. The history comes through the
+  // service client because the tracker rollup it joins is not readable by a
+  // session, and ownership was already settled by the select above.
+  type BidRow = {
+    autobid?: boolean | null;
+    paper_spend_today_cents?: number | null;
+    paper_spend_date?: string | null;
+    paper_total_cents?: number | null;
+  };
+  let bidRow: BidRow | null = null;
+  try {
+    const { data } = await supabase
+      .from("ad_campaigns")
+      .select("autobid, paper_spend_today_cents, paper_spend_date, paper_total_cents")
+      .eq("id", id)
+      .maybeSingle();
+    bidRow = (data as BidRow | null) ?? null;
+  } catch {
+    bidRow = null;
+  }
+  const autobid = bidRow?.autobid !== false;
+  const bidCredits = campaign.bid_credits ?? DEFAULT_BID_CREDITS;
+  const history = await getBidHistory(serviceClient(), {
+    campaignId: id,
+    refSlug: campaign.ref_slug,
+    ownerId: user.id,
+    currentBid: bidCredits,
+    days: 30,
+  });
 
   const impressions = (stats?.impressions as number) ?? 0;
   const clicks = (stats?.clicks as number) ?? 0;
@@ -200,8 +236,33 @@ export default async function CampaignDetailPage({
         </div>
       )}
 
+      {/* The bid and its paper ledger. Paper is what the free-tier clicks would
+          have cost at the bid — real numbers, no money moved — so the auction
+          and the pacing can be read and judged before anybody is billed. */}
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat
+          label={autobid ? "Bid (autobid)" : "Bid (set by hand)"}
+          value={`${bidCredits} cr`}
+          note={`$${((bidCredits * CREDIT_CENTS) / 100).toFixed(2)} per click`}
+        />
+        <Stat
+          label="Paper spend today"
+          value={dollars(bidRow ? paperSpendTodayCents({ daily_budget_cents: campaign.daily_budget_cents, ...bidRow }, today) : 0)}
+          note="what free-tier clicks would have cost"
+        />
+        <Stat
+          label="Paper spend total"
+          value={dollars(Number(bidRow?.paper_total_cents ?? 0))}
+          note="no credits were moved"
+        />
+      </div>
+
       <div className="mt-4">
         <CampaignTrend data={daily} />
+      </div>
+
+      <div className="mt-4">
+        <BidHistory data={history.days} events={history.events} autobid={autobid} failed={history.failed} />
       </div>
 
       {creatives.length > 0 && (
@@ -223,11 +284,12 @@ export default async function CampaignDetailPage({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <div className="card p-4">
       <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
       <div className="mt-1 text-2xl font-bold">{value}</div>
+      {note && <div className="mt-0.5 text-xs text-[var(--color-muted)]">{note}</div>}
     </div>
   );
 }

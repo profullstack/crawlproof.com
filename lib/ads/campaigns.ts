@@ -21,6 +21,7 @@ import { extractSiteBrand, type SiteBrand } from "@/lib/ads/brand";
 import { DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
 import { cleanTopics, promoState, type PromoState } from "@/lib/ads/trending";
 import { grantTrendingPromo, promoForCampaign, promosForCampaigns } from "@/lib/ads/promos";
+import { getBidHistory, recordManualBid, type BidEvent, type BidHistoryDay } from "@/lib/ads/bids";
 
 export type CampaignSummary = {
   id: string;
@@ -30,6 +31,8 @@ export type CampaignSummary = {
   destination_url: string;
   daily_budget_cents: number;
   bid_credits: number | null;
+  /** The bid is the controller's (default). False means somebody typed it. */
+  autobid?: boolean;
   created_at?: string;
   creatives?: number;
   dashboard_url?: string;
@@ -84,10 +87,10 @@ function summaryColumns(summary: AdSummary | null | undefined, domain: string): 
   };
 }
 
-const schemaLag = (message: string | undefined) => /organization_id|summary_|trending_topics|topics|schema cache|column/i.test(message ?? "");
+const schemaLag = (message: string | undefined) => /organization_id|summary_|trending_topics|topics|autobid|schema cache|column/i.test(message ?? "");
 
 /** Columns a hand-applied migration may not have created yet. Dropped on retry. */
-const OPTIONAL_COLUMNS = ["organization_id", "trending_topics", "topics"];
+const OPTIONAL_COLUMNS = ["organization_id", "trending_topics", "topics", "autobid"];
 const isOptionalColumn = (key: string) => OPTIONAL_COLUMNS.includes(key) || key.startsWith("summary_");
 
 /**
@@ -102,15 +105,21 @@ const isOptionalColumn = (key: string) => OPTIONAL_COLUMNS.includes(key) || key.
 async function targetingFor(
   sb: SupabaseClient,
   campaignIds: string[],
-): Promise<Map<string, { trending: boolean; topics: string[] }>> {
-  const out = new Map<string, { trending: boolean; topics: string[] }>();
+): Promise<Map<string, { trending: boolean; topics: string[]; autobid: boolean }>> {
+  const out = new Map<string, { trending: boolean; topics: string[]; autobid: boolean }>();
   const ids = [...new Set(campaignIds.filter(Boolean))];
   if (!ids.length) return out;
   try {
-    const { data, error } = await sb.from("ad_campaigns").select("id, trending_topics, topics").in("id", ids);
-    if (error || !data) return out;
-    for (const row of data as { id: string; trending_topics: boolean | null; topics: string[] | null }[]) {
-      out.set(row.id, { trending: !!row.trending_topics, topics: cleanTopics(row.topics ?? []) });
+    // `autobid` rides along for the same reason: it is behind its own
+    // hand-applied migration. Absent, the answer is the column's default.
+    type Res = { data: unknown[] | null; error: { message?: string } | null };
+    let res: Res = await sb.from("ad_campaigns").select("id, trending_topics, topics, autobid").in("id", ids);
+    if (res.error && schemaLag(res.error.message)) {
+      res = await sb.from("ad_campaigns").select("id, trending_topics, topics").in("id", ids);
+    }
+    if (res.error || !res.data) return out;
+    for (const row of res.data as { id: string; trending_topics: boolean | null; topics: string[] | null; autobid?: boolean | null }[]) {
+      out.set(row.id, { trending: !!row.trending_topics, topics: cleanTopics(row.topics ?? []), autobid: row.autobid !== false });
     }
   } catch {
     return out;
@@ -128,6 +137,7 @@ export async function withTargeting(
   const promo = targeting?.trending ? promoState(await promoForCampaign(sb, campaign.id), now) : null;
   return {
     ...campaign,
+    autobid: targeting?.autobid ?? true,
     trending_topics: targeting?.trending ?? false,
     topics: targeting?.topics ?? [],
     promo: promo && promo.startsAt ? { ...promo, kind: "trending_premium_90" } : null,
@@ -220,6 +230,8 @@ export async function createCampaignForUrl(input: {
   };
   if (org.id) payload.organization_id = org.id;
   if (request.trendingTopics) payload.trending_topics = true;
+  // Autobid is the column default; only an explicit "keep my bid" is written.
+  if (request.autobid === false) payload.autobid = false;
   // The subjects: what the caller said, else what the page is about. The
   // brand's own words are the honest source — a campaign whose claimed topics
   // have nothing to do with its landing page is how targeting gets gamed.
@@ -288,6 +300,7 @@ export async function listCampaigns(input: { sb: SupabaseClient; userId: string;
     const state = own?.trending ? promoState(promos.get(campaign.id) ?? null, now) : null;
     return {
       ...campaign,
+      autobid: own?.autobid ?? true,
       trending_topics: own?.trending ?? false,
       topics: own?.topics ?? [],
       promo: state && state.startsAt ? { ...state, kind: "trending_premium_90" } : null,
@@ -317,6 +330,20 @@ export type CampaignStats = {
   free_clicks: number;
   /** Visits the tracker attributed to this campaign on the caller's own sites, by day. */
   visits: { total: number; days: { day: string; visits: number }[] };
+  /**
+   * The bid, who sets it, and what it has been. Paper figures are what the
+   * free-tier clicks would have cost at the bid; no credit was moved for them.
+   */
+  bid: {
+    credits: number;
+    autobid: boolean;
+    paper_spend_today_cents: number;
+    paper_total_cents: number;
+    /** Per UTC day, oldest first: bid in force vs impressions, clicks, visits. */
+    history: BidHistoryDay[];
+    /** Bid decisions, newest first. */
+    events: BidEvent[];
+  };
 };
 
 const n = (v: unknown): number => {
@@ -344,6 +371,33 @@ export async function campaignStats(sb: SupabaseClient, userId: string, campaign
     for (const item of (rows as { day: string; count: number }[]) ?? []) byDay.set(item.day, (byDay.get(item.day) ?? 0) + n(item.count));
     for (const [day, visits] of byDay) days.push({ day, visits });
   }
+
+  // The bid and its paper ledger. Their own read: the columns are behind a
+  // hand-applied migration and a missing one must not empty the stats.
+  let autobid = true;
+  let paperToday = 0;
+  let paperTotal = 0;
+  try {
+    const { data: bidRow } = await sb
+      .from("ad_campaigns")
+      .select("autobid, paper_spend_today_cents, paper_spend_date, paper_total_cents")
+      .eq("id", campaign.id)
+      .maybeSingle();
+    const b = (bidRow as Record<string, unknown> | null) ?? {};
+    autobid = b.autobid !== false;
+    paperToday = String(b.paper_spend_date ?? "").slice(0, 10) === new Date().toISOString().slice(0, 10) ? n(b.paper_spend_today_cents) : 0;
+    paperTotal = n(b.paper_total_cents);
+  } catch {
+    // defaults above
+  }
+  const history = await getBidHistory(sb, {
+    campaignId: campaign.id,
+    refSlug: campaign.ref_slug,
+    ownerId: userId,
+    currentBid: campaign.bid_credits,
+    days: 30,
+  });
+
   return {
     impressions: n(r.impressions),
     clicks: n(r.clicks),
@@ -352,6 +406,14 @@ export async function campaignStats(sb: SupabaseClient, userId: string, campaign
     free_impressions: n(r.free_impressions),
     free_clicks: n(r.free_clicks),
     visits: { total: days.reduce((sum, d) => sum + d.visits, 0), days },
+    bid: {
+      credits: campaign.bid_credits ?? DEFAULT_BID_CREDITS,
+      autobid,
+      paper_spend_today_cents: paperToday,
+      paper_total_cents: paperTotal,
+      history: history.days,
+      events: history.events,
+    },
   };
 }
 
@@ -375,16 +437,28 @@ export async function patchCampaign(
   }
   if (patch.trendingTopics !== undefined) update.trending_topics = patch.trendingTopics;
   if (patch.topics !== undefined) update.topics = patch.topics;
+  if (patch.autobid !== undefined) update.autobid = patch.autobid;
 
   let { data, error } = await sb.from("ad_campaigns").update(update).eq("id", campaign.id).eq("owner_id", userId).select(CAMPAIGN_COLUMNS).single();
-  // The targeting columns ride behind a hand-applied migration; a deploy that
-  // lands first must not make every ordinary edit fail.
-  if (error && schemaLag(error.message) && (update.trending_topics !== undefined || update.topics !== undefined)) {
+  // The targeting and autobid columns ride behind a hand-applied migration; a
+  // deploy that lands first must not make every ordinary edit fail.
+  if (error && schemaLag(error.message) && (update.trending_topics !== undefined || update.topics !== undefined || update.autobid !== undefined)) {
     for (const key of Object.keys(update)) if (isOptionalColumn(key)) delete update[key];
-    if (!Object.keys(update).length) return { ok: false, status: 503, error: "Trending targeting is not available on this deployment yet." };
+    if (!Object.keys(update).length) return { ok: false, status: 503, error: "That setting is not available on this deployment yet." };
     ({ data, error } = await sb.from("ad_campaigns").update(update).eq("id", campaign.id).eq("owner_id", userId).select(CAMPAIGN_COLUMNS).single());
   }
   if (error || !data) return { ok: false, status: 500, error: error?.message ?? "Failed to update the campaign." };
+
+  // A typed bid is a bid decision too, and the history should say who made it.
+  if (patch.bidCredits !== undefined) {
+    await recordManualBid(sb, {
+      campaignId: campaign.id,
+      ownerId: userId,
+      prevBidCredits: campaign.bid_credits ?? null,
+      bidCredits: patch.bidCredits,
+      reason: "set by API",
+    });
+  }
 
   // Turning it on earns the ninety days — once. Turning it off later does not
   // revoke them: the advertiser was promised a window, not a subscription, and
