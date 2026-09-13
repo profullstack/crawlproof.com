@@ -17,8 +17,9 @@ export function isPrivateAddress(ip: string): boolean {
   if (v === 4) return isPrivateV4(ip);
   if (v === 6) {
     const lower = ip.toLowerCase();
-    const mapped = lower.match(/^(?:0*:)*ffff:(\d+\.\d+\.\d+\.\d+)$/) ?? lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateV4(mapped[1]);
+    // IPv4-mapped (::ffff:a.b.c.d): judge the IPv4 part.
+    const ffff = lower.lastIndexOf("ffff:");
+    if (ffff >= 0 && lower.slice(ffff + 5).includes(".")) return isPrivateV4(lower.slice(ffff + 5));
     if (lower === "::" || lower === "::1") return true;
     if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7
     if (/^fe[89ab]/.test(lower)) return true; // fe80::/10
