@@ -18,8 +18,8 @@
 
 import type { Finding } from "./types";
 
-/** Blended hourly rate, USD. */
-export const HOURLY_RATE_USD = 100;
+/** Standard price per agent-hour, USD. */
+export const HOURLY_RATE_USD = 400;
 
 /** Score we commit to reaching across every engine in the report. */
 export const TARGET_SCORE = 90;

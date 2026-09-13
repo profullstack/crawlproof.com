@@ -420,7 +420,7 @@ function quoteBlock(q: Quote, target?: string): string {
         <div class="kicker">Want us to fix this for you?</div>
         <div class="amount">${formatUsd(q.amountUsd)} <span class="unit">USD${q.cappedForScoping ? "+" : ""}</span></div>
         <div class="promise">
-          Estimated <strong>${formatHours(q.totalHours)}</strong> at ${formatUsd(q.rateUsd)}/hour to take
+          Estimated <strong>${formatHours(q.totalHours)} of agent time</strong> at ${formatUsd(q.rateUsd)}/agent-hour to take
           ${escapeHtml(host)} to a <strong>${q.targetScore}%+ score across the board</strong>.
         </div>
         <div class="split">
