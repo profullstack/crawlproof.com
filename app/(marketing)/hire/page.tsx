@@ -38,7 +38,7 @@ export default async function HirePage({
         <li className="card p-4">
           <strong>Scoped from your scan</strong>
           <p className="mt-1 text-[var(--color-muted)]">
-            We price the work off what the report actually found, at $100/hour.
+            We price the work off what the report actually found, at $400/hour/agent.
             Most engagements run two to three weeks.
           </p>
         </li>

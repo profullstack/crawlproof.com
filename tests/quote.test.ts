@@ -14,13 +14,13 @@ function f(check_key: string, status: Finding["status"] = "fail"): Finding {
 }
 
 describe("quote: pricing basics", () => {
-  it("bills at $100/hour and promises 90%+", () => {
-    expect(HOURLY_RATE_USD).toBe(100);
+  it("bills at $400/hour/agent and promises 90%+", () => {
+    expect(HOURLY_RATE_USD).toBe(400);
     expect(TARGET_SCORE).toBe(90);
     const q = quoteFromFindings([f("homepage.title")]);
-    expect(q.rateUsd).toBe(100);
+    expect(q.rateUsd).toBe(400);
     expect(q.targetScore).toBe(90);
-    expect(q.amountUsd).toBe(Math.round((q.totalHours * 100) / 100) * 100);
+    expect(q.amountUsd).toBe(q.totalHours * 400);
   });
 
   it("always splits hours into AI-assisted and manual", () => {
@@ -151,7 +151,7 @@ describe("quote: guardrails", () => {
     );
     expect(q.cappedForScoping).toBe(true);
     expect(q.totalHours).toBeLessThanOrEqual(120);
-    expect(q.amountUsd).toBeLessThanOrEqual(12_000);
+    expect(q.amountUsd).toBeLessThanOrEqual(48_000);
   });
 
   it("does not flag a normal report for scoping", () => {
