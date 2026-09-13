@@ -76,7 +76,8 @@ describe("deposit match stays solvent", () => {
   );
 
   it("caps the match on the deepest pack instead of doubling it", () => {
-    const deepest = CREDIT_PACKS.at(-1)!; // $50 / 2000 credits = 2.5c each
+    // Old purchases must keep the historical promise when they settle later.
+    const deepest = { amountCents: 5000, credits: 2000 };
     const bonus = depositBonusCredits(deepest.amountCents, deepest.credits);
     // A naive 100% match would grant 2000 and drop cash in to 1.25c/credit —
     // below the 1.4c payout rate. The solvency cap holds it to 857.
@@ -85,7 +86,7 @@ describe("deposit match stays solvent", () => {
   });
 
   it("grants a full 100% match where the pack can afford it", () => {
-    const starter = CREDIT_PACKS[0]; // $1.00 / 20 credits = 5c each
+    const starter = CREDIT_PACKS[0];
     expect(depositBonusCredits(starter.amountCents, starter.credits)).toBe(20);
   });
 

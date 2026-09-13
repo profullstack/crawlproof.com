@@ -15,11 +15,14 @@ import {
 } from "@/lib/credits";
 
 describe("perCreditLabel", () => {
+  it("preserves fractional cents on historical packs", () => {
+    expect(perCreditLabel({ id: "historical", label: "Historical", amountCents: 900, credits: 200 })).toBe("$0.045");
+  });
   it.each([
-    ["pack-1", "$0.05"], // $1.00 / 20 — genuinely round
-    ["pack-10", "$0.045"], // $9 / 200, was shown as $0.05
-    ["pack-50", "$0.035"], // $35 / 1000, was shown as $0.04
-    ["pack-100", "$0.025"], // $50 / 2000, was shown as $0.03
+    ["pack-1", "$0.30"], // $6 / 20
+    ["pack-10", "$0.27"], // $54 / 200
+    ["pack-50", "$0.21"], // $210 / 1000
+    ["pack-100", "$0.15"], // $300 / 2000
   ])("prices %s at %s", (id, expected) => {
     const pack = findPack(id);
     expect(pack).toBeDefined();

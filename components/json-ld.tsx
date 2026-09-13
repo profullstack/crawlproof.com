@@ -1,5 +1,5 @@
 import { env } from "@/lib/env";
-import { ANON_DAILY_SCANS, CREDIT_PACKS, SIGNUP_CREDITS } from "@/lib/credits";
+import { ANON_DAILY_SCANS, CREDIT_PACKS, SIGNUP_CREDITS, SCAN_CREDITS, dollars, perScanCents } from "@/lib/credits";
 
 function Tag({ data }: { data: unknown }) {
   return (
@@ -59,7 +59,7 @@ export function SoftwareApplicationJsonLd() {
             name: p.label,
             price: (p.amountCents / 100).toFixed(2),
             priceCurrency: "USD",
-            description: `${p.credits} scan${p.credits === 1 ? "" : "s"} · $${(p.amountCents / p.credits / 100).toFixed(2)}/scan`,
+            description: `${p.credits} credits · ${p.credits / SCAN_CREDITS} scan${p.credits === SCAN_CREDITS ? "" : "s"} · ${dollars(perScanCents(p))}/scan`,
           })),
         ],
       }}

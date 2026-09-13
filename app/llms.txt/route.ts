@@ -1,4 +1,4 @@
-import { SCAN_CREDITS, SIGNUP_CREDITS } from "@/lib/credits";
+import { SCAN_CREDITS, SIGNUP_CREDITS, SCAN_RACK_CENTS, SCAN_MIN_CENTS, dollars } from "@/lib/credits";
 import { env } from "@/lib/env";
 
 const body = `# CrawlProof
@@ -7,7 +7,7 @@ const body = `# CrawlProof
 
 ## Product
 - Free single-URL AEO audit, 10 per day per IP, no signup required.
-- Signed-in users get ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan); each AI-model scan costs ${SCAN_CREDITS} credits (~$1, volume discounts down to $0.50/scan at the 100-scan pack). No subscription — credits never expire.
+- Signed-in users get ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan); each AI-model scan costs ${SCAN_CREDITS} credits (${dollars(SCAN_RACK_CENTS)} before volume discounts, down to ${dollars(SCAN_MIN_CENTS)}/scan at the 100-scan pack). No subscription — credits never expire.
 - Saved projects, scheduled re-audits, multi-engine LLM scans (Claude Sonnet 4.6, OpenAI GPT-5 Mini, Gemini 2.5 Pro, Perplexity Sonar Pro, Qwen Plus, Kimi v2.6, DeepSeek V4, Z.AI GLM-5.2), consolidated PDF reports, and diff view.
 - Identifies as CrawlProofBot/1.0 (+https://crawlproof.com/bot).
 

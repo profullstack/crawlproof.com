@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { HeroAuditForm } from "@/components/hero-audit-form";
-import { ANON_DAILY_SCANS, SCAN_CREDITS, SIGNUP_CREDITS } from "@/lib/credits";
+import { ANON_DAILY_SCANS, SCAN_CREDITS, SIGNUP_CREDITS, SCAN_RACK_CENTS, SCAN_MIN_CENTS, dollars } from "@/lib/credits";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
 import { PerformancePreview } from "@/components/report/performance-preview";
 import { UptimePreview } from "@/components/report/uptime-preview";
@@ -34,7 +34,7 @@ const faqs = [
   },
   {
     q: "Is the free tier really free?",
-    a: `Yes — anonymous visitors get ${ANON_DAILY_SCANS} audits per day per IP with no signup, and signing up unlocks ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan). Paid scans cost ${SCAN_CREDITS} credits (~$1) with volume discounts down to $0.50/scan at the 100-scan pack. No subscription, credits never expire.`,
+    a: `Yes — anonymous visitors get ${ANON_DAILY_SCANS} audits per day per IP with no signup, and signing up unlocks ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan). Paid scans cost ${SCAN_CREDITS} credits (${dollars(SCAN_RACK_CENTS)} at standard price) with volume discounts down to ${dollars(SCAN_MIN_CENTS)}/scan at the 100-scan pack. No subscription, credits never expire.`,
   },
 ];
 
@@ -106,7 +106,7 @@ export default function HomePage() {
           <ModuleCard emoji="🔍" title="SEO · AEO · GEO Audits" body="See your site the way ChatGPT, Claude, Perplexity, and Google AI crawlers do — with a priority to-do list." />
           <ModuleCard emoji="📈" title="Uptime Monitoring" body="HTTP, keyword, SSL &amp; TCP checks with instant down/recovery alerts to email, Slack, and Discord." />
           <ModuleCard emoji="🛡️" title="Exposed Services" body="Full-port security scans of your verified hosts — get alerted the moment a database or admin port is exposed." />
-          <ModuleCard emoji="✍️" title="Autoblog" body="Research, draft, illustrate, and publish long-form SEO posts to your CMS on a schedule — ~$1 each." />
+          <ModuleCard emoji="✍️" title="Autoblog" body={`Research, draft, illustrate, and publish long-form SEO posts to your CMS on a schedule — ${dollars(SCAN_RACK_CENTS)} each before volume discounts.`} />
           <ModuleCard emoji="🎯" title="Lead Generation" body="Find the companies, the people and the addresses from any directory or search — then send grounded cold email from your own mailbox." href="/lead-generation" />
           <ModuleCard emoji="🔗" title="Link Exchange" body="Verified backlink matching with a real ledger — quality links without four-figure marketplace prices." />
           <ModuleCard emoji="📊" title="Analytics Tracker" body="A drop-in tracker for AI referrals, bot crawls, human traffic, pages, and geo — see who (and what) visits." />
@@ -240,7 +240,7 @@ export default function HomePage() {
             <p className="mt-4 text-[var(--color-muted)]">
               Connect a webhook once and CrawlProof can research topics, draft long-form
               posts, attach a hero image, and deliver articles to your CMS on schedule.
-              Each published post uses 20 credits (~$1).
+              Each published post uses {SCAN_CREDITS} credits ({dollars(SCAN_RACK_CENTS)} before volume discounts).
             </p>
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
               <LaunchStat label="Cost model" value="20 credits" />
@@ -362,7 +362,7 @@ function AutoblogLaunchGraphic() {
   return (
     <div
       className="rounded-xl border border-[var(--color-border)] bg-[#101820] p-5 shadow-2xl shadow-black/20 sm:p-6"
-      aria-label="Backlink marketplace examples ranged from $445 to $4,090, compared with CrawlProof Autoblog at 20 credits (~$1) per post."
+      aria-label={`Backlink marketplace examples ranged from $445 to $4,090, compared with CrawlProof Autoblog at ${SCAN_CREDITS} credits (${dollars(SCAN_RACK_CENTS)} before volume discounts) per post.`}
     >
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -373,7 +373,7 @@ function AutoblogLaunchGraphic() {
         </div>
         <div className="rounded-lg border border-[rgba(110,231,183,0.35)] bg-[rgba(110,231,183,0.12)] px-3 py-2 text-right">
           <div className="text-xs text-[var(--color-muted)]">Autoblog</div>
-          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">~$1</div>
+          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">{dollars(SCAN_RACK_CENTS)}</div>
         </div>
       </div>
 
@@ -403,7 +403,7 @@ function AutoblogLaunchGraphic() {
         </div>
         <div className="rounded-lg bg-[#17202a] p-3">
           <div className="text-xs text-[var(--color-muted)]">CrawlProof</div>
-          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">~$1</div>
+          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">{dollars(SCAN_RACK_CENTS)}</div>
         </div>
       </div>
 

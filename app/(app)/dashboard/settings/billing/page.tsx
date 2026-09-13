@@ -5,6 +5,8 @@ import { PurchaseStatusBanner } from "./purchase-status-banner";
 import {
   CREDIT_PACKS,
   CREDIT_RACK_CENTS,
+  SCAN_CREDITS,
+  SCAN_RACK_CENTS,
   discountPct,
   dollars,
   perScanCents,
@@ -78,7 +80,7 @@ export default async function BillingPage({
           <span className="text-[var(--color-muted)]">credits</span>
         </div>
         <div className="mt-2 text-xs text-[var(--color-muted)]">
-          1 AI-model scan = 20 credits (~$1). Scheduled re-runs spend the same per engine.
+          1 AI-model scan = {SCAN_CREDITS} credits ({dollars(SCAN_RACK_CENTS)} before volume discounts). Scheduled re-runs spend the same per engine.
         </div>
       </div>
 

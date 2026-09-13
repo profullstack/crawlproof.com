@@ -44,7 +44,7 @@ describe("credit packs catalog", () => {
   it("discountPct is 0 for the rack-rate starter", () => {
     const starter = findPack("pack-1")!;
     expect(discountPct(starter)).toBe(0);
-    expect(perScanCents(starter)).toBe(100);
+    expect(perScanCents(starter)).toBe(600);
   });
 
   it("discount increases monotonically with pack size", () => {
@@ -60,6 +60,6 @@ describe("credit packs catalog", () => {
   it("100-pack ships the big-bag 50% discount", () => {
     const big = findPack("pack-100")!;
     expect(discountPct(big)).toBe(50);
-    expect(perScanCents(big)).toBe(50);
+    expect(perScanCents(big)).toBe(300);
   });
 });
