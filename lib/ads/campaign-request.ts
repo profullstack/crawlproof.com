@@ -14,6 +14,11 @@ export type CampaignRequest = {
   name?: string;
   dailyBudgetCents?: number;
   bidCredits?: number;
+  /**
+   * Let the controller set the bid (the default). Sending a bid without saying
+   * otherwise is taken as wanting that bid kept, so it turns autobid off.
+   */
+  autobid?: boolean;
   status?: CampaignStatus;
   /** Prefer this campaign where its subject is what people are asking about. */
   trendingTopics?: boolean;
@@ -72,6 +77,9 @@ export function parseCampaignRequest(body: Record<string, unknown>): { ok: true;
     if (!Number.isFinite(n) || n < 1) return { ok: false, error: "bid_credits must be at least 1." };
     request.bidCredits = Math.min(200, Math.round(n));
   }
+  const autobid = asBoolean(body.autobid);
+  if (autobid !== undefined) request.autobid = autobid;
+  else if (request.bidCredits !== undefined) request.autobid = false;
   if (statusRaw === "active" || statusRaw === "draft") request.status = statusRaw;
 
   const trending = asBoolean(body.trending_topics ?? body.trendingTopics ?? body.trending);
@@ -85,6 +93,8 @@ export type CampaignPatch = {
   name?: string;
   dailyBudgetCents?: number;
   bidCredits?: number;
+  /** See CampaignRequest.autobid: a bid on its own turns this off. */
+  autobid?: boolean;
   status?: "active" | "paused" | "draft";
   trendingTopics?: boolean;
   topics?: string[];
@@ -109,6 +119,9 @@ export function parseCampaignPatch(body: Record<string, unknown>): { ok: true; p
     if (!Number.isFinite(n) || n < 1) return { ok: false, error: "bid_credits must be at least 1." };
     patch.bidCredits = Math.min(200, Math.round(n));
   }
+  const autobid = asBoolean(body.autobid);
+  if (autobid !== undefined) patch.autobid = autobid;
+  else if (patch.bidCredits !== undefined) patch.autobid = false;
   if (body.status !== undefined) {
     if (body.status !== "active" && body.status !== "paused" && body.status !== "draft") {
       return { ok: false, error: 'status must be "active", "paused" or "draft".' };
@@ -119,7 +132,7 @@ export function parseCampaignPatch(body: Record<string, unknown>): { ok: true; p
   if (trending !== undefined) patch.trendingTopics = trending;
   if (body.topics !== undefined) patch.topics = cleanTopics(body.topics);
   if (!Object.keys(patch).length) {
-    return { ok: false, error: "Nothing to change: send name, daily_budget_cents, bid_credits, status, trending_topics or topics." };
+    return { ok: false, error: "Nothing to change: send name, daily_budget_cents, bid_credits, autobid, status, trending_topics or topics." };
   }
   return { ok: true, patch };
 }

@@ -37,7 +37,7 @@ export default async function EditCampaignPage({
 
   const { data: campaign } = await supabase
     .from("ad_campaigns")
-    .select("id, name, destination_url, daily_budget_cents, bid_credits, status, ref_slug")
+    .select("id, name, destination_url, daily_budget_cents, bid_credits, autobid, status, ref_slug")
     .eq("id", id)
     .eq("owner_id", user.id)
     .maybeSingle();
@@ -84,6 +84,7 @@ export default async function EditCampaignPage({
           destinationUrl: campaign.destination_url,
           dailyBudgetCents: campaign.daily_budget_cents,
           bidCredits: campaign.bid_credits ?? 4,
+          autobid: campaign.autobid !== false,
           status: campaign.status,
         }}
         creatives={creatives}

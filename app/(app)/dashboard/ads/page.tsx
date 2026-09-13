@@ -256,6 +256,9 @@ export default async function AdsPage({
                     label="Today"
                     value={`${dollars(spendTodayCents(c, today))} / ${dollars(c.daily_budget_cents)}`}
                   />
+                  {/* The bid autobid is making for it right now; the campaign
+                      page has the history and the reasons. */}
+                  <MiniStat label="Bid" value={`${c.bid_credits ?? 4} cr`} />
                 </div>
                 {!display.serving && (
                   <p className="mt-2 text-sm text-[var(--color-muted)]">{display.hint}</p>

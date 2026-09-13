@@ -18,6 +18,7 @@ import type { SiteBrand } from "@/lib/ads/brand";
 import { MIN_PAYOUT_CENTS, DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
 import { cleanTopics } from "@/lib/ads/trending";
 import { grantTrendingPromo } from "@/lib/ads/promos";
+import { recordManualBid } from "@/lib/ads/bids";
 import { createCryptoPayout } from "@/lib/coinpay";
 
 const ASSET_BUCKET = "ad-assets";
@@ -148,6 +149,8 @@ export async function saveCampaign(input: {
   url: string;
   dailyBudgetCents: number;
   bidCredits?: number;
+  /** Off means "keep the bid I typed". Defaults to on: the controller bids. */
+  autobid?: boolean;
   brand?: SiteBrand | null;
   creatives: Partial<AdCreative>[];
   summary?: Partial<AdSummary> | null;
@@ -189,6 +192,9 @@ export async function saveCampaign(input: {
     brand: input.brand ?? {},
   };
   if (org.id) payload.organization_id = org.id;
+  // Autobid is the column default; only an explicit "keep my bid" is written,
+  // and it is dropped with the other optional columns on a schema-lag retry.
+  if (input.autobid === false) payload.autobid = false;
   // Trending targeting, and the subjects it targets on. The subjects come from
   // the page's own words rather than anything typed here: a campaign claiming
   // topics its landing page never mentions is how contextual targeting gets
@@ -230,10 +236,11 @@ export async function saveCampaign(input: {
   // of the schema. Retry without them rather than refusing to create the
   // campaign: prose is an enhancement, a campaign that cannot be saved is the
   // whole product failing. Same trade the impression short_code makes.
-  if (campaign.error && /summary_|trending_topics|topics|schema cache|column/i.test(campaign.error.message ?? "")) {
+  if (campaign.error && /summary_|trending_topics|topics|autobid|schema cache|column/i.test(campaign.error.message ?? "")) {
     for (const key of Object.keys(summaryFields)) delete payload[key];
     delete payload.trending_topics;
     delete payload.topics;
+    delete payload.autobid;
     campaign = await supabase
       .from("ad_campaigns")
       .insert(payload)
@@ -285,6 +292,8 @@ export async function updateCampaign(input: {
   name?: string;
   dailyBudgetCents?: number;
   bidCredits?: number;
+  /** Hand the bid back to the controller (true) or keep the typed one (false). */
+  autobid?: boolean;
   destinationUrl?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const supabase = await createClient();
@@ -300,9 +309,13 @@ export async function updateCampaign(input: {
   if (Number.isFinite(input.dailyBudgetCents)) {
     patch.daily_budget_cents = Math.max(0, Math.round(input.dailyBudgetCents!));
   }
-  if (Number.isFinite(input.bidCredits)) {
+  // A bid typed while autobid is on would be overwritten within the hour, so
+  // it is only taken when the form is handing the bid to the person.
+  const manualBid = input.autobid !== true && Number.isFinite(input.bidCredits);
+  if (manualBid) {
     patch.bid_credits = Math.min(200, Math.max(1, Math.round(input.bidCredits!)));
   }
+  if (typeof input.autobid === "boolean") patch.autobid = input.autobid;
   if (typeof input.destinationUrl === "string" && input.destinationUrl.trim()) {
     const check = isAllowedTargetUrl(input.destinationUrl);
     if (!check.ok) return { ok: false, error: check.reason };
@@ -311,12 +324,40 @@ export async function updateCampaign(input: {
   }
   if (Object.keys(patch).length === 0) return { ok: true };
 
-  const { error } = await supabase
+  // The bid before the edit, so the history can say what it moved from.
+  let prevBid: number | null = null;
+  if (manualBid) {
+    const { data: before } = await supabase
+      .from("ad_campaigns")
+      .select("bid_credits")
+      .eq("id", input.id)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    prevBid = (before?.bid_credits as number | null | undefined) ?? null;
+  }
+
+  let { error } = await supabase
     .from("ad_campaigns")
     .update(patch)
     .eq("id", input.id)
     .eq("owner_id", user.id);
+  // `autobid` rides behind a hand-applied migration; an edit to the name or
+  // the budget must still land if this deploy is ahead of the schema.
+  if (error && patch.autobid !== undefined && /autobid|schema cache|column/i.test(error.message ?? "")) {
+    delete patch.autobid;
+    if (Object.keys(patch).length === 0) return { ok: false, error: "Autobid is not available on this deployment yet." };
+    ({ error } = await supabase.from("ad_campaigns").update(patch).eq("id", input.id).eq("owner_id", user.id));
+  }
   if (error) return { ok: false, error: error.message };
+  if (manualBid && prevBid !== patch.bid_credits) {
+    await recordManualBid(serviceClient(), {
+      campaignId: input.id,
+      ownerId: user.id,
+      prevBidCredits: prevBid,
+      bidCredits: patch.bid_credits as number,
+      reason: "set in the dashboard",
+    });
+  }
   revalidatePath("/dashboard/ads");
   revalidatePath(`/dashboard/ads/${input.id}`);
   return { ok: true };

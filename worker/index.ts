@@ -47,6 +47,7 @@ import { crawlFeeds } from "../lib/lx/feedCrawl";
 import { reapStalePublishingJobs } from "../lib/promote/jobs";
 import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
+import { runAutobidSweep } from "../lib/ads/bids";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1525,6 +1526,38 @@ setInterval(
   FEED_CRAWL_TICK_MS,
 );
 
+// Ad autobid.
+//
+// Every live campaign with autobid on (the default) gets its bid recomputed by
+// the pacing controller in lib/ads/autobid.ts: behind its daily pace it bids
+// more, ahead it bids less, capped by what the budget could cover. Hourly is
+// the right cadence — the controller paces against the fraction of the UTC
+// day elapsed, and moving a bid more often than delivery can respond to it
+// just writes noise into the history. Runs once at boot too, so a fresh
+// deploy has every campaign bidding within a minute rather than an hour.
+const AUTOBID_TICK_MS = 60 * 60 * 1000; // 1h
+let autobidRunning = false;
+async function autobidSweep() {
+  if (autobidRunning) return;
+  autobidRunning = true;
+  try {
+    const r = await runAutobidSweep(supabase);
+    if (r.failed) {
+      console.error(`[worker] autobid sweep failed: ${r.failed}`);
+    } else if (r.considered > 0) {
+      console.log(
+        `[worker] autobid considered=${r.considered} changed=${r.changed} held=${r.held} seeded=${r.seeded}`,
+      );
+    }
+  } finally {
+    autobidRunning = false;
+  }
+}
+setInterval(
+  () => autobidSweep().catch((e) => console.error("[worker] autobid sweep", e)),
+  AUTOBID_TICK_MS,
+);
+
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to
 // run as a separate Railway service.
@@ -1538,4 +1571,5 @@ server.listen(port, bindHost, () => {
   promoteIngestSweep().catch((e) => console.error("[worker] promote ingest", e));
   sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
   feedCrawlSweep().catch((e) => console.error("[worker] feed crawl sweep", e));
+  autobidSweep().catch((e) => console.error("[worker] autobid sweep", e));
 });

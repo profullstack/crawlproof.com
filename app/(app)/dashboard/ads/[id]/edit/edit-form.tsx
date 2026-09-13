@@ -14,6 +14,8 @@ type Campaign = {
   destinationUrl: string;
   dailyBudgetCents: number;
   bidCredits: number;
+  /** The controller sets the bid (default). Off: the number below is kept. */
+  autobid: boolean;
   status: string;
 };
 
@@ -33,6 +35,7 @@ export function EditCampaignForm({
   const [url, setUrl] = useState(campaign.destinationUrl);
   const [budget, setBudget] = useState(campaign.dailyBudgetCents / 100);
   const [bid, setBid] = useState((campaign.bidCredits * 5) / 100); // credits → $
+  const [autobid, setAutobid] = useState(campaign.autobid);
   const [creatives, setCreatives] = useState(initial);
   const [active, setActive] = useState<AdFormatId>(initial[0]?.format ?? "banner_300x250");
   // Which polarity the previews show and the colour pickers edit. Publishers
@@ -99,6 +102,8 @@ export function EditCampaignForm({
         name,
         destinationUrl: url,
         dailyBudgetCents: Math.round(budget * 100),
+        autobid,
+        // Only meaningful when autobid is off; the action ignores it otherwise.
         bidCredits: Math.max(1, Math.round((bid * 100) / 5)),
       });
       if (!s.ok) return setError(s.error);
@@ -140,17 +145,39 @@ export function EditCampaignForm({
               onChange={(e) => setBudget(Math.max(0, Number(e.target.value)))}
             />
           </label>
-          <label className="block">
-            <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">Max bid / click ($)</span>
-            <input
-              className="input mt-1"
-              type="number"
-              min={0.05}
-              step={0.05}
-              value={bid}
-              onChange={(e) => setBid(Math.max(0.05, Number(e.target.value)))}
-            />
-          </label>
+          <div className="block">
+            <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">Bid / click</span>
+            <label className="mt-2 flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={autobid}
+                onChange={(e) => setAutobid(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">Autobid</span>
+                <span className="block text-xs text-[var(--color-muted)]">
+                  {autobid
+                    ? `Currently ${campaign.bidCredits} credits ($${((campaign.bidCredits * 5) / 100).toFixed(2)}). Set every hour from your daily budget and delivery: raised when behind pace, lowered when ahead.`
+                    : "Off. The bid below is kept until you turn autobid back on."}
+                </span>
+              </span>
+            </label>
+            {!autobid && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[var(--color-muted)]">$</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={0.05}
+                  step={0.05}
+                  value={bid}
+                  onChange={(e) => setBid(Math.max(0.05, Number(e.target.value)))}
+                />
+                <span className="text-sm text-[var(--color-muted)]">/click</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

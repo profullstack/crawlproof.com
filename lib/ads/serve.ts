@@ -27,6 +27,8 @@ import { competesForPaid, fillTier, matchTrend, trendWeight, type TrendMatch } f
 import { promoActiveFor, trendContextFor } from "./trendContext";
 import { promoForCampaign } from "./promos";
 import { promoState, clickChargeCents } from "./trending";
+import { paperWeight, type PaperBudgetFields } from "./autobid";
+import { paperCharge } from "./bids";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
@@ -278,6 +280,16 @@ export async function serveAd(
     ]),
   );
 
+  // Paper spend, for the free-tier auction below. Its own read rather than two
+  // more columns on the serving join: the columns ride behind a hand-applied
+  // migration, and a deploy that lands first must not take every unit dark.
+  // A read that fails means nobody has spent anything today, which is the
+  // pre-autobid behaviour exactly.
+  const paperByCampaign = await paperSpendFor(
+    sb,
+    candidates.map((row) => oneCampaign(row.ad_campaigns).id),
+  );
+
   // Trending targeting, if anybody is using it. Costs one cached query on a
   // network where nobody is; see lib/ads/trendContext.ts.
   const trend = await trendContextFor(
@@ -354,17 +366,33 @@ export async function serveAd(
   }
 
   // Nothing paid to show: backfill with a real advertiser's ad instead of the
-  // house ad. Not bid-weighted — nobody is paying, so a high bid buys no
-  // priority here. A trending match does, because that is about relevance to
-  // the page rather than about money, and this is the tier every promo
-  // campaign serves from.
+  // house ad. This is the PAPER auction: the same bid-weighted lottery as the
+  // paid tier, weighted by each campaign's bid while its paper daily budget
+  // lasts and by a token weight once it is spent. Nobody is paying, and no
+  // credit is ever debited on this tier — but on a network where every fill
+  // lands here, weighting everything at 1 (as this used to) meant no campaign
+  // ever bid at all. Now the bids decide delivery share, the clicks record
+  // what they would have cost, and the pacing controller in lib/ads/autobid.ts
+  // has something real to pace. A trending match still multiplies the weight,
+  // because that is about relevance to the page rather than about money, and
+  // this is the tier every promo campaign serves from.
   if (!pick && free.length > 0) {
     tier = "free";
     pick = runAuction(
-      free.map((row) => ({
-        bidCredits: trendWeight(1, matchFor(oneCampaign(row.ad_campaigns).id)),
-        item: row,
-      })),
+      free.map((row) => {
+        const c = oneCampaign(row.ad_campaigns);
+        const paper = paperByCampaign.get(c.id);
+        const weight = paperWeight(
+          {
+            bid_credits: c.bid_credits ?? DEFAULT_BID_CREDITS,
+            daily_budget_cents: c.daily_budget_cents,
+            paper_spend_today_cents: paper?.paper_spend_today_cents ?? 0,
+            paper_spend_date: paper?.paper_spend_date ?? null,
+          },
+          today,
+        );
+        return { bidCredits: trendWeight(weight, matchFor(c.id)), item: row };
+      }),
     )?.winner;
   }
 
@@ -404,10 +432,18 @@ export async function serveAd(
   // fail on the unknown columns and take *all* paid serving down with it.
   // Retry once without them and fall back to the UUID click URL: a wide URL is
   // a cosmetic problem, a dropped impression is a lost sale.
+  // `bid_credits` — what the winner bid on this fill — rides in the same
+  // optional group: the bid history chart reads it, serving does not need it.
   const shortCode = generateShortCode();
   let { data: imp } = await sb
     .from("ad_impressions")
-    .insert({ ...base, short_code: shortCode, src: ctx.src ?? null, duplicate })
+    .insert({
+      ...base,
+      short_code: shortCode,
+      src: ctx.src ?? null,
+      duplicate,
+      bid_credits: campaign.bid_credits ?? DEFAULT_BID_CREDITS,
+    })
     .select("id, short_code")
     .single();
 
@@ -453,6 +489,37 @@ export async function serveAd(
     trendTopics: matchFor(campaign.id).topics,
     promo: trend.any && promoActiveFor(trend, campaign.id),
   };
+}
+
+/**
+ * Today's paper spend for a set of campaigns, keyed by id.
+ *
+ * Tolerant of everything: the columns not existing yet, the client being a
+ * test double that knows nothing about this table, the network. Any of those
+ * reads as "nothing spent", which weights the free tier by bid alone — the
+ * paper auction still runs, only the daily cap goes unenforced until the
+ * schema catches up.
+ */
+async function paperSpendFor(
+  sb: ReturnType<typeof serviceClient>,
+  campaignIds: string[],
+): Promise<Map<string, PaperBudgetFields>> {
+  const out = new Map<string, PaperBudgetFields>();
+  const ids = [...new Set(campaignIds.filter(Boolean))];
+  if (!ids.length) return out;
+  try {
+    const { data, error } = await sb
+      .from("ad_campaigns")
+      .select("id, daily_budget_cents, paper_spend_today_cents, paper_spend_date")
+      .in("id", ids);
+    if (error || !Array.isArray(data)) return out;
+    for (const row of data as (PaperBudgetFields & { id: string })[]) {
+      if (row && typeof row === "object" && row.id) out.set(row.id, row);
+    }
+  } catch {
+    // see above
+  }
+  return out;
 }
 
 /**
@@ -588,25 +655,34 @@ export async function resolveClick(input: {
     const charge = clickChargeCents({ promo, cpcCents: (campaign.bid_credits ?? DEFAULT_BID_CREDITS) * CREDIT_CENTS });
 
     if (validity.valid && promo.active && charge === 0) {
-      await sb.from("ad_clicks").insert({
-        impression_id: input.impressionId ?? null,
-        slot_id: input.slotId,
-        campaign_id: campaign.id,
-        creative_id: input.creativeId ?? null,
-        visitor_id: visitorId,
-        ip_hash: ipHash,
-        geo_country: input.ctx?.country ?? null,
-        device: input.ctx?.device ?? null,
-        charged_cents: 0,
-        publisher_earn_cents: 0,
-        platform_cut_cents: 0,
-        valid: false,
-        tier: "free",
+      const { data: promoClick } = await sb
+        .from("ad_clicks")
+        .insert({
+          impression_id: input.impressionId ?? null,
+          slot_id: input.slotId,
+          campaign_id: campaign.id,
+          creative_id: input.creativeId ?? null,
+          visitor_id: visitorId,
+          ip_hash: ipHash,
+          geo_country: input.ctx?.country ?? null,
+          device: input.ctx?.device ?? null,
+          charged_cents: 0,
+          publisher_earn_cents: 0,
+          platform_cut_cents: 0,
+          valid: false,
+          tier: "free",
+        })
+        .select("id")
+        .maybeSingle();
+      await paperCharge(sb, {
+        clickId: (promoClick as { id?: string } | null)?.id,
+        campaignId: campaign.id,
+        bidCredits: campaign.bid_credits,
       });
     } else if (validity.valid) {
       // Atomic charge: debit advertiser credits, meter the click, accrue the
       // publisher share + platform fee (unbilled if out of budget/funds).
-      await sb.rpc("ad_charge_click", {
+      const { data: charged } = await sb.rpc("ad_charge_click", {
         p_campaign: campaign.id,
         p_slot: input.slotId,
         p_creative: input.creativeId ?? null,
@@ -619,6 +695,20 @@ export async function resolveClick(input: {
         p_cpc_credits: campaign.bid_credits ?? DEFAULT_BID_CREDITS,
         p_platform_rate: PLATFORM_RATE,
       });
+      // A real click nobody could be billed for — self-deal, out of budget,
+      // out of credit — is the free tier, and the free tier is a paper
+      // auction now: record what this click would have cost at the bid. The
+      // SQL only ever marks a click that is free-tier and unbilled, so a paid
+      // click can never be relabelled from here.
+      const row = Array.isArray(charged) ? charged[0] : charged;
+      const outcome = (row ?? null) as { click_id?: string; charged_cents?: number; valid?: boolean } | null;
+      if (outcome?.click_id && !outcome.valid && !(outcome.charged_cents ?? 0)) {
+        await paperCharge(sb, {
+          clickId: outcome.click_id,
+          campaignId: campaign.id,
+          bidCredits: campaign.bid_credits,
+        });
+      }
     } else {
       // Invalid (bot / duplicate / forged): record an unbilled click for
       // analytics, charge nobody.
