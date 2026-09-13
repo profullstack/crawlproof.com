@@ -71,6 +71,14 @@ export async function assessClickValidity(input: {
   ipHashes?: string[] | null;
   device?: string | null;
 }): Promise<ClickValidity> {
+  try {
+    return await checkClickValidity(input);
+  } catch {
+    return { valid: false, reason: "validation_unavailable" };
+  }
+}
+
+async function checkClickValidity(input: Parameters<typeof assessClickValidity>[0]): Promise<ClickValidity> {
   // 1. Bots never bill.
   if (isBotDevice(input.device)) return { valid: false, reason: "bot" };
 
@@ -79,11 +87,12 @@ export async function assessClickValidity(input: {
   // 2. Anti-forgery: if the click claims an impression, it must exist and match
   // the campaign/slot it says it clicked.
   if (input.impressionId) {
-    const { data: imp } = await sb
+    const { data: imp, error } = await sb
       .from("ad_impressions")
       .select("campaign_id, slot_id")
       .eq("id", input.impressionId)
       .maybeSingle();
+    if (error) return { valid: false, reason: "validation_unavailable" };
     if (!imp) return { valid: false, reason: "no_impression" };
     if (imp.campaign_id !== input.campaignId) return { valid: false, reason: "impression_mismatch" };
     if (input.slotId && imp.slot_id !== input.slotId) return { valid: false, reason: "impression_mismatch" };
@@ -94,14 +103,13 @@ export async function assessClickValidity(input: {
   const ipHashes = (input.ipHashes ?? [])
     .map((h) => safeId(h))
     .filter((h): h is string => h !== null);
-  if (!visitor && ipHashes.length === 0) return { valid: true }; // nothing to dedupe on
+  if (!visitor && ipHashes.length === 0) return { valid: false, reason: "missing_identity" };
 
   const since = new Date(Date.now() - CLICK_DEDUPE_WINDOW_MS).toISOString();
   const q = sb
     .from("ad_clicks")
     .select("id")
     .eq("campaign_id", input.campaignId)
-    .eq("valid", true)
     .gte("ts", since)
     .limit(1);
 
@@ -113,7 +121,8 @@ export async function assessClickValidity(input: {
     ...ipHashes.map((h) => `ip_hash.eq.${h}`),
   ];
 
-  const { data: dupe } = await q.or(terms.join(","));
+  const { data: dupe, error } = await q.or(`and(or(valid.eq.true,tier.eq.free),or(${terms.join(",")}))`);
+  if (error) return { valid: false, reason: "validation_unavailable" };
   if (dupe && dupe.length > 0) return { valid: false, reason: "duplicate" };
 
   return { valid: true };

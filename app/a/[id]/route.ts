@@ -12,7 +12,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveClick } from "@/lib/ads/serve";
 import { serviceClient } from "@/lib/supabase/service";
-import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
+import { lookupGeo } from "@/lib/tracker/geo";
+import { adClickIp } from "@/lib/ads/client-ip";
 import { parseDevice } from "@/lib/tracker/device";
 import { isShortCode } from "@/lib/ads/shortcode";
 import { env } from "@/lib/env";
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     const imp = await findImpression(sb, id, byCode);
     if (!imp) return NextResponse.redirect(fallback, { status: 302 });
 
-    const ip = clientIpFromHeaders(request.headers);
+    const ip = adClickIp(request.headers);
     const geo = await lookupGeo(ip).catch(() => null);
     // Deliberately the STRICT classification here, unlike /api/ads/motd: a
     // terminal ad is served to curl, but it's clicked from a browser when the

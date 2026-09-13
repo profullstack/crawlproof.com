@@ -29,6 +29,7 @@ import { promoForCampaign } from "./promos";
 import { promoState, clickChargeCents } from "./trending";
 import { paperWeight, type PaperBudgetFields } from "./autobid";
 import { paperCharge } from "./bids";
+import { claimClickCooldown } from "./click-cooldown";
 
 // Server-side ad selection + metering. Runs under the service-role client so
 // the public serving endpoints can read cross-tenant campaigns/creatives and
@@ -626,7 +627,7 @@ export async function resolveClick(input: {
     // yesterday's too, or every check silently misses for the first hours after
     // the salt rotates.
     const ipHash = hashIpRotating(input.ctx?.ip ?? null);
-    const validity = await assessClickValidity({
+    let validity = await assessClickValidity({
       campaignId: campaign.id,
       slotId: input.slotId,
       impressionId: input.impressionId,
@@ -634,6 +635,10 @@ export async function resolveClick(input: {
       ipHashes: rotatingIpHashCandidates(input.ctx?.ip ?? null, CLICK_DEDUPE_WINDOW_MS),
       device: input.ctx?.device,
     });
+    if (validity.valid) {
+      const admission = await claimClickCooldown({ visitorId, ip: input.ctx?.ip });
+      if (!admission.allowed) validity = { valid: false, reason: admission.reason };
+    }
 
     // The 90-day promo, settled here rather than inside ad_charge_click.
     //

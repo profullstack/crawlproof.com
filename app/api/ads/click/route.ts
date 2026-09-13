@@ -4,7 +4,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { resolveClick } from "@/lib/ads/serve";
-import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
+import { lookupGeo } from "@/lib/tracker/geo";
+import { adClickIp } from "@/lib/ads/client-ip";
 import { parseDevice } from "@/lib/tracker/device";
 import { env } from "@/lib/env";
 
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
     const creativeId = url.searchParams.get("cr");
     const visitorId = url.searchParams.get("v");
 
-    const ip = clientIpFromHeaders(request.headers);
+    const ip = adClickIp(request.headers);
     const geo = await lookupGeo(ip).catch(() => null);
     const device = parseDevice(request.headers.get("user-agent")).deviceType;
 
