@@ -90,36 +90,17 @@ export async function addOrRefreshProgram(input: string, addedBy: string | null)
     }
     return { ok: false, error: found.error };
   }
-  const { data, error } = await svc
-    .from("affiliate_programs")
-    .upsert(
-      {
-        origin: found.origin,
-        descriptor: found.raw,
-        verified: found.verified,
-        fetched_at: now,
-        error: null,
-        added_by: addedBy,
-        updated_at: now,
-      },
-      { onConflict: "origin" },
-    )
-    .select("id, origin, descriptor, verified, fetched_at, error")
-    .single();
-  if (error || !data) {
-    // The unique index is on lower(origin), which upsert cannot target; fall back to update-or-insert.
-    const existing = await directoryRow(found.origin);
-    if (existing) {
-      await svc
-        .from("affiliate_programs")
-        .update({ descriptor: found.raw, verified: found.verified, fetched_at: now, error: null, updated_at: now })
-        .eq("id", existing.id);
-      const row = await directoryRow(found.origin);
-      return row ? { ok: true, row, warnings: found.warnings } : { ok: false, error: "Could not store the program." };
-    }
-    return { ok: false, error: error?.message ?? "Could not store the program." };
-  }
-  return { ok: true, row: toRow(data), warnings: found.warnings };
+  // The unique index is on lower(origin), which a PostgREST upsert cannot
+  // name, so: update the row that exists, else insert.
+  const existing = await directoryRow(found.origin);
+  const patch = { descriptor: found.raw, verified: found.verified, fetched_at: now, error: null, updated_at: now };
+  const { error } = existing
+    ? await svc.from("affiliate_programs").update(patch).eq("id", existing.id)
+    : await svc.from("affiliate_programs").insert({ origin: found.origin, added_by: addedBy, ...patch });
+  if (error) return { ok: false, error: error.message };
+  const row = await directoryRow(found.origin);
+  if (!row) return { ok: false, error: "Could not store the program." };
+  return { ok: true, row, warnings: found.warnings };
 }
 
 /** Re-read every merchant not read in the last day (spec, "Directories" rule 1). */
