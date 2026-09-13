@@ -17,6 +17,8 @@ import { adClickIp } from "@/lib/ads/client-ip";
 import { parseDevice } from "@/lib/tracker/device";
 import { isShortCode } from "@/lib/ads/shortcode";
 import { env } from "@/lib/env";
+import { gate } from "@/lib/crawl-gateway";
+import { crawlerFamily } from "@/lib/crawl-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,6 +69,8 @@ async function findImpression(
 }
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const denied = await gate(request);
+  if (denied) return denied;
   const fallback = env.siteUrl || "https://crawlproof.com";
   try {
     const { id } = await ctx.params;
@@ -82,12 +86,13 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     if (!imp) return NextResponse.redirect(fallback, { status: 302 });
 
     const ip = adClickIp(request.headers);
-    const geo = await lookupGeo(ip).catch(() => null);
+    const crawler = crawlerFamily(request.headers.get("user-agent"));
+    const geo = crawler ? null : await lookupGeo(ip).catch(() => null);
     // Deliberately the STRICT classification here, unlike /api/ads/motd: a
     // terminal ad is served to curl, but it's clicked from a browser when the
     // reader follows the link. Anyone can curl this URL in a loop, so scripted
     // hits stay unbilled (recorded with valid=false) rather than paying out.
-    const device = parseDevice(request.headers.get("user-agent")).deviceType;
+    const device = crawler ? "bot" : parseDevice(request.headers.get("user-agent")).deviceType;
 
     const dest = await resolveClick({
       impressionId: imp.id,
@@ -103,6 +108,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     });
 
     if (!dest) return NextResponse.redirect(fallback, { status: 302 });
+    if (crawler) return NextResponse.redirect(dest, { status: 302, headers: { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } });
 
     // Terminal traffic is invisible in an advertiser's analytics without a tag
     // — there's no referrer from a shell. resolveClick already appended

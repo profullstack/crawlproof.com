@@ -113,6 +113,23 @@ describe("Traffic list", () => {
     expect(screen.regions.some((r) => typeof r.onClick === "function")).toBe(true);
   });
 
+  it("opens the clicked domain after scrolling and ignores the header", () => {
+    const rows = Array.from({ length: 40 }, (_, i) => siteRow({
+      site: `domain${i}.dev`, id: `p-${i}`, url: `https://domain${i}.dev`, visitors: 1000 - i,
+    }));
+    const state = stateWith({ sort: "visitors", panes: { sites: { selected: 20, offset: 20, total: 40 } } }, rows);
+    const screen = renderToScreen(({ ui, theme }) => renderBody(ui, state, theme), { width: 160, height: 12 });
+    const point = screen.find("domain21.dev");
+    expect(point).not.toBeNull();
+    const region = screen.regions.find((r) => point && point.x >= r.rect.x && point.x < r.rect.x + r.rect.width && point.y >= r.rect.y && point.y < r.rect.y + r.rect.height)!;
+    region.onClick?.(0, 0, "left");
+    expect(state.domain).toBeNull();
+    region.onClick?.(point!.x - region.rect.x, point!.y - region.rect.y, "left");
+    expect(state.domain).toBe("domain21.dev");
+    expect(state.panes.sites?.selected).toBe(21);
+    expect(draw(state).text()).not.toContain("domain20.dev");
+  });
+
   it("marks a site that did not answer rather than drawing it as a quiet one", () => {
     const rows = [siteRow(), siteRow({ site: "down.dev", id: "p-2", url: "https://down.dev", error: "504 Gateway Timeout", visitors: 0, pageviews: 0, series: [], mix: undefined })];
     const text = draw(stateWith({}, rows)).text();
@@ -201,9 +218,35 @@ describe("the domain screen", () => {
 
   it("shows the money for that domain, cost by both denominators", () => {
     const out = text();
-    expect(out).toContain("Cost · by views");
-    expect(out).toContain("Cost · by visits");
+    expect(out).toContain("Est. cost/views");
+    expect(out).toContain("Est. cost/visits");
     expect(out).toContain("Ad earned");
+  });
+
+  it("shows only the opened domain's CoinPay volume, payments and commission", () => {
+    const state = stateWith({ domain: "nichedb.dev" });
+    const fin = state.snapshot!.finance!;
+    fin.businesses = [{ id: "b-1", name: "nichedb.dev" }, { id: "b-2", name: "other.dev" }];
+    fin.businessRevenue = {
+      "b-1": { windowDays: 30, commissionUsd: 12, grossVolumeUsd: 4321, transactions: 7 },
+      "b-2": { windowDays: 30, commissionUsd: 999, grossVolumeUsd: 987654, transactions: 900 },
+    };
+    const out = draw(state).text();
+    expect(out).toMatch(/Revenue\s+\$12.00/);
+    expect(out).toMatch(/Volume · 30d\s+\$4,321/);
+    expect(out).toMatch(/Payments\s+7/);
+    expect(out).not.toContain("987,654");
+    expect(out).toContain("CoinPay: nichedb.dev");
+  });
+
+  it("marks partial ad stats unavailable instead of showing zero-filled earnings", () => {
+    const state = stateWith({ domain: "nichedb.dev" });
+    state.snapshot!.ads!.statsUnavailable = true;
+    const out = draw(state).text();
+    expect(out).toMatch(/Ad earned \(int\.\)\s+—/);
+    expect(out).toMatch(/Ad spent \(int\.\)\s+—/);
+    expect(out).toMatch(/Impressions\s+—/);
+    expect(out).toContain("Ads unavailable");
   });
 
   it("shows the score and every component behind it", () => {

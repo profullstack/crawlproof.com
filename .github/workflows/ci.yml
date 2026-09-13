@@ -31,3 +31,8 @@ jobs:
 
       - name: Tests
         run: npm test
+
+      - name: Ad reporting and crawler limits (PostgreSQL + Redis)
+        run: |
+          node scripts/test-ad-token-earnings.mjs
+          node --import tsx scripts/test-crawl-limits.mjs

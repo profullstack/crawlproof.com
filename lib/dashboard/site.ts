@@ -18,10 +18,8 @@
 //                destination host. Both exact. Both internal: this network has
 //                one account on both sides, so neither is revenue.
 //   revenue      CoinPay commission, which is the only money from outside the
-//                fleet — and is attributable to a domain only when the merchant
-//                account has exactly one business and it is this one. Otherwise
-//                it is null and the screen says why rather than dividing the
-//                fleet's revenue by a number of sites.
+//                fleet — matched by business name/domain and fetched with that
+//                business's id. Missing or unmatched analytics stay unknown.
 
 import type { AdsInput, FinanceInput, RoiModel } from "./roi";
 import { scoreSite, type ScoreItem, type ScoreModel } from "./score";
@@ -58,6 +56,10 @@ export type SiteMoney = {
   revenueUsd: number | null;
   /** How `revenueUsd` was arrived at, for the screen to print. */
   revenueBasis: string;
+  /** Actual payment volume and count over the CoinPay observation window. */
+  grossVolumeUsd: number | null;
+  transactions: number | null;
+  observedDays: number | null;
   /** Revenue per 1,000 human visits, when both halves exist. */
   rpmUsd: number | null;
   /** Revenue less the cost-by-views share. Null when either half is null. */
@@ -127,36 +129,75 @@ export function sameProperty(site: SiteLike, url: string | null | undefined): bo
   return site.site.toLowerCase() === target;
 }
 
+/** Self-referrals and loopback checks are existing traffic, not new discovery. */
+export function sourcesForScore(site: SiteLike): ScoreItem[] {
+  const grouped = new Map<string, number>();
+  for (const source of site.sources ?? []) {
+    const referral = /^referral\s*(?:·|:)\s*(.+)$/i.exec(source.label)?.[1];
+    const host = hostFrom(referral);
+    const local = host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host ?? "");
+    const label = referral && (sameProperty(site, referral) || local) ? "Internal referral" : source.label;
+    grouped.set(label, (grouped.get(label) ?? 0) + num(source.value));
+  }
+  return [...grouped].map(([label, value]) => ({ label, value }));
+}
+
 /**
  * CoinPay commission attributable to one property.
  *
- * Only when the merchant account has exactly one business and it is this one.
- * With several, the snapshot carries a fleet total and no per-business split —
- * `getFinanceAnalytics` takes a `businessId` but the dashboard makes one call,
- * not one per business — so anything else would be the fleet's revenue divided
- * by a guess.
+ * Prefer analytics requested with a business id. Older snapshots can supply a
+ * windowed series only if their sole business matches this property.
  */
 export function coinpayRevenueForSite(
   finance: FinanceInput | null,
   roi: RoiModel,
   site: SiteLike,
-): { usd: number | null; basis: string } {
-  const businesses = (finance as { businesses?: Array<{ id?: string; name?: string }> } | null)?.businesses ?? [];
-  if (!finance) return { usd: null, basis: "no CoinPay session" };
-  if (businesses.length !== 1) {
+): { usd: number | null; basis: string; grossVolumeUsd: number | null; transactions: number | null; observedDays: number | null } {
+  const unknown = (basis: string) => ({ usd: null, basis, grossVolumeUsd: null, transactions: null, observedDays: null });
+  const businesses = finance?.businesses ?? [];
+  if (!finance) return unknown("no CoinPay session");
+  const matches = businesses.filter((b) =>
+    sameProperty(site, b.name) || site.site.toLowerCase() === b.name?.toLowerCase(),
+  );
+  if (finance.businessRevenue) {
+    if (!matches.length) return unknown("no CoinPay business matches this domain");
+    const rows = matches.map((b) => b.id ? finance.businessRevenue?.[b.id] : undefined);
+    for (const row of rows) {
+      if (!row || row.error || row.commissionUsd == null || row.grossVolumeUsd == null || row.transactions == null || !(row.windowDays > 0)) {
+        return unknown(row?.error ?? "business analytics unavailable");
+      }
+    }
+    const observedDays = rows[0]!.windowDays;
+    if (rows.some((row) => row!.windowDays !== observedDays)) return unknown("business windows do not match");
+    const commission = rows.reduce((total, row) => total + num(row!.commissionUsd), 0);
     return {
-      usd: null,
-      basis: businesses.length
-        ? `${businesses.length} CoinPay businesses, no per-business split in the snapshot`
-        : "CoinPay reported no businesses",
+      usd: commission * roi.window.days / observedDays,
+      basis: `CoinPay: ${matches.map((b) => b.name).join(", ")} · ${observedDays}d commission prorated to ${roi.window.range}`,
+      grossVolumeUsd: rows.reduce((total, row) => total + num(row!.grossVolumeUsd), 0),
+      transactions: rows.reduce((total, row) => total + num(row!.transactions), 0),
+      observedDays,
     };
+  }
+  if (businesses.length !== 1) {
+    return unknown(businesses.length
+        ? `${businesses.length} CoinPay businesses, no per-business split in the snapshot`
+        : "CoinPay reported no businesses");
   }
   const only = businesses[0] as { id?: string; name?: string };
   const name = String(only?.name ?? "");
   if (!(sameProperty(site, name) || site.site.toLowerCase() === name.toLowerCase())) {
-    return { usd: null, basis: `all commission belongs to ${name || "another business"}` };
+    return unknown(`all commission belongs to ${name || "another business"}`);
   }
-  return { usd: num(roi.revenue.windowUsd), basis: `all CoinPay commission (${name})` };
+  if (finance.errors?.analytics || !finance.series?.length) {
+    return unknown(finance.errors?.analytics ?? "no windowed CoinPay series");
+  }
+  return {
+    usd: num(roi.revenue.windowUsd),
+    basis: `all CoinPay commission (${name}) · ${roi.revenue.observedDays}d prorated to ${roi.window.range}`,
+    grossVolumeUsd: finance.series.reduce((total, point) => total + num(point.volumeUsd), 0),
+    transactions: finance.series.reduce((total, point) => total + num(point.count), 0),
+    observedDays: roi.revenue.observedDays,
+  };
 }
 
 /** Ad money and delivery for one property, joined exactly rather than shared out. */
@@ -217,13 +258,16 @@ export function buildSiteDetail(input: BuildSiteDetailInput): SiteDetail {
   const visitShare = share(site.visitors, roi.attention.visitors);
   const viewShare = share(site.pageviews, roi.attention.pageviews);
   const costWindow = num(roi.cost.windowUsd);
-  const costByViews = roi.attention.pageviews > 0 ? costWindow * viewShare : null;
-  const costByVisits = roi.attention.visitors > 0 ? costWindow * visitShare : null;
+  const costKnown = Boolean(input.finance?.position && !input.finance.errors?.summary && !site.error);
+  const costByViews = costKnown && roi.attention.pageviews > 0 ? costWindow * viewShare : null;
+  const costByVisits = costKnown && roi.attention.visitors > 0 ? costWindow * visitShare : null;
 
   const ad = adMoneyForSite(input.ads, site);
   const revenue = coinpayRevenueForSite(input.finance, roi, site);
   if (revenue.usd === null) {
     gaps.push(`Revenue is not attributable to one domain here: ${revenue.basis}.`);
+  } else {
+    gaps.push(revenue.basis);
   }
 
   // The earn rail is a network-wide pool — crawler pass revenue funds it with
@@ -231,6 +275,10 @@ export function buildSiteDetail(input: BuildSiteDetailInput): SiteDetail {
   // figure to show. Named rather than omitted, because a missing money line on
   // a money screen reads as a zero.
   gaps.push("Earn-rail rewards are pooled network-wide; there is no per-domain share to report.");
+  const scoreSources = input.window.who === "bots" ? [] : sourcesForScore(site);
+  if (scoreSources.some((s) => s.label === "Internal referral")) {
+    gaps.push("Self-referrals and localhost traffic do not count as discovery.");
+  }
 
   // Human visits are the denominator for a per-reader figure, and the score
   // half that pays attention to money uses the same one. Ad earnings are
@@ -249,8 +297,8 @@ export function buildSiteDetail(input: BuildSiteDetailInput): SiteDetail {
     : scoreSite({
         humans: series.map((p) => num(p.humans)),
         bots: series.map((p) => num(p.bots)),
-        sources: site.sources ?? [],
-        revenueUsd: revenue.usd ?? 0,
+        sources: scoreSources,
+        revenueUsd: revenue.usd,
         mixKnown,
         ...(mixKnown ? { humansTotal: humans, botsTotal: bots } : {}),
       });
@@ -296,6 +344,9 @@ export function buildSiteDetail(input: BuildSiteDetailInput): SiteDetail {
       adClicks: ad.clicks,
       revenueUsd: revenue.usd,
       revenueBasis: revenue.basis,
+      grossVolumeUsd: revenue.grossVolumeUsd,
+      transactions: revenue.transactions,
+      observedDays: revenue.observedDays,
       rpmUsd,
       netUsd: revenue.usd === null || costByViews === null ? null : revenue.usd - costByViews,
     },

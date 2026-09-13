@@ -8,11 +8,15 @@ import { lookupGeo } from "@/lib/tracker/geo";
 import { adClickIp } from "@/lib/ads/client-ip";
 import { parseDevice } from "@/lib/tracker/device";
 import { env } from "@/lib/env";
+import { gate } from "@/lib/crawl-gateway";
+import { crawlerFamily } from "@/lib/crawl-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const denied = await gate(request);
+  if (denied) return denied;
   const fallback = env.siteUrl || "https://crawlproof.com";
   try {
     const url = new URL(request.url);
@@ -23,8 +27,9 @@ export async function GET(request: NextRequest) {
     const visitorId = url.searchParams.get("v");
 
     const ip = adClickIp(request.headers);
-    const geo = await lookupGeo(ip).catch(() => null);
-    const device = parseDevice(request.headers.get("user-agent")).deviceType;
+    const crawler = crawlerFamily(request.headers.get("user-agent"));
+    const geo = crawler ? null : await lookupGeo(ip).catch(() => null);
+    const device = crawler ? "bot" : parseDevice(request.headers.get("user-agent")).deviceType;
 
     const dest = await resolveClick({
       impressionId,

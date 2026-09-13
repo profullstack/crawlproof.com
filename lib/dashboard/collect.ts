@@ -6,8 +6,8 @@
 // request is how the tracker RPCs have timed out before, and a slow client is
 // a much better failure than a route that 504s for everybody.
 //
-// CoinPay is one call into its own SDK, which is the whole point: the finance
-// dashboard already exists and this reads it rather than reimplementing it.
+// CoinPay's SDK supplies the fleet snapshot and business-specific analytics
+// for the domain view. The latter use a bounded fan-out too.
 //
 // Nothing here throws for a partial answer. A source that fails lands in
 // `errors` and its panel says so, because a dashboard that hides a dead feed
@@ -16,6 +16,7 @@
 import {
   buildRoi,
   type AdsInput,
+  type BusinessRevenue,
   type FinanceInput,
   type RoiModel,
   type SiteTraffic,
@@ -24,6 +25,12 @@ import type { ScoreModel } from "./score";
 import { buildSiteDetail, type SiteMix, type SitePoint } from "./site";
 
 export type ListItem = { label: string; value: number };
+export type FeedName = "traffic" | "ads" | "finance";
+export type FeedProgress = {
+  status: "idle" | "loading" | "retrying" | "success" | "error";
+  detail: string;
+};
+export type ProgressListener = (feed: FeedName, progress: FeedProgress) => void;
 
 export type SiteStats = SiteTraffic & {
   id?: string;
@@ -49,6 +56,9 @@ export type DashboardSnapshot = {
   sites: SiteStats[];
   fleet: { sources: ListItem[]; referrers: ListItem[]; pages: ListItem[] };
   ads: AdsInput | null;
+  /** Last successful ads read; retained across a transient failure in the same window. */
+  adsUpdatedAt?: string;
+  adsStale?: boolean;
   finance: FinanceInput | null;
   roi: RoiModel;
   /** Source name → why it is missing. Empty when everything answered. */
@@ -56,6 +66,13 @@ export type DashboardSnapshot = {
 };
 
 const TIMEOUT_MS = 20_000;
+export const ADS_TIMEOUT_MS = 60_000;
+
+class FeedError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+  }
+}
 
 async function fetchJson<T>(url: string, token: string, timeoutMs = TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
@@ -70,16 +87,44 @@ async function fetchJson<T>(url: string, token: string, timeoutMs = TIMEOUT_MS):
     try {
       body = text ? JSON.parse(text) : {};
     } catch {
-      throw new Error(`${res.status} ${res.statusText}: not JSON`);
+      throw new FeedError(`${res.status} ${res.statusText}: not JSON`, res.status >= 500);
     }
     if (!res.ok) {
       const message = (body as { error?: string })?.error ?? `${res.status} ${res.statusText}`;
-      throw new Error(message);
+      throw new FeedError(message, res.status === 408 || res.status === 429 || res.status >= 500);
     }
     return body as T;
+  } catch (err) {
+    if (controller.signal.aborted) throw new FeedError(`Request timed out after ${timeoutMs / 1000}s`, true);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Ads aggregate hundreds of campaigns. Retry one transient or partial read. */
+export async function collectAds(baseUrl: string, token: string, days: number, progress?: (value: FeedProgress) => void): Promise<AdsInput> {
+  const url = `${baseUrl}/api/ads/v1/earnings?days=${encodeURIComponent(String(days))}`;
+  let partial: AdsInput | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    progress?.({ status: attempt ? "retrying" : "loading", detail: attempt ? "Ads retry 2/2" : "Fetching ads" });
+    try {
+      const ads = await fetchJson<AdsInput>(url, token, ADS_TIMEOUT_MS);
+      if (!ads.statsUnavailable) return ads;
+      partial = ads;
+      progress?.({ status: "retrying", detail: "Ads incomplete; retrying" });
+    } catch (err) {
+      const retryable = err instanceof FeedError ? err.retryable : err instanceof TypeError;
+      if (!retryable) throw err;
+      if (attempt === 1) {
+        if (partial) return partial;
+        throw err;
+      }
+      progress?.({ status: "retrying", detail: "Ads request failed; retrying" });
+    }
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return partial as AdsInput;
 }
 
 /** Run `fn` over `items`, at most `limit` in flight. */
@@ -174,6 +219,45 @@ async function statsForSite(
 
 export type CoinPayAuth = { token: string; baseUrl: string };
 
+/** Keep each business separate, including failures, so no fleet total leaks into a domain. */
+export async function collectBusinessRevenue(
+  businesses: NonNullable<FinanceInput["businesses"]>,
+  days: number,
+  analyticsFor: (businessId: string) => Promise<Record<string, unknown>>,
+  progress?: (completed: number, total: number) => void,
+): Promise<Record<string, BusinessRevenue>> {
+  const ids = [...new Set(businesses.flatMap((b) => b.id ? [b.id] : []))];
+  let completed = 0;
+  progress?.(completed, ids.length);
+  const entries = await mapLimit(ids, 4, async (id): Promise<[string, BusinessRevenue]> => {
+    try {
+      const analytics = await analyticsFor(id);
+      const series = analytics?.series as { points?: Array<Record<string, unknown>> } | undefined;
+      if (!Array.isArray(series?.points)) throw new Error("CoinPay returned no windowed series");
+      const totals = { commissionUsd: 0, grossVolumeUsd: 0, transactions: 0 };
+      for (const point of series.points) {
+        for (const [key, field] of [
+          ["commissionUsd", "total_commission_usd"],
+          ["grossVolumeUsd", "total_volume_usd"],
+          ["transactions", "total_count"],
+        ] as const) {
+          const value = point?.[field];
+          if (value == null || value === "" || !Number.isFinite(Number(value))) {
+            throw new Error("CoinPay returned incomplete windowed analytics");
+          }
+          totals[key] += Number(value);
+        }
+      }
+      return [id, { windowDays: days, ...totals }];
+    } catch (err) {
+      return [id, { windowDays: days, error: err instanceof Error ? err.message : String(err) }];
+    } finally {
+      progress?.(++completed, ids.length);
+    }
+  });
+  return Object.fromEntries(entries);
+}
+
 /**
  * The CoinPay finance snapshot, via CoinPay's own SDK.
  *
@@ -183,7 +267,9 @@ export type CoinPayAuth = { token: string; baseUrl: string };
 export async function collectFinance(
   auth: CoinPayAuth,
   days: number,
+  progress?: (value: FeedProgress) => void,
 ): Promise<FinanceInput> {
+  progress?.({ status: "loading", detail: "CoinPay bank & payments" });
   const [{ default: CoinPayClient }, finances] = await Promise.all([
     import("@profullstack/coinpay"),
     import("@profullstack/coinpay/finances"),
@@ -191,7 +277,16 @@ export async function collectFinance(
   const client = new CoinPayClient({ apiKey: auth.token, baseUrl: auth.baseUrl });
   // 500 rather than the default page: the vendor breakdown is only honest if
   // the ledger it groups covers the whole window.
-  return (await finances.collectFinanceSnapshot(client, { days, limit: 500 })) as FinanceInput;
+  const snapshot = await finances.collectFinanceSnapshot(client, { days, limit: 500 });
+  // CoinPay's route accepts day/week/month/year, while this SDK's periodForDays
+  // emits 7d/30d, which the route treats as all-time. Use the server's presets.
+  const period = days <= 1 ? "day" : days <= 7 ? "week" : days <= 30 ? "month" : "year";
+  const windowDays = days <= 1 ? 1 : days <= 7 ? 7 : days <= 30 ? 30 : 365;
+  const businessRevenue = await collectBusinessRevenue(snapshot.businesses, windowDays, (businessId) =>
+    finances.getFinanceAnalytics(client, { period, businessId }),
+    (completed, total) => progress?.({ status: "loading", detail: `CoinPay businesses ${completed}/${total}` }),
+  );
+  return { ...snapshot, businessRevenue } as FinanceInput;
 }
 
 export type CollectOptions = {
@@ -204,32 +299,45 @@ export type CollectOptions = {
   coinpay: CoinPayAuth | null;
   /** Limit the fan-out to these site names or ids. */
   only?: string[] | null;
+  /** Preserve a successful ads read if this refresh fails in the same finance window. */
+  previous?: DashboardSnapshot | null;
+  onProgress?: ProgressListener;
 };
 
 export async function collectDashboard(opts: CollectOptions): Promise<DashboardSnapshot> {
   const errors: Record<string, string> = {};
+  const report = (feed: FeedName, status: FeedProgress["status"], detail: string) => opts.onProgress?.(feed, { status, detail });
+  report("traffic", "loading", "Listing domains");
 
   const sitesPromise = listSites(opts.baseUrl, opts.token).catch((err: unknown) => {
     errors.sites = err instanceof Error ? err.message : String(err);
     return [] as SiteRow[];
   });
 
-  const adsPromise = fetchJson<AdsInput>(
-    `${opts.baseUrl}/api/ads/v1/earnings?days=${encodeURIComponent(String(opts.financeDays))}`,
-    opts.token,
-  ).catch((err: unknown) => {
+  const adsPromise = collectAds(opts.baseUrl, opts.token, opts.financeDays, (p) => opts.onProgress?.("ads", p)).then((ads) => {
+    report("ads", ads.statsUnavailable ? "error" : "success", ads.statsUnavailable ? "Ads partially loaded" : "Ads refreshed");
+    return ads;
+  }).catch((err: unknown) => {
     errors.ads = err instanceof Error ? err.message : String(err);
+    report("ads", "error", `Ads failed: ${errors.ads}`);
     return null;
   });
 
   const financePromise = opts.coinpay
-    ? collectFinance(opts.coinpay, opts.financeDays).catch((err: unknown) => {
+    ? collectFinance(opts.coinpay, opts.financeDays, (p) => opts.onProgress?.("finance", p)).then((finance) => {
+        const failures = Object.keys(finance.errors ?? {}).length + Object.values(finance.businessRevenue ?? {}).filter((b) => b.error).length;
+        if (failures) errors.finance = `${failures} CoinPay sources unavailable`;
+        report("finance", failures ? "error" : "success", failures ? errors.finance! : "CoinPay refreshed");
+        return finance;
+      }).catch((err: unknown) => {
         errors.finance = err instanceof Error ? err.message : String(err);
+        report("finance", "error", `CoinPay failed: ${errors.finance}`);
         return null;
       })
     : Promise.resolve(null);
   if (!opts.coinpay) {
     errors.finance = "No CoinPay session. Run `coinpay auth login`, or set COINPAY_SESSION_TOKEN.";
+    report("finance", "error", "CoinPay: no session");
   }
 
   let siteRows = await sitesPromise;
@@ -238,15 +346,31 @@ export async function collectDashboard(opts: CollectOptions): Promise<DashboardS
     siteRows = siteRows.filter((s) => wanted.has(s.name.toLowerCase()) || wanted.has(s.id));
   }
 
-  const sites = await mapLimit(siteRows, opts.concurrency ?? 8, (site) =>
-    statsForSite(opts.baseUrl, opts.token, site, opts.range, opts.who),
-  );
+  let completed = 0;
+  report("traffic", "loading", `Traffic ${completed}/${siteRows.length}`);
+  const sites = await mapLimit(siteRows, opts.concurrency ?? 8, async (site) => {
+    const stats = await statsForSite(opts.baseUrl, opts.token, site, opts.range, opts.who);
+    report("traffic", "loading", `Traffic ${++completed}/${siteRows.length}`);
+    return stats;
+  });
   sites.sort((a, b) => b.visitors - a.visitors || a.site.localeCompare(b.site));
 
   const failed = sites.filter((s) => s.error).length;
   if (failed) errors.stats = `${failed} of ${sites.length} sites did not answer`;
+  report("traffic", failed || errors.sites ? "error" : "success", errors.sites ? "Domain list failed" : failed ? `Traffic: ${failed} sites failed` : `Traffic ${sites.length}/${sites.length} refreshed`);
 
-  const [ads, finance] = await Promise.all([adsPromise, financePromise]);
+  const [fetchedAds, finance] = await Promise.all([adsPromise, financePromise]);
+  let ads = fetchedAds;
+  if (ads?.statsUnavailable) errors.ads = "Some ad queries failed; domain ad money and delivery are unavailable.";
+  let adsUpdatedAt = ads ? new Date().toISOString() : undefined;
+  let adsStale = false;
+  const previous = opts.previous;
+  if ((!ads || ads.statsUnavailable) && previous?.ads && !previous.ads.statsUnavailable && previous.window.financeDays === opts.financeDays) {
+    ads = previous.ads;
+    adsUpdatedAt = previous.adsUpdatedAt ?? previous.generatedAt;
+    adsStale = true;
+    report("ads", "error", "Ads failed; showing saved data");
+  }
 
   const roi = buildRoi({
     traffic: { range: opts.range, who: opts.who, sites },
@@ -254,9 +378,8 @@ export async function collectDashboard(opts: CollectOptions): Promise<DashboardS
     finance,
   });
 
-  // Scored after the fleet totals exist, because a property's share of the
-  // burn is part of what it is being scored on. Pure and cheap: the domain
-  // screen rebuilds the whole detail from the same snapshot on demand.
+  // Scored after the finance data arrives so money can contribute when it is
+  // attributable. The domain screen rebuilds the same detail on demand.
   const window = { range: opts.range, who: opts.who, financeDays: opts.financeDays };
   for (const site of sites) {
     site.score = buildSiteDetail({ site, roi, ads, finance, window }).score;
@@ -272,6 +395,8 @@ export async function collectDashboard(opts: CollectOptions): Promise<DashboardS
       pages: mergeLists(sites.map((s) => s.pages)),
     },
     ads,
+    adsUpdatedAt,
+    adsStale,
     finance,
     roi,
     errors,

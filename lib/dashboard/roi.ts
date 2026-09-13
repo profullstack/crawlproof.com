@@ -93,18 +93,31 @@ export type AdsInput = {
     advClicks?: number;
     pubImpressions?: number;
     pubClicks?: number;
+    pubBilledClicks?: number;
+    pubFreeClicks?: number;
+    advBilledClicks?: number;
     invalidClicks?: number;
   };
+};
+
+/** Windowed CoinPay analytics fetched with an explicit business_id. */
+export type BusinessRevenue = {
+  windowDays: number;
+  commissionUsd?: number;
+  grossVolumeUsd?: number;
+  transactions?: number;
+  error?: string;
 };
 
 /** The subset of the CoinPay finance snapshot this module reads. */
 export type FinanceInput = {
   windowDays?: number;
   /**
-   * The merchant's businesses. Read by lib/dashboard/site.ts, which can only
-   * attribute commission to a domain when there is exactly one of them.
+   * The merchant's businesses, matched to a property by domain/name.
    */
   businesses?: Array<{ id?: string; name?: string }>;
+  businessRevenue?: Record<string, BusinessRevenue>;
+  errors?: Record<string, string>;
   /**
    * The headline earnings figures, which are **lifetime and not windowed**.
    *
@@ -323,6 +336,8 @@ export const AD_TARGET_CTR = 0.05;
 export type AdTargets = {
   impressions: number;
   clicks: number;
+  billedClicks: number;
+  freeClicks: number;
   ctr: number | null;
   invalidClicks: number;
   freeImpressions: number;
@@ -331,6 +346,7 @@ export type AdTargets = {
   impressionProgress: number;
   ctrProgress: number;
   targetImpressions: number;
+  windowTargetImpressions: number;
   targetCtr: number;
   /** Cents earned per valid click today, if any money has moved at all. */
   cpcCents: number | null;
@@ -362,22 +378,27 @@ export function adTargets(
   const t = ads?.totals ?? {};
   const impressions = n(t.pubImpressions);
   const clicks = n(t.pubClicks);
-  const spent = n(t.spentCents);
+  const spent = (ads?.campaigns ?? []).reduce((total, c) => total + n(c.spentCents), 0);
   const ctr = impressions > 0 ? clicks / impressions : null;
 
-  const derivedCpc = clicks > 0 && spent > 0 ? spent / clicks : null;
+  const billed = n(t.advBilledClicks);
+  const derivedCpc = billed > 0 && spent > 0 ? spent / billed : null;
   const cpc = cpcCents ?? derivedCpc;
+  const windowTargetImpressions = targetImpressions * Math.max(1, ads?.rangeDays ?? 30) / 30;
 
   return {
     impressions,
     clicks,
+    billedClicks: n(t.pubBilledClicks),
+    freeClicks: n(t.pubFreeClicks),
     ctr,
     invalidClicks: n(t.invalidClicks),
     freeImpressions: n((t as { pubFreeImpressions?: number }).pubFreeImpressions),
     paidImpressions: n((t as { pubPaidImpressions?: number }).pubPaidImpressions),
-    impressionProgress: targetImpressions > 0 ? impressions / targetImpressions : 0,
+    impressionProgress: windowTargetImpressions > 0 ? impressions / windowTargetImpressions : 0,
     ctrProgress: ctr !== null && targetCtr > 0 ? ctr / targetCtr : 0,
     targetImpressions,
+    windowTargetImpressions,
     targetCtr,
     cpcCents: cpc,
     projectedMonthlyUsd: cpc === null ? null : (targetImpressions * targetCtr * cpc) / 100,

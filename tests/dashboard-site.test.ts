@@ -16,6 +16,7 @@ import {
   coinpayRevenueForSite,
   hostFrom,
   sameProperty,
+  sourcesForScore,
   type SiteLike,
 } from "@/lib/dashboard/site";
 
@@ -119,7 +120,56 @@ describe("adMoneyForSite", () => {
   });
 });
 
+describe("sourcesForScore", () => {
+  it("keeps self and local referrals in the denominator without treating them as discovery", () => {
+    const input = site({ sources: [
+      { label: "Referral · www.nichedb.dev", value: 50 },
+      { label: "Referral · 127.0.0.1:3000", value: 10 },
+      { label: "referral:localhost", value: 10 },
+      { label: "Social · reddit", value: 30 },
+    ] });
+    expect(sourcesForScore(input)).toEqual([
+      { label: "Internal referral", value: 70 },
+      { label: "Social · reddit", value: 30 },
+    ]);
+    const detail = buildSiteDetail({ site: input, roi: roiFor([input]), ads: ads(), finance: null, window: { range: "1m", who: "humans", financeDays: 30 } });
+    expect(detail.score.viralComponents.find((c) => c.key === "discovery")?.value).toBeCloseTo(0.3);
+    expect(detail.traffic.sources).toEqual(input.sources);
+  });
+});
+
 describe("coinpayRevenueForSite", () => {
+  it("uses only the matching business and prorates its commission onto the traffic window", () => {
+    const fin = finance([{ id: "b-1", name: "www.nichedb.dev" }, { id: "b-2", name: "other.dev" }]);
+    fin.businessRevenue = {
+      "b-1": { windowDays: 7, commissionUsd: 14, grossVolumeUsd: 1000, transactions: 3 },
+      "b-2": { windowDays: 7, commissionUsd: 9000, grossVolumeUsd: 50000, transactions: 99 },
+    };
+    const roi = roiFor([site()], fin);
+    roi.window.days = 1;
+    roi.window.range = "1d";
+    const result = coinpayRevenueForSite(fin, roi, site());
+    expect(result.usd).toBe(2);
+    expect(result.grossVolumeUsd).toBe(1000);
+    expect(result.transactions).toBe(3);
+    expect(result.observedDays).toBe(7);
+    expect(result.basis).toContain("prorated to 1d");
+  });
+
+  it("never falls back to fleet revenue when a business request fails or the domain is unmatched", () => {
+    const fin = finance([{ id: "b-1", name: "nichedb.dev" }]);
+    fin.businessRevenue = { "b-1": { windowDays: 7, error: "timeout" } };
+    expect(coinpayRevenueForSite(fin, roiFor([site()], fin), site()).usd).toBeNull();
+    expect(coinpayRevenueForSite(fin, roiFor([site()], fin), site()).basis).toBe("timeout");
+    expect(coinpayRevenueForSite(fin, roiFor([site()], fin), site({ site: "other.dev", url: "https://other.dev" })).usd).toBeNull();
+  });
+
+  it("does not rescale lifetime earnings if an older snapshot has no day series", () => {
+    const fin = finance([{ name: "nichedb.dev" }]);
+    fin.series = [];
+    expect(coinpayRevenueForSite(fin, roiFor([site()], fin), site()).usd).toBeNull();
+  });
+
   it("attributes the whole commission when there is exactly one matching business", () => {
     const fin = finance([{ id: "b-1", name: "nichedb.dev" }]);
     const result = coinpayRevenueForSite(fin, roiFor([site()], fin), site());
@@ -189,6 +239,15 @@ describe("buildSiteDetail", () => {
     expect(detail.money.rpmUsd).toBeNull();
     expect(detail.money.netUsd).toBeNull();
     expect(detail.gaps.join(" ")).toMatch(/not attributable/);
+    expect(detail.score.viralComponents.find((c) => c.key === "money")?.value).toBeNull();
+  });
+
+  it("leaves cost unknown when CoinPay has no bank position", () => {
+    expect(build({}, null).money.costByViewsUsd).toBeNull();
+    expect(build({}, null).money.costByVisitsUsd).toBeNull();
+    const fin = finance([]);
+    fin.errors = { summary: "bank offline" };
+    expect(build({}, fin).money.costByViewsUsd).toBeNull();
   });
 
   it("computes revenue per 1k humans once there is revenue to divide", () => {
@@ -224,5 +283,6 @@ describe("buildSiteDetail", () => {
       window: { range: "1m", who: "bots", financeDays: 30 },
     });
     expect(detail.gaps.join(" ")).toMatch(/bots-only/);
+    expect(detail.score.viralComponents.find((c) => c.key === "discovery")?.value).toBeNull();
   });
 });
