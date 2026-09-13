@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { attributeUser } from "@/lib/affiliate/attribution";
-import { COOKIE_NAME as OA_COOKIE } from "@/lib/affiliate/cookie";
+import { cookieFromHeader } from "@/lib/affiliate/cookie";
 
 // Resolve the URL Supabase should send users back to. Inside the Railway
 // container Next.js's `request.url` carries the bind address (e.g.
@@ -36,12 +36,12 @@ export async function GET(request: Request) {
     }
     // OpenAffiliate: bind the signed-in user to the affiliate in their cookie.
     try {
-      const oa = request.headers.get("cookie")?.match(new RegExp(`(?:^|;\\s*)${OA_COOKIE}=([^;]+)`))?.[1] ?? null;
+      const oa = cookieFromHeader(request.headers.get("cookie"));
       if (oa) {
         const {
           data: { user },
         } = await supabase.auth.getUser();
-        if (user) await attributeUser(user.id, decodeURIComponent(oa));
+        if (user) await attributeUser(user.id, oa);
       }
     } catch (err) {
       console.error("[affiliate] attribute at sign-in", err);

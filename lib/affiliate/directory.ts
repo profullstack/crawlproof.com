@@ -219,7 +219,7 @@ export async function joinExternal(
   const program = input.programId
     ? row.descriptor.programs.find((p) => p.id === input.programId)
     : row.descriptor.programs.find((p) => p.status === "active") ?? row.descriptor.programs[0];
-  if (!program) return { ok: false, error: `No program ${input.programId ?? ""} at ${row.origin}.`.replace(/\s+\./, ".") };
+  if (!program) return { ok: false, error: input.programId ? `No program ${input.programId} at ${row.origin}.` : `No program at ${row.origin}.` };
 
   const { data: twin } = await svc
     .from("affiliate_joins")

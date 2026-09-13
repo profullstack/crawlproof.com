@@ -2,6 +2,7 @@
 // program, read a ledger, and read an OpenProfile.md. Plain fetch with
 // timeouts and size caps; no Supabase here, so the CLI can use it directly.
 
+import { safeFetch } from "./ssrf";
 import {
   WELL_KNOWN_PATH,
   isVerifiedOrigin,
@@ -18,10 +19,9 @@ const MAX_BYTES = 512 * 1024;
 
 async function fetchText(url: string, accept: string): Promise<{ ok: true; text: string; headers: Headers; url: string } | { ok: false; error: string; status?: number }> {
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       headers: { accept, "user-agent": UA },
       signal: AbortSignal.timeout(10_000),
-      redirect: "follow",
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, status: res.status };
     const buf = await res.arrayBuffer();
@@ -149,7 +149,7 @@ export async function joinProgram(
   if (program.status !== "active") return { ok: false, error: `${program.title} is ${program.status} and takes no joins.` };
   let res: Response;
   try {
-    res = await fetch(program.join, {
+    res = await safeFetch(program.join, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json", "user-agent": UA },
       body: JSON.stringify({ program: program.id, ...body }),
@@ -187,7 +187,7 @@ export async function readLedger(ledgerUrl: string, token: string, since?: strin
   const u = new URL(ledgerUrl);
   if (since) u.searchParams.set("since", since);
   try {
-    const res = await fetch(u.toString(), {
+    const res = await safeFetch(u.toString(), {
       headers: { accept: "application/json", authorization: `Bearer ${token}`, "user-agent": UA },
       signal: AbortSignal.timeout(15_000),
     });

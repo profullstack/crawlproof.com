@@ -48,6 +48,8 @@ crawlproof affiliate [link] [--json]
 crawlproof affiliate ledger [--since=ISO] [--json]
 crawlproof affiliate pay --address 0x…
 crawlproof affiliate payout
+crawlproof affiliate webhook <https-url> | --clear
+crawlproof affiliate token --yes
 crawlproof affiliate programs [add <merchant-url>]
 crawlproof affiliate join <merchant-url> [--program=id] [--code=yours]
 crawlproof affiliate joined [--sync]

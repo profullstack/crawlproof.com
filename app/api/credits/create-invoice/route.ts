@@ -6,7 +6,7 @@ import { findPack } from "@/lib/credits";
 import { createPayment } from "@/lib/coinpay";
 import { env } from "@/lib/env";
 import { attributeUser } from "@/lib/affiliate/attribution";
-import { COOKIE_NAME as OA_COOKIE } from "@/lib/affiliate/cookie";
+import { cookieFromHeader } from "@/lib/affiliate/cookie";
 
 export const runtime = "nodejs";
 
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
   // OpenAffiliate: a buyer carrying the attribution cookie is bound to that
   // affiliate now, so the completion webhook (which has no cookie) can find it.
   try {
-    await attributeUser(user.id, req.headers.get("cookie")?.match(new RegExp(`(?:^|;\\s*)${OA_COOKIE}=([^;]+)`))?.[1] ?? null);
+    await attributeUser(user.id, cookieFromHeader(req.headers.get("cookie")));
   } catch (err) {
     console.error("[affiliate] attribute at invoice", err);
   }

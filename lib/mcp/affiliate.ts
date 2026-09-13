@@ -6,7 +6,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
-import { ensureMembershipForUser, ledgerFor, profileUrlForMembership, setPayAddress } from "@/lib/affiliate/memberships";
+import { ensureMembershipForUser, ledgerFor, profileUrlForMembership, rotateToken, setPayAddress, setWebhook } from "@/lib/affiliate/memberships";
 import { addOrRefreshProgram, joinExternal, listDirectory, listJoins, syncJoin } from "@/lib/affiliate/directory";
 import { requestPayout } from "@/lib/affiliate/payouts";
 import { termsLine } from "@/lib/affiliate/program";
@@ -81,6 +81,37 @@ export function registerAffiliateTools(server: McpServer): void {
       if (a && !isPayAddress(a)) return textResult("That is not a wallet address. It starts with 0x and is 42 characters.");
       const out = await setPayAddress(m.id, a || null);
       return textResult(out.ok ? `Payout address ${a ? `set to ${a}` : "cleared"}.` : out.error);
+    },
+  );
+
+  server.registerTool(
+    "affiliate_set_webhook",
+    {
+      description: "Set (or clear) the https URL the caller's affiliate events are POSTed to: conversion.recorded/approved/reversed, payout.sent, program.changed. Signed with Ed25519 when the merchant key is set; the ledger is the truth either way.",
+      inputSchema: { url: z.string().describe("https URL, or empty to clear") },
+    },
+    async (args, extra) => {
+      const m = await ensureMembershipForUser(await userOf(getUserId(extra)));
+      if (!m) return textResult("No membership.");
+      const u = args.url.trim();
+      if (u && !/^https:\/\//.test(u)) return textResult("A webhook is an https URL.");
+      await setWebhook(m.id, u || null);
+      return textResult(u ? `Webhook set to ${u}.` : "Webhook cleared.");
+    },
+  );
+
+  server.registerTool(
+    "affiliate_token",
+    {
+      description: "Issue a new oa_ affiliate token for the caller (shown once; the old one stops working at once). It reads only the ledger at /api/affiliate/v1/ledger, which is what to hand a third party.",
+      inputSchema: { confirm: z.boolean().describe("true to confirm the rotation") },
+    },
+    async (args, extra) => {
+      if (!args.confirm) return textResult("Not rotated. Pass confirm=true; the current token stops working the moment a new one is issued.");
+      const m = await ensureMembershipForUser(await userOf(getUserId(extra)));
+      if (!m) return textResult("No membership.");
+      const token = await rotateToken(m.id);
+      return textResult(`New affiliate token (shown once): ${token}`);
     },
   );
 

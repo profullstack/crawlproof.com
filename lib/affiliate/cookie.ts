@@ -40,3 +40,20 @@ export function isNavigation(headers: { get(name: string): string | null }): boo
   const accept = headers.get("accept") ?? "";
   return accept.includes("text/html");
 }
+
+/** One cookie out of a Cookie header, without a regex. */
+export function cookieFromHeader(header: string | null | undefined, name = COOKIE_NAME): string | null {
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    const raw = part.slice(eq + 1).trim();
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return null;
+}

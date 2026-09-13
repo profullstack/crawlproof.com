@@ -661,6 +661,23 @@ async function cmdAffiliate(args: Args): Promise<number> {
     return 0;
   }
 
+  if (sub === "webhook") {
+    const url = typeof args.flags.url === "string" ? args.flags.url : args.positional[1] ?? "";
+    if (!url && !args.flags.clear) throw new Error("Usage: crawlproof affiliate webhook <https-url> | --clear");
+    const { status, json: me } = await apiCall(args, "POST", "/api/affiliate/v1/me", { webhook: args.flags.clear ? null : url });
+    if (status !== 200) throw new Error(String(me.error ?? `HTTP ${status}`));
+    console.log(`webhook: ${(me.membership as Record<string, unknown>).webhook ?? "(none)"}`);
+    return 0;
+  }
+
+  if (sub === "token") {
+    if (!args.flags.yes) throw new Error("This replaces your affiliate token at once. Re-run with --yes.");
+    const { status, json: out } = await apiCall(args, "POST", "/api/affiliate/v1/token");
+    if (status !== 200) throw new Error(String(out.error ?? `HTTP ${status}`));
+    console.log(json ? JSON.stringify(out, null, 2) : `new affiliate token (shown once): ${out.token}`);
+    return 0;
+  }
+
   if (sub === "payout") {
     const { status, json: out } = await apiCall(args, "POST", "/api/affiliate/v1/payout");
     if (status !== 200) throw new Error(String(out.error ?? `HTTP ${status}`));
@@ -728,7 +745,7 @@ async function cmdAffiliate(args: Args): Promise<number> {
     return 0;
   }
 
-  throw new Error(`unknown affiliate command: ${sub}. One of link, ledger, pay, payout, programs, join, joined.`);
+  throw new Error(`unknown affiliate command: ${sub}. One of link, ledger, pay, payout, webhook, token, programs, join, joined.`);
 }
 
 function help() {
@@ -806,6 +823,12 @@ COMMANDS
 
   affiliate pay --address 0x… | affiliate payout
       Set where the money goes; send the approved balance now.
+
+  affiliate webhook <https-url> | affiliate webhook --clear
+      Where conversion, reversal and payout events are POSTed (signed).
+
+  affiliate token --yes
+      A new oa_ ledger token, shown once; the old one stops at once.
 
   affiliate programs [add <merchant-url>] [--json]
       The directory of other merchants' OpenAffiliate programs, read from
