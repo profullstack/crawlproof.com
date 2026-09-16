@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Regression: a self-owned campaign (same profile owns the slot and the
 // campaign) used to be filtered out of the candidate list entirely. That is
@@ -22,6 +22,7 @@ const H = vi.hoisted(() => {
       slotOwner: OWNER as string | null,
       campaignOwners: [OWNER] as string[],
       credits: 9999,
+      inventoryErrorAfter: false,
       inserted: [] as Record<string, unknown>[],
     },
   };
@@ -87,10 +88,26 @@ vi.mock("@/lib/supabase/service", () => ({
         });
       }
       if (table === "ad_creatives") {
-        return chain({
-          data: state.campaignOwners.map((o, i) => creativeFor(o, i)),
-          error: null,
+        let limit = 1000; // PostgREST's default response cap.
+        let after = "";
+        const query: unknown = new Proxy({}, {
+          get(_target, prop) {
+            if (prop === "then") {
+              const rows = state.campaignOwners.map((o, i) => creativeFor(o, i))
+                .sort((a, b) => a.id.localeCompare(b.id))
+                .filter((r) => r.id > after).slice(0, limit);
+              const result = after && state.inventoryErrorAfter
+                ? { data: null, error: { message: "inventory timeout" } }
+                : { data: rows, error: null };
+              const promise = Promise.resolve(result);
+              return promise.then.bind(promise);
+            }
+            if (prop === "limit") return (n: number) => { limit = n; return query; };
+            if (prop === "gt") return (_key: string, id: string) => { after = id; return query; };
+            return () => query;
+          },
         });
+        return query;
       }
       if (table === "profiles") {
         return chain({
@@ -186,4 +203,40 @@ describe("self-deal still loses to a real advertiser", () => {
     await fills(40);
     expect(state.inserted.some((r) => r.tier === "paid")).toBe(true);
   });
+});
+
+
+describe("inventory beyond the first page", () => {
+  afterEach(() => { vi.restoreAllMocks(); state.inventoryErrorAfter = false; });
+
+  it.each([374, 500, 1201])("allows the last of %i campaigns to win and records its impression", async (count) => {
+    vi.resetModules();
+    state.slotOwner = OWNER;
+    state.campaignOwners = Array(count).fill(OWNER);
+    state.credits = 9999;
+    state.inserted = [];
+    // Select the last candidate in the ordered pool, past both the former
+    // 100-row cutoff and (in the larger fixture) PostgREST's 1000-row cap.
+    vi.spyOn(Math, "random").mockReturnValue(0.999999);
+    const last = state.campaignOwners.map((owner, i) => creativeFor(owner, i))
+      .sort((a, b) => a.id.localeCompare(b.id)).at(-1)!;
+    const fill = await serve();
+    expect(fill?.campaignId).toBe(last.campaign_id);
+    expect(fill?.tier).toBe("free");
+    expect(state.inserted).toEqual([expect.objectContaining({ campaign_id: last.campaign_id })]);
+  });
+
+  it("does not auction a partial pool when a later inventory page fails", async () => {
+    vi.resetModules();
+    state.slotOwner = OWNER;
+    state.campaignOwners = Array(501).fill(OWNER);
+    state.inventoryErrorAfter = true;
+    state.inserted = [];
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fill = await serve();
+    expect(fill?.campaignId).toBe("house");
+    expect(state.inserted).toEqual([]);
+    expect(log).toHaveBeenCalledWith("[ads] creative inventory unavailable", "inventory timeout");
+  });
+
 });

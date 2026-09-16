@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { loadServingCreatives } from "./candidates";
 import { serviceClient } from "@/lib/supabase/service";
 import { env } from "@/lib/env";
 import {
@@ -221,15 +222,7 @@ export async function serveAd(
   // Campaigns with a ready creative in this format. 'exhausted' is a legacy
   // status no longer written by ad_charge_click — rows still carrying it are
   // live campaigns that ran dry, and belong on the free tier rather than dark.
-  const { data: creatives } = await sb
-    .from("ad_creatives")
-    .select(
-      "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family, ad_campaigns!inner(id, owner_id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)",
-    )
-    .eq("format", format)
-    .eq("status", "ready")
-    .in("ad_campaigns.status", ["active", "exhausted"])
-    .limit(100);
+  const creatives = await loadServingCreatives(sb, format);
 
   // No paid creative for this format → default CrawlProof house ad.
   if (!creatives || creatives.length === 0) return houseFill(format, theme);
