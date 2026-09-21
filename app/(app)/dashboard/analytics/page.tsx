@@ -30,8 +30,17 @@ import {
   BOTS_LABEL,
   HUMANS_DEFINITION,
   HUMANS_LABEL,
+  VISITORS_DEFINITION,
+  VISITORS_LABEL,
   humansFrom,
 } from "@/lib/tracker/humans";
+import {
+  VISITORS_CAPTION,
+  fetchVisitorTotals,
+  sumVisitorTotals,
+  visitorsPartial,
+  type VisitorTotals,
+} from "@/lib/tracker/visitors";
 import {
   TrackerAnalytics,
   type TrackerListItem,
@@ -71,14 +80,18 @@ type PortfolioProject = {
   organization_id?: string | null;
 };
 
-// Every figure on this page leads with humans (bucket not `bot:`, AI referrals
-// included) and shows bot crawls apart. See lib/tracker/humans.ts.
+// Every figure on this page leads with people — distinct visitors from the
+// visitor rollup — then human EVENTS (bucket not `bot:`, AI referrals
+// included; several beacons per page view) and shows bot crawls apart. See
+// lib/tracker/humans.ts and lib/tracker/visitors.ts.
 type ProjectRow = {
   project: PortfolioProject;
   totals: ProjectTotals;
-  /** Human visits, this window vs the one before. */
+  /** Distinct human visitors this window vs the one before; null when the rollup is unavailable. */
+  visitors: VisitorTotals | null;
+  /** Human events, this window vs the one before. */
   trend: Trend;
-  /** Daily human visits for the sparkline; null when over the row budget. */
+  /** Daily human events for the sparkline; null when over the row budget. */
   samples: number[] | null;
 };
 
@@ -217,6 +230,22 @@ export default async function PortfolioAnalyticsPage({
   const portfolio = sumTotals(totalsByProject.values());
   const trends = totalsTrends(portfolio);
 
+  // People. One more RPC, kept apart from the eleven above because its
+  // failure means "no visitor figure", not "no traffic": the tile and the
+  // column are left out rather than zeroed.
+  const visitorsByProject = await fetchVisitorTotals(supabase, projectIds, days, "human");
+  const portfolioVisitors = visitorsByProject
+    ? sumVisitorTotals(visitorsByProject.values())
+    : null;
+  const visitorsTrend = portfolioVisitors
+    ? computeTrend(portfolioVisitors.visitors, portfolioVisitors.prevVisitors)
+    : null;
+  const visitorsCaption = !visitorsByProject
+    ? "Visitor counts are unavailable right now; the figures below count events."
+    : visitorsPartial(days)
+      ? VISITORS_CAPTION
+      : null;
+
   // Ranked by current-window HUMAN volume: the biggest properties get the
   // chart bands, and the daily-detail budget is spent on them first. Ranking
   // by events would hand the top band to whichever site a crawler is hitting.
@@ -264,6 +293,9 @@ export default async function PortfolioAnalyticsPage({
     return {
       project,
       totals,
+      visitors: visitorsByProject
+        ? (visitorsByProject.get(project.id) ?? { visitors: 0, prevVisitors: 0, pageviews: 0, prevPageviews: 0 })
+        : null,
       trend: computeTrend(totals.humans, totals.prevHumans),
       samples: byDay ? axis.map((day) => byDay.get(day) ?? 0) : null,
     };
@@ -444,11 +476,19 @@ export default async function PortfolioAnalyticsPage({
         </p>
       </section>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {visitorsTrend && (
+          <TrendMetric
+            label={VISITORS_LABEL}
+            trend={visitorsTrend}
+            tone="accent"
+            hint={VISITORS_DEFINITION}
+          />
+        )}
         <TrendMetric
           label={HUMANS_LABEL}
           trend={trends.humans}
-          tone="accent"
+          tone={visitorsTrend ? "muted" : "accent"}
           hint={HUMANS_DEFINITION}
         />
         <TrendMetric
@@ -470,6 +510,9 @@ export default async function PortfolioAnalyticsPage({
           hint={ALL_EVENTS_DEFINITION}
         />
       </div>
+      {visitorsCaption && (
+        <p className="-mt-1 text-xs text-[var(--color-muted)]">{visitorsCaption}</p>
+      )}
 
       {portfolio.events === 0 && portfolio.prevEvents === 0 ? (
         <section className="card p-4">
@@ -485,13 +528,21 @@ export default async function PortfolioAnalyticsPage({
               <div>
                 <h2 className="text-lg font-semibold">Portfolio trend</h2>
                 <p className="text-sm text-[var(--color-muted)]">
-                  Daily human visits, stacked by property. Bot crawls across
+                  Daily human events, stacked by property. Bot crawls across
                   every property are the dashed line, kept out of the stack.
                 </p>
               </div>
               <span className="text-xs text-[var(--color-muted)]">
+                {portfolioVisitors && (
+                  <>
+                    <span title={VISITORS_DEFINITION}>
+                      {portfolioVisitors.visitors.toLocaleString()} human visitors
+                    </span>
+                    {" · "}
+                  </>
+                )}
                 <span title={HUMANS_DEFINITION}>
-                  {portfolio.humans.toLocaleString()} human visits
+                  {portfolio.humans.toLocaleString()} human events
                 </span>
                 {" · "}
                 <span title={BOTS_DEFINITION}>
@@ -633,8 +684,11 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
         <thead>
           <tr className="border-b border-[var(--color-border)] text-left text-xs text-[var(--color-muted)]">
             <th className="py-2 pr-3 font-medium">Property</th>
+            <th className="py-2 pr-3 text-right font-medium" title={VISITORS_DEFINITION}>
+              Visitors
+            </th>
             <th className="py-2 pr-3 text-right font-medium" title={HUMANS_DEFINITION}>
-              Humans
+              Events
             </th>
             <th className="py-2 pr-3 text-right font-medium" title={HUMANS_DEFINITION}>
               Previous
@@ -650,7 +704,7 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ project, totals, trend, samples }) => (
+          {rows.map(({ project, totals, visitors, trend, samples }) => (
             <tr
               key={project.id}
               className="border-b border-[var(--color-border)] last:border-0"
@@ -675,6 +729,9 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
                     </span>
                   </span>
                 </Link>
+              </td>
+              <td className="py-2 pr-3 text-right tabular-nums" title={VISITORS_DEFINITION}>
+                {visitors ? visitors.visitors.toLocaleString() : "—"}
               </td>
               <td className="py-2 pr-3 text-right tabular-nums" title={HUMANS_DEFINITION}>
                 {totals.humans.toLocaleString()}

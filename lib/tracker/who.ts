@@ -17,6 +17,10 @@ import {
   BOTS_LABEL,
   HUMANS_DEFINITION,
   HUMANS_LABEL,
+  PAGEVIEWS_DEFINITION,
+  PAGEVIEWS_LABEL,
+  VISITORS_DEFINITION,
+  VISITORS_LABEL,
   type TrackerKind,
 } from "@/lib/tracker/humans";
 
@@ -78,31 +82,66 @@ export function whoCaption(who: Who): string | null {
 }
 
 export type HeadlineTotals = {
+  /**
+   * Distinct visitors in the window from the visitor rollup, on the side
+   * `who` asks for. null when the rollup could not be read: the tile is then
+   * left out rather than shown as 0, because 0 reads as a dead site.
+   */
+  visitors?: number | null;
+  /** Page views those visitors produced; drawn only beside `visitors`. */
+  pageviews?: number | null;
+  /** Events, not people: every beacon on the human side. */
   humans: number;
   ai: number;
   bots: number;
 };
 
 export type HeadlineTile = {
-  key: "humans" | "ai" | "bots";
+  key: "visitors" | "pageviews" | "humans" | "ai" | "bots";
   label: string;
   value: number;
-  tone: "accent" | "pass" | "warn";
+  tone: "accent" | "pass" | "warn" | "muted";
   hint: string;
 };
 
 /**
- * Which headline tiles the page shows for a given toggle. Humans and Bots
- * show their own side's figures; All keeps the three-tile layout the page
- * shipped with. The figures come from the series the page fetched at that
- * same `who`, so a filtered view never mixes in the other side's count.
+ * Which headline tiles the page shows for a given toggle. Humans leads with
+ * people (distinct visitors, then their page views) and shows the event
+ * count under its real name after them; Bots shows its own side; All keeps
+ * both sides. The figures come from the series and the visitor rollup the
+ * page fetched at that same `who`, so a filtered view never mixes in the
+ * other side's count.
  */
 export function headlineTiles(who: Who, t: HeadlineTotals): HeadlineTile[] {
+  const people: HeadlineTile[] =
+    t.visitors === null || t.visitors === undefined
+      ? []
+      : [
+          {
+            key: "visitors",
+            label: who === "bots" ? "Bot visitors" : VISITORS_LABEL,
+            value: t.visitors,
+            tone: who === "bots" ? "warn" : "accent",
+            hint:
+              who === "bots"
+                ? "Distinct visitor ids on the bot side: crawlers that ran the script, and scripted browsers caught by volume."
+                : VISITORS_DEFINITION,
+          },
+          {
+            key: "pageviews",
+            label: PAGEVIEWS_LABEL,
+            value: t.pageviews ?? 0,
+            tone: who === "bots" ? "warn" : "accent",
+            hint: PAGEVIEWS_DEFINITION,
+          },
+        ];
   const humans: HeadlineTile = {
     key: "humans",
     label: HUMANS_LABEL,
     value: t.humans,
-    tone: "accent",
+    // Leads only when the rollup has nothing to say; otherwise it is the
+    // number people used to mistake for readers, kept but demoted.
+    tone: people.length ? "muted" : "accent",
     hint: HUMANS_DEFINITION,
   };
   const ai: HeadlineTile = {
@@ -121,11 +160,11 @@ export function headlineTiles(who: Who, t: HeadlineTotals): HeadlineTile[] {
   };
   switch (who) {
     case "humans":
-      return [humans, ai];
+      return [...people, humans, ai];
     case "bots":
-      return [bots];
+      return [...people, bots];
     default:
-      return [humans, ai, bots];
+      return [...people, humans, ai, bots];
   }
 }
 
@@ -141,7 +180,7 @@ export type PulseLayer = {
 
 const HUMANS_LAYER: PulseLayer = {
   dataKey: "humans",
-  name: "Human visits",
+  name: "Human events",
   stackId: "1",
   color: "var(--color-accent)",
   fillOpacity: 0.28,
@@ -198,7 +237,7 @@ export function pulseHeadline(
   }
   return {
     total: totals.humans,
-    unit: ["human visit", "human visits"],
+    unit: ["human event", "human events"],
     hint: HUMANS_DEFINITION,
   };
 }

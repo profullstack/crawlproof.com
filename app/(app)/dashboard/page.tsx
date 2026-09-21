@@ -3,7 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { rpcFailed, type Loaded } from "@/lib/loaded";
 import { ScoreBadge } from "@/components/score-badge";
 import { FontSparkline } from "@/components/font-sparkline";
-import { BOTS_DEFINITION, HUMANS_DEFINITION } from "@/lib/tracker/humans";
+import { BOTS_DEFINITION, HUMANS_DEFINITION, VISITORS_DEFINITION } from "@/lib/tracker/humans";
+import { fetchVisitorDailySeries } from "@/lib/tracker/visitors";
 import { ProjectLogo } from "@/components/project-logo";
 import { StatsUnavailable } from "@/components/stats-unavailable";
 import { backfillProjectLogo } from "@/app/actions/createProject";
@@ -121,11 +122,12 @@ export default async function DashboardPage({
   // project has an lx_site row in status=active; social is "on" when at
   // least one social account is linked at the project level.
   const projectIds = (projects ?? []).map((p) => p.id);
-  const [autoblogIds, socialIds, latestPosts, traffic] = await Promise.all([
+  const [autoblogIds, socialIds, latestPosts, traffic, visitorsByProject] = await Promise.all([
     fetchEnabledProjectIds(supabase, "lx_site", projectIds, { status: "active" }),
     fetchEnabledProjectIds(supabase, "sp_site_account", projectIds),
     fetchLatestBlogPostByProject(supabase, projectIds),
     fetchSevenDayTraffic(supabase, projectIds),
+    fetchSevenDayVisitors(supabase, projectIds),
   ]);
   const trafficByProject = traffic.data;
   const trafficFailed = traffic.failed;
@@ -266,23 +268,27 @@ export default async function DashboardPage({
                   <div>
                     <div
                       className="text-xs font-medium text-[var(--color-fg)]"
-                      title={trafficFailed ? undefined : HUMANS_DEFINITION}
+                      title={trafficFailed ? undefined : visitorsByProject ? VISITORS_DEFINITION : HUMANS_DEFINITION}
                     >
                       {trafficFailed
                         ? "Traffic unavailable"
-                        : `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human visits`}
+                        : visitorsByProject
+                          ? `${sum(visitorsByProject.get(p.id)).toLocaleString()} human visitors`
+                          : `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human events`}
                     </div>
                     <div
                       className="text-[11px] text-[var(--color-muted)]"
-                      title={trafficFailed ? undefined : BOTS_DEFINITION}
+                      title={trafficFailed ? undefined : `${HUMANS_DEFINITION} ${BOTS_DEFINITION}`}
                     >
                       {trafficFailed
                         ? "Query failed \u2014 not zero"
-                        : `${totalBots(trafficByProject.get(p.id) ?? []).toLocaleString()} bot hits \u00b7 Past 7 days`}
+                        : `${visitorsByProject ? `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human events \u00b7 ` : ""}${totalBots(trafficByProject.get(p.id) ?? []).toLocaleString()} bot hits \u00b7 Past 7 days`}
                     </div>
                   </div>
                   {!trafficFailed && (
-                    <FontSparkline samples={humanSamples(trafficByProject.get(p.id))} />
+                    <FontSparkline
+                      samples={visitorsByProject?.get(p.id) ?? humanSamples(trafficByProject.get(p.id))}
+                    />
                   )}
                 </div>
                 {orgSchemaReady && (
@@ -434,6 +440,32 @@ async function fetchSevenDayTraffic(
   }
 
   return { data: out, failed: false };
+}
+
+// Distinct human visitors per day for the past seven UTC days, per project:
+// the number the card leads with. The visitor rollup only began on
+// lib/tracker/visitors.ts VISITORS_SINCE, and it counts people where
+// dashboard_project_traffic counts beacons (several per page view), which
+// is why the two figures on a card differ by a hundredfold and both are
+// shown. null when the RPC failed or is not deployed: the card then leads
+// with events under their real name rather than showing "0 visitors".
+async function fetchSevenDayVisitors(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectIds: string[],
+): Promise<Map<string, number[]> | null> {
+  const days = lastSevenDays();
+  const byProject = await fetchVisitorDailySeries(supabase, projectIds, 7, "human");
+  if (!byProject) return null;
+  const out = new Map<string, number[]>();
+  for (const projectId of projectIds) {
+    const byDay = byProject.get(projectId);
+    out.set(projectId, days.map((day) => byDay?.get(day) ?? 0));
+  }
+  return out;
+}
+
+function sum(samples: number[] | undefined) {
+  return (samples ?? []).reduce((total, n) => total + n, 0);
 }
 
 function lastSevenDays() {

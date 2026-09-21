@@ -20,6 +20,8 @@ import {
 } from "@/lib/tracker/panels";
 import type { TrackerRange } from "@/lib/tracker/ranges";
 import type { TrackerKind } from "@/lib/tracker/humans";
+import { fetchVisitorTotals } from "@/lib/tracker/visitors";
+import { rollupDays } from "@/lib/tracker/panels";
 
 type Sb = SupabaseClient;
 
@@ -108,7 +110,16 @@ export type StatsAnswer = {
   project: { id: string; name: string; url: string };
   range: string;
   who: string;
-  totals: { visitors: number; pageviews: number };
+  /**
+   * `visitors` is distinct visitor ids over the window from the visitor
+   * rollup (people); `pageviews` is the page views those visitors produced;
+   * `events` is every beacon on the requested side, which is what `visitors`
+   * used to be filled with before the rollup existed (and read ~100x too
+   * high). `visitors` and `pageviews` are null when the rollup could not be
+   * read, never 0: a caller computing cost per visitor must not divide by a
+   * failure.
+   */
+  totals: { visitors: number | null; pageviews: number | null; events: number };
   sources: ListItem[];
   referrers: ListItem[];
   pages: ListItem[];
@@ -167,17 +178,35 @@ export function mixFromSeries(payload: PanelPayload | undefined): {
   return mix;
 }
 
-/** Sum a series payload's points into the two numbers a summary line needs. */
-export function totalsFromSeries(payload: PanelPayload | undefined): { visitors: number; pageviews: number } {
-  if (!payload || Array.isArray(payload)) return { visitors: 0, pageviews: 0 };
+/**
+ * Sum a series payload's points into the event-side numbers. `events` is the
+ * human (or requested-side) beacon count; `pageviews` here is the
+ * bot-inclusive pageview leg of the series and is only a fallback for a
+ * caller with no visitor rollup. Never called `visitors`: a series point has
+ * no visitor field and the old fallback to `humans` is the 100x bug.
+ */
+export function totalsFromSeries(payload: PanelPayload | undefined): { events: number; pageviews: number } {
+  if (!payload || Array.isArray(payload)) return { events: 0, pageviews: 0 };
   const points = (payload as { points?: Record<string, unknown>[] }).points ?? [];
-  let visitors = 0;
+  let events = 0;
   let pageviews = 0;
   for (const point of points) {
-    visitors += Number(point.visitors ?? point.humans ?? 0) || 0;
+    events += Number(point.humans ?? 0) || 0;
     pageviews += Number(point.pageviews ?? 0) || 0;
   }
-  return { visitors, pageviews };
+  return { events, pageviews };
+}
+
+/** The totals block: people from the rollup, events from the series. */
+export function mergeTotals(
+  fromSeries: { events: number; pageviews: number },
+  visitors: { visitors: number; pageviews: number } | null | undefined,
+): StatsAnswer["totals"] {
+  return {
+    visitors: visitors ? visitors.visitors : null,
+    pageviews: visitors ? visitors.pageviews : null,
+    events: fromSeries.events,
+  };
 }
 
 export async function projectStats(
@@ -189,20 +218,26 @@ export async function projectStats(
   /** Add the series and the unfiltered human / bot mix. One extra RPC at most. */
   detail = false,
 ): Promise<StatsAnswer> {
-  const [panels, mixSeries] = await Promise.all([
+  const days = await resolveDays(sb, project.id, range);
+  const [panels, mixSeries, visitorTotals] = await Promise.all([
     fetchPanels(sb, project.id, STATS_PANELS, range, kind),
     // Only when the answer is filtered: at kind null the main series already is
     // the unfiltered one, and a second identical query would be a second query.
     detail && kind !== null
-      ? fetchPanel(sb, project.id, "series", range, await resolveDays(sb, project.id, range), null)
+      ? fetchPanel(sb, project.id, "series", range, days, null)
       : Promise.resolve(undefined),
+    // People. The rollup is day-resolution, so a sub-day range reads today's.
+    fetchVisitorTotals(sb, [project.id], rollupDays(range, days), kind),
   ]);
 
   const answer: StatsAnswer = {
     project: { id: project.id, name: project.name, url: project.url },
     range: range.key,
     who,
-    totals: totalsFromSeries(panels.series),
+    totals: mergeTotals(
+      totalsFromSeries(panels.series),
+      visitorTotals ? (visitorTotals.get(project.id) ?? { visitors: 0, pageviews: 0 }) : null,
+    ),
     sources: asList(panels.sources),
     referrers: asList(panels.referrers),
     pages: asList(panels.pages),
