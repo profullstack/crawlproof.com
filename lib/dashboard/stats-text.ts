@@ -9,7 +9,7 @@ export type StatsItem = { label: string; value: number };
 
 export type StatsAnswerish = {
   project?: { name?: string; url?: string } | null;
-  totals?: { visitors?: number; pageviews?: number } | null;
+  totals?: { visitors?: number | null; pageviews?: number | null; events?: number } | null;
   sources?: StatsItem[] | null;
   referrers?: StatsItem[] | null;
   pages?: StatsItem[] | null;
@@ -24,7 +24,11 @@ export function renderStats(
   const totals = answer.totals ?? {};
   const out: string[] = [
     `${answer.project?.name ?? "project"}  ${range}  ${who}`,
-    `${totals.visitors ?? 0} visitors, ${totals.pageviews ?? 0} pageviews`,
+    // People first. A null visitor count is the rollup being unreadable, not
+    // an empty site, and is printed as such rather than as 0.
+    totals.visitors === null || totals.visitors === undefined
+      ? `visitors unavailable, ${totals.events ?? 0} events`
+      : `${totals.visitors} visitors, ${totals.pageviews ?? 0} pageviews, ${totals.events ?? 0} events`,
   ];
 
   const section = (title: string, items: StatsItem[]) => {
@@ -40,7 +44,7 @@ export function renderStats(
   section("Pages", list(answer.pages));
 
   // Nothing at all is a real answer, and the likeliest cause is worth naming.
-  if (!(totals.pageviews ?? 0) && !list(answer.sources).length) {
+  if (!(totals.pageviews ?? 0) && !(totals.events ?? 0) && !list(answer.sources).length) {
     out.push("", "Nothing in this window. Check the tag is on the page, or widen --range.");
   }
   return `${out.join("\n")}\n`;

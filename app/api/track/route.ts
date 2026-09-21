@@ -7,6 +7,13 @@ import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
 import { kindFromBucket } from "@/lib/tracker/humans";
+import {
+  SCRIPTED_CAP_EVENTS,
+  SCRIPTED_CAP_PAGEVIEWS,
+  applyScriptedDemotion,
+  parseVisitorTouch,
+  type VisitorTouch,
+} from "@/lib/tracker/scripted";
 import { parseDevice } from "@/lib/tracker/device";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { enqueuePostHogEvent } from "@/lib/posthog/events";
@@ -182,12 +189,41 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   const gate = await gateAgent(sb, site, userAgent);
   if (gate.action !== "allow") return refuse(gate);
 
-  const { bucket, isAi } = categorize({ referrer, userAgent, url: pageUrl });
+  const categorized = categorize({ referrer, userAgent, url: pageUrl });
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+
+  // Visitor rollup: one row per (project, day, visitor id), bumped per beacon.
+  // It is the only place the tracker counts people rather than events, and
+  // its answer can demote this hit: a visitor past the scripted cap for the
+  // day is a driven browser, not a reader, whatever its user agent claims
+  // (lib/tracker/scripted.ts). Read before the first counter write so every
+  // rollup below lands on the same side. Best-effort: no visitor id, or a
+  // failed RPC, leaves the user-agent verdict standing.
+  const visitorId = textOrNull(parsed.data.visitorId);
+  let touch: VisitorTouch | null = null;
+  if (visitorId) {
+    try {
+      const { data } = await sb.rpc("tracker_touch_visitor", {
+        p_project: site,
+        p_day: today,
+        p_visitor: visitorId.slice(0, 128),
+        p_kind: kindFromBucket(categorized.bucket),
+        p_pageview: event === "pageview",
+        p_cap_events: SCRIPTED_CAP_EVENTS,
+        p_cap_pageviews: SCRIPTED_CAP_PAGEVIEWS,
+      });
+      touch = parseVisitorTouch(data);
+    } catch {
+      // Silent — the beacon must never fail closed on a counter table.
+    }
+  }
+  const demotion = applyScriptedDemotion(categorized.bucket, touch);
+  const bucket = demotion.bucket;
+  const isAi = demotion.demoted ? false : categorized.isAi;
   // Which side of the human / bot line this hit counts on. The bucket table
   // carries the whole bucket; the other rollups record only this, so the
   // stats page can split every breakdown, not just the headline.
-  const kind = kindFromBucket(bucket);
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  const kind = demotion.kind;
 
   // UPSERT increment. Supabase JS doesn't expose a raw .increment() helper
   // so we read + write under the unique key. The PK protects against

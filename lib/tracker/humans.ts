@@ -13,14 +13,30 @@
 //   bot   = bucket starts with "bot:"          (named AI crawlers + bot:other)
 // so humans + bots = events, exactly.
 
-export const HUMANS_LABEL = "Human visits";
+// Two human figures, and the names keep them apart:
+//   VISITORS — distinct visitor ids per day (tracker_visitor_daily_stats),
+//              the number of PEOPLE. This is the headline.
+//   HUMANS   — every beacon from a non-crawler (tracker_daily_stats), i.e.
+//              EVENTS: the page view plus each scroll depth, click and form
+//              submit stats.js fires. Three to four per page view. It used to
+//              be labelled "Human visits" and read 100x above the number of
+//              people; it keeps its name in code and loses it in the UI.
+export const VISITORS_LABEL = "Human visitors";
+export const HUMANS_LABEL = "Human events";
 export const BOTS_LABEL = "Bot crawls";
+export const PAGEVIEWS_LABEL = "Page views";
+
+export const VISITORS_DEFINITION =
+  "Distinct people, counted once per site per day by the visitor id the tracker stores in the browser. Crawlers and scripted browsers are excluded.";
 
 export const HUMANS_DEFINITION =
-  "Everything not identified as a crawler, including visits referred by AI assistants such as ChatGPT or Perplexity.";
+  "Every tracked event from a visitor not identified as a crawler: the page view plus each scroll depth, click and form submit. Several per page view, so this is not a count of people. Includes visits referred by AI assistants such as ChatGPT or Perplexity.";
+
+export const PAGEVIEWS_DEFINITION =
+  "Pages rendered for people: one per page load from a visitor not identified as a crawler or a scripted browser.";
 
 export const BOTS_DEFINITION =
-  "Hits from user agents identified as crawlers: AI training and retrieval bots, search engine bots, and other automated clients. Not people.";
+  "Hits from user agents identified as crawlers (AI training and retrieval bots, search engine bots, other automated clients) plus scripted browsers caught by volume. Not people.";
 
 export const AI_REFERRALS_DEFINITION =
   "People who arrived from an AI assistant. These are already counted inside human visits.";

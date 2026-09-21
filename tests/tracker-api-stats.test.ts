@@ -85,17 +85,21 @@ describe("resolveProject", () => {
 });
 
 describe("totalsFromSeries", () => {
-  it("sums the points, counting humans when visitors is absent", () => {
+  // A series point has no visitor field. The old fallback counted `humans`
+  // (beacons) as visitors, which is how four sites read 51k "visitors" in a
+  // week against 420 people a day. People now come from the visitor rollup
+  // (tests/tracker-visitor-rollup.test.ts); the series only yields events.
+  it("sums the human beacons as events, never as visitors", () => {
     expect(
-      totalsFromSeries({ points: [{ visitors: 3, pageviews: 9 }, { visitors: 1, pageviews: 2 }] } as never),
-    ).toEqual({ visitors: 4, pageviews: 11 });
-    expect(totalsFromSeries({ points: [{ humans: 2, pageviews: 5 }] } as never)).toEqual({ visitors: 2, pageviews: 5 });
+      totalsFromSeries({ points: [{ humans: 3, pageviews: 9 }, { humans: 1, pageviews: 2 }] } as never),
+    ).toEqual({ events: 4, pageviews: 11 });
+    expect(totalsFromSeries({ points: [{ visitors: 3, humans: 2, pageviews: 5 }] } as never)).toEqual({ events: 2, pageviews: 5 });
   });
 
   it("is zero for a list payload or nothing at all, rather than NaN", () => {
-    expect(totalsFromSeries(undefined)).toEqual({ visitors: 0, pageviews: 0 });
-    expect(totalsFromSeries([] as never)).toEqual({ visitors: 0, pageviews: 0 });
-    expect(totalsFromSeries({ points: [{ pageviews: "4" }] } as never)).toEqual({ visitors: 0, pageviews: 4 });
+    expect(totalsFromSeries(undefined)).toEqual({ events: 0, pageviews: 0 });
+    expect(totalsFromSeries([] as never)).toEqual({ events: 0, pageviews: 0 });
+    expect(totalsFromSeries({ points: [{ pageviews: "4" }] } as never)).toEqual({ events: 0, pageviews: 4 });
   });
 });
 

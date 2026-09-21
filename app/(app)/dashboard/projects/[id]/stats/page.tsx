@@ -8,9 +8,14 @@ import {
   TrackerAnalytics,
   type TrackerPanels,
 } from "@/components/charts/tracker-analytics";
-import { fetchPanels, PANEL_KEYS } from "@/lib/tracker/panels";
+import { fetchPanels, PANEL_KEYS, resolveDays, rollupDays } from "@/lib/tracker/panels";
 import { DEFAULT_TRACKER_RANGE, trackerRange } from "@/lib/tracker/ranges";
 import { headlineTiles, whoOrDefault, whoToKind } from "@/lib/tracker/who";
+import {
+  VISITORS_CAPTION,
+  fetchVisitorTotals,
+  visitorsPartial,
+} from "@/lib/tracker/visitors";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { CareersToggle } from "./careers-toggle";
@@ -65,31 +70,41 @@ export default async function ProjectStatsPage({
   // Every panel is fetched at the toggle's `kind`, so a card and the tiles
   // above it never disagree on who they are counting.
   const range = trackerRange(DEFAULT_TRACKER_RANGE);
-  const panels = (await fetchPanels(
-    supabase,
-    id,
-    PANEL_KEYS,
-    range,
-    kind,
-  )) as unknown as TrackerPanels;
+  // The visitor rollup is day-resolution, so a sub-day range reads today's
+  // rollup — the same rule the device and exit-page cards apply.
+  const visitorDays = rollupDays(range, await resolveDays(supabase, id, range));
+  const [panels, visitorTotals] = await Promise.all([
+    fetchPanels(supabase, id, PANEL_KEYS, range, kind) as unknown as Promise<TrackerPanels>,
+    fetchVisitorTotals(supabase, [id], visitorDays, kind),
+  ]);
 
-  // Headline metrics come straight from the series so they stay exact even
-  // though Top sources below is truncated to the top 10 buckets. The page
-  // leads with humans (every bucket that is not `bot:`, AI referrals
-  // included) and shows bot crawls apart — see lib/tracker/humans.ts for why
-  // the old bot-inclusive total is no longer a headline. Under Humans or
-  // Bots only that side's tiles are shown (lib/tracker/who.ts).
+  // Headline metrics: the people first. Distinct visitors and their page
+  // views come from the visitor rollup (lib/tracker/visitors.ts); the event
+  // figures come straight from the series so they stay exact even though Top
+  // sources below is truncated to the top 10 buckets. The event count used to
+  // be labelled "Human visits" and ran ~100x above the number of people — it
+  // is stats.js firing several beacons per page view — so it now sits after
+  // the visitor tiles under its real name. Under Humans or Bots only that
+  // side's tiles are shown (lib/tracker/who.ts).
   const points = panels.series.points;
   const totalAi = points.reduce((s, p) => s + p.ai, 0);
   const totalBot = points.reduce((s, p) => s + p.bots, 0);
   const totalHuman = points.reduce((s, p) => s + p.humans, 0);
   const grandTotal = points.reduce((s, p) => s + p.events, 0);
   const eventTotal = points.reduce((s, p) => s + p.pageviews + p.interactions, 0);
+  const visitors = visitorTotals?.get(id) ?? (visitorTotals ? { visitors: 0, pageviews: 0 } : null);
   const tiles = headlineTiles(who, {
+    visitors: visitors ? visitors.visitors : null,
+    pageviews: visitors ? visitors.pageviews : null,
     humans: totalHuman,
     ai: totalAi,
     bots: totalBot,
   });
+  const visitorsCaption = visitors === null
+    ? "Visitor counts are unavailable right now; the figures below count events."
+    : visitorsPartial(visitorDays)
+      ? VISITORS_CAPTION
+      : null;
 
   // Older projects have rollup rows in tracker_daily_stats but nothing in
   // tracker_event_daily_stats, which would leave Event mix empty on a page
@@ -265,7 +280,7 @@ export default async function ProjectStatsPage({
           <WhoToggle value={who} />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {tiles.map((tile) => (
             <Metric
               key={tile.key}
@@ -276,6 +291,9 @@ export default async function ProjectStatsPage({
             />
           ))}
         </div>
+        {visitorsCaption && (
+          <p className="-mt-1 text-xs text-[var(--color-muted)]">{visitorsCaption}</p>
+        )}
 
         {grandTotal === 0 && eventTotal === 0 ? (
           <section className="card p-4">
