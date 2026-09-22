@@ -9,6 +9,59 @@ import { serviceClient } from "@/lib/supabase/service";
 // stored under across the same span.
 export const CLICK_DEDUPE_WINDOW_MS = 6 * 60 * 60 * 1000; // 6h
 
+// How long after its impression a click can still count as delivery, by what
+// kind of client the impression was served to.
+//
+// This exists because of a distributed headless-browser crawler that fetches
+// rssamplifier.com's feed documents with a plain Chrome user agent, harvests
+// the /a/<code> link out of the injected feed_item, and requests it a median
+// of 54 hours later from a different address. Nothing else about the click is
+// wrong: the impression exists, the campaign matches, the address never
+// repeats inside the dedupe window. It passed as delivery at ~1,100 clicks
+// every four hours, and the ads dashboard read a 101% CTR because the
+// impressions those clicks pointed at sat two days outside the window and
+// were mostly flagged duplicate. Nothing billed (the network is self-deal),
+// but the paper auction was being steered by it.
+//
+// Measured over 30 days of clicks that did not carry a bot user agent:
+//
+//   impression served to    which clicks     delay from impression
+//   a browser               all formats      p90 2.7 min, none past 6h
+//   a terminal (curl)       non-crawler      85% within 6h, 96% within 24h
+//   a feed reader           non-crawler      spread over days
+//
+// A browser has nothing holding the item once the page is gone, so a click
+// hours later did not come from a person looking at that page. A terminal
+// shows the MOTD at the next login, so a day is generous. A feed reader keeps
+// the item for as long as the subscriber leaves it unread, so there is no
+// ceiling a real reader could not exceed.
+export const CLICK_MAX_AGE_BROWSER_MS = CLICK_DEDUPE_WINDOW_MS;
+export const CLICK_MAX_AGE_TERMINAL_MS = 24 * 60 * 60 * 1000;
+
+/** Longest a click may trail the impression it cites, or null for no ceiling. */
+export function maxClickAgeMs(impressionDevice?: string | null): number | null {
+  switch (impressionDevice) {
+    case "feed":
+      return null;
+    case "terminal":
+      return CLICK_MAX_AGE_TERMINAL_MS;
+    default:
+      return CLICK_MAX_AGE_BROWSER_MS;
+  }
+}
+
+/** Is a click at `now` too long after an impression served at `ts` to `device`? */
+export function isStaleImpression(
+  imp: { ts?: string | null; device?: string | null },
+  now: number = Date.now(),
+): boolean {
+  const max = maxClickAgeMs(imp.device);
+  if (max == null || !imp.ts) return false;
+  const served = Date.parse(imp.ts);
+  if (Number.isNaN(served)) return false;
+  return now - served > max;
+}
+
 export function isBotDevice(device?: string | null): boolean {
   return device === "bot";
 }
@@ -89,13 +142,16 @@ async function checkClickValidity(input: Parameters<typeof assessClickValidity>[
   if (input.impressionId) {
     const { data: imp, error } = await sb
       .from("ad_impressions")
-      .select("campaign_id, slot_id")
+      .select("campaign_id, slot_id, ts, device")
       .eq("id", input.impressionId)
       .maybeSingle();
     if (error) return { valid: false, reason: "validation_unavailable" };
     if (!imp) return { valid: false, reason: "no_impression" };
     if (imp.campaign_id !== input.campaignId) return { valid: false, reason: "impression_mismatch" };
     if (input.slotId && imp.slot_id !== input.slotId) return { valid: false, reason: "impression_mismatch" };
+    // A real impression, but too old for whoever saw it to still be the one
+    // clicking. See maxClickAgeMs for where each ceiling comes from.
+    if (isStaleImpression(imp)) return { valid: false, reason: "stale_impression" };
   }
 
   // 3. Dedupe on this campaign by visitor id or ip hash within the window.
