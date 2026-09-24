@@ -200,8 +200,12 @@ describe("encoder arguments carry the media contract", () => {
       videoKbps: 4000,
     }).join(" ");
     expect(a).toContain("-af apad");
-    // apad alone runs forever; -shortest is what trims it back to the video.
-    expect(a).toContain("-shortest");
+    // apad alone runs forever, and -shortest does NOT trim it: in ffmpeg 4.x
+    // that flag keys off input durations, so the padded stream either kept the
+    // original 2.3s of speech or vanished entirely. The output duration is
+    // stated outright instead.
+    expect(a).toContain("-t 5");
+    expect(a).not.toContain("-shortest");
   });
 
   it("stream-copies into HLS rather than re-encoding", () => {
