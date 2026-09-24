@@ -62,10 +62,21 @@ adapted from does:
 
 From anywhere with the cloud credentials (read-only, safe to rehearse):
 
+`CLOUD_DB_URL` is a normal Postgres connection string for the cloud project.
+Keep it out of your shell history and out of this file — read it from the vault
+into the environment instead of pasting it:
+
 ```sh
-CLOUD_DB_URL='postgres://postgres.ywcizjsgrcmhgyplldac:<pw>@<pooler-host>:5432/postgres' \
-  ops/selfhost/migrate/pull-cloud.sh ~/crawlproof-dump
+export CLOUD_DB_URL="$(logicsrc teams secrets crawlproof --get SUPABASE_POOLER_URL)"
+ops/selfhost/migrate/pull-cloud.sh ~/crawlproof-dump
 ```
+
+Two details about that URL, since they are not guessable: the user is
+`postgres.<project-ref>`, and the host must be the **session** pooler
+(`aws-1-us-west-1.pooler.supabase.com`, port 5432). `aws-0-…` answers for other
+projects and returns `Tenant or user not found`, and the direct
+`db.<ref>.supabase.co` host is IPv6-only. pg_dump needs session mode, so 6543
+(transaction mode) will not do.
 
 Produces `schema.sql`, `data.sql`, `cron-jobs.sql`, `realtime.sql`,
 `buckets.tsv`, `storage-inventory.tsv` and a `MANIFEST`.
