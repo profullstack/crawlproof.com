@@ -64,10 +64,20 @@ export type Mp4EncodeOptions = {
 /**
  * Frames in, one MP4 out.
  *
- * `-frames:v 150` rather than `-t 5`: the contract is a frame count, and a
- * duration flag lets a timebase rounding error produce 149 or 151 frames that
- * still measure "5.0 seconds". Counting frames is the check that actually
- * catches a dropped one.
+ * `-frames:v 150` rather than `-t 5` for a silent encode: the contract is a
+ * frame count, and a duration flag lets a timebase rounding error produce 149
+ * or 151 frames that still measure "5.0 seconds". Counting frames is the check
+ * that actually catches a dropped one.
+ *
+ * With an audio track that flag has to go. `-frames:v` ends the whole output
+ * the moment the video stream hits its limit, which cuts the audio wherever the
+ * encoder happened to have flushed to — around 3.3 of 5 seconds here. That is
+ * not a padding problem and no amount of `apad`, `apad=whole_dur`, `atrim` or
+ * `-shortest` fixes it: an input already padded to exactly 5.000s still came
+ * out at 3.264s. Bounding the output by duration instead produces both a
+ * 5.000s audio track and exactly 150 video frames, because 150 frames at 30fps
+ * IS five seconds — the frame count is still guaranteed, just by arithmetic
+ * rather than by a flag, and validation counts the frames either way.
  */
 export function mp4Args(o: Mp4EncodeOptions): string[] {
   const p = videoProfile(o.profile);
@@ -86,9 +96,16 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
   const withMusic = Boolean(o.audioPath && o.musicPath);
   if (withMusic) args.push("-stream_loop", "-1", "-i", o.musicPath!);
 
+  // See the note above: -frames:v truncates the audio, so an encode that
+  // carries sound is bounded by duration instead.
+  const carriesAudio = Boolean(o.musicPath) || Boolean(o.audioPath);
+  if (carriesAudio) {
+    args.push("-t", String(PREROLL_MS / 1000));
+  } else {
+    args.push("-frames:v", String(PREROLL_FRAMES));
+  }
+
   args.push(
-    "-frames:v",
-    String(PREROLL_FRAMES),
     "-r",
     String(PREROLL_FPS),
     "-c:v",
@@ -136,7 +153,7 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
       "-map", "0:v",
       "-map", "[a]",
     );
-    args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2", "-shortest");
+    args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2");
   } else if (o.audioPath) {
     // `apad` extends the audio with silence indefinitely, and `-shortest` then
     // trims the result to the video's five seconds — so the track is exactly as
@@ -156,7 +173,6 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
     // once padded, dropped the stream entirely. An explicit duration is not a
     // workaround — it is the thing actually being asserted.
     args.push("-af", "apad");
-    args.push("-t", String(PREROLL_MS / 1000));
     args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2");
   } else {
     args.push("-an");

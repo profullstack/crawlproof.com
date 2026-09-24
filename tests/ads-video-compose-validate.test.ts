@@ -187,6 +187,21 @@ describe("encoder arguments carry the media contract", () => {
     expect(narrated[narrated.indexOf("-ar") + 1]).toBe("48000");
   });
 
+  it("keeps the frame-count contract for a silent encode", () => {
+    // Silent encodes have no audio to truncate, so they keep the stronger
+    // guarantee: a frame count cannot be satisfied by a timebase rounding
+    // error the way a duration can.
+    const silent = mp4Args({
+      framePattern: "f-%04d.png",
+      audioPath: null,
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    }).join(" ");
+    expect(silent).toContain("-frames:v 150");
+    expect(silent).not.toContain("-t 5");
+  });
+
   it("pads a narration to the length of the picture", () => {
     // Every narration is shorter than its ad — a five-second read is about two
     // and a half seconds of speech. Without the pad the audio stream ended
@@ -200,11 +215,12 @@ describe("encoder arguments carry the media contract", () => {
       videoKbps: 4000,
     }).join(" ");
     expect(a).toContain("-af apad");
-    // apad alone runs forever, and -shortest does NOT trim it: in ffmpeg 4.x
-    // that flag keys off input durations, so the padded stream either kept the
-    // original 2.3s of speech or vanished entirely. The output duration is
-    // stated outright instead.
+    // Bounded by duration, and crucially WITHOUT -frames:v. That flag ends the
+    // whole output when the video stream hits its limit, cutting the audio
+    // wherever the encoder had flushed to — an input already padded to exactly
+    // 5.000s still came out at 3.264s. No padding filter can fix that.
     expect(a).toContain("-t 5");
+    expect(a).not.toContain("-frames:v");
     expect(a).not.toContain("-shortest");
   });
 
@@ -434,7 +450,14 @@ describe("a music bed under the narration", () => {
   it("trims both to the length of the picture", () => {
     const f = withBed().join(" ");
     expect(f).toContain("atrim=0:5");
-    expect(withBed()).toContain("-shortest");
+    // Bounded by an explicit output duration rather than -shortest, and with
+    // no -frames:v. That flag ends the output when the video stream hits its
+    // limit and cut the audio to ~3.3 of 5 seconds no matter how it was
+    // padded; -shortest is then redundant, since both streams are already
+    // bounded to the same length.
+    expect(f).toContain("-t 5");
+    expect(withBed()).not.toContain("-shortest");
+    expect(withBed()).not.toContain("-frames:v");
   });
 
   it("a bed without a voice is ignored, since that is just music", () => {
