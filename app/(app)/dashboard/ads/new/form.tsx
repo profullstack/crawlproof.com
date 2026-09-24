@@ -120,7 +120,12 @@ export function NewAdForm() {
         setError(res.error);
         return;
       }
-      router.push(`/dashboard/ads?created=${res.refSlug}`);
+      // The campaign page, not the list. Saving queues the five-second
+      // pre-roll render, and the card that reports its progress and serves the
+      // MP4 download lives on the campaign page — landing on the list meant a
+      // video was generated and the advertiser was sent somewhere that never
+      // showed it. (`?created=` was never read by the list page either.)
+      router.push(`/dashboard/ads/${res.id}`);
     });
   }
 
@@ -213,6 +218,15 @@ export function NewAdForm() {
                   Generated with {provider}
                 </span>
               )}
+            </div>
+            {/* The pre-roll is rendered by a worker, which takes a couple of
+                minutes — so it is queued on save rather than blocking this
+                screen, and its progress and MP4 download appear on the campaign
+                page you land on next. Saying so here stops the video looking
+                like something that failed to generate. */}
+            <div className="text-xs text-[var(--color-muted)]">
+              A five-second streaming pre-roll is rendered from this design when you
+              save. It appears on the campaign page, with an MP4 download, once ready.
             </div>
             <div className="flex flex-wrap items-start gap-6">
               {DESIGN_FORMATS.map((f) => {
