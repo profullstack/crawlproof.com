@@ -37,10 +37,15 @@ chmod 700 "$OUT"
 # have anything installed, so dump through a pinned container instead.
 pgdump() { docker run --rm -i "$PG_IMAGE" pg_dump "$@"; }
 
-log "Schema"
+log "Schema (public only)"
+# Deliberately NOT auth or storage. The self-hosted stack's GoTrue and Storage
+# services create and migrate their own schemas to match the images that are
+# running, and those versions are not the cloud's. Replaying the cloud's DDL
+# over them fights the service migrations. auth and storage contribute rows
+# (below), never structure.
 pgdump --dbname="$CLOUD_DB_URL" \
   --schema-only --no-owner --no-privileges --quote-all-identifiers \
-  --schema=public --schema=auth --schema=storage \
+  --schema=public \
   > "$OUT/schema.sql"
 
 log "Data"

@@ -10,7 +10,14 @@
 #
 set -euo pipefail
 
-DUMP=${1:?usage: load-selfhost.sh <dumpdir>}
+DUMP=${1:?usage: load-selfhost.sh <dumpdir> [--post-only]}
+
+# --post-only re-runs everything AFTER the data load: buckets, the URL
+# rewrite, the realtime publication and the cron jobs. Those steps are all
+# idempotent; the schema and data steps are NOT (a second COPY duplicates
+# rows), so this is the safe way back in after a failure part-way through.
+POST_ONLY=0
+[ "${2:-}" = "--post-only" ] && POST_ONLY=1
 DIR=${DIR:-/home/anthony/www/crawlproof.com/supabase}
 CLOUD_REF=${CLOUD_REF:-ywcizjsgrcmhgyplldac}
 NEW_HOST=${NEW_HOST:-supabase.crawlproof.com}
@@ -31,24 +38,20 @@ docker exec supabase-db pg_isready -U postgres -h localhost >/dev/null 2>&1 || d
 log "Snapshot BEFORE (so a silent partial load cannot look like success)"
 psql_strict -At -c "select 'tables='||(select count(*) from information_schema.tables where table_schema='public')||' users='||(select count(*) from auth.users)"
 
+if [ "$POST_ONLY" = 0 ]; then
 # ---------------------------------------------------------------- schema
-# The self-hosted stack ships its own auth/storage schemas, already at the
-# right version for the images that are running. Replaying the cloud's copy
-# over them fights the service migrations, so only public comes from the dump
-# and auth/storage contribute rows alone.
-log "Schema: public only (auth and storage keep the stack's own definitions)"
-awk '
-  /^SET /            { print; next }
-  /^SELECT pg_catalog.set_config/ { print; next }
-  /CREATE SCHEMA "auth"/   { skip=1 }
-  /CREATE SCHEMA "storage"/{ skip=1 }
-  { print }
-' "$DUMP/schema.sql" > "$DUMP/schema.public.sql"
+# schema.sql is public only by construction (see pull-cloud.sh): the stack's
+# own GoTrue and Storage migrate auth and storage to match their images, and
+# those contribute rows here, never structure.
+log "Schema (public)"
+if grep -qE 'CREATE SCHEMA "?(auth|storage)"?' "$DUMP/schema.sql"; then
+  die "schema.sql contains auth/storage DDL — re-dump with a pull-cloud.sh that has the public-only fix"
+fi
 
 # psql without ON_ERROR_STOP: the dump recreates a few objects the stack
 # already has (extensions, the supabase roles) and those collisions are
 # expected. Errors are captured and reviewed rather than aborting the load.
-psql_db -f /dev/stdin < "$DUMP/schema.public.sql" > "$DUMP/schema.load.log" 2>&1 || true
+psql_db -f /dev/stdin < "$DUMP/schema.sql" > "$DUMP/schema.load.log" 2>&1 || true
 log "Schema load errors (expected: existing extensions/roles)"
 grep -c '^ERROR' "$DUMP/schema.load.log" || true
 grep '^ERROR' "$DUMP/schema.load.log" | sed 's/^/    /' | sort -u | head -20 || true
@@ -56,8 +59,13 @@ grep '^ERROR' "$DUMP/schema.load.log" | sed 's/^/    /' | sort -u | head -20 || 
 # ------------------------------------------------------------------ data
 # auth must land before public: public tables carry FKs to auth.users.
 log "Verifying the dump puts auth before public"
-a=$(grep -n 'COPY "auth"' "$DUMP/data.sql" | head -1 | cut -d: -f1 || echo 0)
-p=$(grep -n 'COPY "public"' "$DUMP/data.sql" | head -1 | cut -d: -f1 || echo 0)
+# grep -m1 rather than `grep | head -1`: under `set -o pipefail`, head exiting
+# early gives grep a SIGPIPE, the pipeline reports failure, the `|| echo 0`
+# fires, and the variable ends up holding two lines ("30\n0") which then fails
+# every numeric test with "integer expected".
+a=$(grep -m1 -n 'COPY "auth"' "$DUMP/data.sql" | cut -d: -f1 || echo 0)
+p=$(grep -m1 -n 'COPY "public"' "$DUMP/data.sql" | cut -d: -f1 || echo 0)
+a=${a:-0}; p=${p:-0}
 if [ "$a" -gt 0 ] && [ "$p" -gt 0 ] && [ "$a" -gt "$p" ]; then
   die "data.sql has public before auth (auth at line $a, public at $p) — FKs would fail"
 fi
@@ -68,12 +76,18 @@ psql_db -f /dev/stdin < "$DUMP/data.sql" > "$DUMP/data.load.log" 2>&1 || true
 log "Data load errors"
 grep -c '^ERROR' "$DUMP/data.load.log" || true
 grep '^ERROR' "$DUMP/data.load.log" | sed 's/^/    /' | sort -u | head -20 || true
+else
+log "--post-only: skipping schema and data, running the idempotent tail"
+fi
 
 # --------------------------------------------------------------- buckets
 log "Buckets"
+# psql prints booleans as t/f, which are not SQL literals — unquoted they parse
+# as a column reference and the insert fails with 'column "t" does not exist'.
 while IFS=$'\t' read -r id name pub limit mimes; do
   [ -n "$id" ] || continue
-  psql_strict -c "insert into storage.buckets (id, name, public) values ('$id','$name',${pub}) on conflict (id) do update set public=excluded.public" >/dev/null
+  case "$pub" in t|true) pub_sql=true ;; *) pub_sql=false ;; esac
+  psql_strict -c "insert into storage.buckets (id, name, public) values ('$id','$name',${pub_sql}) on conflict (id) do update set public=excluded.public" >/dev/null
 done < "$DUMP/buckets.tsv"
 psql_strict -At -c "select id||' public='||public from storage.buckets order by id"
 

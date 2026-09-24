@@ -15,7 +15,9 @@ name: Deploy to dev2
 
 on:
   push:
-    branches: [main]
+    # master, not main — this repo's default branch is master, and a workflow
+    # watching main would simply never fire.
+    branches: [master]
   workflow_dispatch:
     inputs:
       ref:

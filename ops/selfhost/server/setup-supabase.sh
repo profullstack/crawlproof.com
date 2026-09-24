@@ -339,6 +339,80 @@ start_stack() {
 
 sql_admin() { docker exec -i supabase-db psql -U supabase_admin -h localhost -d postgres -v ON_ERROR_STOP=1 -X -q -At "$@"; }
 
+# Four things self-hosted/v0.8.2 leaves in a state the services cannot start
+# from. All four were hit on a clean initdb of this release, and all four are
+# idempotent, so this runs on every pass.
+#
+#   1. The service roles' passwords do not match POSTGRES_PASSWORD, so
+#      PostgREST, GoTrue and Storage all crashloop on "password authentication
+#      failed for user authenticator / supabase_auth_admin /
+#      supabase_storage_admin".
+#   2. auth.uid() and friends are created owned by supabase_admin, but GoTrue
+#      migrates as supabase_auth_admin and does `create or replace`, which
+#      fails with "must be owner of function uid".
+#   3. graphql_public does not exist, and PostgREST is configured with
+#      db-schemas=public,graphql_public, so it refuses to build a schema cache
+#      and answers 403 to everything.
+#   4. _realtime does not exist, and Realtime connects with
+#      `SET search_path TO _realtime`, then dies with "no schema has been
+#      selected to create in".
+repair_bootstrap() {
+  log "Repairing the bootstrap gaps in $SUPABASE_REF"
+  local pw
+  pw=$(get_env POSTGRES_PASSWORD)
+  sql_admin <<EOF
+do \$\$
+declare r text;
+begin
+  foreach r in array array[
+    'postgres','authenticator','supabase_auth_admin','supabase_storage_admin',
+    'supabase_admin','supabase_replication_admin','supabase_read_only_user',
+    'supabase_etl_admin','pgbouncer'
+  ] loop
+    if exists (select 1 from pg_roles where rolname = r) then
+      execute format('alter role %I with password %L', r, '$pw');
+    end if;
+  end loop;
+end \$\$;
+EOF
+  sql_admin <<'EOF'
+create schema if not exists graphql_public;
+create schema if not exists _realtime;
+alter schema _realtime owner to supabase_admin;
+grant all on schema _realtime to supabase_admin, postgres;
+grant usage on schema graphql_public to anon, authenticated, service_role, authenticator;
+
+do $$
+declare r record;
+begin
+  execute 'alter schema auth owner to supabase_auth_admin';
+  for r in select 'alter function '||p.oid::regprocedure||' owner to supabase_auth_admin' as cmd
+           from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='auth'
+  loop execute r.cmd; end loop;
+  for r in select 'alter table auth.'||quote_ident(tablename)||' owner to supabase_auth_admin' as cmd
+           from pg_tables where schemaname='auth'
+  loop execute r.cmd; end loop;
+
+  execute 'alter schema storage owner to supabase_storage_admin';
+  for r in select 'alter function '||p.oid::regprocedure||' owner to supabase_storage_admin' as cmd
+           from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='storage'
+  loop execute r.cmd; end loop;
+  for r in select 'alter table storage.'||quote_ident(tablename)||' owner to supabase_storage_admin' as cmd
+           from pg_tables where schemaname='storage'
+  loop execute r.cmd; end loop;
+
+  -- PostgREST authenticates as authenticator and SET ROLEs per request;
+  -- storage does the same for service_role.
+  execute 'grant anon, authenticated, service_role to authenticator';
+  execute 'grant anon, authenticated, service_role to postgres';
+  execute 'grant service_role to supabase_storage_admin';
+end $$;
+
+grant usage on schema public to anon, authenticated, service_role;
+grant usage on schema storage to anon, authenticated, service_role;
+EOF
+}
+
 create_extensions() {
   # crawlproof's schema depends on all of these; pg_cron and pg_net drive the
   # 10 scheduled jobs that call back into the app.

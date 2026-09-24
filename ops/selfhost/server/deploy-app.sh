@@ -65,8 +65,16 @@ fi
 
 log "Fetching $TARGET"
 git -C "$APP_DIR" fetch --all --tags --prune
-git -C "$APP_DIR" checkout --detach "$TARGET"
-SHA=$(git -C "$APP_DIR" rev-parse HEAD)
+
+# Resolve to a sha before checking out. `git checkout --detach <ref>` reports
+# the useless "--detach does not take a path argument" when the ref does not
+# exist, and a bare branch name only resolves locally — this repo's default
+# branch is master, so `main` is not a ref at all.
+SHA=$(git -C "$APP_DIR" rev-parse --verify --quiet "origin/$TARGET^{commit}" \
+   || git -C "$APP_DIR" rev-parse --verify --quiet "$TARGET^{commit}" \
+   || true)
+[ -n "$SHA" ] || die "cannot resolve '$TARGET' to a commit (origin/$TARGET does not exist either)"
+git -C "$APP_DIR" checkout --detach "$SHA"
 log "At $SHA"
 
 log "Building"
