@@ -130,10 +130,45 @@ certbot --nginx -d crawlproof.com -d www.crawlproof.com   # only once DNS points
 apex and `www` cannot be certified over HTTP-01 until DNS moves, so either
 accept a short TLS gap at cutover or pre-issue over DNS-01 with the Porkbun API.
 
-### 7. DNS
+### 7. DNS and the cutover
 
-See the table in the migration report. Apex and `www` come off Railway last,
-after everything above verifies against a `Host:` header.
+Done 2026-09-24. What changed at Porkbun:
+
+| Host | Was | Now |
+| --- | --- | --- |
+| `crawlproof.com` | ALIAS → `h1krorli.up.railway.app` | A → 23.95.228.174 |
+| `www.crawlproof.com` | CNAME → `8gjlucle.up.railway.app` | CNAME → `crawlproof.com` |
+| `supabase.crawlproof.com` | — | A → 23.95.228.174 |
+| `db.crawlproof.com` | — | A → 23.95.228.174 |
+| `_railway-verify` ×2 | TXT | deleted |
+
+`scan.crawlproof.com`, MX, SPF, DKIM and DMARC were not touched.
+
+The apex certificate is pre-issued over DNS-01 with acme.sh against the Porkbun
+API (`ops/selfhost` has the script), so TLS was already serving before the flip
+and there was no gap. acme.sh renews it and reloads nginx; certbot separately
+owns `supabase.crawlproof.com`.
+
+Order that matters, because two databases can otherwise drive the same app:
+
+1. flip DNS
+2. `migrate/delta-sync.sh '<dump time>'` — backfills what the cloud recorded
+   between the dump and the flip (analytics only: ad impressions and tracker
+   rollups; verify nothing else moved, the script checks)
+3. unschedule the **cloud** project's cron jobs — they post to
+   `crawlproof.com`, which now resolves here
+4. `migrate/unpark-cron.sh` — enables the self-hosted jobs, and refuses to run
+   unless crawlproof.com already resolves to dev2
+5. remove the Railway deployments **and disconnect the repo watch**, or the
+   next push to master silently redeploys it
+
+### 8. CI
+
+`.github/workflows/deploy-dev2.yml` ssh's in as `anthony` and runs
+`deploy-app.sh`. Secrets: `DEV2_SSH_KEY`, `DEV2_HOST`, `DEV2_USER`,
+`DEV2_KNOWN_HOSTS`. The deploy account can read `app.env` and use docker, but
+**not** `supabase/.env` — that directory stays root-owned because it holds the
+database's God Mode keys and a deploy has no business reading them.
 
 ## Redis and the prober
 
