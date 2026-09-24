@@ -49,6 +49,12 @@ const TABS: ProjectTab[] = [
     matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/stats`),
   },
   {
+    id: "tracking",
+    label: "Tracking",
+    href: (id) => `/dashboard/projects/${id}/tracking`,
+    matches: (p, id) => p.startsWith(`/dashboard/projects/${id}/tracking`),
+  },
+  {
     id: "security",
     label: "Security",
     href: (id) => `/dashboard/projects/${id}/security`,

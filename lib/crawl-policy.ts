@@ -15,3 +15,6 @@ export function crawlerFamily(ua: string | null): string | null {
 
 export const isPaidCrawler = (ua: string) => isTrainingAgent(ua, PAID_CRAWLERS);
 export const isAdClickPath = (path: string) => path.startsWith("/a/") || path === "/api/ads/click";
+/** Email tracking endpoints: /t/<id>/(o.png|c|u) and /api/v1/tracking/<id>/events. */
+export const isEmailTrackingPath = (path: string) =>
+  path.startsWith("/t/") || path.startsWith("/api/v1/tracking/");

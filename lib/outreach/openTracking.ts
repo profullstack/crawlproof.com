@@ -30,7 +30,7 @@ export const PIXEL_GIF = Buffer.from(
 const PREFETCH_WINDOW_MS = 10_000;
 
 /** User-agent fragments belonging to something that fetches on the recipient's behalf. */
-const PROXY_AGENTS = [
+export const PROXY_AGENTS: readonly string[] = [
   "googleimageproxy",
   "yahoomailproxy",
   "proofpoint",

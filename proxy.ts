@@ -1,5 +1,5 @@
 import { gate } from "@/lib/crawl-gateway";
-import { isAdClickPath } from "@/lib/crawl-policy";
+import { isAdClickPath, isEmailTrackingPath } from "@/lib/crawl-policy";
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { trackReferralCode } from "@profullstack/stack/referrals";
@@ -11,6 +11,10 @@ export async function proxy(request: NextRequest) {
   // Ad routes enforce their gate themselves, before DB work. Avoid counting a
   // request twice or making an unrelated Supabase Auth call for each click.
   if (isAdClickPath(request.nextUrl.pathname)) return NextResponse.next();
+  // Email tracking (/t/<id>/c, /t/<id>/u, the events API) is fetched by mail
+  // proxies, link scanners and the sender's CLI. None of them should meet the
+  // crawl gateway's 402, and none of them carry a session worth refreshing.
+  if (isEmailTrackingPath(request.nextUrl.pathname)) return NextResponse.next();
   // Crawl gateway first: AI training crawlers get 402 Payment Required (or the
   // sales page at /crawl) unless they present a paid pass. People, Googlebot
   // and retrieval crawlers fall through to everything below.
