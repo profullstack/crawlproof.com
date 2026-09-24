@@ -8,6 +8,7 @@ import { GIF_UNITS, gifDocument, gifFrameState, gifTimeline, GIF_TIMELINE } from
 import { GIF_PALETTE_COLORS, gifArgs, paletteArgs, validateGif } from "@/lib/ads/gif/encode";
 import { renderAnimatedBanners } from "@/lib/ads/gif/render";
 import { GIF_FPS, GIF_FRAMES, videoProfile } from "@/lib/ads/video/profiles";
+import { FRAME_PATTERN } from "@/lib/ads/video/render";
 import type { VideoDesignSnapshot } from "@/lib/ads/video/snapshot";
 
 const run = promisify(execFile);
@@ -189,7 +190,10 @@ describe("end to end through real ffmpeg", () => {
           const svgPath = path.join(a.outDir, `f-${i}.svg`);
           await writeFile(svgPath, svg, "utf8");
           await run("ffmpeg", ["-y", "-v", "error", "-i", svgPath,
-            path.join(a.outDir, `frame-${String(i).padStart(4, "0")}.png`)]);
+            // Named exactly as the real capturer names them, derived from the
+            // shared pattern. Writing "frame-%04d.png" here is what let the
+            // encoder's divergent literal pass CI and fail in production.
+            path.join(a.outDir, FRAME_PATTERN.replace("%04d", String(i).padStart(4, "0")))]);
           await rm(svgPath);
         }
       };

@@ -16,6 +16,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { GIF_FPS } from "../video/profiles";
+import { FRAME_PATTERN } from "../video/render";
 
 const run = promisify(execFile);
 
@@ -71,7 +72,12 @@ export async function encodeGif(input: {
   ffmpegPath?: string;
 }): Promise<void> {
   const ffmpeg = input.ffmpegPath ?? "ffmpeg";
-  const pattern = path.join(input.frameDir, "frame-%04d.png");
+  // The shared pattern, not a second copy of it. These were written down twice
+  // and drifted: the capturer emits f-0000.png and this module asked ffmpeg for
+  // frame-0000.png, so every banner encode failed with "could find no file"
+  // while the frame count check passed — it counts .png files and never looks
+  // at their names.
+  const pattern = path.join(input.frameDir, FRAME_PATTERN);
   const palette = path.join(input.frameDir, "palette.png");
 
   await run(ffmpeg, paletteArgs(pattern, palette), { maxBuffer: 16 * 1024 * 1024 });
