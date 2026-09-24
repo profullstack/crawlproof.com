@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyCampaign } from "./classify";
+import { narrationScript } from "./narration";
 import type { AdCreative } from "../formats";
 import { VIDEO_FORMAT_ID } from "../formats";
 import { MAX_HEADLINE_WORDS, renderHash, validateSnapshot, type VideoDesignSnapshot } from "./snapshot";
@@ -81,7 +82,7 @@ export function snapshotFromCreatives(args: {
     .find((c): c is NonNullable<typeof c> => !!c);
   if (!source) return null;
 
-  return {
+  const base = {
     headline: trimHeadlineForVideo(source.headline),
     // The animated banners show this as their second line, matching the static
     // unit. The pre-roll ignores it: five seconds of 1920x1080 is a headline
@@ -102,11 +103,22 @@ export function snapshotFromCreatives(args: {
     logoSha256: null,
     heroUrl: null,
     heroSha256: null,
-    audioMode: "silent",
-    narration: null,
+    // Narrated. The script is derived from the same approved copy the frame
+    // shows, deterministically, so it is part of the render hash: two campaigns
+    // with identical copy share one encode, and changing the copy changes the
+    // voiceover along with the picture.
+    //
+    // Declaring it here rather than when the audio comes back matters — the
+    // hash has to describe what was asked for, not what a speech API happened
+    // to return on the day. A synthesis failure ships the silent cut without
+    // making it a different render.
+    audioMode: "narrated" as const,
+    narration: null as string | null,
     locale: args.locale ?? "en",
     reducedMotion: args.reducedMotion ?? false,
   };
+
+  return { ...base, narration: narrationScript(base) };
 }
 
 export type RenderHandle = {

@@ -116,7 +116,18 @@ export function composeDocument(
   snapshot: VideoDesignSnapshot,
   assets: ComposeAssets = { logo: null, hero: null },
 ): string {
-  const headline = escapeHtml(snapshot.headline);
+  const headlineText = snapshot.headline;
+  const headline = escapeHtml(headlineText);
+  // Long copy has to come down or it wraps into the CTA; short copy should fill
+  // the frame rather than float in the middle of it.
+  const headlineSize = headlineText.length > 46 ? 88 : headlineText.length > 28 ? 116 : 148;
+  // One span per word so each can enter on its own beat. Split on whitespace
+  // only — a word is never broken, so no headline is ever half-drawn.
+  const headlineWords = headlineText
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w, i) => `<span class="w" data-i="${i}">${escapeHtml(w)}</span>`)
+    .join(" ");
   const cta = escapeHtml(snapshot.ctaText);
   const domain = escapeHtml(snapshot.domain);
   const logo = safeDataUri(assets.logo);
@@ -152,24 +163,34 @@ export function composeDocument(
     radial-gradient(120% 120% at 20% 0%, ${accent}22 0%, transparent 60%),${bg}}
   .scrim{position:absolute;inset:0;
     background:linear-gradient(180deg,${bg}1a 0%,${bg}99 62%,${bg}f2 100%)}
-  .copy{position:absolute;left:192px;right:192px;bottom:108px;
-    display:flex;flex-direction:column;gap:28px}
-  .brand{display:flex;align-items:center;gap:22px}
-  .logo{width:84px;height:84px;object-fit:contain;border-radius:18px}
+  /* Centred, not bottom-anchored. Anchored at the bottom the composition left
+     the top half of a 1920x1080 frame empty, which is what made a five-second
+     pre-roll read as a slide rather than an ad. */
+  .copy{position:absolute;left:160px;right:160px;top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;gap:40px}
+  .brand{display:flex;align-items:center;gap:24px}
+  .logo{width:96px;height:96px;object-fit:contain;border-radius:20px}
   .logo--mono{display:grid;place-items:center;background:${accent};color:${bg};
-    font-size:46px;font-weight:800}
-  .domain{font-size:34px;letter-spacing:.02em;opacity:.86}
-  h1{font-size:104px;line-height:1.05;font-weight:800;letter-spacing:-.02em;
-    text-shadow:0 1px 2px ${bg}e6,0 0 12px ${bg}bf}
-  .cta{display:inline-flex;align-items:center;gap:18px;align-self:flex-start;
-    background:${accent};color:${bg};font-size:40px;font-weight:700;
-    padding:22px 40px;border-radius:999px}
+    font-size:52px;font-weight:800}
+  .domain{font-size:38px;letter-spacing:.02em;opacity:.86}
+  /* Sized to the copy. A 20-character headline and an 80-character one cannot
+     share a font size on a fixed frame without one of them looking wrong. */
+  h1{font-size:${headlineSize}px;line-height:1.02;font-weight:800;letter-spacing:-.025em;
+    text-shadow:0 2px 6px ${bg}e6,0 0 18px ${bg}bf}
+  /* Each word animates in on its own, which is what makes the frame visibly
+     progress instead of holding one pose for five seconds. */
+  .w{display:inline-block;will-change:transform,opacity}
+  .cta{display:inline-flex;align-items:center;gap:20px;align-self:flex-start;
+    background:${accent};color:${bg};font-size:44px;font-weight:700;
+    padding:26px 48px;border-radius:999px}
+  .rule{height:8px;width:160px;background:${accent};border-radius:999px;transform-origin:left center}
 </style></head>
 <body><div class="stage">
   ${heroLayer}
   <div class="copy">
     <div class="brand">${mark}<span class="domain">${domain}</span></div>
-    <h1>${headline}</h1>
+    <div class="rule"></div>
+    <h1>${headlineWords}</h1>
     <div class="cta">${cta}</div>
   </div>
 </div>
@@ -185,21 +206,70 @@ var stage = document.querySelector('.stage');
 var copy = document.querySelector('.copy');
 var heroEl = document.querySelector('.hero');
 var ctaEl = document.querySelector('.cta');
+var brandEl = document.querySelector('.brand');
+var ruleEl = document.querySelector('.rule');
+var words = Array.prototype.slice.call(document.querySelectorAll('.w'));
+
+function clamp01(v){ return v < 0 ? 0 : v > 1 ? 1 : v; }
 
 // The whole animation, as a pure function of the frame index. Playwright calls
 // this, waits for the returned promise to settle, then screenshots.
+//
+// Every value below is deliberately large. The previous version moved the copy
+// 40px and scaled the artwork 4% across five seconds, which at 1920x1080 is
+// invisible: frames one second apart were indistinguishable and the result was
+// a still image with a duration. An ad has to visibly progress.
 window.__seek = function (frame) {
   var s = frameState(frame, REDUCED);
-  // Entrance: copy rises 40px and fades in over the first beat, from an
-  // already-legible starting opacity rather than from nothing.
-  copy.style.transform = 'translateY(' + ((1 - s.entrance) * 40).toFixed(3) + 'px)';
-  copy.style.opacity = (0.55 + 0.45 * s.entrance).toFixed(4);
-  // Drift: a 4% slow push on the artwork across the hold. Enough to stop the
-  // frame reading as a still, small enough not to pull the eye off the copy.
-  heroEl.style.transform = 'scale(' + (1 + 0.04 * s.drift).toFixed(4) + ')';
-  // CTA: settles into place and brightens over the final beat.
-  ctaEl.style.transform = 'scale(' + (0.96 + 0.04 * s.cta).toFixed(4) + ')';
-  ctaEl.style.filter = 'brightness(' + (0.9 + 0.1 * s.cta).toFixed(4) + ')';
+  var t = frameTimeMs(frame);
+
+  if (REDUCED) {
+    // Everything at rest, immediately. A reduced-motion ad still ends on its
+    // CTA; it simply never travels there.
+    brandEl.style.opacity = 1; brandEl.style.transform = 'none';
+    ruleEl.style.transform = 'scaleX(1)';
+    words.forEach(function (w) { w.style.opacity = 1; w.style.transform = 'none'; });
+    ctaEl.style.opacity = 1; ctaEl.style.transform = 'none';
+    heroEl.style.transform = 'none';
+    void stage.offsetHeight;
+    return document.fonts ? document.fonts.ready : Promise.resolve();
+  }
+
+  // Beat 1 (0-700ms): the brand arrives and the accent rule draws across.
+  var b = easeOut(clamp01(t / 500));
+  // Floored, not faded from zero. Frame 0 has to show the advertiser's mark and
+  // domain: the poster is cut from it, and a viewer who sees only the opening
+  // instant should still know whose ad this is.
+  brandEl.style.opacity = (0.35 + 0.65 * b).toFixed(3);
+  brandEl.style.transform = 'translateX(' + ((1 - b) * -60).toFixed(2) + 'px)';
+  ruleEl.style.transform = 'scaleX(' + b.toFixed(3) + ')';
+
+  // Beat 2 (0-1200ms): the headline builds a word at a time, each rising into
+  // place. Staggered so the eye is led along the line rather than shown a block.
+  //
+  // The whole build finishes inside the first quarter of the ad, and the first
+  // word starts at t=0. An earlier version of this composition took 2.6s to
+  // assemble, which spends half a five-second ad saying nothing — the same
+  // objection that made the previous, motionless version wrong, in the other
+  // direction.
+  var per = words.length > 1 ? 800 / (words.length - 1) : 0;
+  words.forEach(function (w, i) {
+    var wp = easeOut(clamp01((t - i * per) / 420));
+    w.style.opacity = wp.toFixed(3);
+    w.style.transform = 'translateY(' + ((1 - wp) * 54).toFixed(2) + 'px)';
+  });
+
+  // Beat 3 (1900-2600ms): the CTA arrives, overshooting slightly so it lands
+  // rather than fades. Early enough that it is on screen for nearly half the
+  // ad, which is the part a viewer is meant to act on.
+  var c = easeOut(clamp01((t - 1900) / 700));
+  ctaEl.style.opacity = c.toFixed(3);
+  ctaEl.style.transform = 'translateY(' + ((1 - c) * 40).toFixed(2) + 'px) scale(' + (0.9 + 0.1 * c).toFixed(3) + ')';
+
+  // Throughout: a real push on the artwork. 12% over five seconds is visible
+  // without pulling the eye off the copy; 4% was not.
+  heroEl.style.transform = 'scale(' + (1 + 0.12 * (t / 5000)).toFixed(4) + ')';
+
   // Force layout so the screenshot cannot catch a half-applied style.
   void stage.offsetHeight;
   return document.fonts ? document.fonts.ready : Promise.resolve();
