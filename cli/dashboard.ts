@@ -10,6 +10,7 @@
 import type { Container, RenderArgs, Theme } from "@profullstack/hqtui";
 import { markdownText } from "@profullstack/hqtui";
 
+import { listEmailTracking, setEmailTracking, type EmailTrackingRow } from "../lib/dashboard/collect";
 import { collectDashboard, type CoinPayAuth, type DashboardSnapshot, type SiteStats, type FeedName, type FeedProgress } from "../lib/dashboard/collect";
 import { AD_TARGET_CTR, AD_TARGET_IMPRESSIONS, adTargets } from "../lib/dashboard/roi";
 import { buildSiteDetail, type SiteDetail } from "../lib/dashboard/site";
@@ -20,15 +21,7 @@ export const TABS = ["ROI", "Traffic", "Ads", "Money", "Spend", "Email"] as cons
 /** The Email tab's index: its data is not in the snapshot, so it draws without one. */
 export const EMAIL_TAB = 5;
 
-/** One project's email tracking, as GET /api/v1/email-tracking answers it. */
-export type EmailTrackingRow = {
-  project_id: string;
-  site: string;
-  role: string;
-  tracking_id: string;
-  enabled: boolean;
-  events_24h?: { open: number; click: number; unsubscribe: number };
-};
+export type { EmailTrackingRow };
 
 export type EmailState = { rows: EmailTrackingRow[]; loading: boolean; error: string | null; note: string | null };
 export const RANGES = ["1h", "4h", "1d", "1w", "1m"] as const;
@@ -1388,18 +1381,13 @@ export function createEmailController(
   state: State,
   opts: Pick<DashboardOptions, "baseUrl" | "token">,
   invalidate: () => void,
-  fetcher: typeof fetch = fetch,
+  api: { list: typeof listEmailTracking; set: typeof setEmailTracking } = { list: listEmailTracking, set: setEmailTracking },
 ): { load: () => Promise<void>; toggle: (row: EmailTrackingRow) => Promise<void> } {
-  const base = opts.baseUrl.replace(/\/$/, "");
-  const headers = { authorization: `Bearer ${opts.token}`, accept: "application/json" };
   const load = async (): Promise<void> => {
     state.email.loading = true;
     invalidate();
     try {
-      const res = await fetcher(`${base}/api/v1/email-tracking`, { headers });
-      const json = (await res.json().catch(() => ({}))) as { projects?: EmailTrackingRow[]; error?: string };
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      state.email.rows = json.projects ?? [];
+      state.email.rows = await api.list(opts.baseUrl, opts.token);
       state.email.error = null;
     } catch (e) {
       state.email.error = e instanceof Error ? e.message : String(e);
@@ -1409,12 +1397,10 @@ export function createEmailController(
     }
   };
   const toggle = async (row: EmailTrackingRow): Promise<void> => {
-    const action = row.enabled ? "disable" : "enable";
+    const on = !row.enabled;
     try {
-      const res = await fetcher(`${base}/api/v1/email-tracking/${encodeURIComponent(row.project_id)}/${action}`, { method: "POST", headers });
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      state.email.note = `${row.site}: email tracking ${action === "enable" ? "on" : "off"}.`;
+      await api.set(opts.baseUrl, opts.token, row.project_id, on);
+      state.email.note = `${row.site}: email tracking ${on ? "on" : "off"}.`;
       state.email.error = null;
     } catch (e) {
       state.email.error = e instanceof Error ? e.message : String(e);
