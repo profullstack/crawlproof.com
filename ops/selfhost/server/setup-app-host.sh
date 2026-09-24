@@ -15,7 +15,11 @@ log() { printf '\n===> %s\n' "$*"; }
 
 log "App files to $USER_NAME, supabase/ to root"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 2750 "$ROOT"
-for f in app.env deploy.env docker-compose.app.yml deploy-app.sh; do
+# .deploy-state is included deliberately: running deploy-app.sh once as root
+# (which is the natural thing to do during the initial migration) leaves a
+# root-owned state file, and every later CI deploy then succeeds all the way
+# through the health check and fails on the very last line writing it.
+for f in app.env deploy.env docker-compose.app.yml deploy-app.sh .deploy-state; do
   [ -e "$ROOT/$f" ] && chown "$USER_NAME:$USER_NAME" "$ROOT/$f"
 done
 [ -e "$ROOT/app.env" ] && chmod 600 "$ROOT/app.env"
