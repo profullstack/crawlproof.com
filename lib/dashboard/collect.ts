@@ -74,11 +74,12 @@ class FeedError extends Error {
   }
 }
 
-async function fetchJson<T>(url: string, token: string, timeoutMs = TIMEOUT_MS): Promise<T> {
+async function fetchJson<T>(url: string, token: string, timeoutMs = TIMEOUT_MS, method: "GET" | "POST" = "GET"): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
+      method,
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       signal: controller.signal,
     });
@@ -100,6 +101,28 @@ async function fetchJson<T>(url: string, token: string, timeoutMs = TIMEOUT_MS):
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** One project's email tracking, as GET /api/v1/email-tracking answers it. */
+export type EmailTrackingRow = {
+  project_id: string;
+  site: string;
+  role: string;
+  tracking_id: string;
+  enabled: boolean;
+  events_24h?: { open: number; click: number; unsubscribe: number };
+};
+
+/** Every project's email tracking, for the TUI's Email tab. */
+export async function listEmailTracking(baseUrl: string, token: string): Promise<EmailTrackingRow[]> {
+  const body = await fetchJson<{ projects?: EmailTrackingRow[] }>(`${baseUrl.replace(/\/$/, "")}/api/v1/email-tracking`, token);
+  return body.projects ?? [];
+}
+
+/** Turn one project's email tracking on or off. */
+export async function setEmailTracking(baseUrl: string, token: string, projectId: string, on: boolean): Promise<EmailTrackingRow> {
+  const path = `/api/v1/email-tracking/${encodeURIComponent(projectId)}/${on ? "enable" : "disable"}`;
+  return fetchJson<EmailTrackingRow>(`${baseUrl.replace(/\/$/, "")}${path}`, token, TIMEOUT_MS, "POST");
 }
 
 /** Ads aggregate hundreds of campaigns. Retry one transient or partial read. */

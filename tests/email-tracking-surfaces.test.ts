@@ -34,8 +34,10 @@ describe("crawlproof email-tracking", () => {
   it("lists every project with its state and a day of events", async () => {
     const c = capture();
     expect(await runEmailTracking([], {}, call, c.out)).toBe(0);
-    expect(c.lines[0]).toMatch(/^on\s+moshcode\.sh\s+e960e0a69972a7f34ea197bb\s+12 opens, 3 clicks, 1 unsubs \(24h\)$/);
-    expect(c.lines[1]).toMatch(/^off\s+profullstack\.com/);
+    expect(c.lines).toEqual([
+      `on   ${"moshcode.sh".padEnd(28)} e960e0a69972a7f34ea197bb  12 opens, 3 clicks, 1 unsubs (24h)`,
+      `off  ${"profullstack.com".padEnd(28)} cf9378b423ec82ad8f896fb7  0 opens, 0 clicks, 0 unsubs (24h)`,
+    ]);
   });
 
   it("shows one, with the secret only when asked, and alone when piped", async () => {
@@ -76,16 +78,18 @@ describe("the TUI's Email tab", () => {
   it("loads from the API, and e flips the highlighted project then reloads", async () => {
     const state = initialState({ tab: EMAIL_TAB });
     let enabled = false;
-    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(new Headers(init?.headers as Record<string, string>).get("authorization")).toBe("Bearer crp_test");
-      if (url.endsWith("/api/v1/email-tracking")) return Response.json({ projects: [{ ...ROWS[1], enabled }] });
-      if (url.endsWith("/api/v1/email-tracking/p-pfs/enable") && init?.method === "POST") {
-        enabled = true;
-        return Response.json({ ...ROWS[1], enabled: true });
-      }
-      return Response.json({ error: "no" }, { status: 404 });
-    });
-    const email = createEmailController(state, { baseUrl: "https://crawlproof.test/", token: "crp_test" }, () => {}, fetcher as unknown as typeof fetch);
+    const api = {
+      list: vi.fn(async (base: string, token: string) => {
+        expect([base, token]).toEqual(["https://crawlproof.test/", "crp_test"]);
+        return [{ ...ROWS[1], enabled }];
+      }),
+      set: vi.fn(async (_base: string, _token: string, id: string, on: boolean) => {
+        expect([id, on]).toEqual(["p-pfs", true]);
+        enabled = on;
+        return { ...ROWS[1], enabled };
+      }),
+    };
+    const email = createEmailController(state, { baseUrl: "https://crawlproof.test/", token: "crp_test" }, () => {}, api);
     await email.load();
     expect(state.email.rows.map((r) => r.enabled)).toEqual([false]);
 
