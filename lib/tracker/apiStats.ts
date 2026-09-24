@@ -33,8 +33,24 @@ export type ProjectRow = { id: string; name: string; url: string; tracker_enable
  * Deliberately not every panel: a CLI answer people read in a terminal is the
  * sources, the pages and the shape over time. Devices and browsers are a
  * different question and cost another query each.
+ *
+ * Geography is here because it answers a question the others cannot. Sources
+ * and referrers describe what a caller SAYS it is, and both are trivially
+ * forged; where the packets entered from is not. When traffic to one site
+ * turned out to be almost entirely one city, that single fact identified it as
+ * one operator on a cloud region rather than the scattered readership the
+ * referrer panel implied — and nothing in the terminal could show it, because
+ * these two panels rendered only in the dashboard. Two extra queries is a
+ * cheap price for the panel that tells you who you are actually talking to.
  */
-export const STATS_PANELS: PanelKey[] = ["series", "sources", "pages", "referrers"];
+export const STATS_PANELS: PanelKey[] = [
+  "series",
+  "sources",
+  "pages",
+  "referrers",
+  "countries",
+  "cities",
+];
 
 export type ResolveResult =
   | { ok: true; project: ProjectRow }
@@ -123,6 +139,9 @@ export type StatsAnswer = {
   sources: ListItem[];
   referrers: ListItem[];
   pages: ListItem[];
+  /** Where the traffic entered from. Unforgeable, unlike a referrer. */
+  countries: ListItem[];
+  cities: ListItem[];
   /**
    * The shape over time, present only with `detail`. It is what the totals were
    * summed from, so asking for it costs nothing extra.
@@ -241,6 +260,8 @@ export async function projectStats(
     sources: asList(panels.sources),
     referrers: asList(panels.referrers),
     pages: asList(panels.pages),
+    countries: asList(panels.countries),
+    cities: asList(panels.cities),
   };
   if (!detail) return answer;
 

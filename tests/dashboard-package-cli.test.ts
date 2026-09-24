@@ -103,4 +103,30 @@ describe("renderStats", () => {
     const text = renderStats({ totals: { visitors: 0, pageviews: 0 } }, { range: "1d", who: "humans" });
     expect(text).toContain("Check the tag is on the page");
   });
+
+  it("prints where the traffic came from", () => {
+    const text = renderStats(
+      {
+        project: { name: "site.com" },
+        totals: { visitors: 10, pageviews: 40 },
+        countries: [{ label: "Singapore (SG)", value: 38 }],
+        cities: [{ label: "Singapore, SG", value: 38 }],
+      },
+      { range: "1d", who: "all" },
+    );
+    expect(text).toContain("Countries");
+    expect(text).toContain("Singapore (SG)");
+    expect(text).toContain("Cities");
+  });
+
+  it("omits the geo sections when the panels are empty", () => {
+    // Same rule as every other section: an empty panel prints nothing rather
+    // than an empty heading, so a quiet window stays readable.
+    const text = renderStats(
+      { project: { name: "site.com" }, totals: { visitors: 1, pageviews: 1 }, pages: [{ label: "/", value: 1 }] },
+      { range: "1d", who: "humans" },
+    );
+    expect(text).not.toContain("Countries");
+    expect(text).not.toContain("Cities");
+  });
 });
