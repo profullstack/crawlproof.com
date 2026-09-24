@@ -360,6 +360,11 @@ export async function renderPreroll(args: {
   // revision whose video is fine, because the video is what the advertiser is
   // waiting for. The problems are recorded either way.
   if (args.probeGif) {
+    // Logged unconditionally. The banner step failed silently in production for
+    // three deploys while working when invoked by hand in the same container,
+    // and the only reason that was hard to diagnose is that success and
+    // never-ran looked identical from outside.
+    console.log("[render] animated banners: start");
     try {
       const gifs = await renderAnimatedBanners({
         snapshot,
@@ -367,6 +372,7 @@ export async function renderPreroll(args: {
         captureFrames,
         probeGif: args.probeGif,
       });
+      console.log(`[render] animated banners: produced ${gifs.length}`);
       for (const g of gifs) {
         const facts = await fileFacts(g.file);
         assets.push({
@@ -393,7 +399,7 @@ export async function renderPreroll(args: {
       // — while the code did the opposite and failed whole renders whose video
       // was fine. The banners are optional profiles; their absence is visible
       // in the asset list, and the reason belongs in the log.
-      console.warn(`[render] animated banners skipped: ${(err as Error).message}`);
+      console.error(`[render] animated banners FAILED: ${(err as Error).message}`);
     }
   }
 
