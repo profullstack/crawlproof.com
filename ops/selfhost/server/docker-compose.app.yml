@@ -1,0 +1,69 @@
+# crawlproof.com on dev2 — the app container (Next.js + audit worker, both
+# started by start.sh) and the Redis the prober queue needs.
+#
+# Lives at /home/anthony/www/crawlproof.com/docker-compose.app.yml.
+# nginx on the host terminates TLS and proxies to 127.0.0.1:${APP_PORT}.
+#
+# The Supabase stack is a separate compose project in ./supabase; the app
+# reaches it over the host's loopback gateway, not a shared compose network,
+# so either side can be restarted without the other noticing.
+
+services:
+  app:
+    container_name: crawlproof-app
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+      args:
+        # Next.js inlines NEXT_PUBLIC_* at build time, so these must be
+        # present for `next build`, not just at runtime.
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}
+    restart: unless-stopped
+    env_file:
+      - ./app.env
+    environment:
+      PORT: 3000
+      WORKER_PORT: 9080
+      WORKER_URL: http://127.0.0.1:9080
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:${APP_PORT:-3100}:3000"
+    extra_hosts:
+      # Lets the app reach the Supabase gateway and Redis on the host without
+      # putting both compose projects on one network.
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+  redis:
+    container_name: crawlproof-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    volumes:
+      - ./volumes/redis:/data
+    ports:
+      # The app reaches it over the bridge; the prober droplet reaches it on
+      # the public port, which ufw opens only to that one address.
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }

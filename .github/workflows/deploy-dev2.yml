@@ -1,0 +1,63 @@
+name: Deploy to dev2
+
+# Replaces Railway's git-push auto-deploy. Railway watched this repo and
+# redeployed on every push to main; this does the same thing against dev2.
+#
+# The build happens ON dev2, not here: the image bakes NEXT_PUBLIC_* in at
+# build time and those values live in /home/anthony/www/crawlproof.com/app.env,
+# which never leaves the box. CI only needs to be able to ssh in.
+#
+# Secrets required:
+#   DEV2_SSH_KEY   private key for the deploy account on dev2
+#   DEV2_HOST      dev2.profullstack.com
+#   DEV2_USER      anthony
+#   DEV2_KNOWN_HOSTS  output of `ssh-keyscan dev2.profullstack.com`
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy (defaults to the pushed commit)
+        required: false
+        type: string
+
+concurrency:
+  # One deploy at a time; a newer push should wait rather than race a build
+  # that is already halfway through `next build` on the box.
+  group: deploy-dev2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Resolve target revision
+        id: rev
+        run: echo "sha=${{ inputs.ref || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up ssh
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEV2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEV2_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -o BatchMode=yes "${{ secrets.DEV2_USER }}@${{ secrets.DEV2_HOST }}" \
+            "/home/anthony/www/crawlproof.com/deploy-app.sh ${{ steps.rev.outputs.sha }}"
+
+      - name: Verify the site answers over TLS
+        # deploy-app.sh already health-checks on loopback; this proves nginx and
+        # the certificate in front of it are serving the new container too.
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://crawlproof.com/ || true)
+            if [ "$code" = 200 ]; then echo "crawlproof.com 200"; exit 0; fi
+            echo "attempt $i: $code"; sleep 10
+          done
+          echo "crawlproof.com never returned 200"; exit 1
