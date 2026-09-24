@@ -14,6 +14,7 @@ import {
   PREROLL_FPS,
   PREROLL_FRAMES,
   videoProfile,
+  PREROLL_MS,
   type VideoProfileId,
 } from "./profiles";
 
@@ -146,8 +147,17 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
     // audio stream that ended early. Validation requires the two durations to
     // match within one AAC frame and rejected every narrated render, and a
     // player handed a short track is entitled to stop at its end.
+    // apad extends the audio with silence; -t then fixes the output at exactly
+    // the ad's length so picture and sound agree to the millisecond.
+    //
+    // -shortest was the obvious pairing and does not work here: in ffmpeg 4.x
+    // it keys off INPUT durations, so an infinitely padded filter output does
+    // not extend it and the encode either kept the original 2.3s of speech or,
+    // once padded, dropped the stream entirely. An explicit duration is not a
+    // workaround — it is the thing actually being asserted.
     args.push("-af", "apad");
-    args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2", "-shortest");
+    args.push("-t", String(PREROLL_MS / 1000));
+    args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2");
   } else {
     args.push("-an");
   }

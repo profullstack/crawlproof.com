@@ -13,6 +13,7 @@ import { mkdtemp, rm, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { FFMPEG_BIN, FFPROBE_BIN, run } from "@/lib/ads/video/encode";
+import { mp4Args } from "@/lib/ads/video/encode";
 import { renderPreroll, narrationVtt, type FrameCapturer } from "@/lib/ads/video/render";
 import { probeMedia, evaluateProbe, validateMediaPlaylist } from "@/lib/ads/video/validate";
 import { PREROLL_FRAMES, videoProfile } from "@/lib/ads/video/profiles";
@@ -222,4 +223,51 @@ describe("a snapshot renders to validated media", () => {
     const vtt = narrationVtt("  Try NicheDB\n  today.  ");
     expect(vtt).toBe("WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nTry NicheDB today.\n");
   });
+  it("gives a narrated encode an audio track exactly as long as the picture", async () => {
+    // Every narration is shorter than its ad: a five-second read is about two
+    // and a half seconds of speech. This asserts the padding against real
+    // ffmpeg, because the obvious spelling of it does not work — `-shortest`
+    // keys off input durations in ffmpeg 4.x, so a padded filter output either
+    // left the short track alone or dropped the stream entirely, and both
+    // shipped past unit tests that only inspected the argument list.
+    const dir = await mkdtemp(path.join(tmpdir(), "narrated-"));
+    try {
+      // A 2.3s tone stands in for the voiceover.
+      const audio = path.join(dir, "narration.mp3");
+      await run(FFMPEG_BIN, ["-y", "-v", "error", "-f", "lavfi", "-i",
+        "sine=frequency=440:duration=2.3", audio], 60_000);
+
+      // 150 frames of flat colour: the picture is not what is under test.
+      for (let i = 0; i < 150; i++) {
+        await run(FFMPEG_BIN, ["-y", "-v", "error", "-f", "lavfi", "-i",
+          "color=c=#12161f:s=320x180:d=1", "-frames:v", "1",
+          path.join(dir, `f-${String(i).padStart(4, "0")}.png`)], 60_000);
+      }
+
+      const out = path.join(dir, "narrated.mp4");
+      await run(FFMPEG_BIN, mp4Args({
+        framePattern: path.join(dir, "f-%04d.png"),
+        audioPath: audio,
+        outPath: out,
+        profile: "mp4_480p",
+        videoKbps: 800,
+      }), 180_000);
+
+      const probed = await run(FFPROBE_BIN, ["-v", "error", "-show_entries",
+        "stream=codec_type,duration", "-of", "json", out], 60_000);
+      const streams = JSON.parse(String(probed)).streams as { codec_type: string; duration?: string }[];
+
+      const audioStream = streams.find((st) => st.codec_type === "audio");
+      // The track must exist at all: a silent "narrated" ad is the bug that
+      // reached production.
+      expect(audioStream, "no audio stream in a narrated encode").toBeTruthy();
+
+      const seconds = Number(audioStream!.duration);
+      // Within one AAC frame of five seconds, which is what validation demands.
+      expect(Math.abs(seconds - 5)).toBeLessThan(0.05);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
 });
