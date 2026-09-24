@@ -49,12 +49,24 @@ export async function processDueVideoRenders(
     const hash = row.render_hash as string;
     const profile = (row.output_profile as string) ?? "default";
 
-    // Already scheduled: re-adding is harmless because BullMQ dedupes on the
-    // job id, but checking first keeps the log honest about what this did.
-    const existing = await queue.getJob(renderJobId(hash, profile)).catch(() => null);
+    // Already scheduled? Existence is not the question — BullMQ retains a job
+    // after it finishes, so a failed or completed job is still findable and is
+    // emphatically not scheduled. Treating "a job exists" as "work is coming"
+    // left rows queued forever behind the corpse of the attempt that failed
+    // them, which is precisely the stranding this sweep exists to undo.
+    //
+    // A job in a live state is left alone. A dead one is removed so the id is
+    // free, then re-added below.
+    const jobId = renderJobId(hash, profile);
+    const existing = await queue.getJob(jobId).catch(() => null);
     if (existing) {
-      skipped++;
-      continue;
+      const jobState = await existing.getState().catch(() => "unknown");
+      if (jobState === "failed" || jobState === "completed") {
+        await existing.remove().catch(() => {});
+      } else {
+        skipped++;
+        continue;
+      }
     }
 
     // A row with no design cannot be rendered and re-queueing it forever would
