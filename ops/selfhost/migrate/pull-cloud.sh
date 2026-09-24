@@ -51,14 +51,22 @@ pgdump --dbname="$CLOUD_DB_URL" \
   --disable-triggers \
   --schema=auth --schema=public --schema=storage \
   --exclude-table-data='storage.objects' \
+  --exclude-table-data='storage.migrations' \
+  --exclude-table-data='auth.schema_migrations' \
   --exclude-table-data='public.tracker_events' \
   > "$OUT/data.sql"
 
-# storage.objects is deliberately excluded: sync-storage.mjs re-uploads the
-# files through the Storage API, which writes those rows itself. Importing the
-# cloud rows as well would leave metadata pointing at files the self-hosted
-# backend has never heard of.
-# tracker_events is excluded because it is raw and pruned at 24h anyway.
+# Four exclusions, each for its own reason:
+#
+# storage.objects      sync-storage.mjs re-uploads the files through the
+#                      Storage API, which writes these rows itself. Importing
+#                      the cloud's copy as well would leave metadata pointing
+#                      at files the self-hosted backend has never heard of.
+# storage.migrations   the storage service's own schema-version ledger. Load
+# auth.schema_migrations  the cloud's rows and the self-hosted service believes
+#                      it has already run migrations that its images have not,
+#                      and silently skips them.
+# public.tracker_events  raw hit log, pruned at 24h, worth nothing after a move.
 
 log "pg_cron jobs (not in a schema dump; they live in the cron schema)"
 docker run --rm -i "$PG_IMAGE" psql "$CLOUD_DB_URL" -At -X -v ON_ERROR_STOP=1 \
