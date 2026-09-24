@@ -6,6 +6,7 @@ import { AdPreview } from "@/components/ads/ad-preview";
 import { VideoRenderCard } from "@/components/ads/video-render-card";
 import { latestJobForCampaign } from "@/lib/ads/video/jobs";
 import { isStreamingFormat } from "@/lib/ads/formats";
+import { classifyCampaign } from "@/lib/ads/video/classify";
 import { CampaignActions, RegenerateButton } from "@/components/ads/campaign-actions";
 import { CampaignTrend } from "@/components/ads/campaign-trend";
 import { BidHistory } from "@/components/ads/bid-history";
@@ -274,7 +275,7 @@ export default async function CampaignDetailPage({
       </div>
 
       <div className="mt-6">
-        <VideoRenderCard jobId={videoJobId} />
+        <VideoRenderCard jobId={videoJobId} campaignKind={classifyCampaign(campaign.destination_url)} />
       </div>
 
       {creatives.length > 0 && (

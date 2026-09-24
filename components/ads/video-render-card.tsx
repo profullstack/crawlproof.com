@@ -15,7 +15,14 @@ type Ready = Extract<Status, { ok: true }>;
  * deliberately unhurried: an encode takes tens of seconds, and polling faster
  * would only make the queue look busier than it is.
  */
-export function VideoRenderCard({ jobId }: { jobId: string | null }) {
+export function VideoRenderCard({
+  jobId,
+  campaignKind = "product",
+}: {
+  jobId: string | null;
+  /** What this campaign advertises. Only used to explain an absent pre-roll. */
+  campaignKind?: "product" | "blog" | "social";
+}) {
   const [status, setStatus] = useState<Ready | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,10 +57,28 @@ export function VideoRenderCard({ jobId }: { jobId: string | null }) {
     };
   }, [jobId, settled, poll]);
 
-  // No job means this campaign predates the video pipeline, or its render was
-  // never queued. Saying nothing beats showing a broken-looking empty card on
-  // every older campaign.
-  if (!jobId) return null;
+  // No job. Rendering nothing here was worse than it sounds: a campaign that
+  // was deliberately skipped and one that is broken looked identical, so the
+  // only signal was an absence the advertiser had to interpret. Say which.
+  if (!jobId) {
+    const reason =
+      campaignKind === "blog"
+        ? "This campaign links to a blog post, and the initial rollout covered product ads only."
+        : campaignKind === "social"
+          ? "This campaign links to a social profile, and the initial rollout covered product ads only."
+          : "This campaign predates the video pipeline.";
+    return (
+      <div className="card p-4">
+        <h2 className="font-semibold">Streaming pre-roll</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          No pre-roll yet. {reason}
+        </p>
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          Editing and saving this campaign queues one.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="card p-4">
