@@ -6,9 +6,10 @@
 // The droplet writes no DB — it returns the result as the job's return value,
 // which we read here and persist (scan row + findings). Keeps Supabase creds
 // off the droplet.
-import { Queue, type ConnectionOptions, type Job } from "bullmq";
+import { Queue, type Job } from "bullmq";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PROBER_QUEUE, type PortScanResult } from "./prober";
+import { redisConnectionOptions } from "./redis-connection";
 
 // Ports that are alarming when publicly exposed (databases, caches, admin, etc.).
 const HIGH_RISK_PORTS = new Set([
@@ -23,24 +24,8 @@ const RUNNING_TIMEOUT_MS = 40 * 60 * 1000;
 
 let queue: Queue | null = null;
 
-// Parse REDIS_URL into bullmq connection options so bullmq builds its own
-// ioredis client (avoids a version clash between our ioredis and bullmq's).
-function connectionOptions(): ConnectionOptions | null {
-  const url = process.env.REDIS_URL;
-  if (!url) return null;
-  const u = new URL(url);
-  return {
-    host: u.hostname,
-    port: Number(u.port || "6379"),
-    username: u.username ? decodeURIComponent(u.username) : undefined,
-    password: u.password ? decodeURIComponent(u.password) : undefined,
-    tls: u.protocol === "rediss:" ? {} : undefined,
-    maxRetriesPerRequest: null,
-  };
-}
-
 export function getProberQueue(): Queue | null {
-  const connection = connectionOptions();
+  const connection = redisConnectionOptions();
   if (!connection) return null;
   if (!queue) queue = new Queue(PROBER_QUEUE, { connection });
   return queue;

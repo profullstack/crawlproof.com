@@ -48,6 +48,7 @@ import { reapStalePublishingJobs } from "../lib/promote/jobs";
 import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
 import { runAutobidSweep } from "../lib/ads/bids";
+import { startVideoRenderWorker } from "./video";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1572,4 +1573,7 @@ server.listen(port, bindHost, () => {
   sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
   feedCrawlSweep().catch((e) => console.error("[worker] feed crawl sweep", e));
   autobidSweep().catch((e) => console.error("[worker] autobid sweep", e));
+  // Long-lived BullMQ consumer rather than an interval sweep: a render takes
+  // tens of seconds and the queue, not a timer, decides when the next one runs.
+  startVideoRenderWorker(supabase);
 });
