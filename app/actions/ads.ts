@@ -493,6 +493,7 @@ async function requeueCampaignVideo(
     domain:
       (campaign.destination_domain as string | null) ??
       domainOf(campaign.destination_url as string),
+    destinationUrl: campaign.destination_url as string,
     creatives: rows.map((r) => ({
       format: r.format,
       headline: r.headline ?? "",

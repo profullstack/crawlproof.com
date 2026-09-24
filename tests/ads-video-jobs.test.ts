@@ -6,6 +6,7 @@ import {
   ensureVideoCreative,
   MAX_RENDER_ATTEMPTS,
   renderStateLabel,
+  queueCampaignVideo,
   snapshotFromCreatives,
   streamingReady,
   trimHeadlineForVideo,
@@ -330,5 +331,70 @@ describe("status presentation", () => {
     for (const s of ["queued", "rendering", "validating", "ready", "failed"] as const) {
       expect(renderStateLabel(s)).toMatch(/\w/);
     }
+  });
+});
+
+describe("only product campaigns get media", () => {
+  const creatives = [design("banner_300x250")];
+
+  it("skips a campaign that points at a blog post", async () => {
+    // The backfill classified before queueing, but the dashboard save and the
+    // public API queued anything — so blog campaigns were getting video and
+    // animated banners that were explicitly out of scope. The rule belongs
+    // where all three paths pass through.
+    const db = fakeDb({ existingJob: null, existingCreative: null });
+    const res = await queueCampaignVideo(db.client as never, {
+      campaignId: "c",
+      ownerId: "o",
+      domain: "dev.to",
+      destinationUrl: "https://dev.to/chovy/some-post-abc",
+      creatives,
+      bumpRevision: false,
+    });
+    expect(res).toBeNull();
+    // Nothing written at all: no creative row, no job.
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("skips a social profile", async () => {
+    const db = fakeDb({ existingJob: null, existingCreative: null });
+    const res = await queueCampaignVideo(db.client as never, {
+      campaignId: "c",
+      ownerId: "o",
+      domain: "x.com",
+      destinationUrl: "https://x.com/someone",
+      creatives,
+      bumpRevision: false,
+    });
+    expect(res).toBeNull();
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("renders a product campaign", async () => {
+    const db = fakeDb({ existingJob: null, existingCreative: null });
+    const res = await queueCampaignVideo(db.client as never, {
+      campaignId: "c",
+      ownerId: "o",
+      domain: "moshcoding.com",
+      destinationUrl: "https://moshcoding.com/",
+      creatives,
+      bumpRevision: false,
+    });
+    expect(res).not.toBeNull();
+  });
+
+  it("renders when no destination is known, rather than silently skipping", async () => {
+    // Degrading to "render it" is the safer default: a caller that forgets to
+    // pass the URL produces an extra video, not a campaign that mysteriously
+    // never gets one.
+    const db = fakeDb({ existingJob: null, existingCreative: null });
+    const res = await queueCampaignVideo(db.client as never, {
+      campaignId: "c",
+      ownerId: "o",
+      domain: "example.com",
+      creatives,
+      bumpRevision: false,
+    });
+    expect(res).not.toBeNull();
   });
 });

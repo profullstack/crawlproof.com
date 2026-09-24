@@ -7,6 +7,7 @@
 // never a precondition for one.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { classifyCampaign } from "./classify";
 import type { AdCreative } from "../formats";
 import { VIDEO_FORMAT_ID } from "../formats";
 import { MAX_HEADLINE_WORDS, renderHash, validateSnapshot, type VideoDesignSnapshot } from "./snapshot";
@@ -339,11 +340,30 @@ export async function queueCampaignVideo(
     campaignId: string;
     ownerId: string;
     domain: string;
+    /**
+     * The campaign's destination, used to decide whether it gets media at all.
+     * Optional only so a caller without it degrades to rendering rather than to
+     * silently skipping.
+     */
+    destinationUrl?: string | null;
     creatives: Parameters<typeof snapshotFromCreatives>[0]["creatives"];
     bumpRevision: boolean;
   },
 ): Promise<RenderHandle | null> {
   try {
+    // Product ads only. The backfill classified campaigns before queueing them,
+    // but every other path — the dashboard save, and the shared creator behind
+    // the public API — queued a render for anything, so campaigns pointing at
+    // blog posts and social profiles were getting video and animated banners
+    // that were explicitly out of scope.
+    //
+    // Deciding it here rather than in each caller is the same lesson the API
+    // gap taught: a rule enforced at one of three call sites is a rule that
+    // holds until someone adds a fourth.
+    if (args.destinationUrl && classifyCampaign(args.destinationUrl) !== "product") {
+      return null;
+    }
+
     const snapshot = snapshotFromCreatives({ creatives: args.creatives, domain: args.domain });
     if (!snapshot) return null;
 

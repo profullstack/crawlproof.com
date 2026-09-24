@@ -136,6 +136,7 @@ for (const [i, c] of targets.entries()) {
     campaignId: c.id,
     ownerId: c.owner_id,
     domain: c.destination_domain ?? new URL(c.destination_url).hostname.replace(/^www\./, ""),
+    destinationUrl: c.destination_url,
     creatives: usable.map((r) => ({
       format: r.format,
       headline: r.headline ?? "",

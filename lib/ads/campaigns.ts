@@ -277,6 +277,7 @@ export async function createCampaignForUrl(input: {
     campaignId: campaign.id,
     ownerId: userId,
     domain,
+    destinationUrl: request.url,
     creatives: generated.creatives.map((c) => ({
       format: c.format,
       headline: c.headline ?? "",
