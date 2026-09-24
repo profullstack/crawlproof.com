@@ -62,6 +62,10 @@ export async function GET(request: NextRequest) {
     const ip = clientIpFromHeaders(request.headers);
     const geo = await lookupGeo(ip).catch(() => null);
     const fill = await serveAd(slotId, VIDEO_FORMAT_ID, {
+      // The one path allowed past fitAdFormat's refusal of streaming formats.
+      // It also suppresses markup rendering, so this cannot become a way to
+      // draw a video creative as a banner.
+      streaming: true,
       ip,
       country: geo?.countryCode ?? null,
       device: parseDevice(request.headers.get("user-agent")).deviceType,
