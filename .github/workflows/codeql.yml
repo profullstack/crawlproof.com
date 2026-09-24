@@ -26,7 +26,7 @@ jobs:
     name: analyze (${{ matrix.language }})
     # Auto-skips on private repos; CodeQL is free on public ones.
     if: ${{ github.event.repository.visibility == 'public' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: read
@@ -39,10 +39,10 @@ jobs:
         language: [javascript-typescript]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # 'security-and-quality' is the broadest preset — includes both
@@ -51,9 +51,9 @@ jobs:
           queries: security-and-quality
 
       - name: Build (autobuild for JS/TS — no-op compile)
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
