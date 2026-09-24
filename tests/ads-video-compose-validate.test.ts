@@ -7,7 +7,7 @@ import {
   timeline,
 } from "@/lib/ads/video/compose";
 import type { VideoDesignSnapshot } from "@/lib/ads/video/snapshot";
-import { GOP_FRAMES, hlsArgs, mp4Args, multivariantPlaylist, posterArgs } from "@/lib/ads/video/encode";
+import { AAC_LC_CODEC, avcCodecString, GOP_FRAMES, hlsArgs, mp4Args, multivariantPlaylist, posterArgs } from "@/lib/ads/video/encode";
 import {
   evaluateProbe,
   parseRational,
@@ -193,6 +193,32 @@ describe("encoder arguments carry the media contract", () => {
   it("takes the poster from the settled hold, not the entrance", () => {
     const poster = posterArgs("/tmp/m.mp4", "/tmp/p.webp");
     expect(poster[poster.indexOf("-ss") + 1]).toBe("2");
+  });
+
+it("derives the avc1 codec string from what was actually encoded", () => {
+    // Shipped renditions probe as High @ 3.1. The hardcoded string said level
+    // 4.0 (0x28), which is a promise about the bitstream it does not keep.
+    expect(avcCodecString("High", 31)).toBe("avc1.64001F");
+    expect(avcCodecString("High", 40)).toBe("avc1.640028");
+    expect(avcCodecString("Main", 31)).toBe("avc1.4D001F");
+    expect(avcCodecString("Constrained Baseline", 30)).toBe("avc1.42001E");
+    // Unknown input falls back to High @ 3.1 rather than emitting nonsense.
+    expect(avcCodecString(undefined, undefined)).toBe("avc1.64001F");
+  });
+
+  it("never advertises audio for a silent rendition", () => {
+    // A player reads CODECS before fetching a segment, so an audio codec named
+    // here is an audio track it will wait for. Every ad is silent today.
+    const silent = multivariantPlaylist([
+      { name: "720p", width: 1280, height: 720, bandwidth: 700000, codecs: avcCodecString("High", 31) },
+    ]);
+    expect(silent).toContain('CODECS="avc1.64001F"');
+    expect(silent).not.toContain(AAC_LC_CODEC);
+
+    const narrated = multivariantPlaylist([
+      { name: "720p", width: 1280, height: 720, bandwidth: 700000, codecs: `${avcCodecString("High", 31)},${AAC_LC_CODEC}` },
+    ]);
+    expect(narrated).toContain(AAC_LC_CODEC);
   });
 
   it("does not claim independent segments in the multivariant playlist", () => {
