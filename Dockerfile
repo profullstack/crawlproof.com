@@ -38,8 +38,16 @@ FROM mcr.microsoft.com/playwright:v1.60.0-jammy AS runtime
 WORKDIR /app
 
 # pandoc for canonical Markdown -> HTML conversion in the worker.
+#
+# ffmpeg for the five-second ad renderer, which runs in the worker half of this
+# same container: it encodes the compositor's PNG frames into the MP4
+# renditions and packages them as fMP4 HLS, and ffprobe is what validation
+# decodes to count frames. worker/Dockerfile installs these too, but that image
+# is only built when the worker runs as its own Railway service — on this
+# project the worker is colocated with the app and THIS is the image that ships,
+# so leaving it out here means every render job dies at the first spawn.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends pandoc tini \
+  && apt-get install -y --no-install-recommends pandoc tini ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
