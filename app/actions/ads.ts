@@ -11,6 +11,7 @@ import {
   queueCampaignVideo,
   renderStateLabel,
   streamingReady,
+  animatedBanners,
   type RenderState,
 } from "@/lib/ads/video/jobs";
 import {
@@ -334,6 +335,7 @@ export async function videoRenderStatus(input: { jobId: string }): Promise<
       downloadUrl: string | null;
       downloadBytes: number | null;
       posterUrl: string | null;
+      banners: { profile: string; url: string; byteSize: number; width: number | null; height: number | null }[];
       errorCode: string | null;
     }
   | { ok: false; error: string }
@@ -361,6 +363,16 @@ export async function videoRenderStatus(input: { jobId: string }): Promise<
     streamingReady: streamingReady(status),
     downloadUrl: master?.url ?? null,
     downloadBytes: master?.byteSize ?? null,
+    // Optional by design: a revision rendered before the animated banners
+    // existed simply has none, and the card shows the video alone rather than
+    // an error.
+    banners: animatedBanners(status).map((b) => ({
+      profile: b.profile,
+      url: b.url,
+      byteSize: b.byteSize,
+      width: b.width,
+      height: b.height,
+    })),
     posterUrl: status.assets.find((a) => a.profile === "poster")?.url ?? null,
     errorCode: status.errorCode,
   };
@@ -470,7 +482,7 @@ async function requeueCampaignVideo(
 
   const { data: rows } = await supabase
     .from("ad_creatives")
-    .select("format, headline, cta_text, bg_color, fg_color, accent_color, font_family, logo_url, image_url")
+    .select("format, headline, body, cta_text, bg_color, fg_color, accent_color, font_family, logo_url, image_url")
     .eq("campaign_id", args.campaignId)
     .eq("owner_id", args.ownerId);
   if (!rows?.length) return;
@@ -484,6 +496,7 @@ async function requeueCampaignVideo(
     creatives: rows.map((r) => ({
       format: r.format,
       headline: r.headline ?? "",
+      body: r.body ?? null,
       ctaText: r.cta_text ?? "",
       bgColor: r.bg_color,
       fgColor: r.fg_color,

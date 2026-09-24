@@ -17,7 +17,12 @@ import type { VideoProfileId } from "./profiles";
  * without a version in the key a fixed compositor would keep serving the old
  * bytes forever. Bumping it is the deliberate cost of changing the look.
  */
-export const RENDERER_VERSION = "1";
+// Bumped to 2: a revision now also carries three animated banners, and the HLS
+// playlists written by version 1 declare a codec string that does not match
+// what was encoded. Both are baked into rendered output rather than read at
+// serve time, so the only way to correct them is to render again — which is
+// exactly what changing this does, since it feeds the dedupe hash.
+export const RENDERER_VERSION = "2";
 
 export type AudioMode = "silent" | "narrated";
 
@@ -33,6 +38,15 @@ export type AudioMode = "silent" | "narrated";
  */
 export type VideoDesignSnapshot = {
   headline: string;
+  /**
+   * The approved body line, where the source creative has one.
+   *
+   * Carried so the animated banners show the same second line the static
+   * banners do. Nullable because the mobile banner has no body and some
+   * creatives never had one; a unit with room for it falls back to the domain
+   * rather than rendering an empty row, which reads as broken.
+   */
+  subhead: string | null;
   ctaText: string;
   /** Bare host, e.g. "nichedb.dev" — shown as the destination, never a full URL. */
   domain: string;

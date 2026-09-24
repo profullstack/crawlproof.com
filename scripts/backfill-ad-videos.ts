@@ -114,7 +114,7 @@ for (const [i, c] of targets.entries()) {
 
   const { data: creatives } = await supabase
     .from("ad_creatives")
-    .select("format, headline, cta_text, bg_color, fg_color, accent_color, font_family, logo_url, image_url")
+    .select("format, headline, body, cta_text, bg_color, fg_color, accent_color, font_family, logo_url, image_url")
     .eq("campaign_id", c.id)
     .neq("format", "video_preroll_5s")
     .neq("status", "rejected");
@@ -139,6 +139,7 @@ for (const [i, c] of targets.entries()) {
     creatives: usable.map((r) => ({
       format: r.format,
       headline: r.headline ?? "",
+      body: r.body ?? null,
       ctaText: r.cta_text ?? "",
       bgColor: r.bg_color,
       fgColor: r.fg_color,

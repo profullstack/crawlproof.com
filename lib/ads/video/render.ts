@@ -15,6 +15,7 @@ import {
   withinBudget,
   type VideoProfileId,
 } from "./profiles";
+import { renderAnimatedBanners, type GifProbe } from "../gif/render";
 import { composeDocument, type ComposeAssets } from "./compose";
 import { validateSnapshot, type VideoDesignSnapshot } from "./snapshot";
 import {
@@ -156,6 +157,8 @@ export async function renderPreroll(args: {
   assets?: ComposeAssets;
   workDir: string;
   captureFrames: FrameCapturer;
+  /** Supplied by the worker; omitted in tests that only exercise the video. */
+  probeGif?: GifProbe;
   audioPath?: string | null;
   audioSlotSupported?: boolean;
 }): Promise<RenderResult> {
@@ -345,6 +348,51 @@ export async function renderPreroll(args: {
   for (const id of required) {
     if (!assets.some((a) => a.profile === id)) {
       problems.push({ check: "required profile", expected: id, actual: "absent" });
+    }
+  }
+
+  // The animated banners. Rendered from the same snapshot so the campaign reads
+  // as one thing across the pre-roll and the display units, but laid out at
+  // each unit's own size rather than downscaled — 320x50 is not a small
+  // 300x250, it is a different composition.
+  //
+  // They are optional profiles: a banner that fails to encode must not fail a
+  // revision whose video is fine, because the video is what the advertiser is
+  // waiting for. The problems are recorded either way.
+  if (args.probeGif) {
+    try {
+      const gifs = await renderAnimatedBanners({
+        snapshot,
+        workDir,
+        captureFrames,
+        probeGif: args.probeGif,
+      });
+      for (const g of gifs) {
+        const facts = await fileFacts(g.file);
+        assets.push({
+          profile: g.profile,
+          filePath: g.file,
+          contentType: g.contentType,
+          byteSize: facts.byteSize,
+          sha256: facts.sha256,
+          width: g.width,
+          height: g.height,
+          // A GIF's duration is its frame delays summed; the loop is what
+          // matters and it is fixed, so nothing here needs to carry it.
+          durationMs: null,
+          codecs: null,
+          validation: {
+            ok: g.problems.length === 0,
+            problems: g.problems.map((p) => ({ check: g.profile, expected: "conforming", actual: p })),
+          },
+        });
+      }
+    } catch (err) {
+      problems.push({
+        check: "animated banners",
+        expected: "three units",
+        actual: (err as Error).message,
+      });
     }
   }
 

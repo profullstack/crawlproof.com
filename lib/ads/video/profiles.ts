@@ -68,7 +68,31 @@ export type VideoProfileId =
   | "hls"
   | "poster"
   | "captions"
-  | "audio";
+  | "audio"
+  | "gif_300x250"
+  | "gif_728x90"
+  | "gif_320x50";
+
+/** The animated banner profiles, in the order the dashboard lists them. */
+export const GIF_PROFILE_IDS = ["gif_300x250", "gif_728x90", "gif_320x50"] as const;
+export type GifProfileId = (typeof GIF_PROFILE_IDS)[number];
+
+export function isGifProfile(id: string): id is GifProfileId {
+  return (GIF_PROFILE_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * Animated banners run slower and shorter than the pre-roll.
+ *
+ * GIF stores an inter-frame delay in hundredths of a second, so only a handful
+ * of frame rates are exactly representable: 12.5fps is 8cs and lands on a whole
+ * number, where 12 or 15 would drift and make the loop stutter. Four seconds
+ * keeps the file inside what ad networks accept — every frame is a full frame
+ * of palette, so duration is the main lever on size.
+ */
+export const GIF_FPS = 12.5;
+export const GIF_FRAMES = 50;
+export const GIF_MS = (GIF_FRAMES / GIF_FPS) * 1000; // 4000
 
 export type VideoProfile = {
   id: VideoProfileId;
@@ -162,6 +186,41 @@ export const VIDEO_PROFILES: VideoProfile[] = [
     // Required only for a property with an audio-only slot. A silent gap does
     // not satisfy the ad requirement there, so when it is required it is
     // genuinely required — see audioRequiredFor() below.
+    required: false,
+  },
+  // The animated banners. Sized to the IAB units the display creatives already
+  // use, so a publisher slot that takes the static banner takes this instead
+  // with no layout change.
+  //
+  // 150KB is the ceiling most ad networks enforce, so it is the budget here
+  // even though nothing in this codebase would reject a larger file: a banner
+  // that cannot be trafficked is not an asset. Flat brand colour compresses far
+  // below that, which is what makes 50 frames affordable at all.
+  {
+    id: "gif_300x250",
+    label: "Animated Medium Rectangle",
+    width: 300,
+    height: 250,
+    maxBytes: 150 * KB,
+    contentType: "image/gif",
+    required: false,
+  },
+  {
+    id: "gif_728x90",
+    label: "Animated Leaderboard",
+    width: 728,
+    height: 90,
+    maxBytes: 150 * KB,
+    contentType: "image/gif",
+    required: false,
+  },
+  {
+    id: "gif_320x50",
+    label: "Animated Mobile Banner",
+    width: 320,
+    height: 50,
+    maxBytes: 150 * KB,
+    contentType: "image/gif",
     required: false,
   },
 ];

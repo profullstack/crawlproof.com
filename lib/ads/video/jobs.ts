@@ -11,7 +11,7 @@ import type { AdCreative } from "../formats";
 import { VIDEO_FORMAT_ID } from "../formats";
 import { MAX_HEADLINE_WORDS, renderHash, validateSnapshot, type VideoDesignSnapshot } from "./snapshot";
 import { enqueueRender } from "./queue";
-import { VIDEO_PROFILES, type VideoProfileId } from "./profiles";
+import { VIDEO_PROFILES, type VideoProfileId, GIF_PROFILE_IDS} from "./profiles";
 
 /** The one output profile a job is keyed on; a job renders the whole set. */
 export const DEFAULT_OUTPUT_PROFILE = "default";
@@ -52,7 +52,7 @@ export function trimHeadlineForVideo(headline: string): string {
 export function snapshotFromCreatives(args: {
   creatives: Pick<
     AdCreative,
-    "format" | "headline" | "ctaText" | "bgColor" | "fgColor" | "accentColor" | "fontFamily" | "logoUrl" | "imageUrl"
+    "format" | "headline" | "body" | "ctaText" | "bgColor" | "fgColor" | "accentColor" | "fontFamily" | "logoUrl" | "imageUrl"
   >[];
   domain: string;
   locale?: string;
@@ -73,6 +73,10 @@ export function snapshotFromCreatives(args: {
 
   return {
     headline: trimHeadlineForVideo(source.headline),
+    // The animated banners show this as their second line, matching the static
+    // unit. The pre-roll ignores it: five seconds of 1920x1080 is a headline
+    // and a CTA, and a body line there is copy nobody reads.
+    subhead: (source.body ?? "").trim() || null,
     ctaText: source.ctaText || "Learn more",
     domain: args.domain,
     bgColor: source.bgColor,
@@ -436,6 +440,17 @@ export function renderStateLabel(state: RenderState): string {
 
 /** The profile an advertiser downloads: the 1080p master. */
 export const DOWNLOAD_PROFILE: VideoProfileId = "master_1080p";
+
+/**
+ * The animated banners of a ready revision, in the order the dashboard lists
+ * them. Empty for a revision rendered before they existed, which is why the
+ * card treats them as optional rather than missing.
+ */
+export function animatedBanners(status: RenderStatus) {
+  return GIF_PROFILE_IDS.map((id) => status.assets.find((a) => a.profile === id)).filter(
+    (a): a is NonNullable<typeof a> => !!a,
+  );
+}
 
 export function downloadableAsset(status: RenderStatus) {
   return status.assets.find((a) => a.profile === DOWNLOAD_PROFILE) ?? null;

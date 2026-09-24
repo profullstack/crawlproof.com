@@ -23,6 +23,7 @@ import { contentTypeFor, objectKey, revisionPrefix } from "@/lib/ads/video/stora
 
 const snapshot: VideoDesignSnapshot = {
   headline: "Sources in, feeds out",
+  subhead: "Every source, one feed.",
   ctaText: "Start free",
   domain: "nichedb.dev",
   bgColor: "#12161f",
