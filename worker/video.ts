@@ -111,7 +111,19 @@ export async function processRenderJob(
     // object is recorded, so a crash between these two steps leaves a complete
     // set of unpublished assets rather than a creative pointing at media that
     // is half uploaded.
-    await supabase.from("ad_video_assets").insert(
+    // Upsert, not insert, and the error is checked.
+    //
+    // There is a unique index on (creative_id, revision, profile), so a
+    // re-render of the same revision — exactly what a RENDERER_VERSION bump
+    // asks for — violated it. The result was not an error anybody saw: the
+    // return value was discarded, so the insert failed, the job was marked
+    // ready, and the revision kept the assets of the render it was supposed to
+    // replace. Every fix since the version bump landed in storage and was then
+    // dropped here in silence.
+    //
+    // Replacing the row is right for the same reason replacing the object is:
+    // the design did not change, the renderer did.
+    const { error: assetError } = await supabase.from("ad_video_assets").upsert(
       uploaded.map((u) => ({
         creative_id: d.creativeId,
         owner_id: d.ownerId,
@@ -127,7 +139,18 @@ export async function processRenderJob(
         codecs: u.codecs,
         published: true,
       })),
+      { onConflict: "creative_id,revision,profile" },
     );
+    if (assetError) {
+      // Loudly. A revision whose rows were not written is a revision that
+      // points at nothing, and marking it ready would repeat the failure this
+      // very change exists to end.
+      await setJobState(supabase, d.jobRowId, {
+        state: "failed",
+        error_code: "asset_rows_failed",
+      });
+      throw new Error(`asset rows failed: ${assetError.message}`);
+    }
 
     const published = await publishRevision(supabase, {
       creativeId: d.creativeId,
