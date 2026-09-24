@@ -233,7 +233,10 @@ ops/selfhost/server/authorize-prober-tunnel.sh "$(cat ~/.ssh/id_ed25519_dev2.pub
 ops/selfhost/server/prober-redis-tunnel.sh
 ```
 
-`PROBER_REDIS_URL` then points at `redis://default:<pw>@127.0.0.1:6380`.
+Then set the `PROBER_REDIS_URL` repo secret to a `redis` scheme URL for user
+`default`, host `127.0.0.1`, port **6380**, with the password from
+`REDIS_PASSWORD` in `deploy.env` on dev2. Build it where you set the secret;
+do not write it down here.
 
 Two things that will catch you:
 
