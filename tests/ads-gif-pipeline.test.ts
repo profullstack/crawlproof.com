@@ -40,14 +40,30 @@ describe("the banner timeline is a pure function of the frame index", () => {
     // the impressions of anyone who scrolls past during the entrance.
     expect(first.entrance).toBeGreaterThanOrEqual(0);
     expect(last.entrance).toBe(1);
-    // Nearly 1, deliberately not exactly 1. The 50 frames cover [0, 4000) at
-    // 80ms each, so the final frame sits at 3920ms and the 4000ms mark IS
+    // Nearly 1, deliberately not exactly 1. The 40 frames cover [0, 4000) at
+    // 100ms each, so the final frame sits at 3900ms and the 4000ms mark IS
     // frame 0 of the next loop. A timeline that put a frame exactly on the end
     // would render the loop point twice and the banner would hitch once per
     // cycle.
     expect(last.cta).toBeGreaterThan(0.99);
     expect(last.cta).toBeLessThan(1);
-    expect(last.timeMs).toBe(3920);
+    expect(last.timeMs).toBe(3900);
+  });
+
+  it("holds most of the loop perfectly still", () => {
+    // This is what keeps the file inside the budget. GIF stores a frame as the
+    // rectangle of pixels that changed, so a frame identical to its neighbour
+    // is nearly free — and a sweep running the whole loop would make every
+    // frame a full frame. Asserted because it is a size requirement wearing a
+    // timeline's clothes: lose it and the banners silently stop fitting.
+    const t = gifTimeline(false);
+    let moving = 0;
+    for (let i = 1; i < t.length; i++) {
+      const a = t[i - 1];
+      const b = t[i];
+      if (a.entrance !== b.entrance || a.cta !== b.cta || a.sweep !== b.sweep) moving++;
+    }
+    expect(moving).toBeLessThan(t.length * 0.62);
   });
 
   it("ends the loop with the sweep off the unit", () => {
@@ -68,7 +84,7 @@ describe("the banner timeline is a pure function of the frame index", () => {
   it("holds every beat at rest under reduced motion", () => {
     for (const f of [0, 10, GIF_FRAMES - 1]) {
       const s = gifFrameState(f, true);
-      expect(s).toMatchObject({ entrance: 1, drift: 0, cta: 1 });
+      expect(s).toMatchObject({ entrance: 1, cta: 1, sweep: 2 });
     }
   });
 });
@@ -163,7 +179,7 @@ describe("validation refuses what cannot be trafficked", () => {
   });
   it("rejects the wrong size, a short loop and an oversized file", () => {
     expect(validateGif({ ...base, width: 728 })[0]).toMatch(/expected 300x250/);
-    expect(validateGif({ ...base, frames: 12 })[0]).toMatch(/expected 50 frames/);
+    expect(validateGif({ ...base, frames: 12 })[0]).toMatch(/expected 40 frames/);
     expect(validateGif({ ...base, byteSize: 200 * 1024 })[0]).toMatch(/exceeds/);
   });
 });

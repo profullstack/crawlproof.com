@@ -13,9 +13,9 @@
 // leaderboard and mobile banner run as a row.
 //
 // The motion is deliberately the pre-roll's, not a new vocabulary: a short
-// entrance rise, a slow accent drift through the hold, and a CTA that gains
-// emphasis on the final beat. An advertiser who has seen their video should
-// recognise the banner as the same campaign.
+// entrance rise, one accent sweep, and a CTA that gains emphasis on the final
+// beat. An advertiser who has seen their video should recognise the banner as
+// the same campaign.
 
 import { GIF_FPS, GIF_FRAMES } from "../video/profiles";
 import { escapeHtml, safeDataUri } from "../video/compose";
@@ -42,10 +42,21 @@ export function gifUnit(id: string): GifUnit {
   return u;
 }
 
-/** Beat boundaries, in milliseconds of a 4s loop. */
+/**
+ * Beat boundaries, in milliseconds of a 4s loop.
+ *
+ * The still stretches between them are deliberate and are the reason the file
+ * fits. GIF stores a frame as a rectangle of changed pixels, so a frame
+ * identical to the one before it costs almost nothing — while a full-width
+ * sweep running the whole loop makes every single frame a full frame. Motion is
+ * therefore confined to short windows with the unit at rest between them, which
+ * reads as a deliberate beat rather than as a limitation.
+ */
 export const GIF_TIMELINE = {
-  entranceEndMs: 700,
-  holdEndMs: 2800,
+  entranceEndMs: 600,
+  sweepStartMs: 2200,
+  sweepEndMs: 3200,
+  ctaStartMs: 3200,
   endMs: 4000,
 } as const;
 
@@ -53,7 +64,6 @@ export type GifFrameState = {
   frame: number;
   timeMs: number;
   entrance: number;
-  drift: number;
   cta: number;
   /** The accent sweep's position, -1 to 2 across the unit. */
   sweep: number;
@@ -80,17 +90,18 @@ export function gifFrameState(frame: number, reducedMotion: boolean): GifFrameSt
   if (reducedMotion) {
     // A still banner, held at its resting state. It still reads as the finished
     // ad — headline up, CTA emphasised — it simply never moves toward it.
-    return { frame, timeMs, entrance: 1, drift: 0, cta: 1, sweep: 2 };
+    return { frame, timeMs, entrance: 1, cta: 1, sweep: 2 };
   }
   return {
     frame,
     timeMs,
     entrance: easeOut(phase(timeMs, 0, GIF_TIMELINE.entranceEndMs)),
-    drift: phase(timeMs, GIF_TIMELINE.entranceEndMs, GIF_TIMELINE.holdEndMs),
-    cta: easeOut(phase(timeMs, GIF_TIMELINE.holdEndMs, GIF_TIMELINE.endMs)),
-    // One pass across the unit during the hold. Starts off-screen and ends
-    // off-screen, so the loop point never shows a sweep frozen mid-unit.
-    sweep: -1 + 3 * phase(timeMs, GIF_TIMELINE.entranceEndMs, GIF_TIMELINE.holdEndMs),
+    cta: easeOut(phase(timeMs, GIF_TIMELINE.ctaStartMs, GIF_TIMELINE.endMs)),
+    // One pass across the unit, confined to its own window. Off-screen at both
+    // ends so the loop point never shows a sweep frozen mid-unit — and, just as
+    // importantly, every frame outside that window is identical to its
+    // neighbour and costs the encoder almost nothing.
+    sweep: -1 + 3 * phase(timeMs, GIF_TIMELINE.sweepStartMs, GIF_TIMELINE.sweepEndMs),
   };
 }
 
@@ -160,8 +171,8 @@ export function gifDocument(input: GifComposeInput): string {
   const cta = `<div id="cta" style="flex:0 0 auto"><span style="display:inline-block;background:${accentColor};color:${bgColor};font-weight:600;border-radius:6px;padding:${ctaPad};font-size:${ctaSize}px;white-space:nowrap">${escapeHtml(ctaText)}</span></div>`;
 
   const inner = unit.row
-    ? `<div class="stage" style="display:flex;align-items:center;gap:12px;width:100%;height:100%;padding:0 12px">${mark}${copy}${cta}</div>`
-    : `<div class="stage" style="display:flex;flex-direction:column;height:100%;padding:14px">
+    ? `<div class="content" style="display:flex;align-items:center;gap:12px;width:100%;height:100%;padding:0 12px">${mark}${copy}${cta}</div>`
+    : `<div class="content" style="display:flex;flex-direction:column;height:100%;padding:14px">
          <div style="display:flex;align-items:center;gap:8px">${mark}</div>
          <div style="margin-top:auto">${copy}</div>
          <div style="margin-top:10px">${cta}</div>
@@ -174,10 +185,15 @@ export function gifDocument(input: GifComposeInput): string {
       /* Text rendering is pinned so a frame captured now matches one captured
          on a differently-configured container. */
       -webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
+    /* .stage is what the capturer screenshots, so it must BE the unit. It used
+       to sit on the inner content div, inside this element's 1px border, and
+       every banner came out two pixels short in each dimension — an off-size
+       creative, which ad networks reject outright. */
     #unit{position:relative;width:${unit.width}px;height:${unit.height}px;overflow:hidden;
       border:1px solid ${accentColor}33}
     /* The accent wash keeps the middle of a flat unit from reading as a dead
-       block, and it is what the drift moves. */
+       block. It is deliberately static: animating it changed every pixel of
+       every frame, which is a full frame of palette each time. */
     #wash{position:absolute;inset:0;z-index:0;
       background:radial-gradient(120% 140% at 12% 0%, ${accentColor}22, transparent 60%)}
     /* A single specular pass. Cheap in GIF terms because it is the same few
@@ -185,11 +201,11 @@ export function gifDocument(input: GifComposeInput): string {
     #sweep{position:absolute;top:0;bottom:0;width:38%;z-index:1;pointer-events:none;
       background:linear-gradient(100deg, transparent, ${accentColor}1f 45%, transparent);
       transform:translateX(-120%)}
-    .stage{position:relative;z-index:2}
+    .content{position:relative;z-index:2}
     #domain{position:absolute;right:6px;bottom:4px;z-index:3;font-size:9px;letter-spacing:.06em;
       color:${fgColor};opacity:.45}
   </style></head><body>
-    <div id="unit">
+    <div id="unit" class="stage">
       <div id="wash"></div>
       <div id="sweep"></div>
       ${inner}
@@ -203,13 +219,12 @@ export function gifDocument(input: GifComposeInput): string {
   function phase(ms,a,b){if(b<=a)return ms>=b?1:0;return Math.min(1,Math.max(0,(ms-a)/(b-a)));}
   function state(frame){
     var timeMs=(frame/GIF_FPS)*1000;
-    if(REDUCED)return{timeMs:timeMs,entrance:1,drift:0,cta:1,sweep:2};
+    if(REDUCED)return{timeMs:timeMs,entrance:1,cta:1,sweep:2};
     return{
       timeMs:timeMs,
       entrance:easeOut(phase(timeMs,0,T.entranceEndMs)),
-      drift:phase(timeMs,T.entranceEndMs,T.holdEndMs),
-      cta:easeOut(phase(timeMs,T.holdEndMs,T.endMs)),
-      sweep:-1+3*phase(timeMs,T.entranceEndMs,T.holdEndMs)
+      cta:easeOut(phase(timeMs,T.ctaStartMs,T.endMs)),
+      sweep:-1+3*phase(timeMs,T.sweepStartMs,T.sweepEndMs)
     };
   }
   // Drive every animated value from the frame index. No CSS transitions or
@@ -221,7 +236,6 @@ export function gifDocument(input: GifComposeInput): string {
     var mark = document.getElementById('mark');
     var cta = document.getElementById('cta');
     var sweep = document.getElementById('sweep');
-    var wash = document.getElementById('wash');
 
     // Entrance: copy rises a few pixels into place and fades up. Small, because
     // a banner is read in a glance and a long entrance wastes most of the loop.
@@ -230,9 +244,10 @@ export function gifDocument(input: GifComposeInput): string {
     copy.style.opacity = (0.15 + 0.85 * s.entrance).toFixed(3);
     mark.style.opacity = (0.3 + 0.7 * s.entrance).toFixed(3);
 
-    // Hold: the wash drifts slowly so the unit is never completely static,
-    // which is the whole reason an animated banner outperforms a flat one.
-    wash.style.transform = 'translateX(' + (s.drift * 4).toFixed(2) + 'px)';
+    // The wash is fixed. It used to drift across the hold, which changed every
+    // pixel of every frame and accounted for most of the file size, in service
+    // of motion nobody could see. The sweep is the thing that moves, and only
+    // inside its window.
     sweep.style.transform = 'translateX(' + (s.sweep * 120).toFixed(2) + '%)';
 
     // Final beat: the CTA lifts slightly and reaches full strength. It ends the

@@ -85,13 +85,16 @@ export function isGifProfile(id: string): id is GifProfileId {
  * Animated banners run slower and shorter than the pre-roll.
  *
  * GIF stores an inter-frame delay in hundredths of a second, so only a handful
- * of frame rates are exactly representable: 12.5fps is 8cs and lands on a whole
- * number, where 12 or 15 would drift and make the loop stutter. Four seconds
- * keeps the file inside what ad networks accept — every frame is a full frame
- * of palette, so duration is the main lever on size.
+ * of frame rates are exactly representable: 10fps is exactly 10cs, where 12 or
+ * 15 would drift and make the loop stutter.
+ *
+ * 40 frames rather than 50, because size is the binding constraint and every
+ * frame costs. What actually keeps the file small is not the frame count
+ * though — it is holding most of those frames still, so the encoder's
+ * per-frame diff is a small rectangle instead of the whole unit.
  */
-export const GIF_FPS = 12.5;
-export const GIF_FRAMES = 50;
+export const GIF_FPS = 10;
+export const GIF_FRAMES = 40;
 export const GIF_MS = (GIF_FRAMES / GIF_FPS) * 1000; // 4000
 
 export type VideoProfile = {
