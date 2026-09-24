@@ -10,7 +10,7 @@ import {
   type AdCreative,
   type AdFormatId,
 } from "./creative";
-import { fitAdFormat, FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
+import { isStreamingFormat, fitAdFormat, FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
 import { isAdTheme, type AdTheme, type AdThemePref } from "./theme";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
@@ -159,6 +159,17 @@ export function resolveThemePref(
 }
 
 export type ServeContext = {
+  /**
+   * The caller is filling a streaming break, not a page.
+   *
+   * This is the ONLY way a streaming format reaches selection, and it comes
+   * with an obligation: nothing on this path may render the creative as
+   * markup. fitAdFormat refuses streaming formats precisely because serveAd
+   * produces HTML and ASCII, and a video creative drawn as a banner is the
+   * leak that guard exists to prevent. So the flag opens the gate and closes
+   * the renderer in the same move — see where `html` and `text` are built.
+   */
+  streaming?: boolean;
   visitorId?: string | null;
   ip?: string | null;
   country?: string | null;
@@ -207,7 +218,14 @@ export async function serveAd(
   // while it fits. Constrained to the slot's own list, so this can never turn a
   // servable request into an empty fill. Callers read the format actually
   // served back off `fill.creative.format`.
-  const format = fitAdFormat(requestedFormat, ctx.width, slot.formats);
+  // A streaming break negotiates nothing: there is no width to fit and no
+  // smaller unit to fall back to. The slot must offer the format outright,
+  // which keeps the publisher in control of what their break can carry.
+  const format = ctx.streaming && isStreamingFormat(requestedFormat)
+    ? (Array.isArray(slot.formats) && slot.formats.includes(requestedFormat)
+        ? requestedFormat
+        : null)
+    : fitAdFormat(requestedFormat, ctx.width, slot.formats);
   if (!format) return null;
 
   // `theme` rides behind `add column if not exists`, and migrations here are
@@ -478,8 +496,12 @@ export async function serveAd(
     refSlug: campaign.ref_slug,
     creative,
     clickUrl,
-    html: renderCreativeHtml(creative, clickUrl, { theme }),
-    text: renderCreativeText(creative, clickUrl),
+    // Empty for a streaming fill, and deliberately so. The caller wants a media
+    // URL, and rendering this creative as a banner is exactly the thing
+    // fitAdFormat's refusal was protecting against — the guard has to hold on
+    // the one path that is allowed past it.
+    html: ctx.streaming ? "" : renderCreativeHtml(creative, clickUrl, { theme }),
+    text: ctx.streaming ? "" : renderCreativeText(creative, clickUrl),
     tier,
     trendTopics: matchFor(campaign.id).topics,
     promo: trend.any && promoActiveFor(trend, campaign.id),

@@ -122,3 +122,13 @@ describe("the design-object write path refuses video", () => {
     expect(DESIGN_FORMAT_IDS.length).toBe(AD_FORMAT_IDS.length - STREAMING_FORMAT_IDS.length);
   });
 });
+
+describe("the streaming gate has exactly one door", () => {
+  it("still refuses a streaming format through the display path", () => {
+    // fitAdFormat is the gate in front of the HTML renderer. It must keep
+    // refusing video no matter how a slot is configured, because everything
+    // past it draws markup.
+    expect(fitAdFormat(VIDEO_FORMAT_ID, 1920, [VIDEO_FORMAT_ID])).toBeNull();
+    expect(fitAdFormat(VIDEO_FORMAT_ID, null, [VIDEO_FORMAT_ID])).toBeNull();
+  });
+});
