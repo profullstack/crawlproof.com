@@ -18,6 +18,7 @@ export { parseCampaignRequest, parseCampaignPatch, isRefSlug, domainOf, type Cam
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import { generateAdCreatives, cleanSummary, creativesFromCopy, templateCopy, summaryDomain, type AdCreative, type AdSummary } from "@/lib/ads/creative";
 import { extractSiteBrand, type SiteBrand } from "@/lib/ads/brand";
+import { queueCampaignVideo } from "@/lib/ads/video/jobs";
 import { DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
 import { cleanTopics, promoState, type PromoState } from "@/lib/ads/trending";
 import { grantTrendingPromo, promoForCampaign, promosForCampaigns } from "@/lib/ads/promos";
@@ -261,6 +262,34 @@ export async function createCampaignForUrl(input: {
     await sb.from("ad_campaigns").delete().eq("id", campaign.id).eq("owner_id", userId);
     return { ok: false, status: 500, error: creativeError.message };
   }
+
+  // Queue the five-second pre-roll. This lives here rather than only in the
+  // dashboard action because this is the shared creator: the public API at
+  // /api/ads/v1/campaigns runs through it, which is how myna and the rest of
+  // the automation file ads. With the queueing only in the server action, every
+  // automatically created campaign got display creatives and no video, and
+  // nothing said so — the campaign simply had no pre-roll forever.
+  //
+  // Same rule as the promo below: a render is an extra output of creating a
+  // campaign, never a precondition for one. queueCampaignVideo returns null on
+  // every failure rather than throwing.
+  await queueCampaignVideo(sb, {
+    campaignId: campaign.id,
+    ownerId: userId,
+    domain,
+    creatives: generated.creatives.map((c) => ({
+      format: c.format,
+      headline: c.headline ?? "",
+      ctaText: c.ctaText ?? "",
+      bgColor: c.bgColor ?? null,
+      fgColor: c.fgColor ?? null,
+      accentColor: c.accentColor ?? null,
+      fontFamily: c.fontFamily ?? null,
+      logoUrl: c.logoUrl ?? null,
+      imageUrl: c.imageUrl ?? null,
+    })),
+    bumpRevision: false,
+  });
 
   // Turning trending targeting on is what earns the 90 days. Granted after the
   // campaign exists so the entitlement can name it, and a failure to grant
