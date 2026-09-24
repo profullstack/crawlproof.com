@@ -23,6 +23,17 @@ jobs:
       - name: Install (worker)
         run: cd worker && npm install --no-audit --no-fund
 
+      # The five-second ad renderer encodes with ffmpeg and validates with
+      # ffprobe. tests/ads-video-pipeline.test.ts skips itself when they are
+      # absent, so without this step the one test that proves a pre-roll
+      # actually decodes to 150 frames would quietly never run here — and a
+      # green check would say nothing about it.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Verify ffmpeg is present for the render tests
+        run: ffmpeg -version && ffprobe -version
+
       - name: Typecheck (root)
         run: npm run typecheck
 
