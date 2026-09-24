@@ -41,7 +41,22 @@ async function publishRevision(
 ): Promise<boolean> {
   const { data } = await supabase
     .from("ad_creatives")
-    .update({ published_revision: args.revision })
+    .update({
+      published_revision: args.revision,
+      // Promoted out of "generating" in the same write.
+      //
+      // The row is created as "generating" so nothing serves a creative that
+      // has no bytes yet, and publishing the revision IS the moment it gains
+      // them — but the status was never moved, so all 185 video creatives sat
+      // at "generating" with validated media behind them. Selection only
+      // considers "ready", so every streaming break fell through to the house
+      // ad: the whole pipeline worked and nothing could ever be served.
+      //
+      // Same write as published_revision deliberately. Two statements could
+      // leave a creative servable-by-status with no published revision, or the
+      // reverse, and the compare-and-swap below protects both together.
+      status: "ready",
+    })
     .eq("id", args.creativeId)
     .eq("requested_revision", args.revision)
     .select("id");
