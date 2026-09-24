@@ -93,7 +93,9 @@ docker run --rm -i "$PG_IMAGE" psql "$CLOUD_DB_URL" -At -F$'\t' -X -v ON_ERROR_S
   echo "schema_bytes=$(stat -c%s "$OUT/schema.sql")"
   echo "data_bytes=$(stat -c%s "$OUT/data.sql")"
   echo "storage_objects=$(wc -l < "$OUT/storage-inventory.tsv")"
-  echo "cron_jobs=$(grep -c cron.schedule "$OUT/cron-jobs.sql" || true)"
+  # Job bodies are multi-line and at least one mentions cron.schedule itself,
+  # so count statement starts, not matching lines.
+  echo "cron_jobs=$(grep -c '^select cron.schedule' "$OUT/cron-jobs.sql" || true)"
 } > "$OUT/MANIFEST"
 
 log "Done: $OUT"
