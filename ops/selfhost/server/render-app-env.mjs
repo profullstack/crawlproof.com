@@ -71,10 +71,13 @@ const overrides = {
   SUPABASE_SERVICE_ROLE_KEY: conn.SUPABASE_SERVICE_ROLE_KEY,
   SUPABASE_DB_PASSWORD: conn.SELFHOST_POSTGRES_PASSWORD,
 
-  // Redis moved off redis.railway.internal. The app reaches it through the
-  // host gateway because the app and the Supabase stack are separate compose
-  // projects and are deliberately not on one network.
-  REDIS_URL: `redis://default:${REDIS_PASSWORD}@host.docker.internal:6379`,
+  // Redis moved off redis.railway.internal. It is a service in the SAME
+  // compose file as the app, so it is reachable by service name on the
+  // project network. Going through host.docker.internal instead fails with
+  // ETIMEDOUT, because the published port is bound to 127.0.0.1 and the
+  // gateway address is not that. (host.docker.internal is still how the app
+  // reaches the Supabase stack, which is a separate compose project.)
+  REDIS_URL: `redis://default:${REDIS_PASSWORD}@redis:6379`,
 
   // The worker still runs beside the app inside the same container.
   WORKER_URL: 'http://127.0.0.1:9080',
