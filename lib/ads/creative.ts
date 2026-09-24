@@ -15,6 +15,10 @@ export { summaryParagraphs } from "./feeditem";
 import {
   AD_FORMATS,
   AD_FORMAT_IDS,
+  DESIGN_FORMAT_IDS,
+  STREAMING_FORMAT_IDS,
+  VIDEO_FORMAT_ID,
+  isStreamingFormat,
   brandInitial,
   formatSpec,
   hexToRgba,
@@ -41,7 +45,16 @@ import {
 
 // Re-export the client-safe format primitives so existing server importers of
 // this module keep working; client components should import from ./formats.
-export { AD_FORMATS, AD_FORMAT_IDS, formatSpec, paletteFor };
+export {
+  AD_FORMATS,
+  AD_FORMAT_IDS,
+  DESIGN_FORMAT_IDS,
+  STREAMING_FORMAT_IDS,
+  VIDEO_FORMAT_ID,
+  isStreamingFormat,
+  formatSpec,
+  paletteFor,
+};
 export { renderCreativeText, renderTerminalHtml };
 export type { AdCreative, AdFormatId };
 
@@ -263,7 +276,11 @@ function copyToCreatives(brand: SiteBrand, copy: AdCopy, heroUrl: string | null)
     body: copy.body,
     ctaText: copy.ctaText || "Learn more",
   };
-  return AD_FORMAT_IDS.map((format) => ({
+  // DESIGN_FORMAT_IDS, not AD_FORMAT_IDS: the streaming pre-roll is media the
+  // video worker encodes, not a design object an HTML renderer can take. See
+  // the constant's comment in ./formats for why fanning out over the whole
+  // registry is the bug this avoids.
+  return DESIGN_FORMAT_IDS.map((format) => ({
     format,
     // tiny banner uses the short headline; others use the full one
     headline: format === "banner_320x50" ? copy.shortHeadline || copy.headline : copy.headline,

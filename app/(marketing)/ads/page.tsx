@@ -11,6 +11,7 @@ import {
 } from "@/lib/ads/pricing";
 import {
   AD_FORMATS,
+  DESIGN_FORMATS,
   PUBLISHER_FORMAT_IDS,
   TERMINAL_FORMAT_ID,
   TERMINAL_COLS_LABEL,
@@ -102,7 +103,7 @@ export default async function AdsMarketingPage() {
           />
           <Card
             title="Every size at once"
-            body={`${AD_FORMATS.length} formats from one campaign: the standard display sizes, a borderless text link that reads as part of the page, an ASCII unit for terminals, and a syndication item for RSS and Atom feeds.`}
+            body={`${DESIGN_FORMATS.length} formats from one campaign: the standard display sizes, a borderless text link that reads as part of the page, an ASCII unit for terminals, and a syndication item for RSS and Atom feeds.`}
           />
           <Card
             title="A budget that actually stops"

@@ -72,10 +72,67 @@ export const AD_FORMATS = [
   // pixel box: w/h is only the nominal size the web preview uses when the same
   // creative is rendered as HTML. The real dimension is "one item".
   { id: "feed_item", label: "Feed (RSS/Atom/JSON)", w: 600, h: 120 },
+  // Five-second streaming pre-roll. The only format whose creative is *media*
+  // rather than markup: w/h is the real 16:9 master frame, not a preview size.
+  //
+  // It is deliberately unlike every format above it. The others are generated
+  // synchronously as a design object and rendered to HTML or text at serve
+  // time; this one has to be rendered to an MP4 by a background worker before
+  // it can be shown to anybody, which is why it carries a published media
+  // revision (see ad_video_assets) and why an unrendered one must never reach
+  // a viewer. Keep it out of every list that feeds an HTML or text renderer —
+  // DESIGN_FORMAT_IDS below is the list those call sites want.
+  { id: "video_preroll_5s", label: "Streaming Pre-roll (5s)", w: 1920, h: 1080 },
 ] as const;
 
 export type AdFormatId = (typeof AD_FORMATS)[number]["id"];
 export const AD_FORMAT_IDS = AD_FORMATS.map((f) => f.id) as AdFormatId[];
+
+// The streaming pre-roll id. Named for the same reason TERMINAL_FORMAT_ID and
+// FEED_FORMAT_ID are: several call sites have to branch on it, and this module
+// stays the one place a format id is spelled out.
+export const VIDEO_FORMAT_ID = "video_preroll_5s" as const;
+
+/**
+ * Formats delivered as media the viewer plays, not as a document a renderer
+ * produces.
+ *
+ * Everything outside this list shares one pipeline: copy in, a common design
+ * object out, HTML or ASCII at serve time. A streaming format shares none of
+ * it — there is nothing to render into an iframe, a <pre>, or a feed item, and
+ * the bytes only exist once a worker has encoded them.
+ */
+export const STREAMING_FORMAT_IDS: AdFormatId[] = [VIDEO_FORMAT_ID];
+
+export function isStreamingFormat(id: string | null | undefined): boolean {
+  return !!id && (STREAMING_FORMAT_IDS as string[]).includes(id);
+}
+
+/**
+ * The formats the copy generator fans a campaign's approved copy out into.
+ *
+ * This is what `creativesFromCopy` iterates, and it used to be AD_FORMAT_IDS
+ * outright — every registered format got a row in the same common design
+ * object. That assumption is exactly what a media format breaks: fanning out
+ * over the full list would mint a `video_preroll_5s` creative carrying a
+ * headline, a palette and an image URL, mark it `ready` like its siblings, and
+ * hand an HTML renderer a format it has no template for. The result reads as a
+ * banner, which is the one outcome a five-second pre-roll must never have.
+ *
+ * So the design fan-out is the complement of STREAMING_FORMAT_IDS rather than
+ * the whole registry. Video creatives are created by the video pipeline, which
+ * owns their readiness separately.
+ */
+export const DESIGN_FORMAT_IDS: AdFormatId[] = AD_FORMAT_IDS.filter((f) => !isStreamingFormat(f));
+
+// The same list with its label and nominal box, for the dashboard preview strip
+// and format editors. Those surfaces render every entry through <AdPreview>,
+// which only knows how to draw markup — so they must iterate this rather than
+// AD_FORMATS. They currently skip any format with no creative row, which hides
+// the problem while nothing mints a video creative; that stops being true the
+// moment the video pipeline lands, and a silent banner-shaped video preview is
+// not a failure anyone would notice in review.
+export const DESIGN_FORMATS = AD_FORMATS.filter((f) => !isStreamingFormat(f.id));
 
 // Sizes offered to publishers on the Monetize page — the ones they can copy an
 // embed for and install. A subset of AD_FORMATS that grows as each size is
@@ -84,7 +141,10 @@ export const AD_FORMAT_IDS = AD_FORMATS.map((f) => f.id) as AdFormatId[];
 //
 // WEB ONLY: these are the formats rendered as an <iframe> by /ad.js and dropped
 // into HTML by the GitHub auto-installer. Text/terminal formats must not be in
-// this list — they're fetched, not embedded.
+// this list — they're fetched, not embedded. Neither must a streaming format:
+// the auto-installer would drop a video unit into somebody's HTML with no
+// player, no entitlement check and no session, which is three different kinds
+// of wrong. Streaming publishers register a property instead.
 export const PUBLISHER_FORMAT_IDS: AdFormatId[] = [
   "banner_300x250",
   "banner_728x90",
@@ -124,6 +184,14 @@ export function fitAdFormat(
   width: number | null | undefined,
   allowed: readonly string[] | null | undefined,
 ): AdFormatId | null {
+  // A streaming pre-roll is never negotiated here. This function is the single
+  // gate in front of serveAd(), which renders HTML and ASCII — so refusing the
+  // format at this one point is what makes "an unrendered video cannot serve"
+  // true no matter how a slot is configured, including a slot that somehow
+  // lists it. Video is selected by the playback decision endpoint instead,
+  // which checks for a published, validated media revision first.
+  if (isStreamingFormat(requested)) return null;
+
   const offers = (f: AdFormatId) => !Array.isArray(allowed) || allowed.includes(f);
   if (!offers(requested)) return null;
 

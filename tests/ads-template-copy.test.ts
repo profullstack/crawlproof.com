@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { templateCopy, creativesFromCopy, AD_FORMAT_IDS } from "@/lib/ads/creative";
+import { templateCopy, creativesFromCopy, DESIGN_FORMAT_IDS } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
 
 const brand: SiteBrand = {
@@ -39,9 +39,11 @@ describe("template copy, for when no model has credit", () => {
     expect(bare.bgColor).toBe("#0b0d10");
   });
 
-  it("yields one creative per format, with the page image as the hero", () => {
+  it("yields one creative per design format, with the page image as the hero", () => {
     const creatives = creativesFromCopy(brand, templateCopy(brand), brand.ogImage);
-    expect(creatives.map((c) => c.format)).toEqual(AD_FORMAT_IDS);
+    // Design formats, not every registered format: the streaming pre-roll is
+    // media a worker encodes and has no design object to generate here.
+    expect(creatives.map((c) => c.format)).toEqual(DESIGN_FORMAT_IDS);
     for (const creative of creatives) {
       expect(creative.imageUrl).toBe(brand.ogImage);
       expect(creative.headline.length).toBeGreaterThan(0);
