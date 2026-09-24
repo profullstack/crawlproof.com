@@ -14,8 +14,9 @@ import { readFileSync } from "node:fs";
 import { collectDashboard } from "../../../lib/dashboard/collect";
 import { renderStats } from "../../../lib/dashboard/stats-text";
 import { FINANCE_DAYS, runDashboard } from "../../../cli/dashboard";
+import { EMAIL_TRACKING_USAGE, runEmailTracking } from "../../../lib/emailTracking/cli";
 
-export const VERSION = "0.2.1";
+export const VERSION = "0.3.0";
 
 type Args = {
   command: string;
@@ -145,6 +146,7 @@ COMMANDS
   ads delete <ref-or-id> --yes
       Look at and change what is running. A ref looks like crawlproof-ad-144.
 
+${EMAIL_TRACKING_USAGE}
   help | version
 
 AUTH
@@ -411,6 +413,12 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdAd(args);
       case "ads":
         return await cmdAds(args);
+      case "email-tracking":
+        return await runEmailTracking(args.positional, args.flags, (method, path) => apiCall(args, method, path), {
+      write: (line: string) => process.stdout.write(`${line}\n`),
+      error: (line: string) => console.error(line),
+      isTTY: Boolean(process.stdout.isTTY),
+    });
       case "version":
       case "--version":
       case "-v":
