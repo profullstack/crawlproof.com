@@ -148,6 +148,17 @@ describe("a snapshot renders to validated media", () => {
       // Never claimed, because we do not guarantee it.
       expect(master).not.toContain("EXT-X-INDEPENDENT-SEGMENTS");
 
+      // The CODECS declaration must describe what was actually encoded. These
+      // renditions are silent, so naming an audio codec would be an audio
+      // track a player waits for and never receives; and the level has to be
+      // the one in the bitstream, not a guess.
+      expect(master).not.toContain("mp4a");
+      const declared = [...master.matchAll(/CODECS="([^"]+)"/g)].map((m) => m[1]);
+      expect(declared.length).toBe(2);
+      for (const codec of declared) {
+        expect(codec, `codecs=${codec}`).toMatch(/^avc1\.[0-9A-F]{6}$/);
+      }
+
       expect(byProfile.poster.byteSize).toBeGreaterThan(0);
       expect(byProfile.poster.contentType).toBe("image/webp");
     },

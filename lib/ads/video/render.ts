@@ -18,6 +18,8 @@ import {
 import { composeDocument, type ComposeAssets } from "./compose";
 import { validateSnapshot, type VideoDesignSnapshot } from "./snapshot";
 import {
+  AAC_LC_CODEC,
+  avcCodecString,
   encodeAudioCompanion,
   encodeMp4,
   extractPoster,
@@ -232,19 +234,30 @@ export async function renderPreroll(args: {
   for (const profile of ["mp4_720p", "mp4_480p"] as const) {
     const spec = videoProfile(profile);
     const name = `${spec.height}p`;
-    await packageHls({ inPath: path.join(outDir, `${profile}.mp4`), outDir: hlsDir, name });
+    const renditionPath = path.join(outDir, `${profile}.mp4`);
+    await packageHls({ inPath: renditionPath, outDir: hlsDir, name });
 
     const playlist = await readFile(path.join(hlsDir, `${name}.m3u8`), "utf8");
     problems.push(...validateMediaPlaylist(playlist));
 
-    const mp4Size = statSync(path.join(outDir, `${profile}.mp4`)).size;
+    // Declare what this rendition actually is. Both halves used to be
+    // hardcoded and both were wrong: the level said 4.0 for a stream encoded
+    // at 3.1, and every silent ad advertised an AAC track it did not have.
+    // A player reads CODECS before fetching a segment, so an audio codec named
+    // here is an audio track it will wait for.
+    const probe = await probeMedia(renditionPath);
+    const v = probe.streams.find((st) => st.codec_type === "video");
+    const hasAudio = probe.streams.some((st) => st.codec_type === "audio");
+    const codecs = [avcCodecString(v?.profile, v?.level), ...(hasAudio ? [AAC_LC_CODEC] : [])].join(",");
+
+    const mp4Size = statSync(renditionPath).size;
     renditions.push({
       name,
       width: spec.width!,
       height: spec.height!,
       // Peak bandwidth, derived from the rendition we actually produced.
       bandwidth: Math.round((mp4Size * 8) / 5),
-      codecs: "avc1.640028,mp4a.40.2",
+      codecs,
     });
   }
 
@@ -263,7 +276,7 @@ export async function renderPreroll(args: {
     width: null,
     height: null,
     durationMs: null,
-    codecs: "avc1.640028,mp4a.40.2",
+    codecs: renditions.map((r) => r.codecs).join(" "),
     validation: { ok: true, problems: [] },
     extraFiles: hlsFiles.filter((f) => f !== masterPath),
   });

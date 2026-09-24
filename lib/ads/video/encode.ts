@@ -153,10 +153,47 @@ export function hlsArgs(o: HlsOptions): string[] {
 }
 
 /**
+ * RFC 6381 codec string for an H.264 stream: avc1.PPCCLL.
+ *
+ * PP is profile_idc, CC the constraint flags, LL the level, each as two hex
+ * digits. ffprobe reports the profile by name and the level as an integer, so
+ * the name is mapped back to its idc.
+ *
+ * This is derived from the encoded file rather than hardcoded because the
+ * declaration is load-bearing: a player reads CODECS to choose a decoder
+ * configuration before it fetches a segment, and a wrong level is a promise
+ * about the bitstream that the bitstream does not keep.
+ */
+const PROFILE_IDC: Record<string, number> = {
+  "Constrained Baseline": 66,
+  Baseline: 66,
+  Main: 77,
+  Extended: 88,
+  High: 100,
+  "High 10": 110,
+  "High 4:2:2": 122,
+  "High 4:4:4 Predictive": 244,
+};
+
+export function avcCodecString(profile: string | undefined, level: number | undefined): string {
+  const idc = PROFILE_IDC[profile ?? ""] ?? 100;
+  const lvl = typeof level === "number" && level > 0 ? level : 31;
+  const hex = (n: number) => n.toString(16).padStart(2, "0").toUpperCase();
+  // Constraint flags are 0 for the profiles we produce; libx264 sets none that
+  // belong in this field for High.
+  return `avc1.${hex(idc)}00${hex(lvl)}`;
+}
+
+/** AAC-LC, appended only when a rendition actually carries an audio track. */
+export const AAC_LC_CODEC = "mp4a.40.2";
+
+/**
  * The multivariant playlist.
  *
  * Written by hand rather than by ffmpeg's var_stream_map because the bandwidth
- * and codec declarations have to describe the renditions we actually produced,
+ * and codec declarations have to describe the renditions we actually produced
+ * — including not advertising an audio codec for a silent ad, which is a
+ * promise a player will wait on,
  * and because EXT-X-INDEPENDENT-SEGMENTS is deliberately absent: our segments
  * open on a keyframe but are not independently decodable in the sense that tag
  * asserts, and claiming it would be a lie a player acts on.

@@ -30,6 +30,8 @@ export type ProbeStream = {
   avg_frame_rate?: string;
   /** Present only with -count_frames; it is a decode, not a header read. */
   nb_read_frames?: string;
+  /** h264 level as an integer, e.g. 31 for level 3.1. */
+  level?: number;
   duration?: string;
   sample_rate?: string;
   channels?: number;
