@@ -117,12 +117,14 @@ async function encodeWithinBudget(args: {
   profile: VideoProfileId;
   framePattern: string;
   audioPath: string | null;
+  musicPath?: string | null;
   outPath: string;
 }): Promise<number> {
   let kbps = START_KBPS[args.profile] ?? 2000;
 
   for (let attempt = 0; attempt <= BUDGET_RETRIES; attempt++) {
     await encodeMp4({
+      musicPath: args.musicPath ?? null,
       framePattern: args.framePattern,
       audioPath: args.audioPath,
       outPath: args.outPath,
@@ -160,6 +162,11 @@ export async function renderPreroll(args: {
   /** Supplied by the worker; omitted in tests that only exercise the video. */
   probeGif?: GifProbe;
   audioPath?: string | null;
+  /**
+   * A music bed to lay under the narration. Omitted, the spot is voice only,
+   * which is what it has always been.
+   */
+  musicPath?: string | null;
   audioSlotSupported?: boolean;
 }): Promise<RenderResult> {
   const { snapshot, workDir, captureFrames } = args;
@@ -206,7 +213,9 @@ export async function renderPreroll(args: {
   // 2. The MP4 renditions.
   for (const profile of MP4_PROFILE_IDS) {
     const outPath = path.join(outDir, `${profile}.mp4`);
-    await encodeWithinBudget({ profile, framePattern, audioPath, outPath });
+    // A bed under nothing is just music, so it only travels with a voice.
+    const musicPath = audioPath ? (args.musicPath ?? defaultMusicBed()) : null;
+    await encodeWithinBudget({ profile, framePattern, audioPath, musicPath, outPath });
 
     const probe = await probeMedia(outPath);
     const facts = await fileFacts(outPath);
@@ -419,4 +428,16 @@ export function narrationVtt(narration: string): string {
   // a viewer would otherwise see rendered as a caption.
   const text = narration.trim().replace(/\s+/g, " ");
   return `WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n${text}\n`;
+}
+
+/**
+ * The bed every spot gets unless the caller names another.
+ *
+ * A path rather than a bundled asset: the right music is a brand decision and
+ * changing it should not need a deploy of this package. Unset, spots stay voice
+ * only, which is what they were before.
+ */
+export function defaultMusicBed(): string | null {
+  const configured = process.env.AD_MUSIC_BED?.trim();
+  return configured ? configured : null;
 }

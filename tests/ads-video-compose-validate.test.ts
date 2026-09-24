@@ -388,3 +388,73 @@ describe("validation measures the decoded output", () => {
     expect(validateMediaPlaylist(short).map((p) => p.check)).toContain("segment total duration");
   });
 });
+
+describe("a music bed under the narration", () => {
+  const withBed = () =>
+    mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: "/tmp/narration.mp3",
+      musicPath: "/tmp/bed.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+
+  it("loops the bed, since a bed is shorter than nothing in particular", () => {
+    const a = withBed();
+    // -stream_loop must precede the input it applies to.
+    const loop = a.indexOf("-stream_loop");
+    expect(loop).toBeGreaterThan(-1);
+    expect(a[loop + 1]).toBe("-1");
+    expect(a[loop + 3]).toBe("/tmp/bed.mp3");
+  });
+
+  it("holds the bed well under the voice", () => {
+    const f = withBed().join(" ");
+    // Broadcast practice is 15-20 dB down: felt, not competing with the read.
+    expect(f).toContain("volume=-16dB");
+  });
+
+  it("fades the bed at both ends", () => {
+    const f = withBed().join(" ");
+    // On a five-second spot an abrupt bed is most of what you hear.
+    expect(f).toContain("afade=t=in");
+    expect(f).toContain("afade=t=out");
+  });
+
+  it("mixes without halving both sources", () => {
+    // amix normalises by default, which would duck the voice as well.
+    expect(withBed().join(" ")).toContain("normalize=0");
+  });
+
+  it("trims both to the length of the picture", () => {
+    const f = withBed().join(" ");
+    expect(f).toContain("atrim=0:5");
+    expect(withBed()).toContain("-shortest");
+  });
+
+  it("a bed without a voice is ignored, since that is just music", () => {
+    const a = mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: null,
+      musicPath: "/tmp/bed.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+    expect(a).toContain("-an");
+    expect(a).not.toContain("-filter_complex");
+  });
+
+  it("no bed leaves the narrated path exactly as it was", () => {
+    const a = mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: "/tmp/narration.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+    expect(a).not.toContain("-filter_complex");
+    expect(a[a.indexOf("-af") + 1]).toBe("apad");
+  });
+});

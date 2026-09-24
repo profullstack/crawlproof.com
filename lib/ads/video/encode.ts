@@ -32,11 +32,28 @@ export const GOP_FRAMES = Math.round(
   (HLS_KEYFRAME_SECONDS[1] - HLS_KEYFRAME_SECONDS[0]) * PREROLL_FPS,
 );
 
+/**
+ * How far the bed sits under the voice.
+ *
+ * Broadcast practice is roughly 15-20 dB down: enough to be felt and not enough
+ * to compete with the read. Given as dB rather than a linear figure because
+ * that is the unit the decision is actually made in.
+ */
+const MUSIC_BED_GAIN = "-16dB";
+
 export type Mp4EncodeOptions = {
   /** printf-style pattern of the PNG frame sequence, e.g. `/tmp/x/f-%04d.png`. */
   framePattern: string;
   /** Optional narration track. AAC-LC at 48 kHz is produced regardless of input. */
   audioPath: string | null;
+  /**
+   * Optional music bed, laid under the narration.
+   *
+   * Looped and trimmed to the spot, held well below the voice, and faded at
+   * both ends. A bed that starts and stops abruptly is worse than no bed: on a
+   * five-second spot the cut is most of what you hear.
+   */
+  musicPath?: string | null;
   outPath: string;
   profile: VideoProfileId;
   /** Video bitrate in kbps. The caller lowers it and retries if over budget. */
@@ -63,6 +80,10 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
   ];
 
   if (o.audioPath) args.push("-i", o.audioPath);
+  // The bed is only ever an input alongside a voice; music on its own would be
+  // an advert that says nothing.
+  const withMusic = Boolean(o.audioPath && o.musicPath);
+  if (withMusic) args.push("-stream_loop", "-1", "-i", o.musicPath!);
 
   args.push(
     "-frames:v",
@@ -97,7 +118,25 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
     args.push("-vf", `scale=${p.width}:${p.height}:flags=lanczos`);
   }
 
-  if (o.audioPath) {
+  if (withMusic) {
+    // Voice at full, bed at -16 dB under it, both exactly as long as the
+    // picture. `normalize=0` on the mix, or amix halves everything to avoid a
+    // clip that two sources at these levels cannot produce anyway.
+    const seconds = PREROLL_FRAMES / PREROLL_FPS;
+    const fade = 0.4;
+    args.push(
+      "-filter_complex",
+      [
+        `[1:a]apad,atrim=0:${seconds},asetpts=N/SR/TB[voice]`,
+        `[2:a]atrim=0:${seconds},asetpts=N/SR/TB,volume=${MUSIC_BED_GAIN},` +
+          `afade=t=in:st=0:d=${fade},afade=t=out:st=${(seconds - fade).toFixed(2)}:d=${fade}[bed]`,
+        `[voice][bed]amix=inputs=2:duration=first:normalize=0[a]`,
+      ].join(";"),
+      "-map", "0:v",
+      "-map", "[a]",
+    );
+    args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2", "-shortest");
+  } else if (o.audioPath) {
     // `apad` extends the audio with silence indefinitely, and `-shortest` then
     // trims the result to the video's five seconds — so the track is exactly as
     // long as the picture.
