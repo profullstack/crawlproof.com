@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatSpec, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import { AdPreview } from "@/components/ads/ad-preview";
+import { VideoRenderCard } from "@/components/ads/video-render-card";
+import { latestJobForCampaign } from "@/lib/ads/video/jobs";
+import { isStreamingFormat } from "@/lib/ads/formats";
 import { CampaignActions, RegenerateButton } from "@/components/ads/campaign-actions";
 import { CampaignTrend } from "@/components/ads/campaign-trend";
 import { BidHistory } from "@/components/ads/bid-history";
@@ -63,6 +66,11 @@ export default async function CampaignDetailPage({
     .eq("owner_id", user.id)
     .maybeSingle();
   if (!campaign) notFound();
+
+  // The campaign's newest pre-roll render, if it has one. Fetched alongside the
+  // rest rather than in the client component so the card renders with its job
+  // already known instead of flashing an empty state on every page load.
+  const videoJobId = await latestJobForCampaign(supabase, { campaignId: id, ownerId: user.id });
 
   const [{ data: stats }, { data: creativeRows }, series, { data: profile }] = await Promise.all([
     supabase
@@ -265,11 +273,15 @@ export default async function CampaignDetailPage({
         <BidHistory data={history.days} events={history.events} autobid={autobid} failed={history.failed} />
       </div>
 
+      <div className="mt-6">
+        <VideoRenderCard jobId={videoJobId} />
+      </div>
+
       {creatives.length > 0 && (
         <div className="mt-6">
           <h2 className="mb-3 font-semibold">Creatives</h2>
           <div className="flex flex-wrap gap-4">
-            {creatives.map((c) => (
+            {creatives.filter((c) => !isStreamingFormat(c.format)).map((c) => (
               <div key={c.id} className="card p-3">
                 <AdPreview creative={c} />
                 <div className="mt-2 text-center text-xs text-[var(--color-muted)]">
