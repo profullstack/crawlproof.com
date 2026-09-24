@@ -14,7 +14,7 @@ import { mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { GIF_FRAMES, videoProfile, type GifProfileId } from "../video/profiles";
 import type { VideoDesignSnapshot } from "../video/snapshot";
-import type { FrameCapturer } from "../video/render";
+import { FRAME_PATTERN, type FrameCapturer } from "../video/render";
 import { GIF_UNITS, gifDocument } from "./compose";
 import { encodeGif, validateGif } from "./encode";
 
@@ -74,10 +74,19 @@ export async function renderAnimatedBanners(args: {
     // The compositor is the only thing that decides how many frames exist. If
     // the capture disagrees, the timeline did not run and encoding whatever
     // landed would ship a banner that is silently short.
-    const captured = (await readdir(framesDir)).filter((f) => f.endsWith(".png"));
-    if (captured.length !== GIF_FRAMES) {
+    //
+    // Checked by NAME, not just by count. Counting alone passed while the
+    // capturer wrote f-0000.png and the encoder asked ffmpeg for
+    // frame-0000.png, so the mismatch reached production as an ffmpeg error
+    // instead of a clear one here.
+    const wanted = Array.from({ length: GIF_FRAMES }, (_, i) =>
+      FRAME_PATTERN.replace("%04d", String(i).padStart(4, "0")),
+    );
+    const present = new Set(await readdir(framesDir));
+    const missing = wanted.filter((f) => !present.has(f));
+    if (missing.length > 0) {
       throw new Error(
-        `${unit.id}: captured ${captured.length} frames, expected ${GIF_FRAMES}`,
+        `${unit.id}: ${missing.length} of ${GIF_FRAMES} frames missing, first is ${missing[0]}`,
       );
     }
 

@@ -388,11 +388,12 @@ export async function renderPreroll(args: {
         });
       }
     } catch (err) {
-      problems.push({
-        check: "animated banners",
-        expected: "three units",
-        actual: (err as Error).message,
-      });
+      // Deliberately NOT pushed onto `problems`: everything in there fails the
+      // revision, and this comment previously claimed a failed banner would not
+      // — while the code did the opposite and failed whole renders whose video
+      // was fine. The banners are optional profiles; their absence is visible
+      // in the asset list, and the reason belongs in the log.
+      console.warn(`[render] animated banners skipped: ${(err as Error).message}`);
     }
   }
 
