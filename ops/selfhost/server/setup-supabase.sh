@@ -339,8 +339,8 @@ start_stack() {
 
 sql_admin() { docker exec -i supabase-db psql -U supabase_admin -h localhost -d postgres -v ON_ERROR_STOP=1 -X -q -At "$@"; }
 
-# Four things self-hosted/v0.8.2 leaves in a state the services cannot start
-# from. All four were hit on a clean initdb of this release, and all four are
+# Five things self-hosted/v0.8.2 leaves in a state the services cannot start
+# from. All five were hit on a clean initdb of this release, and all five are
 # idempotent, so this runs on every pass.
 #
 #   1. The service roles' passwords do not match POSTGRES_PASSWORD, so
@@ -356,6 +356,10 @@ sql_admin() { docker exec -i supabase-db psql -U supabase_admin -h localhost -d 
 #   4. _realtime does not exist, and Realtime connects with
 #      `SET search_path TO _realtime`, then dies with "no schema has been
 #      selected to create in".
+#   5. The `_supabase` database Supavisor stores its own state in does not
+#      exist, so the pooler crashloops on invalid_catalog_name. Nothing else
+#      depends on the pooler, so this one hides: it reached 439 restarts here
+#      while every other container reported healthy.
 repair_bootstrap() {
   log "Repairing the bootstrap gaps in $SUPABASE_REF"
   local pw
@@ -375,6 +379,19 @@ begin
   end loop;
 end \$\$;
 EOF
+  # Supavisor keeps its own state in a separate `_supabase` database. Without
+  # it the pooler crashloops on `FATAL 3D000 (invalid_catalog_name) database
+  # "_supabase" does not exist` — quietly, because nothing else depends on the
+  # pooler, so it can rack up hundreds of restarts while the stack looks fine.
+  if ! sql_admin -c "select 1 from pg_database where datname='_supabase'" | grep -q 1; then
+    sql_admin -c "create database _supabase with owner postgres"
+  fi
+  docker exec -i supabase-db psql -U supabase_admin -h localhost -d _supabase -v ON_ERROR_STOP=1 -X <<'EOF'
+create schema if not exists _supavisor authorization postgres;
+create schema if not exists _analytics authorization postgres;
+grant all on database _supabase to postgres, supabase_admin;
+EOF
+
   sql_admin <<'EOF'
 create schema if not exists graphql_public;
 create schema if not exists _realtime;
