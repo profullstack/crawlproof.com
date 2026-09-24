@@ -102,9 +102,21 @@ if (printOnly) {
   process.exit(0);
 }
 
+// GITHUB_APP_PRIVATE_KEY is a PEM and carries real newlines, and lib/env.ts
+// reads it straight out of process.env expecting them (it does no \n
+// unescaping). An unquoted multi-line value makes docker compose fail the
+// whole file with `unexpected character "+" in variable name`, naming the
+// second line of the PEM. Compose keeps real newlines inside a double-quoted
+// value, so quote anything multi-line and escape what would end the quote.
+const encode = (v) => {
+  const s = String(v ?? '');
+  if (!/[\n\r"]/.test(s)) return s;
+  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+};
+
 const body = Object.keys(merged)
   .sort()
-  .map((k) => `${k}=${merged[k]}`)
+  .map((k) => `${k}=${encode(merged[k])}`)
   .join('\n');
 
 writeFileSync(OUT, `# crawlproof app env, rendered by render-app-env.mjs on ${new Date().toISOString()}\n${body}\n`, {
