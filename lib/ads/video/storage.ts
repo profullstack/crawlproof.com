@@ -89,9 +89,20 @@ export async function uploadRenderedAssets(args: {
       const key = objectKey(prefix, asset.profile, path.basename(filePath));
       const { error } = await svc.storage.from(ASSET_BUCKET).upload(key, bytes, {
         contentType: contentTypeFor(filePath, asset.contentType),
-        upsert: false,
-        // A revision's objects never change, so the edge may keep them for a
-        // year. A new revision is a new path.
+        // A re-render of the same revision is replacing its own output, which
+        // is exactly what a RENDERER_VERSION bump asks for: the design did not
+        // change, the renderer did. Refusing the write made those re-renders
+        // impossible — every one failed with "The resource already exists"
+        // after burning a full encode.
+        //
+        // This is safe because the path is owner/campaign/creative/revision:
+        // nothing but this creative's own revision can be addressed here, so
+        // an overwrite can only ever replace bytes this pipeline produced for
+        // this revision.
+        upsert: true,
+        // A revision's objects are still treated as immutable by the edge.
+        // Replacing them is a deliberate, rare act — a renderer change — and
+        // the alternative is a cache-busting query string on every ad URL.
         cacheControl: "public, max-age=31536000, immutable",
       });
       if (error) {
