@@ -7,6 +7,7 @@
 
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import {
   MP4_PROFILE_IDS,
   PREROLL_FRAMES,
@@ -433,11 +434,17 @@ export function narrationVtt(narration: string): string {
 /**
  * The bed every spot gets unless the caller names another.
  *
- * A path rather than a bundled asset: the right music is a brand decision and
- * changing it should not need a deploy of this package. Unset, spots stay voice
- * only, which is what they were before.
+ * A bundled default, so a spot has music without anybody configuring anything:
+ * an advert that needs an environment variable set before it sounds finished
+ * will ship unfinished. AD_MUSIC_BED overrides it, because the right music is a
+ * brand decision and changing it should not need a deploy.
+ *
+ * Missing from disk, the spot is voice only rather than failing: a bed is the
+ * least important thing in the file.
  */
 export function defaultMusicBed(): string | null {
   const configured = process.env.AD_MUSIC_BED?.trim();
-  return configured ? configured : null;
+  if (configured) return configured;
+  const bundled = path.join(process.cwd(), "assets", "audio", "ad-music-bed.mp3");
+  return existsSync(bundled) ? bundled : null;
 }
