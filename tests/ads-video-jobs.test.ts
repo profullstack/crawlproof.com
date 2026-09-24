@@ -4,6 +4,7 @@ import {
   downloadableAsset,
   ensureRenderJob,
   ensureVideoCreative,
+  MAX_RENDER_ATTEMPTS,
   renderStateLabel,
   snapshotFromCreatives,
   streamingReady,
@@ -169,6 +170,39 @@ describe("render jobs dedupe on the design, not the campaign", () => {
     // Nothing queued: the same design previewed, saved and regenerated without
     // edits is one encode.
     expect(db.inserts).toHaveLength(0);
+  });
+
+  it("retries a failed job instead of handing the failure back forever", async () => {
+    // Dedupe is keyed by the design, so returning the failed row made a failure
+    // permanent for that copy: re-saving hit the same hash, and the card's
+    // advice to edit and retry could not work.
+    const db = fakeDb({ existingJob: { id: "job-f", state: "failed", revision: 1, attempts: 1 } });
+    const res = await ensureRenderJob(db.client as never, {
+      ownerId: "o",
+      campaignId: "c",
+      creativeId: "cr",
+      snapshot,
+      revision: 1,
+    });
+    expect(res).toMatchObject({ jobId: "job-f", state: "queued", reused: true });
+    expect(db.updates[0].patch).toMatchObject({ state: "queued", error_code: null });
+  });
+
+  it("stops retrying once the cap is reached", async () => {
+    // The failure may be deterministic, and the row is keyed by design rather
+    // than by attempt, so an uncapped retry re-runs doomed work on every save.
+    const db = fakeDb({
+      existingJob: { id: "job-f", state: "failed", revision: 1, attempts: MAX_RENDER_ATTEMPTS },
+    });
+    const res = await ensureRenderJob(db.client as never, {
+      ownerId: "o",
+      campaignId: "c",
+      creativeId: "cr",
+      snapshot,
+      revision: 1,
+    });
+    expect(res).toMatchObject({ state: "failed", reused: true });
+    expect(db.updates).toHaveLength(0);
   });
 
   it("writes the row before trying to enqueue", async () => {

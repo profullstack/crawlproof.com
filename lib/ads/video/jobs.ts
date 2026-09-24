@@ -29,6 +29,15 @@ export type RenderState = "queued" | "rendering" | "validating" | "ready" | "fai
  * unaffected and the ones that aren't lose a trailing clause rather than half
  * a word.
  */
+/**
+ * How many times one design may be re-attempted.
+ *
+ * A render can fail for a reason that will never change, and the row is keyed
+ * by the design rather than by the attempt, so without a cap every save of an
+ * unrenderable campaign would queue the same doomed work again.
+ */
+export const MAX_RENDER_ATTEMPTS = 3;
+
 export function trimHeadlineForVideo(headline: string): string {
   const words = headline.trim().split(/\s+/).filter(Boolean);
   if (words.length <= MAX_HEADLINE_WORDS) return words.join(" ");
@@ -142,12 +151,49 @@ export async function ensureRenderJob(
 
   const existing = await supabase
     .from("ad_video_jobs")
-    .select("id, state, revision")
+    .select("id, state, revision, attempts")
     .eq("render_hash", hash)
     .eq("output_profile", DEFAULT_OUTPUT_PROFILE)
     .maybeSingle();
 
   if (existing.data) {
+    // A failed job must not become a permanent verdict on a design. Dedupe
+    // handed the failed row straight back, so once a render failed, that exact
+    // copy could never render again: re-saving hit the same hash, and the card
+    // telling the advertiser to edit and retry was advice that could not work.
+    //
+    // Capped, because the failure may be deterministic — a snapshot this
+    // renderer simply cannot draw — and an uncapped retry would re-run it on
+    // every save forever.
+    const state = existing.data.state as RenderState;
+    const attempts = Number(existing.data.attempts ?? 0);
+    if (state === "failed" && attempts < MAX_RENDER_ATTEMPTS) {
+      await supabase
+        .from("ad_video_jobs")
+        .update({ state: "queued", error_code: null })
+        .eq("id", existing.data.id as string);
+      const requeued = await enqueueRender({
+        renderHash: hash,
+        profile: DEFAULT_OUTPUT_PROFILE,
+        data: {
+          jobRowId: existing.data.id as string,
+          ownerId: args.ownerId,
+          campaignId: args.campaignId ?? null,
+          creativeId: args.creativeId ?? null,
+          revision: existing.data.revision as number,
+          snapshot: args.snapshot,
+          profile: DEFAULT_OUTPUT_PROFILE,
+          audioSlotSupported: false,
+        },
+      }).catch(() => false);
+      return {
+        jobId: existing.data.id as string,
+        state: "queued" as RenderState,
+        revision: existing.data.revision as number,
+        reused: true,
+        enqueued: requeued,
+      };
+    }
     return {
       jobId: existing.data.id as string,
       state: existing.data.state as RenderState,
