@@ -49,6 +49,7 @@ import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
 import { runAutobidSweep } from "../lib/ads/bids";
 import { startVideoRenderWorker } from "./video";
+import { processDueVideoRenders } from "../lib/ads/video/sweep";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -1559,6 +1560,20 @@ setInterval(
   AUTOBID_TICK_MS,
 );
 
+// Reschedule render jobs whose BullMQ job never materialised — Redis down at
+// save time, or a crash between the row insert and the enqueue. Without this
+// those rows sit `queued` forever, and a backfill that only inserts rows would
+// never render anything.
+const VIDEO_SWEEP_TICK_MS = 60_000;
+async function videoSweep() {
+  const r = await processDueVideoRenders(supabase);
+  if (r.scheduled > 0) console.log(`[worker] video sweep scheduled=${r.scheduled} skipped=${r.skipped}`);
+}
+setInterval(
+  () => videoSweep().catch((e) => console.error("[worker] video sweep", e)),
+  VIDEO_SWEEP_TICK_MS,
+);
+
 // Bind to loopback by default so the worker isn't reachable from the public
 // internet when colocated with the app. Override with WORKER_BIND=0.0.0.0 to
 // run as a separate Railway service.
@@ -1576,4 +1591,5 @@ server.listen(port, bindHost, () => {
   // Long-lived BullMQ consumer rather than an interval sweep: a render takes
   // tens of seconds and the queue, not a timer, decides when the next one runs.
   startVideoRenderWorker(supabase);
+  videoSweep().catch((e) => console.error("[worker] video sweep", e));
 });
