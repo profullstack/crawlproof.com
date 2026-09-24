@@ -143,5 +143,8 @@ nmap prober as a BullMQ consumer. It connects **outbound** to Redis using the
 that secret has to be repointed at dev2, and ufw opened to that one address —
 the Redis port is on loopback by default.
 
-Note that `deploy-prober.yml` triggers on pushes to `master` while this repo's
-default branch is `main`, so it has probably not fired in a long time.
+This repo's default branch is **`master`**, not `main`. `deploy-prober.yml` and
+`deploy-dev2.yml` both watch `master` for that reason, and `deploy-app.sh`
+resolves a ref through `origin/<ref>` before checking it out, because a bare
+branch name that does not exist locally fails with the thoroughly unhelpful
+"git checkout: --detach does not take a path argument".
