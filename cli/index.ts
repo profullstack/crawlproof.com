@@ -14,6 +14,7 @@
 // by share-token from the production API.
 
 import { readFileSync } from "node:fs";
+import { EMAIL_TRACKING_USAGE, runEmailTracking } from "../lib/emailTracking/cli";
 
 import { isAllowedTargetUrl } from "../lib/rateLimit";
 
@@ -828,6 +829,7 @@ COMMANDS
       people are asking about right now, and earns 90 days during which
       every click is billed at $0.00 (the rate after that is $0.02/click).
 
+${EMAIL_TRACKING_USAGE}
   ads trends [--window=7] [--limit=20] [--stale] [--json]
       What is trending, highest score first, with how many separate
       parties used each subject this window and last. --stale shows a
@@ -964,6 +966,12 @@ async function main() {
         return await cmdTrack(args);
       case "ads":
         return await cmdAds(args);
+      case "email-tracking":
+        return await runEmailTracking(args.positional, args.flags as Record<string, string | boolean>, (method, path) => apiCall(args, method, path), {
+      write: (line: string) => process.stdout.write(`${line}\n`),
+      error: (line: string) => console.error(line),
+      isTTY: Boolean(process.stdout.isTTY),
+    });
       case "slots":
         return await cmdSlots(args);
       case "affiliate":

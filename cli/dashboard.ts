@@ -15,7 +15,22 @@ import { AD_TARGET_CTR, AD_TARGET_IMPRESSIONS, adTargets } from "../lib/dashboar
 import { buildSiteDetail, type SiteDetail } from "../lib/dashboard/site";
 import type { Component } from "../lib/dashboard/score";
 
-export const TABS = ["ROI", "Traffic", "Ads", "Money", "Spend"] as const;
+export const TABS = ["ROI", "Traffic", "Ads", "Money", "Spend", "Email"] as const;
+
+/** The Email tab's index: its data is not in the snapshot, so it draws without one. */
+export const EMAIL_TAB = 5;
+
+/** One project's email tracking, as GET /api/v1/email-tracking answers it. */
+export type EmailTrackingRow = {
+  project_id: string;
+  site: string;
+  role: string;
+  tracking_id: string;
+  enabled: boolean;
+  events_24h?: { open: number; click: number; unsubscribe: number };
+};
+
+export type EmailState = { rows: EmailTrackingRow[]; loading: boolean; error: string | null; note: string | null };
 export const RANGES = ["1h", "4h", "1d", "1w", "1m"] as const;
 
 /** How the Traffic list is ordered. `s` cycles it. */
@@ -108,6 +123,8 @@ export type State = {
    */
   domain: string | null;
   sort: Sort;
+  /** The Email tab: every project's email tracking, read from its own endpoint. */
+  email: EmailState;
 };
 
 function pane(state: State, name: string, total: number): Pane {
@@ -129,7 +146,7 @@ function scrollPane(p: Pane, delta: number, rows = 1): void {
   p.selected = Math.max(p.offset, Math.min(p.selected, max));
 }
 
-const TAB_PANE = ["vendors", "sites", "campaigns", "invoices", "ledger"];
+const TAB_PANE = ["vendors", "sites", "campaigns", "invoices", "ledger", "email"];
 
 const signed = (theme: Theme, v: number) => (v >= 0 ? theme.success : theme.danger);
 
@@ -997,7 +1014,57 @@ function spendScreen(ui: Container, state: State, theme: Theme): void {
   });
 }
 
-const SCREENS = [roiScreen, trafficScreen, adsScreen, moneyScreen, spendScreen];
+/**
+ * Email tracking, per project: on or off, the id a sender needs, and the last
+ * day's human opens, clicks and unsubscribes. `e` turns the highlighted one
+ * on or off; the secret stays out of the terminal (crawlproof email-tracking
+ * show <site> --secret prints it on purpose).
+ */
+export function emailScreen(ui: Container, state: State, theme: Theme): void {
+  const email = state.email;
+  ui.panel(
+    {
+      title: "Email tracking",
+      subtitle: email.loading ? "reading…" : `${email.rows.filter((r) => r.enabled).length} of ${email.rows.length} on`,
+      footer: "e on/off · crawlproof email-tracking show <site> --secret",
+    },
+    (p) => {
+      if (email.error) p.text(`Could not load: ${email.error}`, { fg: theme.danger });
+      if (email.note) p.text(email.note, { fg: theme.success });
+      if (!email.rows.length) {
+        p.text(email.loading ? "Reading email tracking…" : "No projects.", { fg: theme.muted });
+        return;
+      }
+      const view = pane(state, "email", email.rows.length);
+      p.table({
+        columns: [
+          { key: "on", title: "", width: 4 },
+          { key: "site", title: "Site", width: 28 },
+          { key: "id", title: "Tracking id", width: 26 },
+          { key: "opens", title: "Opens", align: "right", width: 7 },
+          { key: "clicks", title: "Clicks", align: "right", width: 7 },
+          { key: "unsubs", title: "Unsubs", align: "right", width: 7 },
+          { key: "role", title: "Role", width: 8 },
+        ],
+        rows: email.rows.map((r) => ({
+          on: r.enabled ? "on" : "off",
+          site: r.site,
+          id: r.tracking_id,
+          opens: count(r.events_24h?.open ?? 0),
+          clicks: count(r.events_24h?.click ?? 0),
+          unsubs: count(r.events_24h?.unsubscribe ?? 0),
+          role: r.role,
+        })),
+        offset: view.offset,
+        selected: view.selected,
+        scrollbar: true,
+        onScroll: (delta: number) => scrollPane(view, delta, 3),
+      });
+    },
+  );
+}
+
+const SCREENS = [roiScreen, trafficScreen, adsScreen, moneyScreen, spendScreen, emailScreen];
 
 /**
  * Draw whichever screen the state is on.
@@ -1076,6 +1143,10 @@ export function renderBody(ui: Container, state: State, theme: Theme): void {
 }
 
 function renderContent(ui: Container, state: State, theme: Theme): void {
+  if (state.tab === EMAIL_TAB) {
+    emailScreen(ui, state, theme);
+    return;
+  }
   if (!state.snapshot) {
     ui.panel({ title: "Spend & ROI" }, (p) => {
       if (state.error) {
@@ -1120,6 +1191,7 @@ export function initialState(overrides: Partial<State> = {}): State {
     targetCtr: AD_TARGET_CTR,
     domain: null,
     sort: "score",
+    email: { rows: [], loading: false, error: null, note: null },
     ...overrides,
   };
 }
@@ -1140,7 +1212,11 @@ export type KeyLike = { name: string; shift?: boolean };
  * without a terminal. Returns true when something changed and the frame is
  * worth redrawing.
  */
-export function handleKey(state: State, event: KeyLike, actions: { refresh: () => void }): boolean {
+export function handleKey(
+  state: State,
+  event: KeyLike,
+  actions: { refresh: () => void; toggleEmail?: (row: EmailTrackingRow) => void },
+): boolean {
   if (state.showHelp) {
     state.showHelp = false;
     return true;
@@ -1197,6 +1273,14 @@ export function handleKey(state: State, event: KeyLike, actions: { refresh: () =
       }
       state.tab = (state.tab + TABS.length - 1) % TABS.length;
       return true;
+
+    case "e": {
+      if (state.tab !== EMAIL_TAB || !actions.toggleEmail) return false;
+      const row = state.email.rows[Math.min(view.selected, state.email.rows.length - 1)];
+      if (!row) return false;
+      actions.toggleEmail(row);
+      return true;
+    }
 
     case "s": {
       // Re-sorting keeps the highlight on the same property rather than on the
@@ -1295,6 +1379,51 @@ export type DashboardOptions = {
 };
 
 /** Manual retries queue once during an active read, including range/filter changes. */
+/**
+ * The Email tab's own loader: GET /api/v1/email-tracking, and a toggle that
+ * POSTs enable or disable and reads the list again. Separate from the fleet
+ * refresh because it is one cheap call and does not wait on CoinPay.
+ */
+export function createEmailController(
+  state: State,
+  opts: Pick<DashboardOptions, "baseUrl" | "token">,
+  invalidate: () => void,
+  fetcher: typeof fetch = fetch,
+): { load: () => Promise<void>; toggle: (row: EmailTrackingRow) => Promise<void> } {
+  const base = opts.baseUrl.replace(/\/$/, "");
+  const headers = { authorization: `Bearer ${opts.token}`, accept: "application/json" };
+  const load = async (): Promise<void> => {
+    state.email.loading = true;
+    invalidate();
+    try {
+      const res = await fetcher(`${base}/api/v1/email-tracking`, { headers });
+      const json = (await res.json().catch(() => ({}))) as { projects?: EmailTrackingRow[]; error?: string };
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      state.email.rows = json.projects ?? [];
+      state.email.error = null;
+    } catch (e) {
+      state.email.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      state.email.loading = false;
+      invalidate();
+    }
+  };
+  const toggle = async (row: EmailTrackingRow): Promise<void> => {
+    const action = row.enabled ? "disable" : "enable";
+    try {
+      const res = await fetcher(`${base}/api/v1/email-tracking/${encodeURIComponent(row.project_id)}/${action}`, { method: "POST", headers });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      state.email.note = `${row.site}: email tracking ${action === "enable" ? "on" : "off"}.`;
+      state.email.error = null;
+    } catch (e) {
+      state.email.error = e instanceof Error ? e.message : String(e);
+    }
+    await load();
+  };
+  return { load, toggle };
+}
+
 export function createRefreshController(
   state: State,
   opts: DashboardOptions,
@@ -1379,7 +1508,9 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     ...(opts.sort && SORTS.includes(opts.sort as never) ? { sort: opts.sort as Sort } : {}),
   });
 
-  const refresh = createRefreshController(state, opts, () => app.invalidate());
+  const refreshFleet = createRefreshController(state, opts, () => app.invalidate());
+  const email = createEmailController(state, opts, () => app.invalidate());
+  const refresh = (): Promise<void> => Promise.all([refreshFleet(), email.load()]).then(() => undefined);
 
   const interval = Math.max(10, opts.interval ?? 60);
   const poll = setInterval(() => {
@@ -1391,7 +1522,7 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
   tick.unref?.();
 
   app.on("key", (event: KeyLike) => {
-    if (handleKey(state, event, { refresh })) app.invalidate();
+    if (handleKey(state, event, { refresh, toggleEmail: (row) => void email.toggle(row) })) app.invalidate();
   });
 
   app.render(({ ui, theme, height }: RenderArgs) => {
@@ -1424,7 +1555,8 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     const onList = state.tab === 1 && !state.domain;
     ui.statusBar({
       items: [
-        { key: "1-5", label: "Screen" },
+        { key: `1-${TABS.length}`, label: "Screen" },
+        ...(state.tab === EMAIL_TAB ? [{ key: "e", label: "On/off" }] : []),
         ...(onList ? [{ key: "↵", label: "Open site" }] : []),
         ...(state.domain ? [{ key: "esc", label: "Back", active: true }] : []),
         ...(onList ? [{ key: "s", label: `Sort ${state.sort}` }] : []),
@@ -1446,7 +1578,7 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
         width: 76,
         height: 28,
         message:
-          "1-5, ←/→ switch screens.\n" +
+          `1-${TABS.length}, ←/→ switch screens. On Email, e turns tracking on/off.\n` +
           "⧉ MD copies a summary; Tab focuses, Enter copies.\n" +
           `r refreshes now; it also refreshes every ${interval}s.\n` +
           "w cycles the window: 1h → 4h → 1d → 1w → 1m.\n" +
