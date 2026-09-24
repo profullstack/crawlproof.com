@@ -181,13 +181,70 @@ Order that matters, because two databases can otherwise drive the same app:
 **not** `supabase/.env` — that directory stays root-owned because it holds the
 database's God Mode keys and a deploy has no business reading them.
 
+## Network posture
+
+What dev2 exposes to the internet, and why:
+
+| Port | Open to | Why |
+| --- | --- | --- |
+| 22 | everyone | ssh |
+| 80 / 443 | everyone | nginx: the app, and the Supabase gateway |
+| 5432 | **allowlist** | Postgres, for the dev box only |
+| 6379 | **nobody** | Redis is loopback; the prober tunnels in |
+| 8000, 3100 | nobody | gateway and app, loopback behind nginx |
+
+Two rules of thumb the hard way:
+
+- **ufw does not gate a published Docker port.** Docker inserts its own
+  iptables rules ahead of ufw's chains, so a ufw rule for a container port is
+  decoration. `DOCKER-USER` is the chain Docker consults first and leaves
+  alone; `restrict-data-ports.sh` puts the 5432 allowlist there and persists it
+  to `/etc/iptables/rules.v4`.
+- **The allowlist has to include `172.16.0.0/12`**, not just this stack's
+  subnet. Other apps on the box run in their own compose projects on their own
+  bridges and reach Postgres through the published port, so they arrive from a
+  different docker subnet and a narrow allowlist cuts them off the moment they
+  start.
+
+`pg_hba` is the other half and is deliberately unchanged by any of this: TLS
+required, `postgres` role only, scram.
+
+Admin access is **Supabase Studio at `https://supabase.crawlproof.com`**,
+behind HTTP basic auth (`DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` in
+`supabase/.env`). It rides the existing TLS, so there is no separate admin port
+to open.
+
 ## Redis and the prober
 
 `scan.crawlproof.com` (164.92.111.224) is a DigitalOcean droplet running the
-nmap prober as a BullMQ consumer. It connects **outbound** to Redis using the
-`PROBER_REDIS_URL` repo secret, which today points at Railway. After the move
-that secret has to be repointed at dev2, and ufw opened to that one address —
-the Redis port is on loopback by default.
+nmap prober as a BullMQ consumer, and it is the **only** remote consumer of
+anything on dev2. It stays on its own droplet deliberately: it port-scans
+customer sites, and doing that from the box that serves crawlproof.com would
+put the app's own address behind the scanning traffic.
+
+Rather than open Redis to it, it tunnels:
+
+```sh
+# on the prober, once
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519_dev2
+# on dev2, with that public key
+ops/selfhost/server/authorize-prober-tunnel.sh "$(cat ~/.ssh/id_ed25519_dev2.pub)"
+# back on the prober
+ops/selfhost/server/prober-redis-tunnel.sh
+```
+
+`PROBER_REDIS_URL` then points at `redis://default:<pw>@127.0.0.1:6380`.
+
+Two things that will catch you:
+
+- **The prober droplet already runs its own `redis-server` on 6379.** The
+  tunnel therefore binds **6380** locally. Using 6379 either fails to bind or,
+  worse, silently points the prober at the wrong Redis.
+- The key on dev2 is
+  `restrict,port-forwarding,permitopen="127.0.0.1:6379",command="/bin/false"`,
+  so it cannot open a shell or reach any other port. `restrict` turns
+  everything off including forwarding, which is why `port-forwarding` has to be
+  listed again after it.
 
 This repo's default branch is **`master`**, not `main`. `deploy-prober.yml` and
 `deploy-dev2.yml` both watch `master` for that reason, and `deploy-app.sh`
