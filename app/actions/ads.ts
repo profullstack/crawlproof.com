@@ -6,6 +6,14 @@ import { serviceClient } from "@/lib/supabase/service";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import {
+  downloadableAsset,
+  getRenderStatus,
+  queueCampaignVideo,
+  renderStateLabel,
+  streamingReady,
+  type RenderState,
+} from "@/lib/ads/video/jobs";
+import {
   generateAdCreatives,
   DESIGN_FORMAT_IDS,
   cleanSummary,
@@ -278,6 +286,18 @@ export async function saveCampaign(input: {
   const { error: cErr } = await supabase.from("ad_creatives").insert(rows);
   if (cErr) return { ok: false, error: cErr.message };
 
+  // Queue the five-second pre-roll from the design that was just approved.
+  // Deliberately fire-and-forget on failure: a render is an extra output of
+  // saving a campaign, never a precondition for one, and holding this request
+  // open until an encode finished would be a minute of spinner on a save.
+  await queueCampaignVideo(supabase, {
+    campaignId: campaign.data.id,
+    ownerId: user.id,
+    domain: domainOf(check.url),
+    creatives,
+    bumpRevision: false,
+  });
+
   // Turning trending targeting on is what earns the 90 days, and the grant is
   // idempotent — a campaign saved twice does not get a second window. A
   // failure to grant never fails the save: the campaign runs and bills
@@ -290,6 +310,60 @@ export async function saveCampaign(input: {
 
   revalidatePath("/dashboard/ads");
   return { ok: true, id: campaign.data.id, refSlug: campaign.data.ref_slug, promoDays };
+}
+
+/**
+ * Poll one pre-roll render.
+ *
+ * The dashboard calls this on an interval while a render is in flight. It is a
+ * status read and nothing more: no request in this application ever waits on an
+ * encode, which is why saving a campaign returns immediately and the video
+ * catches up behind it.
+ *
+ * Reads through the service client because ad_video_assets rows are written by
+ * the worker, but scopes every query to the signed-in user's id rather than
+ * relying on RLS that the service client bypasses.
+ */
+export async function videoRenderStatus(input: { jobId: string }): Promise<
+  | {
+      ok: true;
+      state: RenderState;
+      label: string;
+      revision: number;
+      streamingReady: boolean;
+      downloadUrl: string | null;
+      downloadBytes: number | null;
+      posterUrl: string | null;
+      errorCode: string | null;
+    }
+  | { ok: false; error: string }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const sb = serviceClient();
+  const status = await getRenderStatus(sb, {
+    jobId: input.jobId,
+    ownerId: user.id,
+    publicUrlFor: (key) => sb.storage.from(ASSET_BUCKET).getPublicUrl(key).data.publicUrl,
+  });
+  if (!status) return { ok: false, error: "No such render." };
+
+  const master = downloadableAsset(status);
+  return {
+    ok: true,
+    state: status.state,
+    label: renderStateLabel(status.state),
+    revision: status.revision,
+    streamingReady: streamingReady(status),
+    downloadUrl: master?.url ?? null,
+    downloadBytes: master?.byteSize ?? null,
+    posterUrl: status.assets.find((a) => a.profile === "poster")?.url ?? null,
+    errorCode: status.errorCode,
+  };
 }
 
 // --- Campaign editing (advertiser) ---
@@ -370,6 +444,58 @@ export async function updateCampaign(input: {
   return { ok: true };
 }
 
+/**
+ * Re-queue a campaign's pre-roll after its design changed.
+ *
+ * Reads the campaign's current creatives back rather than trusting the payload
+ * that was just written: an edit may touch one format, and the snapshot has to
+ * be built from whichever source format the video prefers, which may not be
+ * the one that changed.
+ *
+ * bumpRevision is always true here - that is what distinguishes this from the
+ * initial save, and what makes the worker's compare-and-swap meaningful when
+ * two edits land in quick succession.
+ */
+async function requeueCampaignVideo(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  args: { campaignId: string; ownerId: string },
+): Promise<void> {
+  const { data: campaign } = await supabase
+    .from("ad_campaigns")
+    .select("destination_domain, destination_url")
+    .eq("id", args.campaignId)
+    .eq("owner_id", args.ownerId)
+    .maybeSingle();
+  if (!campaign) return;
+
+  const { data: rows } = await supabase
+    .from("ad_creatives")
+    .select("format, headline, cta_text, bg_color, fg_color, accent_color, font_family, logo_url, image_url")
+    .eq("campaign_id", args.campaignId)
+    .eq("owner_id", args.ownerId);
+  if (!rows?.length) return;
+
+  await queueCampaignVideo(supabase, {
+    campaignId: args.campaignId,
+    ownerId: args.ownerId,
+    domain:
+      (campaign.destination_domain as string | null) ??
+      domainOf(campaign.destination_url as string),
+    creatives: rows.map((r) => ({
+      format: r.format,
+      headline: r.headline ?? "",
+      ctaText: r.cta_text ?? "",
+      bgColor: r.bg_color,
+      fgColor: r.fg_color,
+      accentColor: r.accent_color,
+      fontFamily: r.font_family,
+      logoUrl: r.logo_url,
+      imageUrl: r.image_url,
+    })),
+    bumpRevision: true,
+  });
+}
+
 export async function updateCreatives(input: {
   campaignId: string;
   creatives: (Partial<AdCreative> & { id: string })[];
@@ -402,6 +528,7 @@ export async function updateCreatives(input: {
       .eq("owner_id", user.id);
     if (error) return { ok: false, error: error.message };
   }
+  await requeueCampaignVideo(supabase, { campaignId: input.campaignId, ownerId: user.id });
   revalidatePath(`/dashboard/ads/${input.campaignId}`);
   return { ok: true };
 }
@@ -500,6 +627,7 @@ export async function regenerateCampaign(input: {
     }
   }
 
+  await requeueCampaignVideo(supabase, { campaignId: input.id, ownerId: user.id });
   revalidatePath("/dashboard/ads");
   revalidatePath(`/dashboard/ads/${input.id}`);
   return { ok: true };
