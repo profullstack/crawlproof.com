@@ -19,6 +19,7 @@ import { PREROLL_FRAMES, TIMELINE } from "@/lib/ads/video/profiles";
 
 const snapshot: VideoDesignSnapshot = {
   headline: "Sources in, feeds out",
+  subhead: "Every source, one feed.",
   ctaText: "Start free",
   domain: "nichedb.dev",
   bgColor: "#12161f",

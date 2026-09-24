@@ -280,6 +280,7 @@ export async function createCampaignForUrl(input: {
     creatives: generated.creatives.map((c) => ({
       format: c.format,
       headline: c.headline ?? "",
+      body: c.body ?? null,
       ctaText: c.ctaText ?? "",
       bgColor: c.bgColor ?? null,
       fgColor: c.fgColor ?? null,

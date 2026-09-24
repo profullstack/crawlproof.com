@@ -9,6 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { redisConnectionOptions } from "../lib/redis-connection";
 import { VIDEO_RENDER_QUEUE, type VideoRenderJobData } from "../lib/ads/video/queue";
 import { renderPreroll, RenderError } from "../lib/ads/video/render";
+import { probeMedia } from "../lib/ads/video/validate";
 import { uploadRenderedAssets } from "../lib/ads/video/storage";
 import { captureFrames } from "./frames";
 
@@ -60,6 +61,17 @@ export async function processRenderJob(
     });
 
     const { assets, problems } = await renderPreroll({
+      // GIF frame counts come from a decode, not the header, for the same
+      // reason the video's do: a truncated write still parses.
+      probeGif: async (file: string) => {
+        const probe = await probeMedia(file);
+        const v = probe.streams.find((st) => st.codec_type === "video");
+        return {
+          width: Number(v?.width ?? 0),
+          height: Number(v?.height ?? 0),
+          frames: Number(v?.nb_read_frames ?? 0),
+        };
+      },
       snapshot: d.snapshot,
       workDir,
       captureFrames,

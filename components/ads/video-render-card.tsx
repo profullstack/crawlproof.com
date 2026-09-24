@@ -120,6 +120,40 @@ export function VideoRenderCard({
               {formatBytes(status.downloadBytes)} &middot; revision {status.revision}
             </span>
           </div>
+          {status.banners.length > 0 && (
+            <div className="mt-2">
+              <h3 className="text-sm font-semibold">Animated banners</h3>
+              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                The same design as a looping GIF, at the three display sizes. Drop-in
+                replacements for the static units.
+              </p>
+              <div className="mt-3 flex flex-wrap items-start gap-4">
+                {status.banners.map((b) => (
+                  <div key={b.profile} className="flex flex-col gap-2">
+                    {/* The GIF itself, playing. A still preview of an animated
+                        banner tells the advertiser nothing about the motion
+                        they are approving. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={b.url}
+                      alt={`${b.width}x${b.height} animated banner`}
+                      width={b.width ?? undefined}
+                      height={b.height ?? undefined}
+                      className="rounded border border-[var(--color-border,#2a2f3a)]"
+                      style={{ maxWidth: "100%", height: "auto" }}
+                    />
+                    <div className="flex items-center gap-2 text-xs">
+                      <a href={b.url} download className="underline">
+                        {b.width}&times;{b.height} GIF
+                      </a>
+                      <span className="text-[var(--color-muted)]">{formatBytes(b.byteSize)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <p className="text-xs text-[var(--color-muted)]">
             {status.streamingReady
               ? "Ready to stream. Downloading works whether or not the campaign is active."
