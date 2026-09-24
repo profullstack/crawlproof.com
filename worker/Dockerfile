@@ -1,9 +1,12 @@
 FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
-# pandoc for canonical Markdown -> HTML conversion (the PDF path renders this
-# via Playwright). A JS-based fallback (`marked`) runs when pandoc is absent.
+# pandoc for Markdown -> HTML (the PDF path renders that via Playwright).
+# ffmpeg for the five-second ad renderer: it encodes the compositor's PNG frames
+# into the MP4 renditions and packages them as fMP4 HLS, and ffprobe is what
+# validation decodes to count frames. Both binaries must exist or every video
+# render job fails at the first spawn.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends pandoc \
+  && apt-get install -y --no-install-recommends pandoc ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
