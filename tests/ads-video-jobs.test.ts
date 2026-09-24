@@ -60,9 +60,18 @@ describe("the snapshot is derived from approved copy", () => {
       domain: "nichedb.dev",
     })!;
     expect(validateSnapshot(snap)).toEqual([]);
-    // Silent by default, so nothing claims an audible companion it has not got.
-    expect(snap.audioMode).toBe("silent");
-    expect(snap.narration).toBeNull();
+    // Narrated, with a script derived from the approved copy rather than
+    // written afresh: an ad whose voiceover claims something its banner does
+    // not is a compliance problem, not a stylistic one.
+    expect(snap.audioMode).toBe("narrated");
+    expect(snap.narration).toContain(snap.headline);
+    expect(snap.narration).toContain(snap.domain);
+    // Deterministic, because it is part of the render hash.
+    const again = snapshotFromCreatives({
+      creatives: [design("banner_300x250")],
+      domain: "nichedb.dev",
+    })!;
+    expect(again.narration).toBe(snap.narration);
   });
 
   it("records no artwork URL while it records no content hash", () => {

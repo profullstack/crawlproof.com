@@ -42,14 +42,20 @@ describe("the composition is deterministic", () => {
     expect(timeline(false)).toHaveLength(PREROLL_FRAMES);
   });
 
-  it("has the headline legible from the very first frame", () => {
-    // The entrance animates around copy that is already readable. A five-second
-    // ad that spends its first beat assembling itself says nothing for a tenth
-    // of its life.
-    const f0 = frameState(0, false);
-    expect(f0.entrance).toBe(0);
-    // ...and the document's opacity floor for the copy block is 0.55, not 0.
-    expect(composeDocument(snapshot)).toContain("0.55 + 0.45 * s.entrance");
+  it("says who is advertising from the very first frame, and finishes early", () => {
+    // The rule this replaces required the whole headline to be legible at frame
+    // 0. Honouring it produced an ad where nothing visibly happened across five
+    // seconds — frames a second apart were indistinguishable, which is its own
+    // way of saying nothing. The rule is now narrower and still protects the
+    // opening instant: the brand is visible immediately, and the copy finishes
+    // assembling inside the first quarter of the ad rather than half of it.
+    const doc = composeDocument(snapshot);
+    expect(doc).toContain("0.35 + 0.65 * b");
+    // The headline build completes well before the midpoint.
+    expect(doc).toContain("800 / (words.length - 1)");
+    expect(doc).toContain("(t - i * per) / 420");
+    // And the CTA lands early enough to be on screen for roughly the back half.
+    expect(doc).toContain("(t - 1900) / 700");
   });
 
   it("runs its three beats in order and finishes settled", () => {

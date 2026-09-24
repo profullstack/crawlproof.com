@@ -10,6 +10,7 @@ import { redisConnectionOptions } from "../lib/redis-connection";
 import { VIDEO_RENDER_QUEUE, type VideoRenderJobData } from "../lib/ads/video/queue";
 import { renderPreroll, RenderError } from "../lib/ads/video/render";
 import { probeMedia } from "../lib/ads/video/validate";
+import { synthesiseNarration } from "../lib/ads/video/narration";
 import { uploadRenderedAssets } from "../lib/ads/video/storage";
 import { captureFrames } from "./frames";
 
@@ -60,7 +61,18 @@ export async function processRenderJob(
       attempts: job.attemptsMade + 1,
     });
 
+    // Narration, best effort. A silent pre-roll is a working ad; a render that
+    // fails because a speech API was rate-limited is not — so this returns null
+    // on every failure and the silent cut ships.
+    const narration = await synthesiseNarration({ snapshot: d.snapshot, workDir });
+    if (narration) {
+      console.log(`[render] narration: ${narration.byteSize} bytes — "${narration.script}"`);
+    } else {
+      console.log("[render] narration: none (no key or synthesis failed), rendering silent");
+    }
+
     const { assets, problems } = await renderPreroll({
+      audioPath: narration?.filePath ?? null,
       // GIF frame counts come from a decode, not the header, for the same
       // reason the video's do: a truncated write still parses.
       probeGif: async (file: string) => {
