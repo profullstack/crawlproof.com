@@ -3,7 +3,7 @@
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { previewAds, saveCampaign, uploadAdAsset } from "@/app/actions/ads";
-import { AD_FORMATS, paletteFor, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
+import { DESIGN_FORMATS, paletteFor, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import type { SiteBrand } from "@/lib/ads/brand";
 import { AdPreview } from "@/components/ads/ad-preview";
 import { ColorField } from "@/components/ads/color-field";
@@ -215,7 +215,7 @@ export function NewAdForm() {
               )}
             </div>
             <div className="flex flex-wrap items-start gap-6">
-              {AD_FORMATS.map((f) => {
+              {DESIGN_FORMATS.map((f) => {
                 const c = creatives.find((x) => x.format === f.id);
                 if (!c) return null;
                 return (
@@ -242,7 +242,7 @@ export function NewAdForm() {
           {/* Editor for the active format */}
           <div className="card space-y-4 p-5">
             <h2 className="font-semibold">
-              Edit — {AD_FORMATS.find((f) => f.id === active)?.label}
+              Edit — {DESIGN_FORMATS.find((f) => f.id === active)?.label}
             </h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block">

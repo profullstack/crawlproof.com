@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateCampaign, updateCreatives, uploadAdAsset } from "@/app/actions/ads";
-import { AD_FORMATS, paletteFor, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
+import { DESIGN_FORMATS, paletteFor, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import { AdPreview } from "@/components/ads/ad-preview";
 import { ColorField } from "@/components/ads/color-field";
 import type { AdTheme } from "@/lib/ads/theme";
@@ -185,7 +185,7 @@ export function EditCampaignForm({
       {current && (
         <div className="card space-y-4 p-5">
           <div className="flex flex-wrap items-start gap-4">
-            {AD_FORMATS.map((f) => {
+            {DESIGN_FORMATS.map((f) => {
               const c = creatives.find((x) => x.format === f.id);
               if (!c) return null;
               return (

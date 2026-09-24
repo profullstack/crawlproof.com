@@ -7,7 +7,7 @@ import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import {
   generateAdCreatives,
-  AD_FORMAT_IDS,
+  DESIGN_FORMAT_IDS,
   cleanSummary,
   summaryDomain,
   type AdCreative,
@@ -115,7 +115,14 @@ export async function previewAds(input: { url: string }): Promise<
   }
 }
 
-const ALLOWED_FORMATS = new Set<AdFormatId>(AD_FORMAT_IDS);
+// Design formats only. cleanCreative() below produces a design object —
+// headline, body, palette — from a client payload, and the streaming pre-roll
+// has no design object: its creative is media a worker encodes. Allowing it
+// here would let a crafted payload mint a video creative with a headline and no
+// bytes behind it, which is the one row selection must never be able to find.
+// The DB's ad_creatives_revision_check would refuse the write anyway; refusing
+// it here makes that a clean rejection rather than a constraint violation.
+const ALLOWED_FORMATS = new Set<AdFormatId>(DESIGN_FORMAT_IDS);
 // 6- or 8-digit: the editor's opacity slider writes #rrggbbaa.
 const HEX = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
