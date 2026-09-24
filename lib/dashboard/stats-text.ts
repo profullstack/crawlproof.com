@@ -13,6 +13,8 @@ export type StatsAnswerish = {
   sources?: StatsItem[] | null;
   referrers?: StatsItem[] | null;
   pages?: StatsItem[] | null;
+  countries?: StatsItem[] | null;
+  cities?: StatsItem[] | null;
 };
 
 const list = (v: StatsItem[] | null | undefined): StatsItem[] => (Array.isArray(v) ? v : []);
@@ -42,6 +44,12 @@ export function renderStats(
   section("Sources", list(answer.sources));
   section("Referrers", list(answer.referrers));
   section("Pages", list(answer.pages));
+  // Last, but the two that settle an argument. A referrer is whatever the
+  // client typed; the country is where the packets came from. Traffic that
+  // reads as a broad audience in Sources and as a single city here is one
+  // operator, not an audience.
+  section("Countries", list(answer.countries));
+  section("Cities", list(answer.cities));
 
   // Nothing at all is a real answer, and the likeliest cause is worth naming.
   if (!(totals.pageviews ?? 0) && !(totals.events ?? 0) && !list(answer.sources).length) {
