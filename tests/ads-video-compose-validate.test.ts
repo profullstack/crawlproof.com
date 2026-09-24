@@ -187,6 +187,23 @@ describe("encoder arguments carry the media contract", () => {
     expect(narrated[narrated.indexOf("-ar") + 1]).toBe("48000");
   });
 
+  it("pads a narration to the length of the picture", () => {
+    // Every narration is shorter than its ad — a five-second read is about two
+    // and a half seconds of speech. Without the pad the audio stream ended
+    // early, which failed the duration check on every narrated render and left
+    // players entitled to stop at the end of the track.
+    const a = mp4Args({
+      framePattern: "f-%04d.png",
+      audioPath: "/tmp/narration.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    }).join(" ");
+    expect(a).toContain("-af apad");
+    // apad alone runs forever; -shortest is what trims it back to the video.
+    expect(a).toContain("-shortest");
+  });
+
   it("stream-copies into HLS rather than re-encoding", () => {
     const hls = hlsArgs({ inPath: "/tmp/720.mp4", outDir: "/tmp/hls", name: "720p" });
     // Re-encoding would move the keyframes and break the boundaries the MP4 was

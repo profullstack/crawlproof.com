@@ -98,6 +98,16 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
   }
 
   if (o.audioPath) {
+    // `apad` extends the audio with silence indefinitely, and `-shortest` then
+    // trims the result to the video's five seconds — so the track is exactly as
+    // long as the picture.
+    //
+    // Without the pad, a narration shorter than the ad (which every narration
+    // is: a five-second read is about two and a half seconds of speech) left an
+    // audio stream that ended early. Validation requires the two durations to
+    // match within one AAC frame and rejected every narrated render, and a
+    // player handed a short track is entitled to stop at its end.
+    args.push("-af", "apad");
     args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2", "-shortest");
   } else {
     args.push("-an");
