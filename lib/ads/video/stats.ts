@@ -15,9 +15,19 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+/**
+ * Where the video played, and why it is never aggregated away.
+ *
+ * 'preroll' is a break someone waited through. 'in_banner' is a muted, looping
+ * unit in the corner of a page nobody opened for it, measured on its first loop
+ * only. Averaging the two produces a completion rate that describes neither.
+ */
+export type VideoPlacement = "preroll" | "midroll" | "postroll" | "in_banner";
+
 export type VideoFunnelRow = {
   campaignId: string;
   campaignName: string;
+  placement: string;
   fills: number;
   starts: number;
   firstQuartile: number;
@@ -37,6 +47,7 @@ export type VideoFunnelRow = {
 export type VideoSlotFunnelRow = {
   slotId: string;
   projectName: string;
+  placement: string;
   fills: number;
   houseFills: number;
   unfilled: number;
@@ -65,6 +76,7 @@ export function videoFunnelRow(raw: Record<string, unknown>): VideoFunnelRow {
   return {
     campaignId: String(raw.campaign_id ?? ""),
     campaignName: String(raw.campaign_name ?? ""),
+    placement: String(raw.placement ?? "preroll"),
     fills,
     starts,
     firstQuartile: n(raw.first_quartile),
@@ -87,6 +99,7 @@ export function videoSlotFunnelRow(raw: Record<string, unknown>): VideoSlotFunne
   return {
     slotId: String(raw.slot_id ?? ""),
     projectName: String(raw.project_name ?? ""),
+    placement: String(raw.placement ?? "preroll"),
     fills,
     houseFills: n(raw.house_fills),
     unfilled: n(raw.unfilled),
@@ -158,4 +171,13 @@ export function parseDays(v: string | null | undefined, fallback = 7): number {
   const num = Number(v);
   if (!Number.isFinite(num)) return fallback;
   return Math.min(Math.max(Math.round(num), 1), 365);
+}
+
+/** How a placement is written in a report. */
+export function placementLabel(p: string): string {
+  if (p === "in_banner") return "in-banner";
+  if (p === "preroll") return "pre-roll";
+  if (p === "midroll") return "mid-roll";
+  if (p === "postroll") return "post-roll";
+  return p;
 }

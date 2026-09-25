@@ -105,10 +105,11 @@ export default async function CampaignDetailPage({
   // and ad_video_events, which carry RLS with no public policy (they are
   // written by the serving path, not by a session). Ownership was already
   // settled by the campaign select above, and the RPC filters on it again.
-  const videoFunnel =
-    (await videoFunnelForOwner(serviceClient(), user.id, 30).catch(() => [])).find(
-      (r) => r.campaignId === id,
-    ) ?? null;
+  // All of them, not the first: the funnel splits by placement, so a campaign
+  // running both a streaming pre-roll and an in-banner loop has a row each and
+  // they are different products with different completion rates.
+  const videoFunnel = (await videoFunnelForOwner(serviceClient(), user.id, 30).catch(() => []))
+    .filter((r) => r.campaignId === id);
 
   // The bid, who sets it, and its paper ledger: their own read too, for the
   // same reason — the columns ride behind a hand-applied migration and a
@@ -289,11 +290,11 @@ export default async function CampaignDetailPage({
         <VideoRenderCard jobId={videoJobId} campaignKind={classifyCampaign(campaign.destination_url)} />
       </div>
 
-      {videoFunnel && (
-        <div className="mt-4">
-          <VideoFunnelCard row={videoFunnel} />
+      {videoFunnel.map((row) => (
+        <div key={`${row.campaignId}:${row.placement}`} className="mt-4">
+          <VideoFunnelCard row={row} />
         </div>
-      )}
+      ))}
 
       {creatives.length > 0 && (
         <div className="mt-6">

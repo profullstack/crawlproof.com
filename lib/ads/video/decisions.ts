@@ -32,7 +32,7 @@ export function normalizeSurface(v: string | null | undefined): string {
  * a query string would let a client mint unlimited pre-rolls for one session
  * by varying it. The list is what we actually serve.
  */
-const PLACEMENTS = new Set(["preroll", "midroll", "postroll"]);
+const PLACEMENTS = new Set(["preroll", "midroll", "postroll", "in_banner"]);
 
 export function normalizePlacement(v: string | null | undefined): string {
   return v && PLACEMENTS.has(v) ? v : "preroll";

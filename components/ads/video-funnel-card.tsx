@@ -9,6 +9,7 @@ import type { VideoFunnelRow } from "@/lib/ads/video/stats";
  * fill every break it is offered and never play a single frame.
  */
 export function VideoFunnelCard({ row }: { row: VideoFunnelRow | null }) {
+  const where = row?.placement === "in_banner" ? "in-banner" : "pre-roll";
   // Nothing filled means nothing to explain; the render card above already
   // says whether the campaign even has a video.
   if (!row || row.fills === 0) return null;
@@ -27,9 +28,11 @@ export function VideoFunnelCard({ row }: { row: VideoFunnelRow | null }) {
 
   return (
     <div className="card p-4">
-      <h2 className="font-semibold">Playback</h2>
+      <h2 className="font-semibold">Playback · {where}</h2>
       <p className="mt-1 text-xs text-[var(--color-muted)]">
-        A fill is a break this campaign won. A start is one that actually played. Last 30 days.
+        {row.placement === "in_banner"
+          ? "A muted unit that loops in the page. Only its first loop is counted, and a start needs the unit at least half visible. Last 30 days."
+          : "A fill is a break this campaign won. A start is one that actually played. Last 30 days."}
       </p>
 
       <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">

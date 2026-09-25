@@ -490,27 +490,35 @@ async function cmdAds(args: Args): Promise<number> {
       return 0;
     }
     const pct = (v: unknown) => `${Math.round(Number(v ?? 0) * 100)}%`;
+    // A pre-roll and an in-banner loop are different products; the column is
+    // there so nobody reads one row's completion rate as the other's.
+    const label = (v: unknown) => {
+      const p = String(v ?? "preroll");
+      return p === "in_banner" ? "in-banner" : p === "preroll" ? "pre-roll" : p;
+    };
     const campaigns = (json.campaigns as Record<string, unknown>[]) ?? [];
     const slots = (json.slots as Record<string, unknown>[]) ?? [];
 
     if (campaigns.length) {
       process.stdout.write(`Campaigns (${json.days}d)\n`);
-      process.stdout.write(`  ${"fills".padStart(7)} ${"starts".padStart(7)} ${"done".padStart(7)} ${"start%".padStart(7)} ${"done%".padStart(7)}  campaign\n`);
+      process.stdout.write(`  ${"fills".padStart(7)} ${"starts".padStart(7)} ${"done".padStart(7)} ${"start%".padStart(7)} ${"done%".padStart(7)}  ${"where".padEnd(10)} campaign\n`);
       for (const c of campaigns) {
         process.stdout.write(
           `  ${String(c.fills).padStart(7)} ${String(c.starts).padStart(7)} ${String(c.completes).padStart(7)}` +
-            ` ${pct(c.startRate).padStart(7)} ${pct(c.completionRate).padStart(7)}  ${c.campaignName}\n`,
+            ` ${pct(c.startRate).padStart(7)} ${pct(c.completionRate).padStart(7)}` +
+            `  ${label(c.placement).padEnd(10)} ${c.campaignName}\n`,
         );
       }
     }
     if (slots.length) {
       if (campaigns.length) process.stdout.write("\n");
       process.stdout.write(`Slots (${json.days}d)\n`);
-      process.stdout.write(`  ${"fills".padStart(7)} ${"house".padStart(7)} ${"empty".padStart(7)} ${"starts".padStart(7)} ${"done".padStart(7)}  site\n`);
+      process.stdout.write(`  ${"fills".padStart(7)} ${"house".padStart(7)} ${"empty".padStart(7)} ${"starts".padStart(7)} ${"done".padStart(7)}  ${"where".padEnd(10)} site\n`);
       for (const s of slots) {
         process.stdout.write(
           `  ${String(s.fills).padStart(7)} ${String(s.houseFills).padStart(7)} ${String(s.unfilled).padStart(7)}` +
-            ` ${String(s.starts).padStart(7)} ${String(s.completes).padStart(7)}  ${s.projectName || s.slotId}\n`,
+            ` ${String(s.starts).padStart(7)} ${String(s.completes).padStart(7)}` +
+            `  ${label(s.placement).padEnd(10)} ${s.projectName || s.slotId}\n`,
         );
       }
     }
