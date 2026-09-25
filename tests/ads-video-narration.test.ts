@@ -49,7 +49,7 @@ describe("the script is the approved copy, spoken", () => {
     expect(narrationScript(snapshot())).toBe(narrationScript(snapshot()));
   });
 
-  it("clips a long line on a word boundary", () => {
+  it("shortens a long line to a clause, never to a fragment", () => {
     const long = narrationScript(
       snapshot({ headline: "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen" }),
     );
@@ -57,6 +57,22 @@ describe("the script is the approved copy, spoken", () => {
     // A voice cut off mid-word is worse than a shorter line.
     expect(long).not.toMatch(/\s\w{1,2}\.$/);
     expect(long.endsWith(".")).toBe(true);
+    expect(long).toContain("nichedb.dev");
+  });
+
+  it("keeps the address when the address alone is over the estimate", () => {
+    // A 62-character .onion domain puts every candidate over the cap. Clipping
+    // the fullest line — the first thing this did — produced "Open this .onion
+    // address. Open in Tor at.", an advert that names nothing, because
+    // trimming from the end removes the destination first.
+    const onion = "7btj5kisrpopxjkhmcugbiygfk2xd6op3ta7whfrmxxrldyrlh5b5zad.onion";
+    const line = narrationScript(
+      snapshot({ headline: "Open this .onion address", ctaText: "Open in Tor", domain: onion }),
+    );
+    expect(line).toContain(onion);
+    // Over the estimate on purpose: the estimate only picks a candidate, and
+    // the fit compresses whatever comes back into the spot.
+    expect(line).toBe(`${onion}.`);
   });
 
   it("drops a whole clause rather than words off the end", () => {
