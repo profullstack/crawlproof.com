@@ -241,6 +241,29 @@ CRON
   # Seed the baseline so the first cron run already reports a rate.
   "$dest" || true
   echo "    installed $dest (every 15 min); growth record: /var/log/dev2-disk.log"
+
+  install_builder_prune
+}
+
+# Docker build cache is the biggest non-database consumer on a box that builds
+# its own images, and this one does: deploy-app.sh builds here so NEXT_PUBLIC_*
+# never leave the box, and other properties build here too. In one day that
+# cache went 0 -> 38 GB, was pruned, and was back to 11.5 GB within hours,
+# twice firing a disk alarm that had nothing to do with the databases.
+#
+# `until=168h` is the conservative part: only cache older than a week is
+# discarded, so nothing a current or recent build would reuse is touched.
+# Rebuild speed is preserved; only genuinely stale layers go. A bare
+# `prune -f` would slow the next build of every property on the box.
+install_builder_prune() {
+  log "Nightly docker build cache prune (older than 7 days)"
+  cat > /etc/cron.d/docker-builder-prune <<'CRON'
+# Discard docker build cache older than a week. Age-filtered on purpose: the
+# problem is accumulation over time, not the working set.
+17 4 * * * root docker builder prune -f --filter until=168h >>/var/log/docker-prune.log 2>&1
+CRON
+  chmod 644 /etc/cron.d/docker-builder-prune
+  echo "    installed /etc/cron.d/docker-builder-prune (04:17 daily)"
 }
 
 # ------------------------------------------------------------- 2. supabase
