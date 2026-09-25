@@ -7,6 +7,12 @@ import { BOTS_DEFINITION, HUMANS_DEFINITION, VISITORS_DEFINITION } from "@/lib/t
 import { fetchVisitorDailySeries } from "@/lib/tracker/visitors";
 import { ProjectLogo } from "@/components/project-logo";
 import { StatsUnavailable } from "@/components/stats-unavailable";
+import {
+  ListFilter,
+  ListFilterEmpty,
+  ListFilterInput,
+  ListFilterRow,
+} from "@/components/list-filter";
 import { backfillProjectLogo } from "@/app/actions/createProject";
 import { getOrCreateDefaultOrg, isOrgWideRole, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
 import { listOrgTeam } from "@/app/actions/org-members";
@@ -132,6 +138,21 @@ export default async function DashboardPage({
   const trafficByProject = traffic.data;
   const trafficFailed = traffic.failed;
 
+  // What the filter box matches on: everything the card shows apart from the
+  // traffic figures. The badges are in the text too, so "autoblog" narrows to
+  // the projects that have it on and "paused" to the paused ones.
+  const projectFilterItems = projects.map((p) => ({
+    id: p.id,
+    text: [
+      p.name,
+      p.url,
+      p.schedule,
+      p.status,
+      autoblogIds.has(p.id) ? "autoblog" : "",
+      socialIds.has(p.id) ? "social" : "",
+    ].join(" "),
+  }));
+
   // Lazy backfill: any project still missing a logo gets one scraped
   // in the background on this dashboard hit. Fire-and-forget — the
   // tile shows a letter avatar until the next render after the write
@@ -161,161 +182,172 @@ export default async function DashboardPage({
       )}
 
       <section>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Projects</h2>
-          <div
-            role="tablist"
-            className="flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-1 text-sm"
-          >
-            {FILTERS.map((f) => {
-              const active = f.id === status;
-              const n = counts[f.id];
-              return (
-                <Link
-                  key={f.id}
-                  href={dashboardHref(f.id, selectedOrgId)}
-                  role="tab"
-                  aria-selected={active}
-                  className={`rounded-md px-3 py-1 ${
-                    active
-                      ? "bg-[var(--color-bg)] font-semibold"
-                      : "text-[var(--color-muted)]"
-                  }`}
-                >
-                  {f.label}
-                  {n > 0 && (
-                    <span className="ml-1.5 text-xs text-[var(--color-muted)]">
-                      {n}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
+        <ListFilter items={projectFilterItems}>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-lg font-semibold">Projects</h2>
+              {/* Filters the cards already on the page; the status tabs beside it
+                  still go to the server, because the other statuses were never
+                  fetched. */}
+              {projects.length > 1 && (
+                <ListFilterInput label="Filter projects" noun="projects" />
+              )}
+            </div>
+            <div
+              role="tablist"
+              className="flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-1 text-sm"
+            >
+              {FILTERS.map((f) => {
+                const active = f.id === status;
+                const n = counts[f.id];
+                return (
+                  <Link
+                    key={f.id}
+                    href={dashboardHref(f.id, selectedOrgId)}
+                    role="tab"
+                    aria-selected={active}
+                    className={`rounded-md px-3 py-1 ${
+                      active
+                        ? "bg-[var(--color-bg)] font-semibold"
+                        : "text-[var(--color-muted)]"
+                    }`}
+                  >
+                    {f.label}
+                    {n > 0 && (
+                      <span className="ml-1.5 text-xs text-[var(--color-muted)]">
+                        {n}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {projects && projects.length > 0 && trafficFailed && (
-          <StatsUnavailable what="traffic for these projects" />
-        )}
+          {projects && projects.length > 0 && trafficFailed && (
+            <StatsUnavailable what="traffic for these projects" />
+          )}
 
-        {projects && projects.length > 0 ? (
-          <ul className="grid gap-3 md:grid-cols-2">
-            {projects.map((p) => (
-              <li key={p.id} className="card p-4">
-                <Link href={`/dashboard/projects/${p.id}`} className="block">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <ProjectLogo
-                        url={(p as { logo_url: string | null }).logo_url}
-                        name={p.name}
-                        projectId={p.id}
-                      />
-                      <div className="min-w-0">
-                        <div className="truncate font-semibold">{p.name}</div>
-                        <div className="mt-0.5 truncate text-sm text-[var(--color-muted)]">
-                          {p.url}
+          {projects && projects.length > 0 ? (
+            <ul className="grid gap-3 md:grid-cols-2">
+              {projects.map((p) => (
+                <ListFilterRow key={p.id} id={p.id} as="li" className="card p-4">
+                  <Link href={`/dashboard/projects/${p.id}`} className="block">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <ProjectLogo
+                          url={(p as { logo_url: string | null }).logo_url}
+                          name={p.name}
+                          projectId={p.id}
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold">{p.name}</div>
+                          <div className="mt-0.5 truncate text-sm text-[var(--color-muted)]">
+                            {p.url}
+                          </div>
                         </div>
                       </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {autoblogIds.has(p.id) && (
+                          <span
+                            className="badge badge-pass"
+                            title="Autoblog campaign is active for this project"
+                          >
+                            Autoblog on
+                          </span>
+                        )}
+                        {socialIds.has(p.id) && (
+                          <span
+                            className="badge badge-pass"
+                            title="At least one social account is connected"
+                          >
+                            Social on
+                          </span>
+                        )}
+                        <span className="badge">{p.schedule}</span>
+                        {p.status !== "active" && (
+                          <span
+                            className={
+                              p.status === "paused"
+                                ? "badge badge-warn"
+                                : "badge badge-unknown"
+                            }
+                          >
+                            {p.status}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {autoblogIds.has(p.id) && (
-                        <span
-                          className="badge badge-pass"
-                          title="Autoblog campaign is active for this project"
-                        >
-                          Autoblog on
-                        </span>
-                      )}
-                      {socialIds.has(p.id) && (
-                        <span
-                          className="badge badge-pass"
-                          title="At least one social account is connected"
-                        >
-                          Social on
-                        </span>
-                      )}
-                      <span className="badge">{p.schedule}</span>
-                      {p.status !== "active" && (
-                        <span
-                          className={
-                            p.status === "paused"
-                              ? "badge badge-warn"
-                              : "badge badge-unknown"
-                          }
-                        >
-                          {p.status}
-                        </span>
-                      )}
+                  </Link>
+                  {latestPosts.get(p.id) && (
+                    <div className="mt-2 truncate text-xs text-[var(--color-muted)]">
+                      Last blog post:{" "}
+                      <a
+                        href={latestPosts.get(p.id)!.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-[var(--color-fg)]"
+                      >
+                        {new Date(
+                          latestPosts.get(p.id)!.publishedAt,
+                        ).toLocaleDateString()}
+                      </a>
                     </div>
+                  )}
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
+                    <div>
+                      <div
+                        className="text-xs font-medium text-[var(--color-fg)]"
+                        title={trafficFailed ? undefined : visitorsByProject ? VISITORS_DEFINITION : HUMANS_DEFINITION}
+                      >
+                        {trafficFailed
+                          ? "Traffic unavailable"
+                          : visitorsByProject
+                            ? `${sum(visitorsByProject.get(p.id)).toLocaleString()} human visitors`
+                            : `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human events`}
+                      </div>
+                      <div
+                        className="text-[11px] text-[var(--color-muted)]"
+                        title={trafficFailed ? undefined : `${HUMANS_DEFINITION} ${BOTS_DEFINITION}`}
+                      >
+                        {trafficFailed
+                          ? "Query failed \u2014 not zero"
+                          : `${visitorsByProject ? `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human events \u00b7 ` : ""}${totalBots(trafficByProject.get(p.id) ?? []).toLocaleString()} bot hits \u00b7 Past 7 days`}
+                      </div>
+                    </div>
+                    {!trafficFailed && (
+                      <FontSparkline
+                        samples={visitorsByProject?.get(p.id) ?? humanSamples(trafficByProject.get(p.id))}
+                      />
+                    )}
                   </div>
-                </Link>
-                {latestPosts.get(p.id) && (
-                  <div className="mt-2 truncate text-xs text-[var(--color-muted)]">
-                    Last blog post:{" "}
-                    <a
-                      href={latestPosts.get(p.id)!.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-[var(--color-fg)]"
-                    >
-                      {new Date(
-                        latestPosts.get(p.id)!.publishedAt,
-                      ).toLocaleDateString()}
-                    </a>
-                  </div>
-                )}
-                <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
-                  <div>
-                    <div
-                      className="text-xs font-medium text-[var(--color-fg)]"
-                      title={trafficFailed ? undefined : visitorsByProject ? VISITORS_DEFINITION : HUMANS_DEFINITION}
-                    >
-                      {trafficFailed
-                        ? "Traffic unavailable"
-                        : visitorsByProject
-                          ? `${sum(visitorsByProject.get(p.id)).toLocaleString()} human visitors`
-                          : `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human events`}
-                    </div>
-                    <div
-                      className="text-[11px] text-[var(--color-muted)]"
-                      title={trafficFailed ? undefined : `${HUMANS_DEFINITION} ${BOTS_DEFINITION}`}
-                    >
-                      {trafficFailed
-                        ? "Query failed \u2014 not zero"
-                        : `${visitorsByProject ? `${totalHumans(trafficByProject.get(p.id) ?? []).toLocaleString()} human events \u00b7 ` : ""}${totalBots(trafficByProject.get(p.id) ?? []).toLocaleString()} bot hits \u00b7 Past 7 days`}
-                    </div>
-                  </div>
-                  {!trafficFailed && (
-                    <FontSparkline
-                      samples={visitorsByProject?.get(p.id) ?? humanSamples(trafficByProject.get(p.id))}
+                  {orgSchemaReady && (
+                    <ProjectOrgMoveControl
+                      projectId={p.id}
+                      currentOrgId={(p as { organization_id?: string | null }).organization_id ?? null}
+                      orgs={orgs as DashboardOrg[]}
                     />
                   )}
-                </div>
-                {orgSchemaReady && (
-                  <ProjectOrgMoveControl
-                    projectId={p.id}
-                    currentOrgId={(p as { organization_id?: string | null }).organization_id ?? null}
-                    orgs={orgs as DashboardOrg[]}
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-[var(--color-muted)]">
-            {status === "active" ? (
-              <>
-                No projects yet.{" "}
-                <Link href="/dashboard/projects/new" className="underline">
-                  Create one
-                </Link>
-                .
-              </>
-            ) : (
-              `No ${status} projects.`
-            )}
-          </p>
-        )}
+                </ListFilterRow>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[var(--color-muted)]">
+              {status === "active" ? (
+                <>
+                  No projects yet.{" "}
+                  <Link href="/dashboard/projects/new" className="underline">
+                    Create one
+                  </Link>
+                  .
+                </>
+              ) : (
+                `No ${status} projects.`
+              )}
+            </p>
+          )}
+          <ListFilterEmpty noun="projects" />
+        </ListFilter>
       </section>
 
       <section>

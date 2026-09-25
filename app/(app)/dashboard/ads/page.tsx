@@ -7,6 +7,12 @@ import { AccountTrend } from "@/components/ads/account-trend";
 import { RangeTabs } from "@/components/ads/range-tabs";
 import { StatSpark } from "@/components/ads/stat-spark";
 import { StatsUnavailable } from "@/components/stats-unavailable";
+import {
+  ListFilter,
+  ListFilterEmpty,
+  ListFilterInput,
+  ListFilterRow,
+} from "@/components/list-filter";
 import { MediaSplitCard } from "@/components/ads/media-split-card";
 import {
   deliveredClicks,
@@ -121,6 +127,25 @@ export default async function AdsPage({
   const today = utcToday();
   const totals = sumSeries(series);
 
+  // Resolved once, up here, because the badge label is also part of what the
+  // filter box matches: typing "credits" finds the campaigns that stopped for
+  // want of them, which the raw status column does not say.
+  const displayById = new Map(
+    campaigns.map(
+      (c) => [c.id, campaignDisplayStatus(c, today, creditsAvailable)] as const,
+    ),
+  );
+  const campaignFilterItems = campaigns.map((c) => ({
+    id: c.id,
+    text: [
+      c.name,
+      c.destination_domain ?? "",
+      c.ref_slug,
+      c.status,
+      displayById.get(c.id)?.label ?? "",
+    ].join(" "),
+  }));
+
   return (
     <div className="mx-auto max-w-4xl">
       <div className="flex items-center justify-between">
@@ -142,153 +167,167 @@ export default async function AdsPage({
         you fund a daily budget — publishers earn crypto for the clicks.
       </p>
 
-      {campaigns.length > 0 && (
-        <>
-          {/* One filter row, above everything it scopes: the stats, the chart
-              and the per-campaign figures all read the same slice. */}
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <Suspense fallback={null}>
-              <RangeTabs value={range.id} />
-            </Suspense>
-            <span className="text-sm text-[var(--color-muted)]">{range.hint}</span>
-          </div>
+      <ListFilter items={campaignFilterItems}>
+        {campaigns.length > 0 && (
+          <>
+            {/* One filter row, above everything it scopes: the stats, the chart
+                and the per-campaign figures all read the same slice.
 
-          {statsFailed && <StatsUnavailable what="delivery stats" />}
-
-          {/* Delivery first, revenue second. The tiles count every ad actually
-              shown — paid inventory plus free backfill — and name the split
-              underneath, so a range in which nothing was billable reports the
-              traffic it really carried instead of four zeros. Spend stays
-              strictly paid: it is money, and free backfill costs none. */}
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat
-              label="Impressions"
-              value={deliveredImpressions(totals).toLocaleString()}
-              note={deliverySplitNote(totals.impressions, totals.freeImpressions)}
-              spark={<StatSpark data={series} pick={pickDeliveredImpressions} />}
-            />
-            <Stat
-              label="Clicks"
-              value={deliveredClicks(totals).toLocaleString()}
-              note={deliverySplitNote(totals.clicks, totals.freeClicks)}
-              spark={<StatSpark data={series} pick={pickDeliveredClicks} />}
-            />
-            <Stat
-              label="CTR"
-              value={ctr(deliveredClicks(totals), deliveredImpressions(totals))}
-            />
-            <Stat
-              label="Spend"
-              value={dollars(totals.spentCents)}
-              // Only worth saying when there was delivery to bill for; on a
-              // silent range the $0.00 needs no explaining.
-              note={
-                totals.spentCents === 0 && deliveredImpressions(totals) > 0
-                  ? "nothing billable"
-                  : undefined
-              }
-              spark={<StatSpark data={series} pick={(p) => p.spentCents} />}
-            />
-          </div>
-
-          {/* Free backfill costs and earns nobody anything, so the reason it is
-              free is worth one line — otherwise a dashboard full of traffic and
-              an empty Spend tile reads as a billing fault. */}
-          {(totals.freeImpressions > 0 || totals.freeClicks > 0) && (
-            <p className="mt-3 text-sm text-[var(--color-muted)]">
-              Free-tier delivery is backfill: a campaign out of credits or daily
-              budget, or one running on a slot its own account owns. It fills
-              requests no paying advertiser wanted, bills nobody and earns nobody.
-            </p>
-          )}
-
-          <div className="mt-4">
-            <AccountTrend data={series} range={range} failed={seriesFailed} />
-          </div>
-
-          {/* Which presentation the server chose, per fill. Below the chart
-              because it explains the delivery the chart plots rather than adding
-              a measure of its own. */}
-          {mediaSplitFailed ? (
-            <div className="mt-4">
-              <StatsUnavailable what="the delivery-by-medium split" />
+                The range tabs re-query the server; the name box next to them only
+                narrows the campaign list below, so the stats and chart keep
+                covering the whole account whatever is typed. */}
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <Suspense fallback={null}>
+                <RangeTabs value={range.id} />
+              </Suspense>
+              <span className="text-sm text-[var(--color-muted)]">{range.hint}</span>
+              {campaigns.length > 1 && (
+                <ListFilterInput
+                  label="Filter campaigns"
+                  noun="campaigns"
+                  className="sm:ml-auto"
+                />
+              )}
             </div>
-          ) : (
-            <MediaSplitCard rows={mediaSplit} rangeHint={range.hint} />
-          )}
-        </>
-      )}
 
-      {campaigns.length === 0 ? (
-        <div className="card mt-6 p-8 text-center text-[var(--color-muted)]">
-          No campaigns yet.{" "}
-          <Link href="/dashboard/ads/new" className="text-[var(--color-accent)]">
-            Create your first ad
-          </Link>
-          .
-        </div>
-      ) : (
-        <ul className="mt-4 space-y-2">
-          {campaigns.map((c) => {
-            // Range-scoped, so a row never contradicts the header above it.
-            const s = rangeById.get(c.id) ?? EMPTY_TOTALS;
-            // Same measure as the header tiles, or a campaign delivering only
-            // free backfill would read as a dead row under a live chart.
-            const impr = deliveredImpressions(s);
-            const clk = deliveredClicks(s);
-            const display = campaignDisplayStatus(c, today, creditsAvailable);
-            return (
-              <li key={c.id} className="card p-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <Link href={`/dashboard/ads/${c.id}`} className="block truncate font-semibold hover:text-[var(--color-accent)]">
-                      {c.name}
-                    </Link>
-                    <div className="truncate text-sm text-[var(--color-muted)]">
-                      {c.destination_domain} · {dollars(c.daily_budget_cents)}/day ·{" "}
-                      <span className="font-mono">{c.ref_slug}</span>
+            {statsFailed && <StatsUnavailable what="delivery stats" />}
+
+            {/* Delivery first, revenue second. The tiles count every ad actually
+                shown — paid inventory plus free backfill — and name the split
+                underneath, so a range in which nothing was billable reports the
+                traffic it really carried instead of four zeros. Spend stays
+                strictly paid: it is money, and free backfill costs none. */}
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Stat
+                label="Impressions"
+                value={deliveredImpressions(totals).toLocaleString()}
+                note={deliverySplitNote(totals.impressions, totals.freeImpressions)}
+                spark={<StatSpark data={series} pick={pickDeliveredImpressions} />}
+              />
+              <Stat
+                label="Clicks"
+                value={deliveredClicks(totals).toLocaleString()}
+                note={deliverySplitNote(totals.clicks, totals.freeClicks)}
+                spark={<StatSpark data={series} pick={pickDeliveredClicks} />}
+              />
+              <Stat
+                label="CTR"
+                value={ctr(deliveredClicks(totals), deliveredImpressions(totals))}
+              />
+              <Stat
+                label="Spend"
+                value={dollars(totals.spentCents)}
+                // Only worth saying when there was delivery to bill for; on a
+                // silent range the $0.00 needs no explaining.
+                note={
+                  totals.spentCents === 0 && deliveredImpressions(totals) > 0
+                    ? "nothing billable"
+                    : undefined
+                }
+                spark={<StatSpark data={series} pick={(p) => p.spentCents} />}
+              />
+            </div>
+
+            {/* Free backfill costs and earns nobody anything, so the reason it is
+                free is worth one line — otherwise a dashboard full of traffic and
+                an empty Spend tile reads as a billing fault. */}
+            {(totals.freeImpressions > 0 || totals.freeClicks > 0) && (
+              <p className="mt-3 text-sm text-[var(--color-muted)]">
+                Free-tier delivery is backfill: a campaign out of credits or daily
+                budget, or one running on a slot its own account owns. It fills
+                requests no paying advertiser wanted, bills nobody and earns nobody.
+              </p>
+            )}
+
+            <div className="mt-4">
+              <AccountTrend data={series} range={range} failed={seriesFailed} />
+            </div>
+
+            {/* Which presentation the server chose, per fill. Below the chart
+                because it explains the delivery the chart plots rather than adding
+                a measure of its own. */}
+            {mediaSplitFailed ? (
+              <div className="mt-4">
+                <StatsUnavailable what="the delivery-by-medium split" />
+              </div>
+            ) : (
+              <MediaSplitCard rows={mediaSplit} rangeHint={range.hint} />
+            )}
+          </>
+        )}
+
+        {campaigns.length === 0 ? (
+          <div className="card mt-6 p-8 text-center text-[var(--color-muted)]">
+            No campaigns yet.{" "}
+            <Link href="/dashboard/ads/new" className="text-[var(--color-accent)]">
+              Create your first ad
+            </Link>
+            .
+          </div>
+        ) : (
+          <ul className="mt-4 space-y-2">
+            {campaigns.map((c) => {
+              // Range-scoped, so a row never contradicts the header above it.
+              const s = rangeById.get(c.id) ?? EMPTY_TOTALS;
+              // Same measure as the header tiles, or a campaign delivering only
+              // free backfill would read as a dead row under a live chart.
+              const impr = deliveredImpressions(s);
+              const clk = deliveredClicks(s);
+              const display = displayById.get(c.id)!;
+              return (
+                <ListFilterRow key={c.id} id={c.id} as="li" className="card p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <Link href={`/dashboard/ads/${c.id}`} className="block truncate font-semibold hover:text-[var(--color-accent)]">
+                        {c.name}
+                      </Link>
+                      <div className="truncate text-sm text-[var(--color-muted)]">
+                        {c.destination_domain} · {dollars(c.daily_budget_cents)}/day ·{" "}
+                        <span className="font-mono">{c.ref_slug}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Link href={`/dashboard/ads/${c.id}`} className="hidden sm:block" aria-label="View campaign">
+                        <MiniTrend data={seriesById.get(c.id) ?? []} failed={dailyFailed} />
+                      </Link>
+                      <span className="badge whitespace-nowrap" title={display.hint}>
+                        {display.label}
+                      </span>
+                      <Link href={`/dashboard/ads/${c.id}/edit`} className="btn text-sm">
+                        Edit
+                      </Link>
+                      <CampaignActions id={c.id} status={c.status} />
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Link href={`/dashboard/ads/${c.id}`} className="hidden sm:block" aria-label="View campaign">
-                      <MiniTrend data={seriesById.get(c.id) ?? []} failed={dailyFailed} />
-                    </Link>
-                    <span className="badge whitespace-nowrap" title={display.hint}>
-                      {display.label}
-                    </span>
-                    <Link href={`/dashboard/ads/${c.id}/edit`} className="btn text-sm">
-                      Edit
-                    </Link>
-                    <CampaignActions id={c.id} status={c.status} />
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-[var(--color-border)] pt-3 text-sm">
-                  <MiniStat label="Impressions" value={impr.toLocaleString()} />
-                  <MiniStat label="Clicks" value={clk.toLocaleString()} />
-                  <MiniStat label="CTR" value={ctr(clk, impr)} />
-                  <MiniStat label="Spent" value={dollars(s.spentCents)} />
-                  {s.freeImpressions > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-[var(--color-border)] pt-3 text-sm">
+                    <MiniStat label="Impressions" value={impr.toLocaleString()} />
+                    <MiniStat label="Clicks" value={clk.toLocaleString()} />
+                    <MiniStat label="CTR" value={ctr(clk, impr)} />
+                    <MiniStat label="Spent" value={dollars(s.spentCents)} />
+                    {s.freeImpressions > 0 && (
+                      <MiniStat
+                        label="Of which free"
+                        value={s.freeImpressions.toLocaleString()}
+                      />
+                    )}
                     <MiniStat
-                      label="Of which free"
-                      value={s.freeImpressions.toLocaleString()}
+                      label="Today"
+                      value={`${dollars(spendTodayCents(c, today))} / ${dollars(c.daily_budget_cents)}`}
                     />
+                    {/* The bid autobid is making for it right now; the campaign
+                        page has the history and the reasons. */}
+                    <MiniStat label="Bid" value={`${c.bid_credits ?? 4} cr`} />
+                  </div>
+                  {!display.serving && (
+                    <p className="mt-2 text-sm text-[var(--color-muted)]">{display.hint}</p>
                   )}
-                  <MiniStat
-                    label="Today"
-                    value={`${dollars(spendTodayCents(c, today))} / ${dollars(c.daily_budget_cents)}`}
-                  />
-                  {/* The bid autobid is making for it right now; the campaign
-                      page has the history and the reasons. */}
-                  <MiniStat label="Bid" value={`${c.bid_credits ?? 4} cr`} />
-                </div>
-                {!display.serving && (
-                  <p className="mt-2 text-sm text-[var(--color-muted)]">{display.hint}</p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                </ListFilterRow>
+              );
+            })}
+          </ul>
+        )}
+        <ListFilterEmpty noun="campaigns" />
+      </ListFilter>
     </div>
   );
 }

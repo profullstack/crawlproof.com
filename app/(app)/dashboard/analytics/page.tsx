@@ -42,6 +42,12 @@ import {
   type VisitorTotals,
 } from "@/lib/tracker/visitors";
 import {
+  ListFilter,
+  ListFilterEmpty,
+  ListFilterInput,
+  ListFilterRow,
+} from "@/components/list-filter";
+import {
   TrackerAnalytics,
   type TrackerListItem,
 } from "@/components/charts/tracker-analytics";
@@ -457,6 +463,17 @@ export default async function PortfolioAnalyticsPage({
     (r) => r.samples === null && r.totals.humans > 0,
   ).length;
 
+  // The by-property table is the one list on this page long enough to need
+  // finding things in, so it gets a filter box. Everything above it — the
+  // verdict, the tiles, the stacked chart — stays portfolio-wide however the
+  // table is narrowed: those figures answer "how is the portfolio doing", and
+  // silently re-scoping them to a typed substring would be a different
+  // question.
+  const propertyFilterItems = rows.map(({ project }) => ({
+    id: project.id,
+    text: [project.name, project.url, project.status].join(" "),
+  }));
+
   return (
     <div className="space-y-6">
       <PageHeader days={days} orgs={orgs} selectedOrgId={selectedOrg?.id ?? null} />
@@ -554,31 +571,42 @@ export default async function PortfolioAnalyticsPage({
           </section>
 
           <section className="card p-4">
-            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <div>
-                <h2 className="text-lg font-semibold">By property</h2>
-                <p className="text-sm text-[var(--color-muted)]">
-                  Human visits per site against its own previous {days} days.
-                  AI referrals are part of the human figure; bot crawls are
-                  not.
-                </p>
+            <ListFilter items={propertyFilterItems}>
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                <div>
+                  <h2 className="text-lg font-semibold">By property</h2>
+                  <p className="text-sm text-[var(--color-muted)]">
+                    Human visits per site against its own previous {days} days.
+                    AI referrals are part of the human figure; bot crawls are
+                    not.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {rows.length > 1 && (
+                    <ListFilterInput
+                      label="Filter properties"
+                      noun="properties"
+                    />
+                  )}
+                  <Link
+                    href="/dashboard"
+                    className="text-xs text-[var(--color-muted)] underline hover:text-[var(--color-fg)]"
+                  >
+                    Manage projects
+                  </Link>
+                </div>
               </div>
-              <Link
-                href="/dashboard"
-                className="text-xs text-[var(--color-muted)] underline hover:text-[var(--color-fg)]"
-              >
-                Manage projects
-              </Link>
-            </div>
-            <ProjectTrendTable rows={rows} />
-            {missingSparklines > 0 && (
-              <p className="mt-3 text-xs text-[var(--color-muted)]">
-                Sparklines are shown for the {detailCount} highest-traffic
-                properties; {missingSparklines} more{" "}
-                {missingSparklines === 1 ? "has" : "have"} totals only over this
-                window. Pick a shorter range to see more of them.
-              </p>
-            )}
+              <ProjectTrendTable rows={rows} />
+              <ListFilterEmpty noun="properties" />
+              {missingSparklines > 0 && (
+                <p className="mt-3 text-xs text-[var(--color-muted)]">
+                  Sparklines are shown for the {detailCount} highest-traffic
+                  properties; {missingSparklines} more{" "}
+                  {missingSparklines === 1 ? "has" : "have"} totals only over
+                  this window. Pick a shorter range to see more of them.
+                </p>
+              )}
+            </ListFilter>
           </section>
 
           {/* No projectId: this page aggregates across every project and
@@ -705,8 +733,10 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
         </thead>
         <tbody>
           {rows.map(({ project, totals, visitors, trend, samples }) => (
-            <tr
+            <ListFilterRow
               key={project.id}
+              id={project.id}
+              as="tr"
               className="border-b border-[var(--color-border)] last:border-0"
             >
               <td className="py-2 pr-3">
@@ -755,7 +785,7 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
               <td className="py-2 text-right tabular-nums text-[var(--color-muted)]" title={BOTS_DEFINITION}>
                 {totals.bots.toLocaleString()}
               </td>
-            </tr>
+            </ListFilterRow>
           ))}
         </tbody>
       </table>
