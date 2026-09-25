@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { formatSpec, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import { AdPreview } from "@/components/ads/ad-preview";
 import { VideoRenderCard } from "@/components/ads/video-render-card";
+import { VideoFunnelCard } from "@/components/ads/video-funnel-card";
+import { videoFunnelForOwner } from "@/lib/ads/video/stats";
 import { latestJobForCampaign } from "@/lib/ads/video/jobs";
 import { isStreamingFormat } from "@/lib/ads/formats";
 import { classifyCampaign } from "@/lib/ads/video/classify";
@@ -98,6 +100,15 @@ export default async function CampaignDetailPage({
   // exist at all (nobody has enabled trending targeting, or the migration has
   // not been applied here yet). Both read as "no promo".
   const promo = await promoStateForCampaign(supabase, id);
+
+  // Playback, through the service client: the funnel reads ad_video_decisions
+  // and ad_video_events, which carry RLS with no public policy (they are
+  // written by the serving path, not by a session). Ownership was already
+  // settled by the campaign select above, and the RPC filters on it again.
+  const videoFunnel =
+    (await videoFunnelForOwner(serviceClient(), user.id, 30).catch(() => [])).find(
+      (r) => r.campaignId === id,
+    ) ?? null;
 
   // The bid, who sets it, and its paper ledger: their own read too, for the
   // same reason — the columns ride behind a hand-applied migration and a
@@ -277,6 +288,12 @@ export default async function CampaignDetailPage({
       <div className="mt-6">
         <VideoRenderCard jobId={videoJobId} campaignKind={classifyCampaign(campaign.destination_url)} />
       </div>
+
+      {videoFunnel && (
+        <div className="mt-4">
+          <VideoFunnelCard row={videoFunnel} />
+        </div>
+      )}
 
       {creatives.length > 0 && (
         <div className="mt-6">

@@ -18,7 +18,13 @@ describe("crawlproof MCP · stats module", () => {
 
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(["ad_earnings", "list_projects", "promote_status", "recent_audits"]);
+    expect(names).toEqual([
+      "ad_earnings",
+      "list_projects",
+      "promote_status",
+      "recent_audits",
+      "video_ad_funnel",
+    ]);
 
     const audits = tools.find((t) => t.name === "recent_audits");
     const props = (audits?.inputSchema as { properties?: Record<string, unknown> })?.properties;
