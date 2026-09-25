@@ -1,3 +1,4 @@
+import { safeFontFamily } from "./creative";
 // Campaigns created from outside the dashboard.
 //
 // The dashboard's saveCampaign (app/actions/ads.ts) takes creatives the person
@@ -70,7 +71,7 @@ function creativeRow(campaignId: string, ownerId: string, c: AdCreative) {
     light_bg_color: c.lightBgColor ?? null,
     light_fg_color: c.lightFgColor ?? null,
     light_accent_color: c.lightAccentColor ?? null,
-    font_family: (c.fontFamily ?? "system-ui, sans-serif").slice(0, 200),
+    font_family: safeFontFamily(c.fontFamily),
   };
 }
 
