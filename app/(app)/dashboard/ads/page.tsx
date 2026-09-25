@@ -8,7 +8,13 @@ import { RangeTabs } from "@/components/ads/range-tabs";
 import { StatSpark } from "@/components/ads/stat-spark";
 import { StatsUnavailable } from "@/components/stats-unavailable";
 import { MediaSplitCard } from "@/components/ads/media-split-card";
-import { ListFilter, ListPager } from "@/components/list-filter";
+import {
+  ListFilter,
+  ListFilterBar,
+  ListFilterEmpty,
+  ListFilterRow,
+  ListPager,
+} from "@/components/list-filter";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -25,12 +31,7 @@ import {
   type RangeTotals,
 } from "@/lib/ads/series";
 import { getMediaSplit, type MediaSplitRow } from "@/lib/ads/media-stats";
-import {
-  filterAndPaginate,
-  needsFilter,
-  parseListQuery,
-  statusCounts,
-} from "@/lib/list-filter";
+import { FIELD_SEPARATOR, parseListQuery, type ListRow } from "@/lib/list-filter";
 import { resolveRange } from "@/lib/ads/ranges";
 import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 
@@ -135,26 +136,26 @@ export default async function AdsPage({
   const today = utcToday();
   const totals = sumSeries(series);
 
-  // The list is filtered and paged here rather than in the query: the range
-  // totals, the sparkline series and the status badge are all already loaded
-  // per-owner for the whole list, so narrowing in SQL would mean either
-  // re-plumbing those or letting the rows disagree with the figures above them.
-  // At a few hundred campaigns the filter itself costs nothing.
+  // Every campaign is rendered; the filter runs in the browser over these
+  // descriptors and hides the rows that fall out, so typing narrows the list
+  // without re-running the range totals and the daily series behind this page.
   //
   // The status searched and filtered on is the DISPLAYED one, not the stored
   // column. A campaign shows as "free backfill" when the account is out of
   // credits while its own status still reads 'active', and filtering on the raw
   // column would return rows whose badge says something else.
-  const statusFor = (c: CampaignRow) => campaignDisplayStatus(c, today, creditsAvailable).label;
-  const filterSpec = {
-    fields: (c: CampaignRow) => [c.name, c.destination_domain, c.ref_slug, statusFor(c)],
-    statusOf: statusFor,
-  };
-  const paged = filterAndPaginate(campaigns, listQuery, filterSpec);
-  const statusOptions = [...statusCounts(campaigns, listQuery, filterSpec)]
-    .sort((a, b) => b[1] - a[1])
-    .map(([value, count]) => ({ value, label: value, count }));
-  const showFilter = needsFilter(campaigns.length);
+  const displayById = new Map(
+    campaigns.map(
+      (c) => [c.id, campaignDisplayStatus(c, today, creditsAvailable)] as const,
+    ),
+  );
+  const filterRows: ListRow[] = campaigns.map((c) => ({
+    id: c.id,
+    text: [c.name, c.destination_domain, c.ref_slug, displayById.get(c.id)?.label]
+      .filter(Boolean)
+      .join(FIELD_SEPARATOR),
+    status: displayById.get(c.id)?.label,
+  }));
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -263,40 +264,31 @@ export default async function AdsPage({
           .
         </div>
       ) : (
-        <>
-          {/* Only once the list is long enough to be worth hiding behind a
-              filter — a search box over six campaigns is clutter. */}
-          {showFilter && (
-            <div className="mt-6">
-              <Suspense fallback={null}>
-                <ListFilter
-                  total={campaigns.length}
-                  shown={paged.total}
-                  statuses={statusOptions}
-                  label="campaigns"
-                  placeholder="Search name, domain or slug…"
-                />
-              </Suspense>
-            </div>
-          )}
+        <ListFilter
+          rows={filterRows}
+          initial={listQuery}
+          label="campaigns"
+        >
+          {/* The bar hides itself until the list is long enough to be worth
+              filtering — a search box over six campaigns is clutter. */}
+          <ListFilterBar
+            className="mt-6"
+            placeholder="Search name, domain or slug…"
+          />
 
-          {paged.total === 0 && (
-            <div className="card mt-4 p-8 text-center text-[var(--color-muted)]">
-              No campaigns match that filter.
-            </div>
-          )}
+          <ListFilterEmpty>No campaigns match that filter.</ListFilterEmpty>
 
         <ul className="mt-4 space-y-2">
-          {paged.items.map((c) => {
+          {campaigns.map((c) => {
             // Range-scoped, so a row never contradicts the header above it.
             const s = rangeById.get(c.id) ?? EMPTY_TOTALS;
             // Same measure as the header tiles, or a campaign delivering only
             // free backfill would read as a dead row under a live chart.
             const impr = deliveredImpressions(s);
             const clk = deliveredClicks(s);
-            const display = campaignDisplayStatus(c, today, creditsAvailable);
+            const display = displayById.get(c.id)!;
             return (
-              <li key={c.id} className="card p-4">
+              <ListFilterRow key={c.id} id={c.id} as="li" className="card p-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <Link href={`/dashboard/ads/${c.id}`} className="block truncate font-semibold hover:text-[var(--color-accent)]">
@@ -342,20 +334,13 @@ export default async function AdsPage({
                 {!display.serving && (
                   <p className="mt-2 text-sm text-[var(--color-muted)]">{display.hint}</p>
                 )}
-              </li>
+              </ListFilterRow>
             );
           })}
         </ul>
 
-          <Suspense fallback={null}>
-            <ListPager
-              page={paged.page}
-              pages={paged.pages}
-              total={paged.total}
-              label="campaigns"
-            />
-          </Suspense>
-        </>
+          <ListPager />
+        </ListFilter>
       )}
     </div>
   );

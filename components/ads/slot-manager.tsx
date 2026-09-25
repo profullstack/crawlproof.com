@@ -89,6 +89,7 @@ export function SlotManager({
   coins,
   payouts = [],
   stats = null,
+  hidden = false,
 }: {
   project: Project;
   slot: Slot | null;
@@ -97,6 +98,12 @@ export function SlotManager({
   coins: { code: string; label: string }[];
   payouts?: Payout[];
   stats?: { impressions: number; clicks: number; earnedCents: number } | null;
+  /**
+   * Hidden by the list filter on the slots page. It lands here rather than on a
+   * wrapper because this component's root already IS the list's `li`, and an
+   * `li` inside an `li` is not valid markup. See components/ads/slot-row.tsx.
+   */
+  hidden?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -251,7 +258,7 @@ export function SlotManager({
   }
 
   return (
-    <li className="card space-y-4 p-4">
+    <li className="card space-y-4 p-4" hidden={hidden}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate font-semibold">{project.name}</div>

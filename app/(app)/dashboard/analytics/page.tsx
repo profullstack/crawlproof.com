@@ -1,10 +1,15 @@
 import Link from "next/link";
-import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { rpcFailed } from "@/lib/loaded";
 import { StatsUnavailable } from "@/components/stats-unavailable";
-import { ListFilter, ListPager } from "@/components/list-filter";
-import { filterAndPaginate, needsFilter, parseListQuery } from "@/lib/list-filter";
+import {
+  ListFilter,
+  ListFilterBar,
+  ListFilterEmpty,
+  ListFilterRow,
+  ListPager,
+} from "@/components/list-filter";
+import { FIELD_SEPARATOR, parseListQuery, type ListRow } from "@/lib/list-filter";
 import { ProjectLogo } from "@/components/project-logo";
 import { FontSparkline } from "@/components/font-sparkline";
 import { bucketLabel } from "@/lib/tracker/categorize";
@@ -319,13 +324,16 @@ export default async function PortfolioAnalyticsPage({
   // the totals and the stacked chart above it deliberately keep reading every
   // row: they describe the portfolio, and a chart that moved when you searched
   // for one site would answer a different question than its title claims.
-  const tablePage = filterAndPaginate(
-    rows,
-    listQuery,
-    { fields: (r: ProjectRow) => [r.project.name] },
-    25,
-  );
-  const showTableFilter = needsFilter(rows.length);
+  //
+  // Narrowed in the browser, over descriptors for rows the server rendered in
+  // full. Eleven RPCs stand behind this page, and none of them should run again
+  // because someone typed a letter.
+  const tableFilterRows: ListRow[] = rows.map(({ project }) => ({
+    id: project.id,
+    text: [project.name, project.url, project.status]
+      .filter(Boolean)
+      .join(FIELD_SEPARATOR),
+  }));
   const verdict = portfolioVerdict(
     trends.humans,
     withTraffic.map((r) => r.trend.direction),
@@ -592,27 +600,21 @@ export default async function PortfolioAnalyticsPage({
                 Manage projects
               </Link>
             </div>
-            {showTableFilter && (
-              <div className="mb-3">
-                <Suspense fallback={null}>
-                  <ListFilter
-                    total={rows.length}
-                    shown={tablePage.total}
-                    label="properties"
-                    placeholder="Search property name…"
-                  />
-                </Suspense>
-              </div>
-            )}
-            <ProjectTrendTable rows={tablePage.items} />
-            <Suspense fallback={null}>
-              <ListPager
-                page={tablePage.page}
-                pages={tablePage.pages}
-                total={tablePage.total}
-                label="properties"
+            <ListFilter
+              rows={tableFilterRows}
+              initial={listQuery}
+              label="properties"
+            >
+              <ListFilterBar
+                className="mb-3"
+                placeholder="Search name or URL…"
               />
-            </Suspense>
+              <ProjectTrendTable rows={rows} />
+              <ListFilterEmpty className="py-6 text-center text-sm text-[var(--color-muted)]">
+                No properties match that search.
+              </ListFilterEmpty>
+              <ListPager />
+            </ListFilter>
             {missingSparklines > 0 && (
               <p className="mt-3 text-xs text-[var(--color-muted)]">
                 Sparklines are shown for the {detailCount} highest-traffic
@@ -747,8 +749,10 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
         </thead>
         <tbody>
           {rows.map(({ project, totals, visitors, trend, samples }) => (
-            <tr
+            <ListFilterRow
               key={project.id}
+              id={project.id}
+              as="tr"
               className="border-b border-[var(--color-border)] last:border-0"
             >
               <td className="py-2 pr-3">
@@ -797,7 +801,7 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
               <td className="py-2 text-right tabular-nums text-[var(--color-muted)]" title={BOTS_DEFINITION}>
                 {totals.bots.toLocaleString()}
               </td>
-            </tr>
+            </ListFilterRow>
           ))}
         </tbody>
       </table>

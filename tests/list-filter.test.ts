@@ -9,6 +9,9 @@ import {
   parseListQuery,
   statusCounts,
   FILTER_THRESHOLD,
+  applyListQuery,
+  LIST_ROW_SPEC,
+  type ListRow,
 } from "@/lib/list-filter";
 
 type Item = { name: string; url?: string | null; status: string };
@@ -200,5 +203,77 @@ describe("when a filter is worth showing", () => {
     expect(needsFilter(0)).toBe(false);
     expect(needsFilter(FILTER_THRESHOLD + 1)).toBe(true);
     expect(needsFilter(465)).toBe(true);
+  });
+});
+
+// The filter itself now runs in the browser over one descriptor per rendered
+// row, so these two are what the client component leans on: matching through
+// LIST_ROW_SPEC, and writing the query back to the address bar.
+
+const rows: ListRow[] = [
+  { id: "a", text: "Acme   https://acme.test   Serving", status: "Serving" },
+  { id: "b", text: "Beta   https://beta.test   Out of credits", status: "Out of credits" },
+  { id: "c", text: "Gamma   https://gamma.example   Serving", status: "Serving" },
+];
+
+describe("filtering rendered rows by descriptor", () => {
+  it("searches the whole descriptor, badge label included", () => {
+    const ids = (q: string) =>
+      filterList(rows, query({ q }), LIST_ROW_SPEC).map((r) => r.id);
+    expect(ids("acme")).toEqual(["a"]);
+    expect(ids(".test")).toEqual(["a", "b"]);
+    expect(ids("credits")).toEqual(["b"]);
+    expect(ids("")).toEqual(["a", "b", "c"]);
+  });
+
+  it("filters on the row's status when one is given", () => {
+    const serving = filterList(rows, query({ status: "Serving" }), LIST_ROW_SPEC);
+    expect(serving.map((r) => r.id)).toEqual(["a", "c"]);
+  });
+
+  it("keeps every row when a list has no status of its own", () => {
+    // /dashboard spends ?status= on its Active/Paused/Archived tabs, so a row
+    // there carries none — and must not be filtered out against it.
+    const statusless: ListRow[] = [{ id: "x", text: "Acme" }];
+    expect(filterList(statusless, query({ status: ANY_STATUS }), LIST_ROW_SPEC)).toHaveLength(1);
+  });
+
+  it("counts statuses for the dropdown after the search", () => {
+    const counts = statusCounts(rows, query({ q: "serving" }), LIST_ROW_SPEC);
+    expect(counts.get("Serving")).toBe(2);
+    expect(counts.has("Out of credits")).toBe(false);
+  });
+});
+
+describe("writing the query back to the URL", () => {
+  it("drops defaults rather than writing them out", () => {
+    expect(applyListQuery("", query())).toBe("");
+    expect(applyListQuery("", query({ q: "acme" }))).toBe("q=acme");
+    expect(applyListQuery("", query({ page: 3 }))).toBe("page=3");
+    expect(applyListQuery("page=3", query({ page: 1 }))).toBe("");
+  });
+
+  it("leaves every other parameter alone", () => {
+    // The ads page shares its URL with ?range=, analytics with ?days= and ?org=.
+    expect(applyListQuery("range=1w", query({ q: "acme" }))).toBe("range=1w&q=acme");
+    expect(applyListQuery("days=90&org=o1", query({ page: 2 }))).toBe("days=90&org=o1&page=2");
+  });
+
+  it("only touches status for a list that owns it", () => {
+    expect(applyListQuery("", query({ status: "Serving" }))).toBe("status=Serving");
+    // A statusless list must not delete the dashboard's status TAB, nor write
+    // a status of its own over it.
+    expect(applyListQuery("status=archived", query({ q: "acme" }), { withStatus: false })).toBe(
+      "status=archived&q=acme",
+    );
+    expect(applyListQuery("status=archived", query({ status: "Serving" }), { withStatus: false })).toBe(
+      "status=archived",
+    );
+  });
+
+  it("round-trips through parseListQuery", () => {
+    const written = applyListQuery("", query({ q: "acme", status: "Serving", page: 4 }));
+    const params = Object.fromEntries(new URLSearchParams(written));
+    expect(parseListQuery(params)).toEqual({ q: "acme", status: "Serving", page: 4 });
   });
 });

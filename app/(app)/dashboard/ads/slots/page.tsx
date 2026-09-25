@@ -2,16 +2,15 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { fetchSupportedTokens } from "@/lib/coinpay-tokens";
-import { SlotManager } from "@/components/ads/slot-manager";
+import { SlotRow } from "@/components/ads/slot-row";
 import { StatsUnavailable } from "@/components/stats-unavailable";
-import { ListFilter, ListPager } from "@/components/list-filter";
 import {
-  filterAndPaginate,
-  needsFilter,
-  parseListQuery,
-  statusCounts,
-} from "@/lib/list-filter";
-import { Suspense } from "react";
+  ListFilter,
+  ListFilterBar,
+  ListFilterEmpty,
+  ListPager,
+} from "@/components/list-filter";
+import { FIELD_SEPARATOR, parseListQuery, type ListRow } from "@/lib/list-filter";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -123,15 +122,11 @@ export default async function SlotsPage({
   // that a new slot is born inactive, so "inactive" is worth being able to
   // isolate too.
   const slotStatusOf = (p: Project) => slotByProject.get(p.id)?.status ?? "no slot";
-  const filterSpec = {
-    fields: (p: Project) => [p.name, p.url, slotStatusOf(p)],
-    statusOf: slotStatusOf,
-  };
-  const paged = filterAndPaginate(projects, listQuery, filterSpec, 10);
-  const statusOptions = [...statusCounts(projects, listQuery, filterSpec)]
-    .sort((a, b) => b[1] - a[1])
-    .map(([value, count]) => ({ value, label: value, count }));
-  const showFilter = needsFilter(projects.length);
+  const filterRows: ListRow[] = projects.map((p) => ({
+    id: p.id,
+    text: [p.name, p.url, slotStatusOf(p)].filter(Boolean).join(FIELD_SEPARATOR),
+    status: slotStatusOf(p),
+  }));
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -169,39 +164,24 @@ export default async function SlotsPage({
           to enable a slot.
         </div>
       ) : (
-        <>
+        <ListFilter rows={filterRows} initial={listQuery} perPage={10} label="sites">
           {/* Each row is a whole slot manager — embed snippets, payout address,
               per-format controls — so this list is far taller per item than it
               looks. Paging it matters more here than the item count suggests. */}
-          {showFilter && (
-            <div className="mt-6">
-              <Suspense fallback={null}>
-                <ListFilter
-                  total={projects.length}
-                  shown={paged.total}
-                  statuses={statusOptions}
-                  label="sites"
-                  placeholder="Search site name or URL…"
-                />
-              </Suspense>
-            </div>
-          )}
+          <ListFilterBar className="mt-6" placeholder="Search site name or URL…" />
 
-          {paged.total === 0 && (
-            <div className="card mt-4 p-8 text-center text-[var(--color-muted)]">
-              No sites match that filter.
-            </div>
-          )}
+          <ListFilterEmpty>No sites match that filter.</ListFilterEmpty>
 
         <ul className="mt-6 space-y-3">
-          {paged.items.map((p) => {
+          {projects.map((p) => {
             const slot = slotByProject.get(p.id) ?? null;
             const earned = slot ? earnedBySlot.get(slot.id) ?? 0 : 0;
             const withdrawn = slot ? withdrawnBySlot.get(slot.id) ?? 0 : 0;
             const stat = slot ? statsBySlot.get(slot.id) : undefined;
             return (
-              <SlotManager
+              <SlotRow
                 key={p.id}
+                rowId={p.id}
                 project={p}
                 slot={slot}
                 origin={env.siteUrl}
@@ -224,15 +204,8 @@ export default async function SlotsPage({
           })}
         </ul>
 
-          <Suspense fallback={null}>
-            <ListPager
-              page={paged.page}
-              pages={paged.pages}
-              total={paged.total}
-              label="sites"
-            />
-          </Suspense>
-        </>
+          <ListPager />
+        </ListFilter>
       )}
     </div>
   );
