@@ -17,7 +17,9 @@
 #      to it. Running Caddy here would fight nginx for :80 and :443.
 #
 # What it does:
-#   1. System: base packages, Docker log rotation, ufw (ssh + 80/443 + Postgres)
+#   1. System: base packages, Docker log rotation, ufw (ssh + 80/443 + Postgres),
+#      and a cron disk alarm — every database here shares one Postgres, so a
+#      full disk stops writes for all of them
 #   2. Supabase: official setup.sh at a pinned self-hosted release tag
 #   3. .env: public URLs, SMTP, compose overrides
 #   4. Postgres: self-signed TLS cert, pg_hba that only lets `postgres` in from
@@ -111,6 +113,93 @@ system_setup() {
   # Docker publishes ports through its own iptables chains, ahead of ufw, so
   # the rules above document intent; the real gate for 5432 is pg_hba + TLS.
   ufw status | sed 's/^/    /'
+
+  install_disk_alarm
+}
+
+# A box running more than one property on one Postgres has disk as a SHARED
+# failure mode: a full filesystem stops writes for every database on it, so
+# one property's import takes the other's site down too.
+#
+# Installed as a cron job the box runs itself. The first version of this lived
+# inside an agent session's monitor, died with that session, and ~100 GB of
+# overnight growth went unnoticed. Monitoring that is not on the box is not
+# monitoring.
+#
+# The rate check is the part that earns its keep. During nichedb's catalogue
+# import dev2 grew 149 -> 247 GB in four hours (~22 GB/h); a percentage
+# threshold would not have moved in time. Anything that would fill the disk
+# within 48h is critical regardless of how full it currently is.
+#
+# Cautionary note baked in below: nichedb's "6 GB/day" was measured on Railway
+# with a throttled disk. On NVMe the same importers ran ~40x faster. Growth
+# figures do not transfer between hosts.
+install_disk_alarm() {
+  log "Disk alarm (cron, every 15 min)"
+  local dest=/usr/local/bin/dev2-disk-alarm.sh
+  backup "$dest"
+  cat > "$dest" <<'ALARM'
+#!/usr/bin/env bash
+# Disk alarm. Warns early, and keeps a growth record in the log that is the
+# right place to read a real steady-state rate off, rather than sampling by
+# hand. Writes to syslog; mails root if a mailer exists.
+set -uo pipefail
+
+WARN=${WARN:-70}
+CRIT=${CRIT:-85}
+LOG=/var/log/dev2-disk.log
+STATE=/var/lib/dev2-disk-alarm.state
+
+pct=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+used_kb=$(df --output=used / | tail -1 | tr -dc 0-9)
+now=$(date -u +%s)
+stamp=$(date -u '+%F %T')
+
+rate=""
+if [ -f "$STATE" ]; then
+  read -r prev_ts prev_kb < "$STATE" 2>/dev/null || true
+  if [ -n "${prev_ts:-}" ] && [ "$now" -gt "$prev_ts" ]; then
+    rate=$(( (used_kb - prev_kb) * 3600 / (now - prev_ts) / 1048576 ))
+  fi
+fi
+echo "$now $used_kb" > "$STATE"
+
+echo "$stamp used=${pct}% ($(df -h --output=used / | tail -1 | tr -d ' ')) rate=${rate:-?}GB/h" >> "$LOG"
+tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+
+notify() {
+  logger -t dev2-disk -p daemon.warning "$1: $2"
+  command -v mail >/dev/null 2>&1 && printf '%s\n\nRecent history:\n%s\n' \
+    "$2" "$(tail -12 "$LOG")" | mail -s "dev2 disk $1: ${pct}% used" root 2>/dev/null || true
+}
+
+if [ "$pct" -ge "$CRIT" ]; then
+  notify CRITICAL "root is ${pct}% full (${rate:-?} GB/h). One Postgres serves every database here — a full disk stops writes for all of them."
+elif [ "$pct" -ge "$WARN" ]; then
+  notify WARNING "root is ${pct}% full (${rate:-?} GB/h). Check whether the VG still has free extents; if not, growing means adding a disk."
+fi
+
+# Independent of thresholds: a burst fills a disk long before a percentage
+# threshold reacts to it.
+if [ -n "$rate" ] && [ "$rate" -gt 0 ]; then
+  avail_gb=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+  hours=$(( avail_gb / rate ))
+  [ "$hours" -lt 48 ] && notify CRITICAL "will fill in ~${hours}h at ${rate} GB/h (${avail_gb} GB free)."
+fi
+ALARM
+  chmod 755 "$dest"
+
+  cat > /etc/cron.d/dev2-disk-alarm <<CRON
+# Disk alarm — every database on this box shares one Postgres, so a full disk
+# stops writes for all of them. Warns at 70%, critical at 85%, and separately
+# whenever the observed rate would fill the disk inside 48 hours.
+*/15 * * * * root $dest
+CRON
+  chmod 644 /etc/cron.d/dev2-disk-alarm
+
+  # Seed the baseline so the first cron run already reports a rate.
+  "$dest" || true
+  echo "    installed $dest (every 15 min); growth record: /var/log/dev2-disk.log"
 }
 
 # ------------------------------------------------------------- 2. supabase
