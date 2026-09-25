@@ -6,10 +6,15 @@ import { FontSparkline } from "@/components/font-sparkline";
 import { BOTS_DEFINITION, HUMANS_DEFINITION, VISITORS_DEFINITION } from "@/lib/tracker/humans";
 import { fetchVisitorDailySeries } from "@/lib/tracker/visitors";
 import { ProjectLogo } from "@/components/project-logo";
-import { Suspense } from "react";
 import { StatsUnavailable } from "@/components/stats-unavailable";
-import { ListFilter, ListPager } from "@/components/list-filter";
-import { filterAndPaginate, needsFilter, parseListQuery } from "@/lib/list-filter";
+import {
+  ListFilter,
+  ListFilterBar,
+  ListFilterEmpty,
+  ListFilterRow,
+  ListPager,
+} from "@/components/list-filter";
+import { FIELD_SEPARATOR, parseListQuery, type ListRow } from "@/lib/list-filter";
 import { backfillProjectLogo } from "@/app/actions/createProject";
 import { getOrCreateDefaultOrg, isOrgWideRole, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
 import { listOrgTeam } from "@/app/actions/org-members";
@@ -128,16 +133,12 @@ export default async function DashboardPage({
   ]);
   const projects = ((projectsRaw ?? []) as unknown) as DashboardProject[];
 
-  // Search and paging over the list the query already returned. Status stays in
-  // SQL (the tablist above, which is also what `counts` describes); this is the
-  // dimension that cannot be a tab, because a project is found by name.
-  const projectPage = filterAndPaginate(
-    projects,
-    listQuery,
-    { fields: (p: DashboardProject) => [p.name, p.url] },
-    24,
-  );
-  const showProjectFilter = needsFilter(projects.length);
+  // Search over the list the query already returned, narrowed in the browser
+  // (the descriptors are built below, once the badges are known). Status stays in
+  // SQL — the tablist above, which is also what `counts` describes — and these
+  // rows carry no status of their own, so the filter leaves `?status=` to those
+  // tabs. Search is the dimension that cannot be a tab, because a project is
+  // found by name.
 
   // Per-project autoblog/social enablement. Autoblog is "on" when the
   // project has an lx_site row in status=active; social is "on" when at
@@ -152,6 +153,22 @@ export default async function DashboardPage({
   ]);
   const trafficByProject = traffic.data;
   const trafficFailed = traffic.failed;
+
+  // What the filter box matches on: everything the card shows apart from the
+  // traffic figures. The badges are in the text too, so "autoblog" narrows to
+  // the projects that have it on.
+  const filterRows: ListRow[] = projects.map((p) => ({
+    id: p.id,
+    text: [
+      p.name,
+      p.url,
+      p.schedule,
+      autoblogIds.has(p.id) ? "autoblog" : "",
+      socialIds.has(p.id) ? "social" : "",
+    ]
+      .filter(Boolean)
+      .join(FIELD_SEPARATOR),
+  }));
 
   // Lazy backfill: any project still missing a logo gets one scraped
   // in the background on this dashboard hit. Fire-and-forget — the
@@ -215,37 +232,25 @@ export default async function DashboardPage({
           </div>
         </div>
 
+        <ListFilter rows={filterRows} initial={listQuery} perPage={24} label="projects">
         {/* Search sits below the status tabs rather than beside them: the tabs
             are the coarse cut and change what `counts` describes, this is how a
             named project is found inside the cut. */}
-        {showProjectFilter && (
-          <div className="mb-3">
-            <Suspense fallback={null}>
-              <ListFilter
-                total={projects.length}
-                shown={projectPage.total}
-                label="projects"
-                placeholder="Search name or URL…"
-              />
-            </Suspense>
-          </div>
-        )}
+        <ListFilterBar className="mb-3" placeholder="Search name or URL…" />
 
         {projects && projects.length > 0 && trafficFailed && (
           <StatsUnavailable what="traffic for these projects" />
         )}
 
-        {projects.length > 0 && projectPage.total === 0 && (
-          <div className="card p-8 text-center text-[var(--color-muted)]">
-            No projects match that search.
-          </div>
-        )}
+        <ListFilterEmpty className="card p-8 text-center text-[var(--color-muted)]">
+          No projects match that search.
+        </ListFilterEmpty>
 
         {projects && projects.length > 0 ? (
           <>
           <ul className="grid gap-3 md:grid-cols-2">
-            {projectPage.items.map((p) => (
-              <li key={p.id} className="card p-4">
+            {projects.map((p) => (
+              <ListFilterRow key={p.id} id={p.id} as="li" className="card p-4">
                 <Link href={`/dashboard/projects/${p.id}`} className="block">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-3">
@@ -342,17 +347,10 @@ export default async function DashboardPage({
                     orgs={orgs as DashboardOrg[]}
                   />
                 )}
-              </li>
+              </ListFilterRow>
             ))}
           </ul>
-          <Suspense fallback={null}>
-            <ListPager
-              page={projectPage.page}
-              pages={projectPage.pages}
-              total={projectPage.total}
-              label="projects"
-            />
-          </Suspense>
+          <ListPager />
           </>
         ) : (
           <p className="text-[var(--color-muted)]">
@@ -369,6 +367,7 @@ export default async function DashboardPage({
             )}
           </p>
         )}
+        </ListFilter>
       </section>
 
       <section>
