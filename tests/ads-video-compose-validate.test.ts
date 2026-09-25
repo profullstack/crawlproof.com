@@ -473,7 +473,7 @@ describe("a music bed under the narration", () => {
     expect(a).not.toContain("-filter_complex");
   });
 
-  it("no bed leaves the narrated path exactly as it was", () => {
+  it("no bed keeps the narrated path on a simple filter, not the mixer", () => {
     const a = mp4Args({
       framePattern: "/tmp/f-%04d.png",
       audioPath: "/tmp/narration.mp3",
@@ -482,7 +482,9 @@ describe("a music bed under the narration", () => {
       videoKbps: 4000,
     });
     expect(a).not.toContain("-filter_complex");
-    expect(a[a.indexOf("-af") + 1]).toBe("apad");
+    // The pad still comes first; loudness is applied after it, once the track
+    // is the length of the picture.
+    expect(a[a.indexOf("-af") + 1]).toMatch(/^apad(,|$)/);
   });
 });
 
