@@ -56,6 +56,12 @@ export async function GET(request: NextRequest) {
     // theme) still overrides it.
     const theme = url.searchParams.get("theme") ?? "auto";
 
+    // Pin the presentation instead of rotating — `&media=static` for a publisher
+    // who does not want motion in their page, `&media=gif` to look at one. Absent
+    // is the default and rotates, which is what every embed already installed
+    // sends and why none of them has to be edited to receive video.
+    const media = url.searchParams.get("media");
+
     const ip = clientIpFromHeaders(request.headers);
     const geo = await lookupGeo(ip).catch(() => null);
     const device = parseDevice(request.headers.get("user-agent")).deviceType;
@@ -66,6 +72,7 @@ export async function GET(request: NextRequest) {
       country: geo?.countryCode ?? null,
       device,
       theme,
+      media,
     });
 
     if (!fill) return htmlResponse(EMPTY_HTML);

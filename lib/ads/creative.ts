@@ -9,6 +9,7 @@ import { extractSiteBrand, type SiteBrand } from "./brand";
 import { resolveAdHeroImage } from "./heroImage";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import { renderFeedHtml } from "./feeditem";
+import { NO_MEDIA, type AdMediaKind, type MediaAssets } from "./media";
 // One implementation, next to the renderers that consume it. Re-exported so a
 // server-side caller working with summaries has a single import.
 export { summaryParagraphs } from "./feeditem";
@@ -562,6 +563,18 @@ export type RenderOptions = {
    * embed that cannot see the page it is on. See `themeStyle`.
    */
   theme?: AdThemePref;
+  /**
+   * Which presentation to draw — see ./media. Defaults to the behaviour that
+   * predates rotation: the hero image when the creative has one, the brand wash
+   * when it does not, which is exactly 'image'/'static' decided by the creative
+   * rather than drawn at random.
+   */
+  media?: AdMediaKind;
+  /**
+   * URLs for the rendered media. Only read for the kind actually being drawn,
+   * so a caller that never asks for motion never has to resolve any.
+   */
+  mediaAssets?: MediaAssets;
 };
 
 /**
@@ -667,12 +680,92 @@ export function renderCreativeHtml(
   // opaque ink — an alpha wash there would make the label see-through.
   const cta = `<span style="background:${cssVar("accent")};color:${cssVar("solidBg")};font-weight:600;border-radius:6px;padding:${isMobile ? "4px 8px" : "7px 12px"};font-size:${isMobile ? 11 : 13}px;white-space:nowrap">${esc(creative.ctaText)}</span>`;
 
+  const assets = opts.mediaAssets ?? NO_MEDIA;
+  // The default is the pre-rotation behaviour rather than a kind: 'image' when
+  // the creative has artwork and 'static' when it does not is exactly what this
+  // renderer did before there was anything to choose, so a caller that passes
+  // no media (the React preview, every test that predates this) is unchanged.
+  const media: AdMediaKind = opts.media ?? (creative.imageUrl ? "image" : "static");
+
+  // The animated banner IS the unit: it is composed from the same design
+  // snapshot as the static one and carries the headline, the body line and the
+  // CTA inside the frames. So it replaces the markup rather than sitting behind
+  // it — drawing our copy on top would print every line twice.
+  //
+  // Sized in CSS as well as by the file so a rendition that somehow came back
+  // at the wrong dimensions is letterboxed inside the slot's box instead of
+  // pushing the publisher's layout around.
+  if (media === "gif" && assets.gifUrl) {
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
+    *{box-sizing:border-box;margin:0}
+    a{text-decoration:none;display:block}
+    .cp-ad{position:relative;width:${w}px;height:${h}px;background:${cssVar("bg")};
+      overflow:hidden;border:1px solid ${cssVar("edge")};border-radius:0}
+    .cp-ad img{display:block;width:100%;height:100%;object-fit:contain}
+  </style></head><body>
+    <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
+      <img src="${esc(assets.gifUrl)}" width="${w}" height="${h}" alt="${esc(creative.headline)}" />
+    </a>
+  </body></html>`;
+  }
+
+  // In-banner video: a 16:9 stage with the copy and the CTA under it.
+  //
+  // muted + playsinline + autoplay is the only combination a browser will start
+  // without a gesture, and `loop` matters because a five-second spot that stops
+  // is a frozen frame for the rest of the impression. `preload="metadata"` and
+  // not "auto": the unit is competing with the publisher's own page for the same
+  // connection, and the poster is what the reader sees until the first frame
+  // lands anyway.
+  //
+  // The poster is doing real work beyond the first paint. A publisher with a
+  // CSP that allows our images (which the hero already requires) but has no
+  // media-src entry gets the poster and the copy — a still ad that reads
+  // correctly — instead of a black rectangle. That is why this path renders the
+  // CTA as markup rather than trusting the video to carry it.
+  if (media === "video" && assets.videoUrl && !row) {
+    const stage = Math.round((w * 9) / 16);
+    const poster = assets.posterUrl ? ` poster="${esc(assets.posterUrl)}"` : "";
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
+    *{box-sizing:border-box;margin:0}
+    a{text-decoration:none;display:block}
+    .cp-ad{position:relative;width:${w}px;height:${h}px;background:${cssVar("bg")};
+      font-family:${creative.fontFamily};overflow:hidden;border-radius:0;
+      border:1px solid ${cssVar("edge")};display:flex;flex-direction:column}
+    .cp-stage{width:100%;height:${stage}px;flex:0 0 auto;background:${cssVar("solidBg")};
+      display:block;object-fit:cover}
+    .cp-foot{flex:1 1 auto;min-height:0;padding:8px 12px;display:flex;align-items:center;gap:10px}
+  </style></head><body>
+    <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">
+      <video class="cp-stage" src="${esc(assets.videoUrl)}"${poster}
+        autoplay muted loop playsinline preload="metadata"
+        aria-label="${esc(creative.headline)}"></video>
+      <span class="cp-foot">
+        <span style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 auto">
+          <span style="font-weight:700;font-size:14px;line-height:1.15;color:${cssVar("fg")};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(creative.headline)}</span>
+        </span>
+        <span style="flex:0 0 auto">${cta}</span>
+      </span>
+    </a>
+  </body></html>`;
+  }
+  // Whether this fill is showing the artwork.
+  //
+  // Media-driven now rather than creative-driven: 'static' is a real choice the
+  // rotation can make on a creative that HAS a hero, and it has to actually
+  // suppress it — otherwise the static arm of the experiment is the image arm
+  // with a different label and the measurement means nothing. 'audio' keeps
+  // whatever the creative would have shown, because the companion is an
+  // addition to a unit rather than a presentation of its own.
+  const wantsHero = media === "image" || (media === "audio" && Boolean(creative.imageUrl));
+  const heroUrl = wantsHero ? creative.imageUrl : null;
+
   // On the rectangle a hero image reads best full-bleed with a gradient
   // (matches the house ad); text over it takes the theme's over-image ink,
   // which is the side the gradient is mixed from.
   // Which ink and whether there is a shadow at all depend on the creative, not
   // the theme, so they are decided here; only the values behind them move.
-  const overImage = !row && Boolean(creative.imageUrl);
+  const overImage = !row && Boolean(heroUrl);
   const heroText = overImage ? cssVar("overInk") : cssVar("fg");
   // The scrim stops well short of opaque so the artwork survives, so the copy
   // carries its own contrast. Only over an image — on a flat brand wash a
@@ -687,9 +780,45 @@ export function renderCreativeHtml(
       ${showBody ? `<div style="font-size:${isLeaderboard ? 12 : 13}px;line-height:1.3;color:${heroText};${shadow}opacity:${bodyFade}">${esc(creative.body)}</div>` : ""}
     </div>`;
 
+  // The leaderboard's hero, as a plate on the right.
+  //
+  // A 728x90 cannot use the rectangle's full-bleed treatment — a 90px-tall crop
+  // of a hero is a stripe of unreadable detail, and copy over it loses whatever
+  // contrast the scrim buys. So the artwork becomes a fixed-width tile the copy
+  // sits beside, which is the only shape at this height where both the picture
+  // and the headline survive. Without it, 'image' would be indistinguishable
+  // from 'static' on two of the three sizes.
+  const heroPlate =
+    row && heroUrl && !isMobile
+      ? `<div style="flex:0 0 auto;width:120px;height:100%;border-radius:4px;overflow:hidden;
+           background:url('${esc(heroUrl)}') center/cover no-repeat"></div>`
+      : "";
+
+  // The audible companion, on the browser's own control.
+  //
+  // Native <audio controls> and no script: the served document is sandboxed
+  // without allow-scripts, so anything hand-built would be a dead ornament.
+  // Click-to-play and NOT autoplay — a page that starts talking is what gets a
+  // tag removed, and muted audio is a contradiction.
+  //
+  // Outside the <a>, because a control inside a link cannot be operated: the
+  // first click navigates. That is also why the wrapper stops the unit's own
+  // padding from being applied twice.
+  const audioBar =
+    media === "audio" && assets.audioUrl
+      ? `<div style="position:absolute;left:0;right:0;bottom:0;z-index:3;padding:6px 8px;
+           background:${cssVar("solidBg")};border-top:1px solid ${cssVar("edge")}">
+           <audio src="${esc(assets.audioUrl)}" controls preload="none"
+             style="display:block;width:100%;height:28px"></audio>
+         </div>`
+      : "";
+  // The control is laid over the unit, so the copy has to stop above it rather
+  // than run underneath.
+  const audioInset = audioBar ? 42 : 0;
+
   const inner = row
-    ? `<div style="display:flex;align-items:center;gap:12px;width:100%;height:100%">${mark}${text}<div style="margin-left:auto;flex:0 0 auto">${cta}</div></div>`
-    : `<div style="position:relative;z-index:2;display:flex;flex-direction:column;height:100%">
+    ? `<div style="display:flex;align-items:center;gap:12px;width:100%;height:100%">${mark}${text}<div style="margin-left:auto;flex:0 0 auto;display:flex;align-items:center;gap:12px">${cta}</div>${heroPlate}</div>`
+    : `<div style="position:relative;z-index:2;display:flex;flex-direction:column;height:100%;${audioInset ? `padding-bottom:${audioInset}px` : ""}">
          <div style="display:flex;align-items:center;gap:8px">${mark}</div>
          <div style="margin-top:auto">${text}</div>
          <div style="margin-top:12px">${cta}</div>
@@ -697,19 +826,31 @@ export function renderCreativeHtml(
 
   // Rectangle background: hero image + readability gradient, or a subtle
   // accent-tinted brand wash so the middle is never a dead flat block.
-  const rectBg = creative.imageUrl
-    ? `<div style="position:absolute;inset:0;z-index:0;background:url('${esc(creative.imageUrl)}') center/cover no-repeat"></div>
+  const rectBg =
+    heroUrl && !row
+      ? `<div style="position:absolute;inset:0;z-index:0;background:url('${esc(heroUrl)}') center/cover no-repeat"></div>
        <div style="position:absolute;inset:0;z-index:1;background:${cssVar("scrim")}"></div>`
-    : "";
-  const bg = row || creative.imageUrl ? cssVar("bg") : cssVar("wash");
+      : "";
+  const bg = row || heroUrl ? cssVar("bg") : cssVar("wash");
+
+  // The audio control cannot live inside the click link, so when there is one
+  // the unit gets a positioned wrapper and the control is its sibling. With no
+  // companion the wrapper is inert and the markup is what it always was.
+  const body = audioBar
+    ? `<div class="cp-wrap">
+         <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">${rectBg}${inner}</a>
+         ${audioBar}
+       </div>`
+    : `<a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">${rectBg}${inner}</a>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
+    .cp-wrap{position:relative;width:${w}px;height:${h}px;overflow:hidden}
     .cp-ad{position:relative;width:${w}px;height:${h}px;background:${bg};font-family:${creative.fontFamily};
       border-radius:0;padding:${isMobile ? "8px 10px" : "14px"};overflow:hidden;
       border:1px solid ${cssVar("edge")}}
   </style></head><body>
-    <a class="cp-ad" href="${esc(clickUrl)}" target="_blank" rel="noopener sponsored">${rectBg}${inner}</a>
+    ${body}
   </body></html>`;
 }

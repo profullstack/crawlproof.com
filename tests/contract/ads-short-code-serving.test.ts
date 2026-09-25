@@ -137,13 +137,22 @@ describe("serveAd short-code click URLs", () => {
     state.hasNewColumns = false;
     const fill = await serve();
     expect(fill).not.toBeNull();
-    // Two attempts: the first naming the new columns, the second without them.
-    expect(state.inserts).toHaveLength(2);
+    // Three attempts, not two: `media` (the presentation rotation's reporting
+    // column) sits on a rung of its own above this group, so stepping down from
+    // it lands here first and only then on the bare row. That is the point of
+    // the separate rung — see tests/contract/ads-media-column-ladder.
+    expect(state.inserts).toHaveLength(3);
     expect(state.inserts[0]).toHaveProperty("short_code");
-    expect(state.inserts[1]).not.toHaveProperty("short_code");
-    expect(state.inserts[1]).not.toHaveProperty("src");
+    expect(state.inserts[0]).toHaveProperty("media");
+    // Rung two: media dropped, this group still attempted.
+    expect(state.inserts[1]).toHaveProperty("short_code");
+    expect(state.inserts[1]).not.toHaveProperty("media");
+    // Rung three: the bare row, which is what this database can actually take.
+    expect(state.inserts[2]).not.toHaveProperty("short_code");
+    expect(state.inserts[2]).not.toHaveProperty("src");
+    expect(state.inserts[2]).not.toHaveProperty("media");
     // The impression is still recorded, so the click still meters.
-    expect(state.inserts[1]).toMatchObject({ slot_id: "slot-1", campaign_id: "camp-1" });
+    expect(state.inserts[2]).toMatchObject({ slot_id: "slot-1", campaign_id: "camp-1" });
   });
 
   it("falls back to the UUID click URL when the code could not be stored", async () => {

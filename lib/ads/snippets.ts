@@ -25,6 +25,7 @@ import {
   TERMINAL_FORMAT_ID,
   type AdFormatId,
 } from "./formats";
+import { mediaKindsForFormat, type AdMediaKind } from "./media";
 
 export type Snippet = {
   /** Stable key — also the button caption's identity across re-renders. */
@@ -846,5 +847,33 @@ export function formatBlurb(format: AdFormatId): string {
       "for an ad inside a blog post."
     );
   }
-  return "Rendered in the browser by ad.js inside an isolated iframe.";
+  // What the unit rotates between is worth saying here, because the embed does
+  // not say it: a publisher pastes a size and gets whichever medium the winning
+  // campaign has rendered. Nobody has to re-paste anything to start receiving a
+  // new one, and that is the single most useful fact about installing a unit.
+  const media = mediaKindsForFormat(format).filter((m) => m !== "static");
+  const rotation = media.length
+    ? ` Rotates between the static unit and ${listAnd(media.map(mediaLabel))} as the advertiser's campaign has them.`
+    : "";
+  return `Rendered in the browser by ad.js inside an isolated iframe.${rotation}`;
+}
+
+function mediaLabel(kind: AdMediaKind): string {
+  switch (kind) {
+    case "image":
+      return "hero artwork";
+    case "gif":
+      return "an animated banner";
+    case "video":
+      return "in-banner video";
+    case "audio":
+      return "an audible companion";
+    default:
+      return kind;
+  }
+}
+
+function listAnd(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
