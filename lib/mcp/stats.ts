@@ -174,7 +174,7 @@ export function registerStatsTools(server: McpServer): void {
         lines.push("Campaigns:");
         for (const c of campaigns) {
           lines.push(
-            `- ${c.campaignName}: ${c.fills} filled, ${c.starts} started (${pct(c.startRate)}), ` +
+            `- ${c.campaignName} (${c.placement === "in_banner" ? "in-banner" : "pre-roll"}): ${c.fills} filled, ${c.starts} started (${pct(c.startRate)}), ` +
               `${c.completes} completed (${pct(c.completionRate)} of starts), ${c.clicks} click(s), ${c.errors} error(s)`,
           );
         }
@@ -183,7 +183,7 @@ export function registerStatsTools(server: McpServer): void {
         lines.push("Slots:");
         for (const s of slots) {
           lines.push(
-            `- ${s.projectName || s.slotId}: ${s.fills} filled (${s.houseFills} house, ${s.unfilled} empty), ` +
+            `- ${s.projectName || s.slotId} (${s.placement === "in_banner" ? "in-banner" : "pre-roll"}): ${s.fills} filled (${s.houseFills} house, ${s.unfilled} empty), ` +
               `${s.starts} started, ${s.completes} completed`,
           );
         }

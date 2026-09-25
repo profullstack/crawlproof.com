@@ -12,11 +12,23 @@
 // Because there is no script, there is also no theme detection: this document
 // carries both palettes and lets its own `prefers-color-scheme` decide. Pass
 // `&theme=light` or `&theme=dark` to pin it.
+//
+// ONE exception to "no script", added deliberately and narrowly: a fill that
+// rendered as video or as the audible companion carries a small measurement
+// script. It is the only way to know whether a video ad actually played, it
+// runs inside THIS document rather than the host page (so the zero-JS promise
+// to the publisher is unchanged), and a reader with JavaScript off still gets
+// the ad — the unit renders and clicks exactly as before, it simply reports
+// nothing. Every other medium is served as script-free as it has always been.
 
 import { NextRequest, NextResponse } from "next/server";
 import { serveAd, isAdFormat } from "@/lib/ads/serve";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { parseDevice } from "@/lib/tracker/device";
+import { serviceClient } from "@/lib/supabase/service";
+import { recordDecision } from "@/lib/ads/video/decisions";
+import { bannerBeaconScript, injectBannerBeacon } from "@/lib/ads/video/bannerBeacon";
+import { env } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,7 +88,32 @@ export async function GET(request: NextRequest) {
     });
 
     if (!fill) return htmlResponse(EMPTY_HTML);
-    return htmlResponse(fill.html);
+
+    // Only the media that can actually report anything. A static banner has
+    // no playback to measure and gets no script.
+    if (fill.media !== "video" && fill.media !== "audio") {
+      return htmlResponse(fill.html);
+    }
+
+    const decisionId = await recordDecision(serviceClient(), {
+      slotId,
+      // No playback session on a display surface: the unit is drawn once and
+      // a reload is a genuinely new impression, so the fill is its own session.
+      sessionId: crypto.randomUUID(),
+      placement: "in_banner",
+      kind: fill.media === "audio" ? "audio" : "video",
+      surface: "web",
+      fill,
+      assetRevision: null,
+    });
+
+    // Unmeasurable is not unservable: without a decision to report against
+    // there is nothing to put in the script, and the ad goes out as it is.
+    if (!decisionId) return htmlResponse(fill.html);
+
+    return htmlResponse(
+      injectBannerBeacon(fill.html, bannerBeaconScript(decisionId, env.siteUrl)),
+    );
   } catch {
     return htmlResponse(EMPTY_HTML);
   }
