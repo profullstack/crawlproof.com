@@ -100,8 +100,24 @@ ${VISITOR_SNIPPET}
           iframe.setAttribute('scrolling', 'no');
           iframe.setAttribute('frameborder', '0');
           iframe.setAttribute('loading', 'lazy');
-          // Sandbox: allow the ad's click link to open a new tab, nothing else.
-          iframe.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');
+          // Sandbox: allow the ad's click link to open a new tab, and nothing
+          // else — except on a fill that has something to measure.
+          //
+          // allow-scripts is granted ONLY to video and audio, the two media
+          // that can report playback, and for the same reason the autoplay
+          // permission below is: a tag that hands out a capability on every
+          // fill is handing out more than it uses. A static banner still runs
+          // nothing at all.
+          //
+          // allow-same-origin is NEVER granted, and the two together are why.
+          // A frame with both can reach its own frameElement and delete the
+          // sandbox attribute, which is not a sandbox at all. Without it this
+          // document has an opaque origin: it cannot read the publisher's DOM,
+          // cookies or storage, and the worst a compromised creative gets is
+          // its own inert box. Keep them apart.
+          var sandbox = 'allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation';
+          if (res.media === 'video' || res.media === 'audio') sandbox += ' allow-scripts';
+          iframe.setAttribute('sandbox', sandbox);
           // A muted <video> still needs the frame to hold the autoplay
           // permission, or Chrome refuses to start it and the unit is a poster
           // that never moves. Granted only on the fill that actually has a video

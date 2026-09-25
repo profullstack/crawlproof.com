@@ -5,6 +5,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { serveAd, isAdFormat } from "@/lib/ads/serve";
+import { serviceClient } from "@/lib/supabase/service";
+import { recordDecision } from "@/lib/ads/video/decisions";
+import { bannerBeaconScript, injectBannerBeacon } from "@/lib/ads/video/bannerBeacon";
+import { env } from "@/lib/env";
 import { clientIpFromHeaders, lookupGeo } from "@/lib/tracker/geo";
 import { parseDevice } from "@/lib/tracker/device";
 
@@ -64,11 +68,33 @@ export async function GET(request: NextRequest) {
 
     if (!fill) return NextResponse.json({ ok: false }, { status: 200, headers });
 
+    // Playback measurement, on the two media that have any. The tag grants this
+    // frame allow-scripts for exactly these, so the beacon has somewhere to run;
+    // every other medium gets the markup untouched and a script-free sandbox.
+    let html = fill.html;
+    if (fill.media === "video" || fill.media === "audio") {
+      const decisionId = await recordDecision(serviceClient(), {
+        slotId,
+        // A display unit is drawn once and a reload is a genuinely new
+        // impression, so the fill is its own session.
+        sessionId: crypto.randomUUID(),
+        placement: "in_banner",
+        kind: fill.media === "audio" ? "audio" : "video",
+        surface: "web",
+        fill,
+        assetRevision: null,
+      });
+      // Unmeasurable is not unservable: no decision, no script, same ad.
+      if (decisionId) {
+        html = injectBannerBeacon(html, bannerBeaconScript(decisionId, env.siteUrl));
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
         impressionId: fill.impressionId,
-        html: fill.html,
+        html,
         clickUrl: fill.clickUrl,
         // What was actually served, which is not always what was asked for —
         // the tag sizes its iframe from this.

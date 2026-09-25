@@ -540,6 +540,37 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** What a creative gets when its stored font is not something we will emit. */
+export const DEFAULT_FONT_STACK = "system-ui, sans-serif";
+
+/**
+ * A font stack, or the default.
+ *
+ * `font_family` is the one advertiser-derived value that lands in a CSS
+ * context rather than a text node, and `esc()` is the wrong tool for that: it
+ * escapes for HTML, and inside a `<style>` block `&quot;` is not a quote and
+ * `}` is still a closing brace. An unfiltered value could close the rule and
+ * open its own — a defacement today, and worse once the unit is allowed to run
+ * scripts.
+ *
+ * So this is an allow-list of shapes rather than an escape: letters, digits,
+ * spaces, commas, hyphens and underscores, which is every stack we actually
+ * ship (`system-ui, -apple-system, Segoe UI, Roboto, sans-serif` and
+ * `system-ui, sans-serif` are the only two in production). Quotes are refused
+ * outright — `Helvetica Neue` is valid CSS unquoted, so the quoted form buys
+ * nothing and costs the one character most useful for breaking out.
+ *
+ * Applied where the value is interpolated, not only where it is saved: that is
+ * what makes it true for the 2,978 creatives already stored.
+ */
+const SAFE_FONT_STACK = /^[A-Za-z0-9 _,-]+$/;
+
+export function safeFontFamily(v: string | null | undefined): string {
+  const raw = (v ?? "").trim();
+  if (!raw || raw.length > 120) return DEFAULT_FONT_STACK;
+  return SAFE_FONT_STACK.test(raw) ? raw : DEFAULT_FONT_STACK;
+}
+
 // The brand mark: a real <img> logo when we have one, otherwise an accent-tinted
 // monogram tile. Never renders empty. Sandboxed served ads can't run JS, so we
 // only show the <img> when the URL was verified at generation time.
@@ -628,7 +659,7 @@ export function renderCreativeHtml(
   if (creative.format === "feed_item") {
     return `<!doctype html><html><head><meta charset="utf-8"><style>${vars}
       body{margin:0;padding:12px;background:${cssVar("bg")};color:${cssVar("fg")};
-        font-family:${creative.fontFamily};font-size:14px;line-height:1.45}
+        font-family:${safeFontFamily(creative.fontFamily)};font-size:14px;line-height:1.45}
       a{color:${cssVar("accent")}}
       pre{overflow:auto;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       hr{border:0;border-top:1px solid ${cssVar("edge")}}
@@ -655,7 +686,7 @@ export function renderCreativeHtml(
       *{box-sizing:border-box;margin:0}
       a{text-decoration:none;display:block}
       .cp-ad{display:flex;align-items:center;gap:8px;width:100%;height:${h}px;
-        background:${cssVar("bg")};font-family:${creative.fontFamily};font-size:13px;
+        background:${cssVar("bg")};font-family:${safeFontFamily(creative.fontFamily)};font-size:13px;
         padding:0 12px;overflow:hidden;border-radius:0;
         border:1px solid ${cssVar("edge")};border-left:3px solid ${cssVar("accent")}}
       .cp-head{color:${cssVar("fg")};flex:0 1 auto;min-width:0;white-space:nowrap;
@@ -730,7 +761,7 @@ export function renderCreativeHtml(
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
     .cp-ad{position:relative;width:${w}px;height:${h}px;background:${cssVar("bg")};
-      font-family:${creative.fontFamily};overflow:hidden;border-radius:0;
+      font-family:${safeFontFamily(creative.fontFamily)};overflow:hidden;border-radius:0;
       border:1px solid ${cssVar("edge")};display:flex;flex-direction:column}
     .cp-stage{width:100%;height:${stage}px;flex:0 0 auto;background:${cssVar("solidBg")};
       display:block;object-fit:cover}
@@ -847,7 +878,7 @@ export function renderCreativeHtml(
     *{box-sizing:border-box;margin:0}
     a{text-decoration:none;display:block}
     .cp-wrap{position:relative;width:${w}px;height:${h}px;overflow:hidden}
-    .cp-ad{position:relative;width:${w}px;height:${h}px;background:${bg};font-family:${creative.fontFamily};
+    .cp-ad{position:relative;width:${w}px;height:${h}px;background:${bg};font-family:${safeFontFamily(creative.fontFamily)};
       border-radius:0;padding:${isMobile ? "8px 10px" : "14px"};overflow:hidden;
       border:1px solid ${cssVar("edge")}}
   </style></head><body>
