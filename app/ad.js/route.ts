@@ -102,6 +102,13 @@ ${VISITOR_SNIPPET}
           iframe.setAttribute('loading', 'lazy');
           // Sandbox: allow the ad's click link to open a new tab, nothing else.
           iframe.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');
+          // A muted <video> still needs the frame to hold the autoplay
+          // permission, or Chrome refuses to start it and the unit is a poster
+          // that never moves. Granted only on the fill that actually has a video
+          // in it: the permission is not needed by any other medium, and a tag
+          // that hands it out unconditionally is handing out more than it uses.
+          // The companion is click-to-play, so audio needs nothing here.
+          if (res.media === 'video') iframe.setAttribute('allow', 'autoplay');
           iframe.style.border = '0';
           // Text links are native full-width; banners keep their fixed box.
           iframe.style.width = (format === 'text_link') ? '100%' : (dims[0] + 'px');

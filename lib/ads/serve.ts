@@ -11,6 +11,18 @@ import {
   type AdFormatId,
 } from "./creative";
 import { isStreamingFormat, fitAdFormat, FEED_FORMAT_ID, TERMINAL_FORMAT_ID } from "./formats";
+import {
+  applyMediaMix,
+  availableMediaKinds,
+  isAdMediaKind,
+  pickMediaKind,
+  rotatesMedia,
+  NO_MEDIA,
+  type AdMediaKind,
+  type MediaAssets,
+} from "./media";
+import { displayMediaFor, slotMediaMix } from "./display-media";
+import { ASSET_BUCKET } from "./video/storage";
 import { isAdTheme, type AdTheme, type AdThemePref } from "./theme";
 import { houseFill, HOUSE_AD_ROTATION_RATE } from "./house";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, PLATFORM_RATE } from "./pricing";
@@ -60,6 +72,12 @@ export type Fill = {
   /** ASCII rendering of the same creative, for terminal/MOTD consumers. */
   text: string;
   tier: AdTier;
+  /**
+   * Which presentation this fill was drawn as — see ./media. Rotated per fill
+   * over whatever the winning campaign has rendered, so a publisher's embed
+   * never names it and never has to be changed to receive a new one.
+   */
+  media: AdMediaKind;
   /**
    * The trending subjects this fill was chosen for, if it was. Empty on every
    * ordinary fill, which is most of them.
@@ -192,6 +210,20 @@ export type ServeContext = {
    * in which case the requested format is served unchanged.
    */
   width?: number | null;
+  /**
+   * Pin the presentation instead of rotating — `&media=gif` on the frame URL.
+   *
+   * For previewing a medium and for a publisher who wants one and only one; an
+   * unrecognised value is ignored rather than refused, and a kind this fill
+   * cannot render falls back to the rotation. Absent is the default and is what
+   * every embed installed to date sends, which is the point of the feature.
+   */
+  media?: string | null;
+  /**
+   * Random source for the rotation, injectable so a test can assert which arm
+   * was drawn. Production never passes it.
+   */
+  rnd?: () => number;
 };
 
 // Returns a rendered fill for the slot, or null if the slot is inactive /
@@ -416,6 +448,47 @@ export async function serveAd(
   // campaign can win the paid auction and must still book as free.
   tier = tierByCampaign.get(campaign.id) ?? tier;
 
+  // Which medium this fill is drawn as.
+  //
+  // This is the change that reaches every already-installed unit without
+  // touching a single publisher's site: the embed names a SIZE, and the medium
+  // is chosen here, per fill, from whatever the winning campaign has rendered.
+  // A slot pasted into a page a year ago starts serving animated and video units
+  // the day the render pipeline produces them.
+  //
+  // Only for formats with more than one presentation, and both lookups are
+  // best-effort — see ./display-media. A format with nothing to rotate (text
+  // link, terminal, feed) and any failure both land on 'static', which is what
+  // those fills already were.
+  let media: AdMediaKind = "static";
+  let mediaAssets: MediaAssets = NO_MEDIA;
+  if (rotatesMedia(format)) {
+    mediaAssets = await displayMediaFor(sb, {
+      campaignId: campaign.id,
+      format,
+      publicUrlFor: (key) => sb.storage.from(ASSET_BUCKET).getPublicUrl(key).data.publicUrl,
+    });
+    const candidates = availableMediaKinds({
+      format,
+      hasImage: Boolean(pick.image_url),
+      assets: mediaAssets,
+    });
+
+    // An explicit ?media= is honoured only where it is actually renderable —
+    // pinning 'video' on a campaign with no render would otherwise be a way to
+    // ask for an empty unit.
+    const pinned = isAdMediaKind(ctx.media) ? [ctx.media] : null;
+
+    // The slot's preference is only worth a round trip when there is more than
+    // one thing it could narrow. Serialised after the asset lookup rather than
+    // run alongside it on purpose: most campaigns have no render yet, so on most
+    // fills there is exactly one candidate and this is a query saved on the
+    // hottest path in the system. Once a campaign HAS media the extra latency is
+    // one round trip on a request that is already fetching a video.
+    const mix = pinned ?? (candidates.length > 1 ? await slotMediaMix(sb, slotId) : null);
+    media = pickMediaKind(applyMediaMix(candidates, mix), ctx.rnd);
+  }
+
   // Record the impression first so we have an id to bind the click to.
   const ipHash = hashIpRotating(ctx.ip ?? null);
   const base = {
@@ -447,18 +520,39 @@ export async function serveAd(
   // a cosmetic problem, a dropped impression is a lost sale.
   // `bid_credits` — what the winner bid on this fill — rides in the same
   // optional group: the bid history chart reads it, serving does not need it.
+  //
+  // `media` is newer than that group and so gets its own rung rather than
+  // joining it. Postgres rejects an insert naming an unknown column outright, so
+  // one shared optional group would mean a missing `media` column costs
+  // short_code, src, duplicate AND bid_credits on every fill — click
+  // attribution silently back to the long UUID form and dedupe flags stopping
+  // altogether — for a reporting dimension. Stepping down one rung at a time
+  // keeps each optional column's absence paid for by that column alone.
   const shortCode = generateShortCode();
+  const optional = {
+    ...base,
+    short_code: shortCode,
+    src: ctx.src ?? null,
+    duplicate,
+    bid_credits: campaign.bid_credits ?? DEFAULT_BID_CREDITS,
+  };
+
+  // Which arm of the rotation this impression was. Rotating without recording it
+  // would be randomising delivery and learning nothing, so this is the return on
+  // the feature rather than instrumentation bolted on after.
   let { data: imp } = await sb
     .from("ad_impressions")
-    .insert({
-      ...base,
-      short_code: shortCode,
-      src: ctx.src ?? null,
-      duplicate,
-      bid_credits: campaign.bid_credits ?? DEFAULT_BID_CREDITS,
-    })
+    .insert({ ...optional, media })
     .select("id, short_code")
     .single();
+
+  if (!imp) {
+    ({ data: imp } = await sb
+      .from("ad_impressions")
+      .insert(optional)
+      .select("id, short_code")
+      .single());
+  }
 
   if (!imp) {
     ({ data: imp } = await sb.from("ad_impressions").insert(base).select("id").single());
@@ -500,9 +594,15 @@ export async function serveAd(
     // URL, and rendering this creative as a banner is exactly the thing
     // fitAdFormat's refusal was protecting against — the guard has to hold on
     // the one path that is allowed past it.
-    html: ctx.streaming ? "" : renderCreativeHtml(creative, clickUrl, { theme }),
+    html: ctx.streaming
+      ? ""
+      : renderCreativeHtml(creative, clickUrl, { theme, media, mediaAssets }),
+    // The ASCII rendering is unchanged by the rotation: a terminal has no media
+    // to rotate, and the text form of a display creative is a fallback for
+    // consumers that cannot show any of it.
     text: ctx.streaming ? "" : renderCreativeText(creative, clickUrl),
     tier,
+    media,
     trendTopics: matchFor(campaign.id).topics,
     promo: trend.any && promoActiveFor(trend, campaign.id),
   };

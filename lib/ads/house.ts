@@ -301,5 +301,10 @@ export function houseFill(format: AdFormatId, theme: AdThemePref = "dark"): Fill
     html: renderHouseAdHtml(format, clickUrl, copy, theme),
     text: renderCreativeText(creative, clickUrl, { label: "CRAWLPROOF ADS" }),
     tier: "house",
+    // The house ad is assembled in code from copy and bundled artwork, so it has
+    // no rendered revision and nothing in the asset store to rotate over. It is
+    // the static unit by construction — the same reason the house pre-roll is a
+    // bundled file rather than a render.
+    media: "static",
   };
 }

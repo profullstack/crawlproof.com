@@ -40,6 +40,10 @@ export async function GET(request: NextRequest) {
     // unit that cannot fit it. Absent on older tags — serveAd then honours the
     // requested format unchanged.
     const width = Number(url.searchParams.get("w"));
+    // Pin the presentation instead of rotating. Absent on every embed installed
+    // to date, which is the default and the point: the medium is the server's
+    // choice unless a publisher takes it back.
+    const media = url.searchParams.get("media");
     if (!slotId || !isAdFormat(format)) {
       return NextResponse.json({ ok: false }, { status: 200, headers });
     }
@@ -55,6 +59,7 @@ export async function GET(request: NextRequest) {
       device,
       theme,
       width: Number.isFinite(width) && width > 0 ? width : null,
+      media,
     });
 
     if (!fill) return NextResponse.json({ ok: false }, { status: 200, headers });
@@ -68,6 +73,11 @@ export async function GET(request: NextRequest) {
         // What was actually served, which is not always what was asked for —
         // the tag sizes its iframe from this.
         format: fill.creative.format,
+        // Which medium the rotation drew. The tag reads it to grant the frame
+        // autoplay permission only when there is something to play, and it is
+        // what makes the rotation visible in a browser's network tab instead of
+        // only in the impressions table.
+        media: fill.media,
       },
       { status: 200, headers },
     );
