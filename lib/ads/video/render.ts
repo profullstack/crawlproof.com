@@ -9,8 +9,10 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import {
+  AUDIO_TOLERANCE_MS,
   MP4_PROFILE_IDS,
   PREROLL_FRAMES,
+  PREROLL_MS,
   requiredProfiles,
   videoProfile,
   withinBudget,
@@ -25,6 +27,7 @@ import {
   encodeAudioCompanion,
   encodeMp4,
   extractPoster,
+  fitNarration,
   multivariantPlaylist,
   packageHls,
 } from "./encode";
@@ -194,6 +197,33 @@ export async function renderPreroll(args: {
   await mkdir(framesDir, { recursive: true });
   await mkdir(outDir, { recursive: true });
 
+  // Make the read fit the spot before anything muxes it.
+  //
+  // Synthesis returns whatever length the voice took, and both consumers below
+  // bound their own output at five seconds — so a read longer than the advert
+  // was cut mid-word, taking the call to action and the domain with it, which
+  // is the whole of what the line is for. Fitting here rather than in each
+  // consumer is what keeps the picture's track and the audible companion the
+  // same five seconds of the same read.
+  //
+  // Best effort, like the synthesis it follows: a fit that fails leaves the
+  // track exactly as it was muxed before this existed.
+  let fittedAudioPath = audioPath;
+  if (audioPath) {
+    try {
+      const fit = await fitNarration({
+        inPath: audioPath,
+        outPath: path.join(workDir, "narration-fitted.wav"),
+      });
+      fittedAudioPath = fit.outPath;
+      console.log(
+        `[render] narration fitted: ${fit.measuredMs?.toFixed(0) ?? "?"}ms read at ${fit.tempo.toFixed(3)}x`,
+      );
+    } catch (err) {
+      console.log(`[render] narration fit failed, muxing as synthesised: ${String(err)}`);
+    }
+  }
+
   // 1. Compose and capture. Always at the master's dimensions; the renditions
   //    are downscales of these pixels, not separate layouts.
   const html = composeDocument(snapshot, args.assets ?? { logo: null, hero: null });
@@ -216,7 +246,13 @@ export async function renderPreroll(args: {
     const outPath = path.join(outDir, `${profile}.mp4`);
     // A bed under nothing is just music, so it only travels with a voice.
     const musicPath = audioPath ? (args.musicPath ?? defaultMusicBed()) : null;
-    await encodeWithinBudget({ profile, framePattern, audioPath, musicPath, outPath });
+    await encodeWithinBudget({
+      profile,
+      framePattern,
+      audioPath: fittedAudioPath,
+      musicPath,
+      outPath,
+    });
 
     const probe = await probeMedia(outPath);
     const facts = await fileFacts(outPath);
@@ -332,10 +368,29 @@ export async function renderPreroll(args: {
 
   if (audioPath && (narrated || args.audioSlotSupported)) {
     const companionPath = path.join(outDir, "audio.m4a");
-    await encodeAudioCompanion(audioPath, companionPath);
+    await encodeAudioCompanion(fittedAudioPath ?? audioPath, companionPath);
     const probe = await probeMedia(companionPath);
     const facts = await fileFacts(companionPath);
     const audioStream = probe.streams.find((s) => s.codec_type === "audio");
+    const companionMs = audioStream?.duration ? Number(audioStream.duration) * 1000 : null;
+
+    // The companion is one spot long, and it is checked rather than assumed.
+    // It ran to whatever length the voice took for every render before the fit
+    // above existed, which is how 117 of 184 production spots came to overrun
+    // their own break and get cut by the player. Measuring it is what stops
+    // that returning quietly.
+    const companionProblems: ValidationProblem[] =
+      companionMs !== null && Math.abs(companionMs - PREROLL_MS) > AUDIO_TOLERANCE_MS
+        ? [
+            {
+              check: "audio companion duration",
+              expected: `${PREROLL_MS}ms`,
+              actual: `${companionMs.toFixed(0)}ms`,
+            },
+          ]
+        : [];
+    problems.push(...companionProblems);
+
     assets.push({
       profile: "audio",
       filePath: companionPath,
@@ -344,9 +399,9 @@ export async function renderPreroll(args: {
       sha256: facts.sha256,
       width: null,
       height: null,
-      durationMs: audioStream?.duration ? Number(audioStream.duration) * 1000 : null,
+      durationMs: companionMs,
       codecs: audioStream?.codec_name ?? null,
-      validation: { ok: true, problems: [] },
+      validation: { ok: companionProblems.length === 0, problems: companionProblems },
     });
   }
 

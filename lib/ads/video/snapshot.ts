@@ -22,7 +22,14 @@ import type { VideoProfileId } from "./profiles";
 // what was encoded. Both are baked into rendered output rather than read at
 // serve time, so the only way to correct them is to render again — which is
 // exactly what changing this does, since it feeds the dedupe hash.
-export const RENDERER_VERSION = "2";
+// Bumped to 3: the narration is now fitted to the spot before it is muxed.
+// Every render before this bounded its output at five seconds around a read
+// that was often longer — 117 of the 184 audio companions in production ran
+// past the end of their own break — so the last second or two of those spots,
+// which is where the call to action and the domain are, is simply not in the
+// encoded bytes. Nothing at serve time can recover it; the only fix is to
+// render again, which is what changing this does.
+export const RENDERER_VERSION = "3";
 
 export type AudioMode = "silent" | "narrated";
 

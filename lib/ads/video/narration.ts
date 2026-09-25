@@ -11,10 +11,29 @@
 
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  MAX_NARRATION_SPEEDUP,
+  NARRATION_BUDGET_MS,
+  NARRATION_CHARS_PER_SEC,
+} from "./profiles";
 import type { VideoDesignSnapshot } from "./snapshot";
 
-/** Roughly what a five-second read fits, at an unhurried pace. */
-export const MAX_NARRATION_CHARS = 140;
+/**
+ * The longest line worth sending to the synthesiser.
+ *
+ * Derived rather than picked: the read has NARRATION_BUDGET_MS to land in, it
+ * may be sped up to MAX_NARRATION_SPEEDUP to get there, and a voice covers
+ * about NARRATION_CHARS_PER_SEC. That makes 59 characters, where this constant
+ * used to say 140 — which is where the truncated ads came from. 140 characters
+ * is nine seconds of speech offered a five-second spot, and the spot won.
+ *
+ * It is an estimate and it is only used to choose between candidate lines.
+ * What actually guarantees the read fits is measuring the audio that comes
+ * back; see fitNarrationArgs in ./encode.
+ */
+export const MAX_NARRATION_CHARS = Math.floor(
+  (NARRATION_BUDGET_MS / 1000) * MAX_NARRATION_SPEEDUP * NARRATION_CHARS_PER_SEC,
+);
 
 const API = "https://api.elevenlabs.io/v1/text-to-speech";
 
@@ -34,6 +53,34 @@ const DEFAULT_VOICE = process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM";
  * listener is meant to remember is the last thing they hear.
  */
 export function narrationScript(snapshot: VideoDesignSnapshot): string {
+  for (const line of narrationVariants(snapshot)) {
+    if (line.length <= MAX_NARRATION_CHARS) return line;
+  }
+
+  // Every candidate is too long, which takes a headline-free domain of sixty
+  // characters. Clipped on a word boundary rather than mid-word: a voice cut
+  // off in the middle of a word is worse than a shorter line.
+  const longest = narrationVariants(snapshot)[0];
+  const clipped = longest.slice(0, MAX_NARRATION_CHARS);
+  const lastSpace = clipped.lastIndexOf(" ");
+  return `${clipped.slice(0, lastSpace > 0 ? lastSpace : clipped.length).trim()}.`;
+}
+
+/**
+ * The line to speak, from fullest to barest.
+ *
+ * Shortening a spot is a choice about what to drop, and dropping words off the
+ * end — which is what a character cap does, and what the encoder was doing to
+ * the finished audio — drops exactly the wrong ones: the destination is last
+ * because it is what a listener is meant to leave with.
+ *
+ * So each step here drops a whole clause and keeps the domain. The call to
+ * action goes before the headline does: "Independent podcasts, all self-hosted.
+ * p0dcasters.com." is still an advert that says what it is and where to go,
+ * whereas the headline is the only thing carrying the offer on an audio-only
+ * break where there is no picture to read it from.
+ */
+export function narrationVariants(snapshot: VideoDesignSnapshot): string[] {
   const headline = snapshot.headline.trim().replace(/\s+/g, " ");
   const cta = snapshot.ctaText.trim().replace(/\s+/g, " ");
   const domain = snapshot.domain.trim();
@@ -41,14 +88,8 @@ export function narrationScript(snapshot: VideoDesignSnapshot): string {
   // A headline that already ends in punctuation should not gain a second full
   // stop; one that does not needs one, or the two clauses run together.
   const head = /[.!?]$/.test(headline) ? headline : `${headline}.`;
-  const line = `${head} ${cta} at ${domain}.`;
 
-  // Truncated on a word boundary rather than mid-word: a voice cut off in the
-  // middle of a word is worse than a shorter line.
-  if (line.length <= MAX_NARRATION_CHARS) return line;
-  const clipped = line.slice(0, MAX_NARRATION_CHARS);
-  const lastSpace = clipped.lastIndexOf(" ");
-  return `${clipped.slice(0, lastSpace > 0 ? lastSpace : clipped.length).trim()}.`;
+  return [`${head} ${cta} at ${domain}.`, `${head} ${domain}.`, `${cta} at ${domain}.`, `${domain}.`];
 }
 
 export type NarrationResult = {

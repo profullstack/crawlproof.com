@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_NARRATION_CHARS,
   narrationScript,
+  narrationVariants,
   synthesiseNarration,
 } from "@/lib/ads/video/narration";
 import type { VideoDesignSnapshot } from "@/lib/ads/video/snapshot";
@@ -56,6 +57,27 @@ describe("the script is the approved copy, spoken", () => {
     // A voice cut off mid-word is worse than a shorter line.
     expect(long).not.toMatch(/\s\w{1,2}\.$/);
     expect(long.endsWith(".")).toBe(true);
+  });
+
+  it("drops a whole clause rather than words off the end", () => {
+    // The destination is last because it is what a listener is meant to leave
+    // with, so shortening from the end — which is what a character cap does,
+    // and what the encoder was doing to the finished audio — drops exactly the
+    // wrong words. Every step of the ladder keeps the domain.
+    const long = narrationScript(
+      snapshot({ headline: "Independent podcasts, every one of them self-hosted" }),
+    );
+    expect(long).toContain("nichedb.dev");
+    expect(long.endsWith("nichedb.dev.")).toBe(true);
+  });
+
+  it("keeps the read inside what five seconds can hold", () => {
+    // 140 characters is about nine seconds of speech, which is where the
+    // truncated ads came from: the spot is five seconds and it wins.
+    expect(MAX_NARRATION_CHARS).toBeLessThan(70);
+    for (const line of narrationVariants(snapshot())) {
+      expect(line.endsWith("nichedb.dev.")).toBe(true);
+    }
   });
 
   it("collapses whitespace so the read is not shaped by the authoring", () => {

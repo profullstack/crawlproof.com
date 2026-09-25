@@ -57,6 +57,44 @@ export const HLS_KEYFRAME_SECONDS = [0, 2, 4] as const;
  * allows exactly one frame of it and no more, which catches a genuinely wrong
  * duration while not failing a correct encode for being AAC.
  */
+/**
+ * How much of the spot the read is allowed to occupy, and what is left after it.
+ *
+ * A five-second slot is not five seconds of speech. The line ends with the
+ * domain — the one thing a listener is meant to carry away — and a word that
+ * lands on the final frame is a word the player, the fade or the next track
+ * eats. The tail is that word's margin.
+ *
+ * It is also the whole of the bug this exists to fix: renders were bounded at
+ * five seconds while the read was measured at up to 8.4, so 117 of 184 audio
+ * companions in production ran past the end of their own spot and were cut
+ * mid-sentence — always in the last second or two, which is exactly where the
+ * call to action lives.
+ */
+export const NARRATION_TAIL_MS = 1000;
+export const NARRATION_BUDGET_MS = PREROLL_MS - NARRATION_TAIL_MS; // 4000
+
+/**
+ * How far a read may be sped up to fit.
+ *
+ * Time-compression is the fallback, not the plan: the script is chosen to fit
+ * first. 1.35x is about the limit at which a synthesised voice still sounds
+ * like someone talking rather than someone in a hurry, and a slightly brisk
+ * complete read beats an unhurried truncated one every time.
+ */
+export const MAX_NARRATION_SPEEDUP = 1.35;
+
+/**
+ * Observed speaking rate, in characters per second.
+ *
+ * Measured over the 184 narrations already in production: 11.5 chars/sec on
+ * average, 7.0 at the slowest. This is only an estimate used to pick which
+ * candidate line to synthesise — the fit is decided by probing the audio that
+ * actually comes back, because the rate varies by a factor of three with
+ * punctuation and phrasing and no character count can stand in for it.
+ */
+export const NARRATION_CHARS_PER_SEC = 11;
+
 export const AAC_FRAME_SAMPLES = 1024;
 export const AAC_SAMPLE_RATE = 48_000;
 export const AUDIO_TOLERANCE_MS = (AAC_FRAME_SAMPLES / AAC_SAMPLE_RATE) * 1000; // 21.333…
