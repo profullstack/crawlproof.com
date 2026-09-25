@@ -473,7 +473,7 @@ describe("a music bed under the narration", () => {
     expect(a).not.toContain("-filter_complex");
   });
 
-  it("no bed leaves the narrated path exactly as it was", () => {
+  it("no bed keeps the narrated path on a simple filter, not the mixer", () => {
     const a = mp4Args({
       framePattern: "/tmp/f-%04d.png",
       audioPath: "/tmp/narration.mp3",
@@ -482,6 +482,60 @@ describe("a music bed under the narration", () => {
       videoKbps: 4000,
     });
     expect(a).not.toContain("-filter_complex");
-    expect(a[a.indexOf("-af") + 1]).toBe("apad");
+    // The pad still comes first; loudness is applied after it, once the track
+    // is the length of the picture.
+    expect(a[a.indexOf("-af") + 1]).toMatch(/^apad(,|$)/);
+  });
+});
+
+describe("loudness", () => {
+  const narrated = () =>
+    mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: "/tmp/narration.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+  const withBed = () =>
+    mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: "/tmp/narration.mp3",
+      musicPath: "/tmp/bed.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+
+  it("brings a narrated spot up to streaming level", () => {
+    // Renders were landing at -30 dB mean: audible only to someone who had
+    // already turned everything up, which is the one moment an advert must not
+    // ask them to.
+    expect(narrated().join(" ")).toContain("loudnorm=I=-16");
+  });
+
+  it("normalises the mix, not the voice before the bed joins it", () => {
+    const f = withBed().join(" ");
+    // Normalising the voice alone would move it relative to the bed and undo
+    // the -16 dB the bed was placed at.
+    expect(f).toMatch(/amix=[^;]*normalize=0,loudnorm=/);
+  });
+
+  it("caps true peak, so lifting a quiet source cannot clip it", () => {
+    // A clipped voice is worse than a quiet one.
+    expect(narrated().join(" ")).toContain("TP=-1.5");
+    expect(withBed().join(" ")).toContain("TP=-1.5");
+  });
+
+  it("a silent spot gains no audio filter", () => {
+    const a = mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: null,
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+    expect(a).toContain("-an");
+    expect(a.join(" ")).not.toContain("loudnorm");
   });
 });

@@ -42,6 +42,22 @@ export const GOP_FRAMES = Math.round(
  */
 const MUSIC_BED_GAIN = "-16dB";
 
+/**
+ * Bring the finished mix to a normal listening level.
+ *
+ * A synthesised read comes back quiet and a five second spot has no room to
+ * ride the gain, so renders were landing around -30 dB mean: audible only if
+ * the viewer had already turned everything up for the programme, which is the
+ * one moment an advert must not ask them to. -16 LUFS is the level streaming
+ * platforms normalise to, so a spot arrives at the same loudness as whatever it
+ * interrupted rather than under it.
+ *
+ * The true-peak ceiling matters as much as the target. Without it, normalising
+ * a quiet source lifts its peaks into clipping, and a clipped voice is worse
+ * than a quiet one.
+ */
+const LOUDNESS = "loudnorm=I=-16:TP=-1.5:LRA=11";
+
 export type Mp4EncodeOptions = {
   /** printf-style pattern of the PNG frame sequence, e.g. `/tmp/x/f-%04d.png`. */
   framePattern: string;
@@ -148,7 +164,7 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
         `[1:a]apad,atrim=0:${seconds},asetpts=N/SR/TB[voice]`,
         `[2:a]atrim=0:${seconds},asetpts=N/SR/TB,volume=${MUSIC_BED_GAIN},` +
           `afade=t=in:st=0:d=${fade},afade=t=out:st=${(seconds - fade).toFixed(2)}:d=${fade}[bed]`,
-        `[voice][bed]amix=inputs=2:duration=first:normalize=0[a]`,
+        `[voice][bed]amix=inputs=2:duration=first:normalize=0,${LOUDNESS}[a]`,
       ].join(";"),
       "-map", "0:v",
       "-map", "[a]",
@@ -172,7 +188,7 @@ export function mp4Args(o: Mp4EncodeOptions): string[] {
     // not extend it and the encode either kept the original 2.3s of speech or,
     // once padded, dropped the stream entirely. An explicit duration is not a
     // workaround — it is the thing actually being asserted.
-    args.push("-af", "apad");
+    args.push("-af", `apad,${LOUDNESS}`);
     args.push("-c:a", "aac", "-profile:a", "aac_low", "-ar", String(AAC_SAMPLE_RATE), "-b:a", "128k", "-ac", "2");
   } else {
     args.push("-an");
