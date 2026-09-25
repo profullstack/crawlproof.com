@@ -473,7 +473,64 @@ async function cmdAds(args: Args): Promise<number> {
     }
     return 0;
   }
-  console.error(`unknown: crawlproof ads ${sub} (expected: create | list | show | pause | resume | budget | bid | delete | trending | trends)`);
+  if (sub === "video") {
+    const days = (args.flags.days as string | undefined) ?? "7";
+    const side = (args.flags.side as string | undefined) ?? "both";
+    const { status, json } = await apiCall(
+      args,
+      "GET",
+      `/api/ads/v1/video/stats?days=${encodeURIComponent(days)}&side=${encodeURIComponent(side)}`,
+    );
+    if (status >= 400) {
+      console.error(`ads video failed: ${status} ${json.error ?? ""}`);
+      return 1;
+    }
+    if (args.flags.json) {
+      process.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+      return 0;
+    }
+    const pct = (v: unknown) => `${Math.round(Number(v ?? 0) * 100)}%`;
+    const campaigns = (json.campaigns as Record<string, unknown>[]) ?? [];
+    const slots = (json.slots as Record<string, unknown>[]) ?? [];
+
+    if (campaigns.length) {
+      process.stdout.write(`Campaigns (${json.days}d)\n`);
+      process.stdout.write(`  ${"fills".padStart(7)} ${"starts".padStart(7)} ${"done".padStart(7)} ${"start%".padStart(7)} ${"done%".padStart(7)}  campaign\n`);
+      for (const c of campaigns) {
+        process.stdout.write(
+          `  ${String(c.fills).padStart(7)} ${String(c.starts).padStart(7)} ${String(c.completes).padStart(7)}` +
+            ` ${pct(c.startRate).padStart(7)} ${pct(c.completionRate).padStart(7)}  ${c.campaignName}\n`,
+        );
+      }
+    }
+    if (slots.length) {
+      if (campaigns.length) process.stdout.write("\n");
+      process.stdout.write(`Slots (${json.days}d)\n`);
+      process.stdout.write(`  ${"fills".padStart(7)} ${"house".padStart(7)} ${"empty".padStart(7)} ${"starts".padStart(7)} ${"done".padStart(7)}  site\n`);
+      for (const s of slots) {
+        process.stdout.write(
+          `  ${String(s.fills).padStart(7)} ${String(s.houseFills).padStart(7)} ${String(s.unfilled).padStart(7)}` +
+            ` ${String(s.starts).padStart(7)} ${String(s.completes).padStart(7)}  ${s.projectName || s.slotId}\n`,
+        );
+      }
+    }
+    if (!campaigns.length && !slots.length) {
+      process.stdout.write("No video breaks in this window.\n");
+      return 0;
+    }
+    // A fill that never starts is the one failure this report exists to catch,
+    // and it is invisible in a column of zeroes unless something says so.
+    const silent = [...campaigns, ...slots].filter(
+      (r) => Number(r.fills ?? 0) > 0 && Number(r.starts ?? 0) === 0,
+    );
+    if (silent.length) {
+      process.stdout.write(
+        `\n${silent.length} row(s) filled a break and reported no start — the player is not sending playback events (see crawlproof.com/preroll.js).\n`,
+      );
+    }
+    return 0;
+  }
+  console.error(`unknown: crawlproof ads ${sub} (expected: create | list | show | pause | resume | budget | bid | delete | trending | trends | video)`);
   return 2;
 }
 
@@ -847,6 +904,13 @@ ${EMAIL_TRACKING_USAGE}
       One campaign with its delivery: impressions, clicks, spend, the
       visits the tracker attributed to it on your own sites, and the days
       left on its promo.
+
+  ads video [--days=7] [--side=campaigns|slots|both] [--json]
+      The pre-roll funnel: breaks filled, breaks that actually started
+      playing, quartiles, completions. A fill is not a view — the gap
+      between fills and starts is ads that were chosen and never seen.
+      Reporting needs the player to send playback events; the drop-in
+      helper at crawlproof.com/preroll.js does it for you.
 
   ads pause <ref-or-id> | ads resume <ref-or-id> | ads budget <ref-or-id> <cents>
       Change a campaign in place. A ref looks like crawlproof-ad-144.

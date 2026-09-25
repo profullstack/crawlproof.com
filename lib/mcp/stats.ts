@@ -7,6 +7,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
+import { videoFunnelForOwner, videoSlotFunnelForOwner } from "@/lib/ads/video/stats";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getUserId(extra: any): string {
@@ -148,6 +149,52 @@ export function registerStatsTools(server: McpServer): void {
         return `- ${r.platform}: ${status}${r.post_url ? ` → ${r.post_url}` : ""}`;
       });
       return textResult(`Last ${rows.length} (${summary}):\n${lines.join("\n")}`);
+    },
+  );
+
+  server.registerTool(
+    "video_ad_funnel",
+    {
+      description:
+        "Pre-roll video ad playback funnel for the caller: breaks filled, breaks that started playing, quartiles, completions, errors. A fill is an ad that was chosen, a start is one that actually played — they are different numbers and the gap between them is ads nobody saw.",
+      inputSchema: { days: z.number().int().min(1).max(365).optional() },
+    },
+    async (args, extra) => {
+      const userId = getUserId(extra);
+      const days = args.days ?? 7;
+      const sb = serviceClient();
+      const campaigns = await videoFunnelForOwner(sb, userId, days);
+      const slots = await videoSlotFunnelForOwner(sb, userId, days);
+      if (!campaigns.length && !slots.length) {
+        return textResult(`No video breaks in the last ${days} day(s).`);
+      }
+      const pct = (v: number) => `${Math.round(v * 100)}%`;
+      const lines: string[] = [];
+      if (campaigns.length) {
+        lines.push("Campaigns:");
+        for (const c of campaigns) {
+          lines.push(
+            `- ${c.campaignName}: ${c.fills} filled, ${c.starts} started (${pct(c.startRate)}), ` +
+              `${c.completes} completed (${pct(c.completionRate)} of starts), ${c.clicks} click(s), ${c.errors} error(s)`,
+          );
+        }
+      }
+      if (slots.length) {
+        lines.push("Slots:");
+        for (const s of slots) {
+          lines.push(
+            `- ${s.projectName || s.slotId}: ${s.fills} filled (${s.houseFills} house, ${s.unfilled} empty), ` +
+              `${s.starts} started, ${s.completes} completed`,
+          );
+        }
+      }
+      const silent = [...campaigns, ...slots].filter((r) => r.fills > 0 && r.starts === 0);
+      if (silent.length) {
+        lines.push(
+          `${silent.length} row(s) filled a break and reported no start — the player is not sending playback events (crawlproof.com/preroll.js does it for you).`,
+        );
+      }
+      return textResult(lines.join("\n"));
     },
   );
 }
