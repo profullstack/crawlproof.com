@@ -157,5 +157,20 @@ export async function recordDecision(
     return existing?.id ?? null;
   }
 
+  // Everything else is swallowed — a break must never fail because we could
+  // not measure it — but it is said out loud, because a silent one looks
+  // exactly like no traffic.
+  //
+  // The failure this has actually produced: PostgREST caches the schema, and
+  // migrations here are applied by hand, so the deploy after one that adds a
+  // column answers PGRST204 ("Could not find the 'tier' column … in the schema
+  // cache") for every insert naming it. Nothing about the database is wrong;
+  // it needs `notify pgrst, 'reload schema'`. Recording zero decisions while
+  // happily serving ads is how that presents.
+  console.warn(
+    `[ads] video decision not recorded for slot ${input.slotId}: ${error?.code ?? "unknown"} ${
+      (error as { message?: string } | null)?.message ?? ""
+    }`,
+  );
   return null;
 }

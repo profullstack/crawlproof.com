@@ -20,6 +20,7 @@ function fill(over: Partial<Fill> = {}): Fill {
     html: "",
     text: "",
     tier: "paid",
+    media: "video",
     ...over,
   };
 }
