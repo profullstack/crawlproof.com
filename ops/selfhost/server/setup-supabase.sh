@@ -155,22 +155,63 @@ used_kb=$(df --output=used / | tail -1 | tr -dc 0-9)
 now=$(date -u +%s)
 stamp=$(date -u '+%F %T')
 
+# A rate is only meaningful over a reasonable interval. Two samples seconds
+# apart — a manual run right after a cron run, say — produce numbers like
+# "166 GB/h" from ordinary write jitter, which pollutes the growth record and
+# can fire a spurious CRITICAL. Ignore anything under MIN_INTERVAL, and do not
+# overwrite the baseline either, so the next cron sample still measures from a
+# sensible point.
+MIN_INTERVAL=${MIN_INTERVAL:-300}
 rate=""
+fresh_baseline=1
 if [ -f "$STATE" ]; then
   read -r prev_ts prev_kb < "$STATE" 2>/dev/null || true
-  if [ -n "${prev_ts:-}" ] && [ "$now" -gt "$prev_ts" ]; then
-    rate=$(( (used_kb - prev_kb) * 3600 / (now - prev_ts) / 1048576 ))
+  if [ -n "${prev_ts:-}" ]; then
+    elapsed=$((now - prev_ts))
+    if [ "$elapsed" -ge "$MIN_INTERVAL" ]; then
+      rate=$(( (used_kb - prev_kb) * 3600 / elapsed / 1048576 ))
+    else
+      fresh_baseline=0
+    fi
   fi
 fi
-echo "$now $used_kb" > "$STATE"
+[ "$fresh_baseline" = 1 ] && echo "$now $used_kb" > "$STATE"
 
 echo "$stamp used=${pct}% ($(df -h --output=used / | tail -1 | tr -d ' ')) rate=${rate:-?}GB/h" >> "$LOG"
 tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 
+# What is eating the disk? The first alarm this fired was a 57 GB/h spike that
+# turned out to be 38 GB of docker build cache from an image build, not the
+# databases at all — and working that out cost a round trip. So the alarm
+# attributes its own finding: reclaimable docker space and the biggest
+# databases, inline.
+whodunnit() {
+  local out=""
+  if command -v docker >/dev/null 2>&1; then
+    # --format, not positional awk: "Build Cache" is two whitespace-separated
+    # fields in the default table, which shifts every column and silently
+    # reports counts where you expected sizes.
+    while IFS='|' read -r type size recl; do
+      [ -n "$type" ] && out+="docker: ${type} ${size} (${recl} reclaimable)
+"
+    done < <(docker system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' 2>/dev/null)
+  fi
+  # Sizes straight from the running cluster, largest first.
+  if docker exec -i supabase-db psql -U postgres -h localhost -d postgres -X -At \
+       -c "select string_agg(datname || ' ' || pg_size_pretty(pg_database_size(datname)), ', ' order by pg_database_size(datname) desc) from pg_database where not datistemplate" >/tmp/.dbsz 2>/dev/null; then
+    out+="databases: $(cat /tmp/.dbsz)
+"
+    rm -f /tmp/.dbsz
+  fi
+  printf '%s' "$out"
+}
+
 notify() {
   logger -t dev2-disk -p daemon.warning "$1: $2"
-  command -v mail >/dev/null 2>&1 && printf '%s\n\nRecent history:\n%s\n' \
-    "$2" "$(tail -12 "$LOG")" | mail -s "dev2 disk $1: ${pct}% used" root 2>/dev/null || true
+  command -v mail >/dev/null 2>&1 && printf '%s\n\nWhat is using it:\n%s\nRecent history:\n%s\n' \
+    "$2" "$(whodunnit)" "$(tail -12 "$LOG")" | mail -s "dev2 disk $1: ${pct}% used" root 2>/dev/null || true
+  # Attribution also goes to syslog, so it is there even with no mailer.
+  whodunnit | while IFS= read -r l; do [ -n "$l" ] && logger -t dev2-disk -p daemon.warning "  $l"; done
 }
 
 if [ "$pct" -ge "$CRIT" ]; then
