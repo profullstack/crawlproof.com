@@ -57,13 +57,20 @@ export function narrationScript(snapshot: VideoDesignSnapshot): string {
     if (line.length <= MAX_NARRATION_CHARS) return line;
   }
 
-  // Every candidate is too long, which takes a headline-free domain of sixty
-  // characters. Clipped on a word boundary rather than mid-word: a voice cut
-  // off in the middle of a word is worse than a shorter line.
-  const longest = narrationVariants(snapshot)[0];
-  const clipped = longest.slice(0, MAX_NARRATION_CHARS);
-  const lastSpace = clipped.lastIndexOf(" ");
-  return `${clipped.slice(0, lastSpace > 0 ? lastSpace : clipped.length).trim()}.`;
+  // Every candidate is over the estimate, which takes a domain longer than the
+  // budget on its own — a 62-character .onion address, for instance.
+  //
+  // The bare domain, then, and emphatically not a clip of the fullest line.
+  // Clipping was the first thing written here and it produced "Open this
+  // .onion address. Open in Tor at." — an advert that names nothing, because
+  // trimming from the end removes the destination first. A brisk complete
+  // address is an advert; a fluent introduction to no address is not.
+  //
+  // Nothing is lost by returning a line over the estimate: the estimate only
+  // chooses between candidates, and the fit measures what actually comes back
+  // and compresses it into the spot regardless of how long it turned out to be.
+  const variants = narrationVariants(snapshot);
+  return variants[variants.length - 1];
 }
 
 /**
