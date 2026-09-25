@@ -7,7 +7,8 @@ import {
   timeline,
 } from "@/lib/ads/video/compose";
 import type { VideoDesignSnapshot } from "@/lib/ads/video/snapshot";
-import { AAC_LC_CODEC, audioCompanionArgs, avcCodecString, GOP_FRAMES, hlsArgs, mp4Args, multivariantPlaylist, posterArgs } from "@/lib/ads/video/encode";
+import { AAC_LC_CODEC, atempoChain, audioCompanionArgs, avcCodecString, fitNarrationArgs, GOP_FRAMES, hlsArgs, mp4Args, multivariantPlaylist, narrationTempo, posterArgs } from "@/lib/ads/video/encode";
+import { NARRATION_BUDGET_MS, NARRATION_TAIL_MS, PREROLL_MS } from "@/lib/ads/video/profiles";
 import {
   evaluateProbe,
   parseRational,
@@ -545,7 +546,18 @@ describe("loudness", () => {
     // player asks for this file and nothing else, which makes it the only
     // thing most listeners ever hear.
     const a = audioCompanionArgs("/tmp/narration.mp3", "/tmp/audio.m4a");
-    expect(a[a.indexOf("-af") + 1]).toBe("loudnorm=I=-16:TP=-1.5:LRA=11");
+    expect(a[a.indexOf("-af") + 1]).toContain("loudnorm=I=-16:TP=-1.5:LRA=11");
+  });
+
+  it("makes the companion one spot long, however long the read was", () => {
+    // The bug this exists for: the companion ran to whatever length the voice
+    // took — 2.3s to 8.4s across production, against a five-second break — so
+    // the player cut the majority of them, always in the last second or two
+    // where the call to action lives. It is now bounded like the picture is,
+    // and padded so a short read does not end early either.
+    const a = audioCompanionArgs("/tmp/narration.mp3", "/tmp/audio.m4a");
+    expect(a[a.indexOf("-t") + 1]).toBe("5");
+    expect(a[a.indexOf("-af") + 1]).toMatch(/^apad,/);
   });
 
   it("gives the companion the same target and ceiling as the video", () => {
@@ -554,5 +566,54 @@ describe("loudness", () => {
     const companion = audioCompanionArgs("/tmp/narration.mp3", "/tmp/audio.m4a");
     const filter = companion[companion.indexOf("-af") + 1];
     expect(narrated().join(" ")).toContain(filter);
+  });
+});
+
+describe("the read is made to fit the spot", () => {
+  it("leaves a read that already fits alone", () => {
+    // atempo is not free of artefacts, so a spot that does not need it does
+    // not get it.
+    expect(narrationTempo(2_300)).toBe(1);
+    expect(narrationTempo(NARRATION_BUDGET_MS)).toBe(1);
+    const args = fitNarrationArgs({ inPath: "a.mp3", outPath: "b.wav", tempo: 1 });
+    expect(args[args.indexOf("-af") + 1]).toBe("apad");
+  });
+
+  it("speeds up a read that runs past its budget", () => {
+    // The longest read in production was 8.405s against a five-second advert.
+    // Bounding the output at five, which is what every consumer did, cut it
+    // mid-sentence; compressing it to the budget says the whole line.
+    expect(narrationTempo(8_405)).toBeCloseTo(8_405 / NARRATION_BUDGET_MS, 5);
+    const args = fitNarrationArgs({
+      inPath: "a.mp3",
+      outPath: "b.wav",
+      tempo: narrationTempo(8_405),
+    });
+    // 2.101x is past what one atempo stage is specified for, so it arrives as
+    // a chain whose stages multiply to it.
+    expect(args[args.indexOf("-af") + 1]).toBe("atempo=2.0,atempo=1.050625,apad");
+  });
+
+  it("chains atempo past the 2x a single stage is specified for", () => {
+    expect(atempoChain(1)).toEqual([]);
+    expect(atempoChain(1.5)).toEqual(["atempo=1.500000"]);
+    expect(atempoChain(3)).toEqual(["atempo=2.0", "atempo=1.500000"]);
+  });
+
+  it("returns exactly one spot, with the tail silent", () => {
+    // Both halves matter: -t is what stops a long read overrunning, apad is
+    // what stops a short one ending early and leaving the player a track
+    // shorter than the advert it is playing.
+    const args = fitNarrationArgs({ inPath: "a.mp3", outPath: "b.wav", tempo: 1 });
+    expect(args[args.indexOf("-t") + 1]).toBe(String(PREROLL_MS / 1000));
+    expect(args[args.indexOf("-af") + 1]).toContain("apad");
+    // PCM, because this intermediate is re-encoded twice and a second lossy
+    // generation would be paid for nothing.
+    expect(args).toContain("pcm_s16le");
+  });
+
+  it("budgets a second of silence after the read", () => {
+    expect(NARRATION_TAIL_MS).toBe(1000);
+    expect(NARRATION_BUDGET_MS).toBe(PREROLL_MS - NARRATION_TAIL_MS);
   });
 });

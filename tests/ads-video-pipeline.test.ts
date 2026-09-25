@@ -12,11 +12,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { FFMPEG_BIN, FFPROBE_BIN, run } from "@/lib/ads/video/encode";
+import { encodeAudioCompanion, FFMPEG_BIN, FFPROBE_BIN, fitNarration, run } from "@/lib/ads/video/encode";
 import { mp4Args } from "@/lib/ads/video/encode";
 import { renderPreroll, narrationVtt, type FrameCapturer } from "@/lib/ads/video/render";
 import { probeMedia, evaluateProbe, validateMediaPlaylist } from "@/lib/ads/video/validate";
-import { PREROLL_FRAMES, videoProfile } from "@/lib/ads/video/profiles";
+import { NARRATION_BUDGET_MS, PREROLL_FRAMES, videoProfile } from "@/lib/ads/video/profiles";
 import type { VideoDesignSnapshot } from "@/lib/ads/video/snapshot";
 
 async function haveFfmpeg(): Promise<boolean> {
@@ -265,6 +265,72 @@ describe("a snapshot renders to validated media", () => {
       const seconds = Number(audioStream!.duration);
       // Within one AAC frame of five seconds, which is what validation demands.
       expect(Math.abs(seconds - 5)).toBeLessThan(0.05);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("fits a read that is longer than the advert instead of cutting it", async () => {
+    // The bug, against real ffmpeg. Production reads ran to 8.405s in a
+    // five-second spot, and every consumer bounded its output at five — so the
+    // last three seconds, which is the call to action and the domain, were
+    // simply not in the file.
+    //
+    // The discriminator is where the silence starts. A truncated read has none
+    // at all: it is signal right up to the final sample. A fitted one is signal
+    // for its budget and silence for the tail, which is what this asserts.
+    const dir = await mkdtemp(path.join(tmpdir(), "overlong-"));
+    try {
+      const audio = path.join(dir, "narration.mp3");
+      await run(FFMPEG_BIN, ["-y", "-v", "error", "-f", "lavfi", "-i",
+        "sine=frequency=440:duration=8.405", audio], 60_000);
+
+      const fitted = path.join(dir, "fitted.wav");
+      const fit = await fitNarration({ inPath: audio, outPath: fitted });
+      expect(fit.tempo).toBeGreaterThan(2);
+
+      // Through ffprobe rather than ffmpeg: silencedetect reports on stderr,
+      // and reading it as frame tags puts the answer on stdout where it can be
+      // parsed rather than scraped out of a log.
+      const detected = await run(FFPROBE_BIN, ["-v", "error", "-f", "lavfi",
+        "-i", `amovie=${fitted},silencedetect=noise=-50dB:d=0.3`,
+        "-show_entries", "frame_tags=lavfi.silence_start", "-of", "json"], 60_000);
+      const startedAt = /"lavfi\.silence_start":\s*"([\d.]+)"/.exec(String(detected));
+      expect(startedAt, "no trailing silence: the read was cut, not fitted").toBeTruthy();
+      expect(Number(startedAt![1])).toBeCloseTo(NARRATION_BUDGET_MS / 1000, 1);
+
+      // And the companion a music player actually fetches is one spot long,
+      // where it used to be however long the voice happened to take.
+      const companion = path.join(dir, "audio.m4a");
+      await encodeAudioCompanion(fitted, companion);
+      const probe = await probeMedia(companion);
+      const stream = probe.streams.find((s) => s.codec_type === "audio");
+      expect(Math.abs(Number(stream!.duration) - 5)).toBeLessThan(0.05);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("pads a short read out to the advert, so the companion is never short", async () => {
+    // The other half of the same fault: a 2.3s read produced a 2.3s audio
+    // companion, and a player handed a track shorter than the break it is
+    // filling is entitled to move on early.
+    const dir = await mkdtemp(path.join(tmpdir(), "shortread-"));
+    try {
+      const audio = path.join(dir, "narration.mp3");
+      await run(FFMPEG_BIN, ["-y", "-v", "error", "-f", "lavfi", "-i",
+        "sine=frequency=440:duration=2.3", audio], 60_000);
+
+      const fitted = path.join(dir, "fitted.wav");
+      const fit = await fitNarration({ inPath: audio, outPath: fitted });
+      // It fits, so it is not resampled: atempo is not free of artefacts.
+      expect(fit.tempo).toBe(1);
+
+      const companion = path.join(dir, "audio.m4a");
+      await encodeAudioCompanion(fitted, companion);
+      const probe = await probeMedia(companion);
+      const stream = probe.streams.find((s) => s.codec_type === "audio");
+      expect(Math.abs(Number(stream!.duration) - 5)).toBeLessThan(0.05);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

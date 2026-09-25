@@ -11,6 +11,7 @@ import path from "node:path";
 import {
   AAC_SAMPLE_RATE,
   HLS_KEYFRAME_SECONDS,
+  NARRATION_BUDGET_MS,
   PREROLL_FPS,
   PREROLL_FRAMES,
   videoProfile,
@@ -57,6 +58,83 @@ const MUSIC_BED_GAIN = "-16dB";
  * than a quiet one.
  */
 const LOUDNESS = "loudnorm=I=-16:TP=-1.5:LRA=11";
+
+/**
+ * Speed a read up by `tempo`, as an atempo chain.
+ *
+ * A single atempo stage is specified for 0.5-2.0, so anything faster is
+ * expressed as stages that multiply to it. Beyond about 1.4 this sounds
+ * hurried and we would rather have shortened the script, but a fast complete
+ * read is still strictly better than a truncated one, so there is no ceiling
+ * here — the ceiling is on which line gets written, not on whether it is
+ * allowed to finish.
+ */
+export function atempoChain(tempo: number): string[] {
+  if (!(tempo > 1)) return [];
+  const stages: string[] = [];
+  let remaining = tempo;
+  while (remaining > 2) {
+    stages.push("atempo=2.0");
+    remaining /= 2;
+  }
+  stages.push(`atempo=${remaining.toFixed(6)}`);
+  return stages;
+}
+
+/**
+ * How fast this read has to be played to land inside its budget.
+ *
+ * 1 when it already fits — resampling a read that does not need it is a cost
+ * with no benefit, and atempo is not free of artefacts.
+ */
+export function narrationTempo(measuredMs: number, budgetMs = NARRATION_BUDGET_MS): number {
+  if (!Number.isFinite(measuredMs) || measuredMs <= budgetMs) return 1;
+  return measuredMs / budgetMs;
+}
+
+/**
+ * Fit a synthesised read to the spot: exactly PREROLL_MS, speech inside the
+ * budget, silence after it.
+ *
+ * This is the step that was missing. Synthesis returns however long the voice
+ * took — measured across production, anywhere from 2.3 to 8.4 seconds for a
+ * five-second advert — and every consumer downstream simply bounded its output
+ * at five, which cuts a long read mid-word. Nothing downstream could fix that:
+ * by the time the encoder sees it, the audio genuinely is longer than the ad.
+ *
+ * So the read is made to fit before anything muxes it, and it comes out as the
+ * exact length of the spot with the tail already silent. Loudness is
+ * deliberately not applied here — this step is purely temporal, and the two
+ * consumers each master it themselves.
+ *
+ * PCM rather than another MP3: this file exists only to be re-encoded twice
+ * (into the video and into the audible companion) and a second lossy
+ * generation for an intermediate is a quality cost paid for nothing.
+ */
+export function fitNarrationArgs(o: {
+  inPath: string;
+  outPath: string;
+  tempo: number;
+}): string[] {
+  // apad extends with silence and -t fixes the length, so a short read gains a
+  // tail and a fitted one keeps the one its budget left it.
+  const filters = [...atempoChain(o.tempo), "apad"].join(",");
+  return [
+    "-y",
+    "-nostdin",
+    "-i",
+    o.inPath,
+    "-af",
+    filters,
+    "-t",
+    String(PREROLL_MS / 1000),
+    "-c:a",
+    "pcm_s16le",
+    "-ar",
+    String(AAC_SAMPLE_RATE),
+    o.outPath,
+  ];
+}
 
 export type Mp4EncodeOptions = {
   /** printf-style pattern of the PNG frame sequence, e.g. `/tmp/x/f-%04d.png`. */
@@ -352,7 +430,15 @@ export function audioCompanionArgs(inPath: string, outPath: string): string[] {
     inPath,
     "-vn",
     "-af",
-    LOUDNESS,
+    `apad,${LOUDNESS}`,
+    // The companion is a five-second spot, the same five seconds as the
+    // picture. It used to be however long the voice happened to take, which
+    // put 117 of 184 production spots past the end of their own break for a
+    // player to cut — and this file is the only thing a radio or music
+    // listener ever gets, so a cut here takes the whole call to action with no
+    // picture left to carry it.
+    "-t",
+    String(PREROLL_MS / 1000),
     "-c:a",
     "aac",
     "-profile:a",
@@ -423,3 +509,53 @@ export const extractPoster = (inPath: string, outPath: string) =>
   run(FFMPEG_BIN, posterArgs(inPath, outPath));
 export const encodeAudioCompanion = (inPath: string, outPath: string) =>
   run(FFMPEG_BIN, audioCompanionArgs(inPath, outPath));
+
+/**
+ * Measure a read and return a copy of it that is exactly one spot long.
+ *
+ * Measured, not assumed: the same character count comes back anywhere between
+ * 7 and 21 characters per second depending on phrasing, so the script length
+ * chooses which line to speak and this chooses how to fit what came back.
+ */
+export async function fitNarration(input: {
+  inPath: string;
+  outPath: string;
+  /** Injected by tests; defaults to probing the file with ffprobe. */
+  measureMs?: (filePath: string) => Promise<number | null>;
+}): Promise<{ outPath: string; measuredMs: number | null; tempo: number }> {
+  const measured = await (input.measureMs ?? probeDurationMs)(input.inPath);
+  const tempo = measured === null ? 1 : narrationTempo(measured);
+  await run(FFMPEG_BIN, fitNarrationArgs({ inPath: input.inPath, outPath: input.outPath, tempo }));
+  return { outPath: input.outPath, measuredMs: measured, tempo };
+}
+
+/**
+ * Duration of the first audio stream, in milliseconds, or null.
+ *
+ * Null rather than a throw: a read that cannot be measured is still a read,
+ * and the caller falls back to muxing it unfitted — which is what every render
+ * did before this existed, so an unmeasurable file is no worse off than it was.
+ */
+export async function probeDurationMs(filePath: string): Promise<number | null> {
+  try {
+    const out = await run(
+      FFPROBE_BIN,
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=duration",
+        "-of",
+        "default=nw=1:nk=1",
+        filePath,
+      ],
+      60_000,
+    );
+    const seconds = Number(out.trim().split(/\s+/)[0]);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+  } catch {
+    return null;
+  }
+}
