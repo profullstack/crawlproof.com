@@ -20,6 +20,11 @@ function fill(over: Partial<Fill> = {}): Fill {
     html: "",
     text: "",
     tier: "paid",
+    // A streaming break is served as media, so it is the one fill whose
+    // presentation was never in question — the display rotation does not reach
+    // it (see mediaKindsForFormat, which gives video_preroll_5s nothing to
+    // rotate). Named rather than left off so this stays a complete Fill.
+    media: "video",
     ...over,
   };
 }
