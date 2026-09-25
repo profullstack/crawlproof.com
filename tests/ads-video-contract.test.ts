@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { streamMediaFor } from "@/lib/ads/video/serve";
 import {
   AUDIO_TOLERANCE_MS,
   PREROLL_FRAMES,
@@ -196,5 +197,42 @@ describe("storage layout", () => {
     expect(contentTypeFor("/x/720p-1.m4s", "application/vnd.apple.mpegurl")).toBe("video/mp4");
     expect(contentTypeFor("/x/720p-init.mp4", "application/vnd.apple.mpegurl")).toBe("video/mp4");
     expect(contentTypeFor("/x/poster.webp", "image/webp")).toBe("image/webp");
+  });
+});
+
+describe("the house break", () => {
+  const sb = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }) } as never;
+
+  it("fills, rather than coming back empty", async () => {
+    // A house ad is assembled in code and has no render, so looking it up in
+    // ad_creatives found nothing and every unsold break played nothing at all.
+    const media = await streamMediaFor(sb, {
+      creativeId: "house",
+      kind: "video",
+      publicUrlFor: (k) => `https://cdn.example/${k}`,
+    });
+    expect(media).not.toBeNull();
+    expect(media?.url).toMatch(/\/ads\/house\/preroll\.mp4$/);
+    expect(media?.durationMs).toBe(5000);
+  });
+
+  it("says it is video even when audio was asked for", async () => {
+    // It carries a picture. Labelling it audio would hand a music player a
+    // video URL and tell it there is nothing to show.
+    const media = await streamMediaFor(sb, {
+      creativeId: "house",
+      kind: "audio",
+      publicUrlFor: (k) => `https://cdn.example/${k}`,
+    });
+    expect(media?.kind).toBe("video");
+  });
+
+  it("a real creative with no published media still comes back empty", async () => {
+    const media = await streamMediaFor(sb, {
+      creativeId: "3f1b2c4d-0000-0000-0000-000000000000",
+      kind: "video",
+      publicUrlFor: (k) => `https://cdn.example/${k}`,
+    });
+    expect(media).toBeNull();
   });
 });

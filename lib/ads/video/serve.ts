@@ -8,6 +8,7 @@
 // This module answers only the question serveAd cannot: given the creative it
 // picked, which file should this player fetch?
 
+import { env } from "@/lib/env";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { GIF_PROFILE_IDS, type VideoProfileId } from "./profiles";
 
@@ -44,10 +45,42 @@ const AUDIO_PROFILE: VideoProfileId = "audio";
  * fallback to an unpublished revision would serve media that was never
  * approved for serving.
  */
+/**
+ * The house pre-roll.
+ *
+ * A house ad is assembled in code from copy and artwork, so unlike a campaign
+ * creative it has no render and nothing in the asset store to point a player
+ * at. Every unsold break therefore came back empty, which is safe but means an
+ * inventory slot that never plays anything at all.
+ *
+ * One bundled file rather than a render: the house pitch does not change per
+ * fill the way a campaign's does, and giving it a render pipeline of its own
+ * would be a second way to produce the same five seconds.
+ */
+const HOUSE_PREROLL = {
+  path: "/ads/house/preroll.mp4",
+  durationMs: 5000,
+} as const;
+
 export async function streamMediaFor(
   sb: SupabaseClient,
   args: { creativeId: string; kind: StreamKind; publicUrlFor: (objectKey: string) => string },
 ): Promise<StreamMedia | null> {
+  // The house fill carries a literal id, not a row: looking it up in
+  // ad_creatives finds nothing and empties the break.
+  if (args.creativeId === "house") {
+    return {
+      // It carries a picture, so an audio-only surface is told what it is
+      // getting rather than handed a video URL labelled as audio.
+      kind: "video",
+      url: `${env.siteUrl}${HOUSE_PREROLL.path}`,
+      durationMs: HOUSE_PREROLL.durationMs,
+      posterUrl: null,
+      captionsUrl: null,
+      revision: 1,
+    };
+  }
+
   // published_revision, not the newest: a revision becomes servable only when
   // the worker has validated it, and "newest" would serve a render that is
   // still being written.
