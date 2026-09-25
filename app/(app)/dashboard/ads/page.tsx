@@ -8,6 +8,7 @@ import { RangeTabs } from "@/components/ads/range-tabs";
 import { StatSpark } from "@/components/ads/stat-spark";
 import { StatsUnavailable } from "@/components/stats-unavailable";
 import { MediaSplitCard } from "@/components/ads/media-split-card";
+import { ListFilter, ListPager } from "@/components/list-filter";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -24,6 +25,12 @@ import {
   type RangeTotals,
 } from "@/lib/ads/series";
 import { getMediaSplit, type MediaSplitRow } from "@/lib/ads/media-stats";
+import {
+  filterAndPaginate,
+  needsFilter,
+  parseListQuery,
+  statusCounts,
+} from "@/lib/list-filter";
 import { resolveRange } from "@/lib/ads/ranges";
 import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 
@@ -54,9 +61,16 @@ function ctr(clicks: number, impressions: number): string {
 export default async function AdsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{
+    range?: string;
+    q?: string;
+    status?: string;
+    page?: string;
+  }>;
 }) {
-  const range = resolveRange((await searchParams).range);
+  const params = await searchParams;
+  const range = resolveRange(params.range);
+  const listQuery = parseListQuery(params);
   const supabase = await createClient();
   const {
     data: { user },
@@ -120,6 +134,27 @@ export default async function AdsPage({
 
   const today = utcToday();
   const totals = sumSeries(series);
+
+  // The list is filtered and paged here rather than in the query: the range
+  // totals, the sparkline series and the status badge are all already loaded
+  // per-owner for the whole list, so narrowing in SQL would mean either
+  // re-plumbing those or letting the rows disagree with the figures above them.
+  // At a few hundred campaigns the filter itself costs nothing.
+  //
+  // The status searched and filtered on is the DISPLAYED one, not the stored
+  // column. A campaign shows as "free backfill" when the account is out of
+  // credits while its own status still reads 'active', and filtering on the raw
+  // column would return rows whose badge says something else.
+  const statusFor = (c: CampaignRow) => campaignDisplayStatus(c, today, creditsAvailable).label;
+  const filterSpec = {
+    fields: (c: CampaignRow) => [c.name, c.destination_domain, c.ref_slug, statusFor(c)],
+    statusOf: statusFor,
+  };
+  const paged = filterAndPaginate(campaigns, listQuery, filterSpec);
+  const statusOptions = [...statusCounts(campaigns, listQuery, filterSpec)]
+    .sort((a, b) => b[1] - a[1])
+    .map(([value, count]) => ({ value, label: value, count }));
+  const showFilter = needsFilter(campaigns.length);
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -228,8 +263,31 @@ export default async function AdsPage({
           .
         </div>
       ) : (
+        <>
+          {/* Only once the list is long enough to be worth hiding behind a
+              filter — a search box over six campaigns is clutter. */}
+          {showFilter && (
+            <div className="mt-6">
+              <Suspense fallback={null}>
+                <ListFilter
+                  total={campaigns.length}
+                  shown={paged.total}
+                  statuses={statusOptions}
+                  label="campaigns"
+                  placeholder="Search name, domain or slug…"
+                />
+              </Suspense>
+            </div>
+          )}
+
+          {paged.total === 0 && (
+            <div className="card mt-4 p-8 text-center text-[var(--color-muted)]">
+              No campaigns match that filter.
+            </div>
+          )}
+
         <ul className="mt-4 space-y-2">
-          {campaigns.map((c) => {
+          {paged.items.map((c) => {
             // Range-scoped, so a row never contradicts the header above it.
             const s = rangeById.get(c.id) ?? EMPTY_TOTALS;
             // Same measure as the header tiles, or a campaign delivering only
@@ -288,6 +346,16 @@ export default async function AdsPage({
             );
           })}
         </ul>
+
+          <Suspense fallback={null}>
+            <ListPager
+              page={paged.page}
+              pages={paged.pages}
+              total={paged.total}
+              label="campaigns"
+            />
+          </Suspense>
+        </>
       )}
     </div>
   );
