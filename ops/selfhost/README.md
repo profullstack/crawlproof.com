@@ -181,6 +181,68 @@ Order that matters, because two databases can otherwise drive the same app:
 **not** `supabase/.env` — that directory stays root-owned because it holds the
 database's God Mode keys and a deploy has no business reading them.
 
+## Backups
+
+There were none until 2026-09-25, and by then the Supabase cloud project had
+been deleted, so dev2 was the only place crawlproof's data existed.
+
+| | schedule | scope | retention |
+| --- | --- | --- | --- |
+| frequent | every 4h, `:00` | everything that cannot be re-derived | 7 days |
+| full | daily 05:20 | complete, including bulk tables | 7 days |
+| off-box pull | every 4h, `:10` | the frequent dumps, onto dev1 | 7 days |
+
+**Why two modes.** "Back up every database every four hours" is the right
+instinct and not literally affordable: nichedb is 169 GB (15 GB compressed,
+~17 minutes) and rssamplifier is comparable. Six full dumps a day of those
+would outgrow the disk. The frequent job therefore excludes the bulk
+catalogue tables, which are re-importable from public sources:
+
+- `nichedb`: `public.items`
+- `rssamplifier`: `public.feed_items`, `public.item_extracts`, `public.feed_keywords`
+
+Measured cost of a frequent run: **~800 MB, under a minute**. crawlproof's own
+database is dumped complete every four hours (599 MB), because it is small
+enough that excluding anything would be false economy.
+
+`sources` in nichedb is deliberately **not** excluded. It holds the adapter
+config *and* the import cursors, which is what makes re-running an importer
+cheap rather than a restart from zero. Do not widen the exclusions without
+asking the session that owns those databases.
+
+**Every dump is verified** with `pg_restore --list` before it counts as good.
+`pg_dump` can exit 0 and still leave a truncated file if the disk fills, and a
+backup that cannot be read is worse than none because it buys false
+confidence.
+
+**Retention never deletes the newest full** for a database even when every
+copy has aged out. Pure age-based expiry would cheerfully leave a database
+with no complete backup at all if the daily job were broken for a fortnight —
+exactly when you would need one. `test/retention.sh` proves this with
+backdated files rather than waiting a week.
+
+### Off-box
+
+`server/pull-backups.sh` runs on **dev1** and pulls from dev2. Pull, not push:
+dev2 holds no credentials for dev1, so compromising dev2 does not reach the
+backups. Only the frequent dumps travel (~2.6 GB for 7 days); the daily fulls
+stay on dev2, since what they add is precisely the re-importable part.
+
+Two rsync filter traps, both of which bit during setup:
+
+- **Order matters.** rsync takes the first matching rule, so the exclusions
+  must come *before* `--include='*.dump'`. Backwards, it silently pulls the
+  full dumps it is meant to skip.
+- **Do not descend into hidden directories.** dev2 had a `.measure/` holding
+  an in-progress dump, and a partial file is worse than useless off-box
+  because it looks like a backup.
+
+### What this does and does not cover
+
+On-box copies cover a dropped table, a bad migration, a delete without a
+`WHERE`. The dev1 copy covers losing dev2 entirely. Neither covers losing both
+boxes; that was raised and consciously accepted rather than overlooked.
+
 ## Network posture
 
 What dev2 exposes to the internet, and why:

@@ -243,6 +243,179 @@ CRON
   echo "    installed $dest (every 15 min); growth record: /var/log/dev2-disk.log"
 
   install_builder_prune
+  install_pg_backup
+}
+
+# Backups for every database in the cluster.
+#
+# There were none until 2026-09-25, and by then crawlproof's Supabase cloud
+# project had been deleted — so the live database was the only copy of its
+# data anywhere.
+#
+# Two modes, because "every database every four hours" is the right instinct
+# but not literally affordable. nichedb is 169 GB (15 GB compressed, ~17 min)
+# and rssamplifier is comparable; six full dumps a day of those would outgrow
+# the disk. The frequent job therefore excludes the bulk catalogue tables,
+# which are re-importable from public sources, and the daily job takes the
+# complete copies. Both roll on 7 days.
+#
+# The exclusions were agreed with the session that owns those databases. Note
+# `sources` in nichedb is deliberately NOT excluded: it carries the adapter
+# config and the import cursors, which is what makes re-running an importer
+# cheap rather than a restart from zero.
+install_pg_backup() {
+  log "Database backups (frequent every 4h, full daily, 7-day retention)"
+  local dest=/usr/local/bin/dev2-pg-backup.sh
+  backup "$dest"
+  {
+    echo '#!/usr/bin/env bash'
+    cat <<'PGBACKUP'
+#
+# Backups for the self-hosted cluster on dev2.
+#
+#   dev2-pg-backup.sh frequent   every 4 hours (cron)
+#   dev2-pg-backup.sh full       once a day (cron)
+#
+# WHY TWO MODES. "Back up every database every four hours" is the right
+# instinct but not literally affordable: nichedb is ~165 GB and rssamplifier
+# will be ~40-50 GB, and six full dumps a day of those would outgrow the disk
+# in days. The split keeps the 4-hour recovery point for everything that
+# cannot be re-derived, and takes the bulk catalogues once a day.
+#
+# The excluded tables are all re-importable from public sources. Critically,
+# `sources` in nichedb is NOT excluded: it holds the adapter config and the
+# import cursors, which is what makes re-running an importer cheap rather than
+# a restart from zero. Scoping agreed with the session that owns those
+# databases; do not widen the exclusions without asking it.
+#
+# RETENTION is 7 days for both classes. That is cheap for the frequent dumps
+# (~700 MB a run) and expensive for the daily fulls, because seven copies of
+# the bulk databases is hundreds of GB. The script therefore warns when the
+# backup directory passes BACKUP_WARN_GB, rather than letting backups cause
+# the disk outage they exist to protect against.
+#
+# Every dump is checked with `pg_restore --list` before it counts as good. A
+# pg_dump can exit 0 and still be truncated if the disk fills, and a backup
+# that cannot be read is worse than none because it buys false confidence.
+set -uo pipefail
+
+MODE=${1:-frequent}
+OUT=${OUT:-/var/backups/postgres}
+LOG=${LOG:-/var/log/dev2-pg-backup.log}
+# Both classes roll on age, not count: "7 days of history" should mean the
+# same thing whichever dump you reach for.
+KEEP_FREQUENT_DAYS=${KEEP_FREQUENT_DAYS:-7}
+KEEP_FULL_DAYS=${KEEP_FULL_DAYS:-7}
+# Backups that quietly eat the disk would cause the outage they exist to
+# prevent. Flag it well before the disk alarm would.
+BACKUP_WARN_GB=${BACKUP_WARN_GB:-450}
+# A database with no policy that is bigger than this gets flagged rather than
+# silently dumped in full every four hours.
+UNPOLICIED_WARN_GB=${UNPOLICIED_WARN_GB:-5}
+
+mkdir -p "$OUT"
+stamp=$(date -u +%Y%m%d-%H%M%S)
+say() { echo "$(date -u '+%F %T') [$MODE] $*" >> "$LOG"; }
+alert() { logger -t dev2-pg-backup -p daemon.err "$*"; say "ALERT $*"; }
+
+psql_q() { docker exec -i supabase-db psql -U postgres -h localhost -d postgres -X -At -c "$1" 2>/dev/null; }
+
+# Tables excluded from the FREQUENT dump of each database. Everything here is
+# re-derivable from public dumps or re-crawlable; everything not here is not.
+exclusions_for() {
+  case "$1" in
+    nichedb)      echo "public.items" ;;
+    rssamplifier) echo "public.feed_items public.item_extracts public.feed_keywords" ;;
+    *)            echo "" ;;
+  esac
+}
+
+# Databases big enough that a full copy belongs in the daily job, not the
+# 4-hourly one.
+is_bulk() { [ -n "$(exclusions_for "$1")" ]; }
+
+dbs=$(psql_q "select datname from pg_database where not datistemplate and datallowconn order by datname")
+[ -n "$dbs" ] || { alert "cannot list databases — postgres unreachable"; exit 1; }
+
+rc=0
+for db in $dbs; do
+  size_gb=$(psql_q "select (pg_database_size('$db')/1024/1024/1024)::int")
+  excl=$(exclusions_for "$db")
+
+  if [ "$MODE" = full ]; then
+    # The daily job only exists to capture the bulk tables the frequent job
+    # skips. Databases with no exclusions are already complete every 4 hours.
+    is_bulk "$db" || continue
+    f="$OUT/${db}-full-${stamp}.dump"
+    args=()
+  else
+    f="$OUT/${db}-${stamp}.dump"
+    args=()
+    for t in $excl; do args+=(--exclude-table="$t"); done
+    # An unknown database that is large would quietly cost a full dump six
+    # times a day. Back it up, but say so.
+    if [ -z "$excl" ] && [ "${size_gb:-0}" -ge "$UNPOLICIED_WARN_GB" ]; then
+      alert "$db is ${size_gb}GB with no exclusion policy — it is being dumped in full every 4h; add a policy to exclusions_for()"
+    fi
+  fi
+
+  if docker exec -i supabase-db pg_dump -U postgres -h localhost -Fc "${args[@]}" -d "$db" > "$f" 2>>"$LOG"; then
+    sz=$(du -h "$f" | cut -f1)
+    if docker exec -i supabase-db pg_restore --list < "$f" >/dev/null 2>&1; then
+      say "ok   $db $sz${excl:+ (excluding:$excl)}"
+    else
+      alert "$db dump is unreadable by pg_restore"
+      rc=1
+    fi
+  else
+    alert "pg_dump failed for $db"
+    rm -f "$f"
+    rc=1
+  fi
+done
+
+# Retention: both classes roll on age, 7 days each by default.
+find "$OUT" -name '*-[0-9]*.dump' ! -name '*-full-*' -mtime +"$KEEP_FREQUENT_DAYS" -delete 2>/dev/null
+
+# Fulls also roll on age, but never delete the newest one for a database. If
+# the daily job were broken for a fortnight, pure age-based expiry would
+# cheerfully leave that database with no complete backup at all — exactly when
+# you most need one.
+for db in $dbs; do
+  newest=$(ls -1t "$OUT/${db}-full-"*.dump 2>/dev/null | head -1)
+  while IFS= read -r old; do
+    [ -n "$old" ] || continue
+    [ "$old" = "$newest" ] && continue
+    rm -f "$old"
+  done < <(find "$OUT" -name "${db}-full-*.dump" -mtime +"$KEEP_FULL_DAYS" 2>/dev/null)
+done
+
+total=$(du -sh "$OUT" 2>/dev/null | cut -f1)
+total_gb=$(du -s --block-size=1G "$OUT" 2>/dev/null | cut -f1)
+avail=$(df -h --output=avail / | tail -1 | tr -d ' ')
+say "retained $(ls -1 "$OUT"/*.dump 2>/dev/null | wc -l) dumps, $total total, $avail free on /"
+if [ "${total_gb:-0}" -ge "$BACKUP_WARN_GB" ]; then
+  alert "backups are using ${total_gb}GB (warn at ${BACKUP_WARN_GB}GB). Seven days of full dumps of the bulk databases is the likely cause — shorten KEEP_FULL_DAYS or move them off-box."
+fi
+
+# Backups are useless if they are all on the machine that fails. Say so every
+# run so it is never quietly forgotten.
+say "NOTE same-box only — does not survive losing dev2; off-box copy still missing"
+exit $rc
+PGBACKUP
+  } > "$dest"
+  chmod 755 "$dest"
+
+  cat > /etc/cron.d/dev2-pg-backup <<'CRON'
+# frequent: everything that cannot be re-derived, ~800 MB and under a minute.
+# full: the complete copies including the bulk tables, kept 7 days.
+# 05:20 sits after the 04:17 build-cache prune so they never overlap.
+0 */4 * * * root /usr/local/bin/dev2-pg-backup.sh frequent
+20 5 * * *  root /usr/local/bin/dev2-pg-backup.sh full
+CRON
+  chmod 644 /etc/cron.d/dev2-pg-backup
+  echo "    installed $dest; log: /var/log/dev2-pg-backup.log"
+  echo "    NOTE these live on this box; ops/selfhost/server/pull-backups.sh copies them off it"
 }
 
 # Docker build cache is the biggest non-database consumer on a box that builds
