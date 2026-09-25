@@ -7,6 +7,7 @@ import { AccountTrend } from "@/components/ads/account-trend";
 import { RangeTabs } from "@/components/ads/range-tabs";
 import { StatSpark } from "@/components/ads/stat-spark";
 import { StatsUnavailable } from "@/components/stats-unavailable";
+import { MediaSplitCard } from "@/components/ads/media-split-card";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -22,6 +23,7 @@ import {
   type CampaignDailyPoint,
   type RangeTotals,
 } from "@/lib/ads/series";
+import { getMediaSplit, type MediaSplitRow } from "@/lib/ads/media-stats";
 import { resolveRange } from "@/lib/ads/ranges";
 import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 
@@ -77,8 +79,13 @@ export default async function AdsPage({
   let statsFailed = false;
   let seriesFailed = false;
   let dailyFailed = false;
+  let mediaSplit: MediaSplitRow[] = [];
+  // Its own flag rather than folding into statsFailed: the split reads a
+  // different RPC, and a card that cannot load must not make the tiles above it
+  // claim they could not either.
+  let mediaSplitFailed = false;
   if (user) {
-    const [{ data }, { data: profile }, accountSeries, campaignTotals] = await Promise.all([
+    const [{ data }, { data: profile }, accountSeries, campaignTotals, split] = await Promise.all([
       supabase
         .from("ad_campaigns")
         .select(
@@ -92,6 +99,7 @@ export default async function AdsPage({
         .maybeSingle(),
       getAccountSeries(supabase, range),
       getCampaignRangeTotals(supabase, range),
+      getMediaSplit(supabase, range),
     ]);
     creditsAvailable = (profile?.credits_balance ?? 0) + (profile?.ad_bonus_credits ?? 0);
     campaigns = (data as CampaignRow[]) ?? [];
@@ -105,6 +113,8 @@ export default async function AdsPage({
     seriesById = daily.data;
     seriesFailed = accountSeries.failed;
     dailyFailed = daily.failed;
+    mediaSplit = split.data;
+    mediaSplitFailed = split.failed;
     statsFailed = accountSeries.failed || campaignTotals.failed || daily.failed;
   }
 
@@ -195,6 +205,17 @@ export default async function AdsPage({
           <div className="mt-4">
             <AccountTrend data={series} range={range} failed={seriesFailed} />
           </div>
+
+          {/* Which presentation the server chose, per fill. Below the chart
+              because it explains the delivery the chart plots rather than adding
+              a measure of its own. */}
+          {mediaSplitFailed ? (
+            <div className="mt-4">
+              <StatsUnavailable what="the delivery-by-medium split" />
+            </div>
+          ) : (
+            <MediaSplitCard rows={mediaSplit} rangeHint={range.hint} />
+          )}
         </>
       )}
 
