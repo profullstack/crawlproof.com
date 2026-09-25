@@ -6,7 +6,10 @@ import { FontSparkline } from "@/components/font-sparkline";
 import { BOTS_DEFINITION, HUMANS_DEFINITION, VISITORS_DEFINITION } from "@/lib/tracker/humans";
 import { fetchVisitorDailySeries } from "@/lib/tracker/visitors";
 import { ProjectLogo } from "@/components/project-logo";
+import { Suspense } from "react";
 import { StatsUnavailable } from "@/components/stats-unavailable";
+import { ListFilter, ListPager } from "@/components/list-filter";
+import { filterAndPaginate, needsFilter, parseListQuery } from "@/lib/list-filter";
 import { backfillProjectLogo } from "@/app/actions/createProject";
 import { getOrCreateDefaultOrg, isOrgWideRole, listUserOrgs, missingOrgSchema } from "@/lib/orgs";
 import { listOrgTeam } from "@/app/actions/org-members";
@@ -41,9 +44,16 @@ const FILTERS: { id: StatusFilter; label: string }[] = [
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; org?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    org?: string;
+    q?: string;
+    page?: string;
+  }>;
 }) {
-  const { status: statusParam, org: orgParam } = await searchParams;
+  const params = await searchParams;
+  const { status: statusParam, org: orgParam } = params;
+  const listQuery = parseListQuery(params);
   const status: StatusFilter =
     statusParam === "paused" || statusParam === "archived"
       ? statusParam
@@ -117,6 +127,17 @@ export default async function DashboardPage({
     fetchOrgTeam(selectedOrg && isOrgWideRole(selectedOrg.role) ? selectedOrgId : null),
   ]);
   const projects = ((projectsRaw ?? []) as unknown) as DashboardProject[];
+
+  // Search and paging over the list the query already returned. Status stays in
+  // SQL (the tablist above, which is also what `counts` describes); this is the
+  // dimension that cannot be a tab, because a project is found by name.
+  const projectPage = filterAndPaginate(
+    projects,
+    listQuery,
+    { fields: (p: DashboardProject) => [p.name, p.url] },
+    24,
+  );
+  const showProjectFilter = needsFilter(projects.length);
 
   // Per-project autoblog/social enablement. Autoblog is "on" when the
   // project has an lx_site row in status=active; social is "on" when at
@@ -194,13 +215,36 @@ export default async function DashboardPage({
           </div>
         </div>
 
+        {/* Search sits below the status tabs rather than beside them: the tabs
+            are the coarse cut and change what `counts` describes, this is how a
+            named project is found inside the cut. */}
+        {showProjectFilter && (
+          <div className="mb-3">
+            <Suspense fallback={null}>
+              <ListFilter
+                total={projects.length}
+                shown={projectPage.total}
+                label="projects"
+                placeholder="Search name or URL…"
+              />
+            </Suspense>
+          </div>
+        )}
+
         {projects && projects.length > 0 && trafficFailed && (
           <StatsUnavailable what="traffic for these projects" />
         )}
 
+        {projects.length > 0 && projectPage.total === 0 && (
+          <div className="card p-8 text-center text-[var(--color-muted)]">
+            No projects match that search.
+          </div>
+        )}
+
         {projects && projects.length > 0 ? (
+          <>
           <ul className="grid gap-3 md:grid-cols-2">
-            {projects.map((p) => (
+            {projectPage.items.map((p) => (
               <li key={p.id} className="card p-4">
                 <Link href={`/dashboard/projects/${p.id}`} className="block">
                   <div className="flex items-start justify-between gap-3">
@@ -301,6 +345,15 @@ export default async function DashboardPage({
               </li>
             ))}
           </ul>
+          <Suspense fallback={null}>
+            <ListPager
+              page={projectPage.page}
+              pages={projectPage.pages}
+              total={projectPage.total}
+              label="projects"
+            />
+          </Suspense>
+          </>
         ) : (
           <p className="text-[var(--color-muted)]">
             {status === "active" ? (

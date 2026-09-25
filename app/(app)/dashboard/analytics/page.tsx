@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { rpcFailed } from "@/lib/loaded";
 import { StatsUnavailable } from "@/components/stats-unavailable";
+import { ListFilter, ListPager } from "@/components/list-filter";
+import { filterAndPaginate, needsFilter, parseListQuery } from "@/lib/list-filter";
 import { ProjectLogo } from "@/components/project-logo";
 import { FontSparkline } from "@/components/font-sparkline";
 import { bucketLabel } from "@/lib/tracker/categorize";
@@ -98,9 +101,16 @@ type ProjectRow = {
 export default async function PortfolioAnalyticsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ days?: string; org?: string }>;
+  searchParams: Promise<{
+    days?: string;
+    org?: string;
+    q?: string;
+    page?: string;
+  }>;
 }) {
-  const { days: daysParam, org: orgParam } = await searchParams;
+  const params = await searchParams;
+  const { days: daysParam, org: orgParam } = params;
+  const listQuery = parseListQuery(params);
   const days = parseRange(daysParam);
 
   const supabase = await createClient();
@@ -304,6 +314,18 @@ export default async function PortfolioAnalyticsPage({
   const withTraffic = rows.filter(
     (r) => r.totals.humans > 0 || r.totals.prevHumans > 0,
   );
+
+  // Search and paging for the per-property table ONLY. The portfolio verdict,
+  // the totals and the stacked chart above it deliberately keep reading every
+  // row: they describe the portfolio, and a chart that moved when you searched
+  // for one site would answer a different question than its title claims.
+  const tablePage = filterAndPaginate(
+    rows,
+    listQuery,
+    { fields: (r: ProjectRow) => [r.project.name] },
+    25,
+  );
+  const showTableFilter = needsFilter(rows.length);
   const verdict = portfolioVerdict(
     trends.humans,
     withTraffic.map((r) => r.trend.direction),
@@ -570,7 +592,27 @@ export default async function PortfolioAnalyticsPage({
                 Manage projects
               </Link>
             </div>
-            <ProjectTrendTable rows={rows} />
+            {showTableFilter && (
+              <div className="mb-3">
+                <Suspense fallback={null}>
+                  <ListFilter
+                    total={rows.length}
+                    shown={tablePage.total}
+                    label="properties"
+                    placeholder="Search property name…"
+                  />
+                </Suspense>
+              </div>
+            )}
+            <ProjectTrendTable rows={tablePage.items} />
+            <Suspense fallback={null}>
+              <ListPager
+                page={tablePage.page}
+                pages={tablePage.pages}
+                total={tablePage.total}
+                label="properties"
+              />
+            </Suspense>
             {missingSparklines > 0 && (
               <p className="mt-3 text-xs text-[var(--color-muted)]">
                 Sparklines are shown for the {detailCount} highest-traffic

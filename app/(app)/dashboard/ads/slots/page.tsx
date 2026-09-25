@@ -4,6 +4,14 @@ import { env } from "@/lib/env";
 import { fetchSupportedTokens } from "@/lib/coinpay-tokens";
 import { SlotManager } from "@/components/ads/slot-manager";
 import { StatsUnavailable } from "@/components/stats-unavailable";
+import { ListFilter, ListPager } from "@/components/list-filter";
+import {
+  filterAndPaginate,
+  needsFilter,
+  parseListQuery,
+  statusCounts,
+} from "@/lib/list-filter";
+import { Suspense } from "react";
 import {
   deliveredClicks,
   deliveredImpressions,
@@ -42,7 +50,12 @@ type Payout = {
   created_at: string;
 };
 
-export default async function SlotsPage() {
+export default async function SlotsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; status?: string; page?: string }>;
+}) {
+  const listQuery = parseListQuery(await searchParams);
   const supabase = await createClient();
   const {
     data: { user },
@@ -103,6 +116,23 @@ export default async function SlotsPage() {
 
   const slotByProject = new Map(slots.map((s) => [s.project_id, s]));
 
+  // The status here is the SLOT's, not the project's — which is the question
+  // this page is actually about. "No slot" is a first-class value rather than an
+  // absence: a site that has never been monetised is exactly what someone
+  // filtering this page is usually looking for, and 20260829's embed gotcha is
+  // that a new slot is born inactive, so "inactive" is worth being able to
+  // isolate too.
+  const slotStatusOf = (p: Project) => slotByProject.get(p.id)?.status ?? "no slot";
+  const filterSpec = {
+    fields: (p: Project) => [p.name, p.url, slotStatusOf(p)],
+    statusOf: slotStatusOf,
+  };
+  const paged = filterAndPaginate(projects, listQuery, filterSpec, 10);
+  const statusOptions = [...statusCounts(projects, listQuery, filterSpec)]
+    .sort((a, b) => b[1] - a[1])
+    .map(([value, count]) => ({ value, label: value, count }));
+  const showFilter = needsFilter(projects.length);
+
   return (
     <div className="mx-auto max-w-3xl">
       <Link href="/dashboard/ads" className="text-sm text-[var(--color-muted)]">
@@ -139,8 +169,32 @@ export default async function SlotsPage() {
           to enable a slot.
         </div>
       ) : (
+        <>
+          {/* Each row is a whole slot manager — embed snippets, payout address,
+              per-format controls — so this list is far taller per item than it
+              looks. Paging it matters more here than the item count suggests. */}
+          {showFilter && (
+            <div className="mt-6">
+              <Suspense fallback={null}>
+                <ListFilter
+                  total={projects.length}
+                  shown={paged.total}
+                  statuses={statusOptions}
+                  label="sites"
+                  placeholder="Search site name or URL…"
+                />
+              </Suspense>
+            </div>
+          )}
+
+          {paged.total === 0 && (
+            <div className="card mt-4 p-8 text-center text-[var(--color-muted)]">
+              No sites match that filter.
+            </div>
+          )}
+
         <ul className="mt-6 space-y-3">
-          {projects.map((p) => {
+          {paged.items.map((p) => {
             const slot = slotByProject.get(p.id) ?? null;
             const earned = slot ? earnedBySlot.get(slot.id) ?? 0 : 0;
             const withdrawn = slot ? withdrawnBySlot.get(slot.id) ?? 0 : 0;
@@ -169,6 +223,16 @@ export default async function SlotsPage() {
             );
           })}
         </ul>
+
+          <Suspense fallback={null}>
+            <ListPager
+              page={paged.page}
+              pages={paged.pages}
+              total={paged.total}
+              label="sites"
+            />
+          </Suspense>
+        </>
       )}
     </div>
   );
