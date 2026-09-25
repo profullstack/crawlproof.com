@@ -336,6 +336,13 @@ export function posterArgs(inPath: string, outPath: string): string[] {
  * drift into describing different offers. A silent creative has no companion:
  * five seconds of silence would be recorded as an audio ad having played, and
  * the spec is explicit that silence never satisfies an audio slot.
+ *
+ * It carries the same mastering as the picture's own track. This is the file a
+ * music player asks for, and it is built from the raw narration rather than
+ * from the finished video, so without the filter here it keeps whatever level
+ * the voice came back at. That was the whole of the bug on this path: the
+ * video was brought up to streaming level while the audible spot, which is the
+ * only thing a radio or music listener ever gets, stayed near -29 dB.
  */
 export function audioCompanionArgs(inPath: string, outPath: string): string[] {
   return [
@@ -344,6 +351,8 @@ export function audioCompanionArgs(inPath: string, outPath: string): string[] {
     "-i",
     inPath,
     "-vn",
+    "-af",
+    LOUDNESS,
     "-c:a",
     "aac",
     "-profile:a",
