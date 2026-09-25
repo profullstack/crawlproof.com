@@ -7,7 +7,7 @@ import {
   timeline,
 } from "@/lib/ads/video/compose";
 import type { VideoDesignSnapshot } from "@/lib/ads/video/snapshot";
-import { AAC_LC_CODEC, avcCodecString, GOP_FRAMES, hlsArgs, mp4Args, multivariantPlaylist, posterArgs } from "@/lib/ads/video/encode";
+import { AAC_LC_CODEC, audioCompanionArgs, avcCodecString, GOP_FRAMES, hlsArgs, mp4Args, multivariantPlaylist, posterArgs } from "@/lib/ads/video/encode";
 import {
   evaluateProbe,
   parseRational,
@@ -537,5 +537,22 @@ describe("loudness", () => {
     });
     expect(a).toContain("-an");
     expect(a.join(" ")).not.toContain("loudnorm");
+  });
+
+  it("masters the audible companion too, not only the picture", () => {
+    // The companion is built from the raw narration, not from the finished
+    // video, so it does not inherit the video track's mastering. A music
+    // player asks for this file and nothing else, which makes it the only
+    // thing most listeners ever hear.
+    const a = audioCompanionArgs("/tmp/narration.mp3", "/tmp/audio.m4a");
+    expect(a[a.indexOf("-af") + 1]).toBe("loudnorm=I=-16:TP=-1.5:LRA=11");
+  });
+
+  it("gives the companion the same target and ceiling as the video", () => {
+    // Two levels for one spot would mean the advert changed loudness when a
+    // listener moved between a video slot and an audio one.
+    const companion = audioCompanionArgs("/tmp/narration.mp3", "/tmp/audio.m4a");
+    const filter = companion[companion.indexOf("-af") + 1];
+    expect(narrated().join(" ")).toContain(filter);
   });
 });
