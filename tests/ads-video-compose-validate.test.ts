@@ -485,3 +485,55 @@ describe("a music bed under the narration", () => {
     expect(a[a.indexOf("-af") + 1]).toBe("apad");
   });
 });
+
+describe("loudness", () => {
+  const narrated = () =>
+    mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: "/tmp/narration.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+  const withBed = () =>
+    mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: "/tmp/narration.mp3",
+      musicPath: "/tmp/bed.mp3",
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+
+  it("brings a narrated spot up to streaming level", () => {
+    // Renders were landing at -30 dB mean: audible only to someone who had
+    // already turned everything up, which is the one moment an advert must not
+    // ask them to.
+    expect(narrated().join(" ")).toContain("loudnorm=I=-16");
+  });
+
+  it("normalises the mix, not the voice before the bed joins it", () => {
+    const f = withBed().join(" ");
+    // Normalising the voice alone would move it relative to the bed and undo
+    // the -16 dB the bed was placed at.
+    expect(f).toMatch(/amix=[^;]*normalize=0,loudnorm=/);
+  });
+
+  it("caps true peak, so lifting a quiet source cannot clip it", () => {
+    // A clipped voice is worse than a quiet one.
+    expect(narrated().join(" ")).toContain("TP=-1.5");
+    expect(withBed().join(" ")).toContain("TP=-1.5");
+  });
+
+  it("a silent spot gains no audio filter", () => {
+    const a = mp4Args({
+      framePattern: "/tmp/f-%04d.png",
+      audioPath: null,
+      outPath: "/tmp/out.mp4",
+      profile: "master_1080p",
+      videoKbps: 4000,
+    });
+    expect(a).toContain("-an");
+    expect(a.join(" ")).not.toContain("loudnorm");
+  });
+});
