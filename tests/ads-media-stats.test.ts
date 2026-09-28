@@ -7,6 +7,7 @@ import {
   rotatedImpressions,
   MIN_CLICKS_TO_COMPARE,
   UNATTRIBUTED,
+  FIXED_FORMAT,
 } from "@/lib/ads/media-stats";
 
 /** An RPC row, with the zeros the RPC would actually send. */
@@ -32,6 +33,40 @@ function row(
 }
 
 describe("shaping the split", () => {
+  it("keeps fixed-format delivery out of the static arm's share", () => {
+    // The production shape on 2026-09-28: feed items are ~95% of fills and can
+    // only render static. Counted as the static arm they read "Static 98.7%".
+    const rows = mediaSplitRows([
+      row("static", { free_impressions: 46 }),
+      row("image", { free_impressions: 30 }),
+      row("gif", { free_impressions: 24 }),
+      row(FIXED_FORMAT, { free_impressions: 190_000, free_clicks: 2_000 }),
+    ]);
+    const byMedia = Object.fromEntries(rows.map((r) => [r.media, r]));
+    expect(byMedia.static.share).toBeCloseTo(0.46);
+    expect(byMedia[FIXED_FORMAT].rotated).toBe(false);
+    expect(byMedia[FIXED_FORMAT].share).toBe(0);
+    // A crawler replaying feed-item links is not a rate for anything...
+    expect(byMedia[FIXED_FORMAT].ctr).toBeNull();
+    // ...and its clicks do not open the CTR gate for the real arms.
+    expect(ctrReadable(rows)).toBe(false);
+  });
+
+  it("gives the unattributed bucket no rate", () => {
+    const [r] = mediaSplitRows([row(UNATTRIBUTED, { free_impressions: 100, free_clicks: 8 })]);
+    expect(r.ctr).toBeNull();
+  });
+
+  it("orders arms, then fixed format, then unattributed", () => {
+    const rows = mediaSplitRows([
+      row(UNATTRIBUTED, { free_impressions: 9_000 }),
+      row(FIXED_FORMAT, { free_impressions: 90_000 }),
+      row("gif", { free_impressions: 5 }),
+      row("static", { free_impressions: 10 }),
+    ]);
+    expect(rows.map((r) => r.media)).toEqual(["static", "gif", FIXED_FORMAT, UNATTRIBUTED]);
+  });
+
   it("counts paid and free together, because a mix describes what was shown", () => {
     // Every fill on this network books free, so a paid-only impressions figure
     // would report the whole card as zeros — the #199 bug, one surface later.

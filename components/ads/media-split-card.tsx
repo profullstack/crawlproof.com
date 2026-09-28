@@ -2,6 +2,7 @@ import {
   attributedClicks,
   ctrReadable,
   ctrUnreadableNote,
+  FIXED_FORMAT,
   rotatedImpressions,
   UNATTRIBUTED,
   type MediaSplitRow,
@@ -27,6 +28,10 @@ const LABELS: Record<string, { name: string; hint: string }> = {
   gif: { name: "Animated", hint: "The rendered GIF at the slot's exact size." },
   video: { name: "In-banner video", hint: "Muted, looping MP4 with the CTA beneath." },
   audio: { name: "Audible companion", hint: "The unit plus a click-to-play control." },
+  [FIXED_FORMAT]: {
+    name: "Fixed format",
+    hint: "Feed items, text links and terminal units. One presentation, nothing to rotate. Excluded from every share and rate.",
+  },
   [UNATTRIBUTED]: {
     name: "Unattributed",
     hint: "Served before the rotation shipped, or a click whose impression cannot be resolved. Excluded from every share and rate.",
@@ -41,11 +46,11 @@ export function MediaSplitCard({
   rangeHint?: string;
 }) {
   const delivery = rotatedImpressions(rows);
-  const unattributed = rows.find((r) => !r.rotated);
+  const context = rows.some((r) => !r.rotated && r.impressions + r.clicks + r.freeClicks > 0);
 
   // Nothing rotated in this window. The card would be a header over an empty
   // table, and the tiles above already say whether there was any delivery.
-  if (delivery === 0 && !unattributed) return null;
+  if (delivery === 0 && !context) return null;
 
   const showCtr = ctrReadable(rows);
   const note = ctrUnreadableNote(rows);
