@@ -27,6 +27,16 @@ import { AD_MEDIA_KINDS, type AdMediaKind } from "./media";
  */
 export const UNATTRIBUTED = "unknown";
 
+/**
+ * The bucket for fills whose format has one presentation and nothing to rotate:
+ * feed items, text links, terminal units (see rotatesMedia). They serve as
+ * 'static' by construction, and they are most of the network's delivery, so
+ * booking them as the static arm made static win an arm it could not lose
+ * ("Static 98.7%" while a 300x250 split 46% static). Reported, never shared or
+ * rated. Bucketed in SQL by ad_media_bucket.
+ */
+export const FIXED_FORMAT = "fixed";
+
 export type MediaSplitRow = {
   media: string;
   /** True for the five real arms; false for UNATTRIBUTED. */
@@ -40,7 +50,9 @@ export type MediaSplitRow = {
   spentCents: number;
   /** Share of rotated delivery, 0-1. Zero for UNATTRIBUTED. */
   share: number;
-  /** clicks / impressions, or null when there is nothing to divide. */
+  /** clicks / impressions for a rotated arm; null when there is nothing to
+   *  divide, and always null for FIXED_FORMAT and UNATTRIBUTED, which are
+   *  context rather than arms and would otherwise show a crawler's CTR. */
   ctr: number | null;
 };
 
@@ -77,9 +89,10 @@ export function mediaSplitRows(rows: Row[]): MediaSplitRow[] {
     const clicks = n(r.clicks);
     const freeClicks = n(r.free_clicks);
     const impressions = paidImpressions + freeImpressions;
+    const rotated = isRotated(media);
     return {
       media,
-      rotated: isRotated(media),
+      rotated,
       impressions,
       paidImpressions,
       freeImpressions,
@@ -89,7 +102,7 @@ export function mediaSplitRows(rows: Row[]): MediaSplitRow[] {
       share: 0,
       // Null, not 0: "nobody clicked this" and "nothing was measured" are
       // different findings and only one of them is about the medium.
-      ctr: impressions > 0 ? (clicks + freeClicks) / impressions : null,
+      ctr: rotated && impressions > 0 ? (clicks + freeClicks) / impressions : null,
     };
   });
 
@@ -103,12 +116,11 @@ export function mediaSplitRows(rows: Row[]): MediaSplitRow[] {
     row.share = row.rotated && rotatedTotal > 0 ? row.impressions / rotatedTotal : 0;
   }
 
-  // Biggest arm first, and the unattributed bucket always last — it is context,
-  // not a competitor.
-  return mapped.sort((a, b) => {
-    if (a.rotated !== b.rotated) return a.rotated ? -1 : 1;
-    return b.impressions - a.impressions;
-  });
+  // Biggest arm first, then fixed-format delivery, and the unattributed bucket
+  // always last — both are context, not competitors.
+  const rank = (r: { rotated: boolean; media: string }) =>
+    r.rotated ? 0 : r.media === FIXED_FORMAT ? 1 : 2;
+  return mapped.sort((a, b) => rank(a) - rank(b) || b.impressions - a.impressions);
 }
 
 /** Rotated delivery in the window — the denominator, and whether there is one. */
