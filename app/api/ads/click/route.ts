@@ -3,7 +3,8 @@
 // still redirect somewhere safe rather than dead-ending the user.
 
 import { NextRequest, NextResponse } from "next/server";
-import { resolveClick } from "@/lib/ads/serve";
+import { BLOCKED_CLICK, resolveClick } from "@/lib/ads/serve";
+import { blockedClickResponse } from "@/lib/ads/blocked-click";
 import { lookupGeo } from "@/lib/tracker/geo";
 import { adClickIp } from "@/lib/ads/client-ip";
 import { parseDevice } from "@/lib/tracker/device";
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
       ctx: { visitorId, ip, country: geo?.countryCode ?? null, device },
     });
 
+    if (dest === BLOCKED_CLICK) return blockedClickResponse();
     return NextResponse.redirect(dest ?? fallback, { status: 302 });
   } catch {
     return NextResponse.redirect(fallback, { status: 302 });

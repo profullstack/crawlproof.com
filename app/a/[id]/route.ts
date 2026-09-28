@@ -10,7 +10,8 @@
 // impression row) redirect to the site rather than dead-ending.
 
 import { NextRequest, NextResponse } from "next/server";
-import { resolveClick } from "@/lib/ads/serve";
+import { BLOCKED_CLICK, resolveClick } from "@/lib/ads/serve";
+import { blockedClickResponse } from "@/lib/ads/blocked-click";
 import { serviceClient } from "@/lib/supabase/service";
 import { lookupGeo } from "@/lib/tracker/geo";
 import { adClickIp } from "@/lib/ads/client-ip";
@@ -107,6 +108,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       },
     });
 
+    if (dest === BLOCKED_CLICK) return blockedClickResponse();
     if (!dest) return NextResponse.redirect(fallback, { status: 302 });
     if (crawler) return NextResponse.redirect(dest, { status: 302, headers: { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } });
 

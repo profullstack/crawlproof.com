@@ -717,15 +717,28 @@ async function resolveClickVisitor(
   }
 }
 
+/**
+ * resolveClick's answer for a click that is refused outright: no row, no
+ * redirect. Today that is exactly one case, a click trailing an impression
+ * past its device's ceiling (see maxClickAgeMs). Those were recorded as
+ * invalid and still sent to the advertiser, which is what kept the harvesting
+ * crawler coming back — ~37k a month, every one of them replaying a feed-item
+ * link days to weeks after it was fetched. Nobody real is refused by it: no
+ * browser click in 30 days trailed its impression past 6h, and feed-reader
+ * impressions have no ceiling at all.
+ */
+export const BLOCKED_CLICK = Symbol("blocked-click");
+
 // Resolve a click: record it, return the destination URL (with ?ref=) to
-// redirect to. Returns null if the campaign/creative can't be resolved.
+// redirect to. Returns null if the campaign/creative can't be resolved, and
+// BLOCKED_CLICK if the click is refused.
 export async function resolveClick(input: {
   impressionId?: string | null;
   slotId?: string | null;
   campaignId?: string | null;
   creativeId?: string | null;
   ctx?: ServeContext;
-}): Promise<string | null> {
+}): Promise<string | null | typeof BLOCKED_CLICK> {
   const sb = serviceClient();
   if (!input.campaignId) return null;
 
@@ -753,6 +766,7 @@ export async function resolveClick(input: {
       ipHashes: rotatingIpHashCandidates(input.ctx?.ip ?? null, CLICK_DEDUPE_WINDOW_MS),
       device: input.ctx?.device,
     });
+    if (validity.reason === "stale_impression") return BLOCKED_CLICK;
     if (validity.valid) {
       const admission = await claimClickCooldown({ visitorId, ip: input.ctx?.ip });
       if (!admission.allowed) validity = { valid: false, reason: admission.reason };
