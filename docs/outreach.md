@@ -1,8 +1,15 @@
-# Leads — automated lead generation & cold outreach
+# Leads — lead generation & cold outreach
 
 Find businesses that need what CrawlProof sells, scan their sites, write a
-cold email that cites what the scan actually found, and send it — on a
-schedule, without anyone in the loop.
+cold email that cites what the scan actually found, and send it.
+
+> **The campaign autopilot was removed on 2026-09-29.** It ran every 15
+> minutes and, once its sender mailbox stopped authenticating, re-drafted the
+> same 26 prospects on every tick: ~2,800 model calls and ~$56 a day for four
+> days with nothing sent. Finding, researching, drafting and sending leads is
+> now manual only (the Leads tab, or the MCP tools below). The
+> `outreach_campaigns` / `outreach_campaign_runs` tables and their history are
+> kept; nothing reads or schedules them any more.
 
 **Leads are project-scoped.** They live at `/projects/[id]/leads` (the
 "Leads" tab), and every MCP tool takes a `project`. The same agency runs
@@ -60,10 +67,6 @@ re-enters mid-funnel on every tick.
 
 - **Find leads** — a search query, or a directory page whose outbound links
   become candidates. Each new domain gets a free scan queued immediately.
-- **Campaigns** — the autopilot. Create one with sources and caps; it starts
-  in drafts-only mode. "Run now" ticks it by hand; "Enable sending" is a
-  deliberate second act, and is disabled entirely until the postal address is
-  configured.
 - **Pipeline** — every lead with its score, contact, top findings, fix quote
   and report link. Per-lead: *Rescan*, *Draft email*, *Never contact*.
 - **Sending is two clicks.** *Test (dry run)* runs the entire path —
@@ -86,7 +89,6 @@ is just one.
 | `research_lead` | Scan the site, price the fix, find the published contact. `contact_only` skips the scan; `person` guesses an address with SMTP verification |
 | `draft_message` | Grounded draft — from the scan (email) or from what they asked (Reddit) |
 | `send_message` | The only tool that contacts anyone. **Dry run unless `dry_run: false`** |
-| `campaign` | `create` / `update` / `run` / `list`. `{action:'update', name, active:false}` is the kill switch |
 | `leads` | Pipeline summary, or `format: csv \| json` to export |
 | `suppress` | Do-not-contact: an address, a whole domain, or a Reddit user |
 
@@ -96,9 +98,6 @@ These are the design, not a safety bolt-on. Cold outreach that ignores them
 costs a sending domain, and a domain does not come back.
 
 - **Dry run by default** everywhere that touches the outside world.
-- **`auto_send` defaults false.** A new campaign discovers, scans, researches
-  and drafts on its own, logging each message as a dry run. Read a few, then
-  enable sending deliberately.
 - **Global do-not-contact list** (`outreach_suppressions`), scoped to an
   address, a whole domain, or a Reddit user. Global on purpose: an opt-out is
   a promise CrawlProof makes, not one that a single user makes.
@@ -140,9 +139,9 @@ costs a sending domain, and a domain does not come back.
    VALUESERP_API_KEY=…                   # optional; better discovery than the free engines
    ```
 
-3. **Cron** — `POST /api/cron/outreach` with `x-cron-secret`, every 15
-   minutes. Ticking faster doesn't help: the slow step is the scan worker and
-   the daily caps are the real throttle.
+3. **Cron** — none for sending. The `crawlproof-outreach` pg_cron job was
+   unscheduled with the autopilot (migration `20260929090000`). The reply
+   scan (`/api/cron/outreach-replies`) still runs.
 
 4. **Reddit** — reconnect the account at Settings → Social. The OAuth scopes
    grew (`read`, `privatemessages`); connections made before that get a 403

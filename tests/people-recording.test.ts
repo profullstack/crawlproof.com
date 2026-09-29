@@ -86,13 +86,7 @@ describe("both discovery paths record people", () => {
   // dropped `people` entirely, so every person found by a campaign was
   // discarded after being rendered, paginated and parsed for. The finder did
   // it correctly, which is precisely why nobody noticed.
-  const runner = readFileSync(new URL("../lib/outreach/runner.ts", import.meta.url), "utf8");
   const action = readFileSync(new URL("../app/actions/leads.ts", import.meta.url), "utf8");
-
-  it("the campaign runner records the people it names", () => {
-    expect(runner).toContain("recordDiscoveredPeople");
-    expect(runner).toContain("found.people");
-  });
 
   it("the one-shot finder records them too", () => {
     expect(action).toContain("recordDiscoveredPeople");
@@ -100,7 +94,6 @@ describe("both discovery paths record people", () => {
 
   it("both go through the one shared recorder", () => {
     // Two copies is what let them drift the first time.
-    expect(runner).not.toMatch(/upsertContact\(/);
     expect(action).not.toMatch(/upsertContact\(/);
   });
 });
