@@ -15,6 +15,7 @@ import { discoverProspects } from "./discover";
 import { isEmailSuppressed, sendsInLast24h } from "./suppress";
 import {
   PROSPECT_COLUMNS,
+  checkRecipient,
   draftEmail,
   isWeakEnough,
   latestAuditForHost,
@@ -195,6 +196,10 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
   );
 
   // ---- 1. Follow-ups. Finishing a started conversation beats starting one.
+  // Set when a draft or a send fails for a reason that is not the prospect's.
+  // Both loops below stop on it: the rest of the tick would pay for the same
+  // failure again.
+  let halted = false;
   if (campaign.follow_ups) {
     const due = prospects
       .filter((p) => p.status === "contacted" && p.last_sent_at && p.last_step >= 1 && p.last_step < 3)
@@ -212,6 +217,10 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
       const outcome = await draftAndSend(campaign, p, step);
       applyOutcome(result, outcome);
       if (outcome.kind === "sent") sendBudget -= 1;
+      if ("halt" in outcome && outcome.halt) {
+        halted = true;
+        break;
+      }
     }
   }
 
@@ -233,7 +242,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     )
     .slice(0, MAX_SEND_PER_TICK);
 
-  for (const p of ready) {
+  for (const p of halted ? [] : ready) {
     if (sendBudget <= 0) {
       result.skipped.push(`${p.target_key}: daily send budget exhausted`);
       break;
@@ -242,6 +251,7 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
     const outcome = await draftAndSend(campaign, p, 1);
     applyOutcome(result, outcome);
     if (outcome.kind === "sent") sendBudget -= 1;
+    if ("halt" in outcome && outcome.halt) break;
   }
 
   // Prospects that scored too well are not a lie we're willing to tell.
@@ -528,11 +538,48 @@ export async function runEmailCampaignTick(campaign: CampaignRow): Promise<TickR
   return result;
 }
 
+// halt: the failure was the provider's or the sender's, not this prospect's,
+// so every later prospect in the tick would fail identically, and a failed
+// draft is still a billed model call.
 type Outcome =
   | { kind: "sent"; host: string }
   | { kind: "dry"; host: string }
-  | { kind: "skipped"; host: string; reason: string }
-  | { kind: "error"; host: string; reason: string };
+  | { kind: "skipped"; host: string; reason: string; halt?: boolean }
+  | { kind: "error"; host: string; reason: string; halt?: boolean };
+
+// How long a logged draft stays good enough to send instead of paying for a
+// new one. Long enough to ride out a broken mailbox over a weekend; short
+// enough that an edited campaign pitch reaches the queue within the week.
+const DRAFT_REUSE_DAYS = 7;
+
+/**
+ * The newest draft already written for this prospect at this step.
+ *
+ * A send that fails, or a campaign with auto_send off, logs its draft and
+ * leaves the prospect where it was, so the next tick picks it up again.
+ * Drafting afresh each time is what turned one broken SMTP password into
+ * ~2,800 model calls a day for twenty-six people.
+ */
+async function reusableDraft(
+  campaign: CampaignRow,
+  prospect: ProspectRow,
+  step: OutreachStep,
+): Promise<{ ok: true; subject: string; body: string } | null> {
+  const since = new Date(Date.now() - DRAFT_REUSE_DAYS * 24 * 3600 * 1000).toISOString();
+  const { data } = await serviceClient()
+    .from("outreach_sends")
+    .select("subject, body")
+    .eq("prospect_id", prospect.id)
+    .eq("campaign", campaign.name)
+    .eq("step", step)
+    .gte("sent_at", since)
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const row = data as { subject: string | null; body: string | null } | null;
+  if (!row?.subject?.trim() || !row.body?.trim()) return null;
+  return { ok: true, subject: row.subject, body: row.body };
+}
 
 
 /**
@@ -557,15 +604,41 @@ async function draftAndSend(
   prospect: ProspectRow,
   step: OutreachStep,
 ): Promise<Outcome> {
-  const draft = await draftEmail({
+  // Who it is going to is settled before anything is paid for. A machine
+  // mailbox or an unsubscribed address will never become sendable, so it
+  // leaves the queue rather than being drafted for on every tick.
+  const recipient = await checkRecipient({
+    userId: campaign.owner_id,
     prospect,
     step,
-    angle: campaign.angle,
-    sender: campaign.sender_name,
-    pitch: campaignPitch(campaign),
+    campaign: campaign.name,
   });
+  if (!recipient.ok) {
+    if (recipient.permanent) {
+      await serviceClient()
+        .from("outreach_prospects")
+        .update({ status: "skipped", notes: recipient.reason })
+        .eq("id", prospect.id);
+    }
+    return { kind: "skipped", host: prospect.target_key, reason: recipient.reason };
+  }
+
+  const draft =
+    (await reusableDraft(campaign, prospect, step)) ??
+    (await draftEmail({
+      prospect,
+      step,
+      angle: campaign.angle,
+      sender: campaign.sender_name,
+      pitch: campaignPitch(campaign),
+    }));
   if (!draft.ok) {
-    return { kind: "error", host: prospect.target_key, reason: draft.problems.join("; ") };
+    return {
+      kind: "error",
+      host: prospect.target_key,
+      reason: draft.problems.join("; "),
+      halt: draft.generationFailed,
+    };
   }
 
   // auto_send off means the campaign builds the whole funnel and stops at the
@@ -582,7 +655,9 @@ async function draftAndSend(
     dryRun: !campaign.auto_send,
   });
 
-  if (!outcome.ok) return { kind: "skipped", host: prospect.target_key, reason: outcome.reason };
+  if (!outcome.ok) {
+    return { kind: "skipped", host: prospect.target_key, reason: outcome.reason, halt: outcome.transport };
+  }
   return outcome.dryRun
     ? { kind: "dry", host: prospect.target_key }
     : { kind: "sent", host: prospect.target_key };
