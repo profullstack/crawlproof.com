@@ -678,7 +678,9 @@ Hard rules, in order of importance:
 
 export type DraftResult =
   | { ok: true; subject: string; body: string; evidenceUsed: string[] }
-  | { ok: false; problems: string[] };
+  // generationFailed marks a provider failure rather than a bad draft: the
+  // next prospect would fail the same way, so a caller in a loop should stop.
+  | { ok: false; problems: string[]; generationFailed?: boolean };
 
 export async function draftEmail(input: {
   prospect: ProspectRow;
@@ -745,7 +747,11 @@ export async function draftEmail(input: {
     });
     output = res.output;
   } catch (err) {
-    return { ok: false, problems: [`generation failed: ${err instanceof Error ? err.message : "unknown"}`] };
+    return {
+      ok: false,
+      problems: [`generation failed: ${err instanceof Error ? err.message : "unknown"}`],
+      generationFailed: true,
+    };
   }
 
   // The model is the least trustworthy part of this pipeline, so its output
@@ -830,7 +836,11 @@ async function draftCustomEmail(input: {
     });
     output = res.output;
   } catch (err) {
-    return { ok: false, problems: [`generation failed: ${err instanceof Error ? err.message : "unknown"}`] };
+    return {
+      ok: false,
+      problems: [`generation failed: ${err instanceof Error ? err.message : "unknown"}`],
+      generationFailed: true,
+    };
   }
 
   // Facts, plus the intro and ask — everything the operator authored counts
@@ -873,26 +883,44 @@ async function draftCustomEmail(input: {
 
 export type SendOutcome =
   | { ok: true; dryRun: boolean; to: string; sentToday: number }
-  | { ok: false; reason: string };
+  // transport marks a failure of the sender itself (bad SMTP password, host
+  // down), not of this recipient. Every later send in the tick would fail the
+  // same way.
+  | { ok: false; reason: string; transport?: boolean };
 
 /**
- * The only function in the codebase that puts a cold email on the wire.
- * Everything protective lives here rather than in the callers, so a new
- * caller cannot forget it.
+ * A send error that says the sender is broken rather than this recipient:
+ * rejected SMTP credentials, or a relay that cannot be reached at all. A 550
+ * for one unknown user says nothing about the next address, so it is not one.
  */
-export async function sendProspectEmail(input: {
+export function isSenderFailure(error: string): boolean {
+  return /\b53[045]\b|invalid login|EAUTH|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|not set\b|not configured/i.test(
+    error,
+  );
+}
+
+export type RecipientCheck =
+  | { ok: true; to: string; sentToday: number }
+  // permanent means no later tick will change the answer, so the prospect can
+  // leave the queue instead of being drafted for again every fifteen minutes.
+  | { ok: false; reason: string; permanent: boolean };
+
+/**
+ * Whether this prospect may be emailed at this step, decided without a draft.
+ *
+ * Runs before drafting as well as inside sendProspectEmail, because a draft is
+ * a paid model call: checking only at the wire paid for a message to every
+ * noreply@ address on every tick, forever.
+ */
+export async function checkRecipient(input: {
   userId: string;
   prospect: ProspectRow;
-  subject: string;
-  body: string;
   step: OutreachStep;
   campaign: string;
   to?: string | null;
-  replyTo?: string | null;
-  dryRun: boolean;
-}): Promise<SendOutcome> {
+}): Promise<RecipientCheck> {
   const to = normalizeEmail(input.to ?? input.prospect.contact_email ?? "");
-  if (!looksLikeEmail(to)) return { ok: false, reason: "no usable recipient address" };
+  if (!looksLikeEmail(to)) return { ok: false, reason: "no usable recipient address", permanent: true };
 
   const sb = serviceClient();
   const [suppressed, unsubAt, sentToday, prior] = await Promise.all([
@@ -919,7 +947,37 @@ export async function sendProspectEmail(input: {
     sentToday,
     dailyCap: env.outreachDailyCap,
   });
-  if (reason) return { ok: false, reason: explainSuppression(reason) };
+  if (reason) {
+    return {
+      ok: false,
+      reason: explainSuppression(reason),
+      permanent: reason !== "daily-cap" && reason !== "already-contacted",
+    };
+  }
+  return { ok: true, to, sentToday };
+}
+
+/**
+ * The only function in the codebase that puts a cold email on the wire.
+ * Everything protective lives here rather than in the callers, so a new
+ * caller cannot forget it.
+ */
+export async function sendProspectEmail(input: {
+  userId: string;
+  prospect: ProspectRow;
+  subject: string;
+  body: string;
+  step: OutreachStep;
+  campaign: string;
+  to?: string | null;
+  replyTo?: string | null;
+  dryRun: boolean;
+}): Promise<SendOutcome> {
+  const check = await checkRecipient(input);
+  if (!check.ok) return { ok: false, reason: check.reason };
+  const { to, sentToday } = check;
+
+  const sb = serviceClient();
 
   const facts = factsOf(input.prospect);
   const claims = unsupportedClaims(input.body, facts);
@@ -994,7 +1052,7 @@ export async function sendProspectEmail(input: {
     track_token: failed ? null : trackToken,
   });
 
-  if (failed) return { ok: false, reason: failed };
+  if (failed) return { ok: false, reason: failed, transport: isSenderFailure(failed) };
 
   if (!input.dryRun) {
     await sb

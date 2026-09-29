@@ -161,6 +161,8 @@ async function generateWithAnthropic<T>(
   return parsed;
 }
 
+const OPENAI_REASONING_HEADROOM = 2048;
+
 async function generateWithOpenAI<T>(
   args: StructuredOutputArgs<T>,
 ): Promise<T> {
@@ -186,8 +188,13 @@ async function generateWithOpenAI<T>(
       "",
       "Return JSON only. The final answer must be valid JSON and must not include Markdown.",
     ].join("\n"),
-    max_output_tokens: args.maxTokens,
-    reasoning: { effort: "medium" },
+    // max_output_tokens counts reasoning as well as the answer, so without
+    // headroom a reasoning model spends the whole budget thinking and returns
+    // nothing, billed. The outreach drafts (900 tokens, medium effort) came
+    // back empty on most calls this way. A caller that turned thinking off for
+    // Anthropic wants the cheap path here too.
+    max_output_tokens: args.maxTokens + OPENAI_REASONING_HEADROOM,
+    reasoning: { effort: args.anthropicEffort === false ? "low" : (args.anthropicEffort ?? "medium") },
     text: { format },
     store: false,
   });
