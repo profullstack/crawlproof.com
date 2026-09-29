@@ -46,7 +46,6 @@ import { addSuppression, isEmailSuppressed, sendsInLast24h } from "@/lib/outreac
 import { describeAddressSource, resolvePostalAddress } from "@/lib/outreach/postalAddress";
 import { discoverProspects } from "@/lib/outreach/discover";
 import { enrichContact, findEmail, leadsToCsv, leadsToJson, type ExportableLead } from "@/lib/outreach/enrich";
-import { CAMPAIGN_COLUMNS, runEmailCampaignTick, summarize, type CampaignRow } from "@/lib/outreach/runner";
 import {
   draftRedditReply,
   findRedditThreads,
@@ -290,7 +289,7 @@ export function registerLeadTools(server: McpServer): void {
           "",
           ...lines,
           "",
-          "Next: research_lead({ url }) — or campaign({ action: 'create' }) to run this query on a schedule.",
+          "Next: research_lead({ url }).",
         ].join("\n"),
       );
     },
@@ -598,150 +597,6 @@ export function registerLeadTools(server: McpServer): void {
               "Pass dry_run: false to send it.",
             ].join("\n")
           : `Sent to ${outcome.to} — step ${step}. ${outcome.sentToday + 1}/${env.outreachDailyCap} sends used today.`,
-      );
-    },
-  );
-
-  // ------------------------------------------------------------ campaign
-  server.registerTool(
-    "campaign",
-    {
-      description:
-        "The autopilot. action 'create' sets up a campaign (search queries and/or directory pages, targeting, caps); 'update' changes one — {action:'update', name, active:false} is the kill switch; 'run' runs one tick now; 'list' shows them all. A campaign discovers, scans, researches and drafts on its own; it only SENDS when auto_send is true, which defaults false.",
-      inputSchema: {
-        project: z
-          .string()
-          .optional()
-          .describe("Project id, name, or site URL. Optional when the account has exactly one project."),
-        action: z.enum(["create", "update", "run", "list"]).describe("What to do."),
-        name: z.string().optional().describe("Campaign name. Required for create/update/run."),
-        queries: z.array(z.string()).optional().describe("Search queries, e.g. ['dentists in Miami']."),
-        seed_urls: z.array(z.string()).optional().describe("Directory pages whose outbound links are leads."),
-        max_score: z.number().optional().describe("Only pitch sites at or below this score. Default 70."),
-        daily_send_limit: z.number().optional().describe("Live sends per day. Default 10."),
-        target_pipeline: z.number().optional().describe("Leads to keep in the funnel. Default 25."),
-        auto_send: z.boolean().optional().describe("Default FALSE — build and draft, but don't send."),
-        follow_ups: z.boolean().optional().describe("Send steps 2 and 3 on schedule. Default true."),
-        angle: z.string().optional().describe("Standing emphasis for every draft."),
-        sender_name: z.string().optional().describe("Sign-off name."),
-        reply_to: z.string().optional().describe("Reply-To address."),
-        active: z.boolean().optional().describe("Whether the cron tick runs it."),
-      },
-    },
-    async (args, extra) => {
-      const userId = getUserId(extra);
-      const project = await resolveProject(userId, args.project);
-      if (!project.ok) return errorResult(project.error);
-      const sb = serviceClient();
-
-      if (args.action === "list") {
-        const { data } = await sb
-          .from("outreach_campaigns")
-          .select("name, active, auto_send, daily_send_limit, max_score, last_run_at, last_run_note")
-          .eq("project_id", project.id)
-          .order("updated_at", { ascending: false })
-          .limit(20);
-        const rows = (data as Array<Record<string, unknown>> | null) ?? [];
-        if (!rows.length) return textResult("No campaigns yet. campaign({ action: 'create', name, queries }).");
-        return textResult(
-          rows
-            .map(
-              (c) =>
-                `• ${c.name} — ${c.active ? "active" : "paused"}, auto_send ${c.auto_send ? "ON" : "off"}, ${c.daily_send_limit}/day, ≤${c.max_score}/100${
-                  c.last_run_at ? `\n    last tick ${String(c.last_run_at).slice(0, 16)}: ${c.last_run_note ?? ""}` : "\n    never run"
-                }`,
-            )
-            .join("\n"),
-        );
-      }
-
-      if (!args.name) return errorResult(`action '${args.action}' needs a name.`);
-
-      if (args.action === "run") {
-        const { data } = await sb
-          .from("outreach_campaigns")
-          .select(CAMPAIGN_COLUMNS)
-          .eq("project_id", project.id)
-          .ilike("name", args.name)
-          .maybeSingle();
-        if (!data) return errorResult(`No campaign named "${args.name}" in ${project.name}.`);
-        const result = await runEmailCampaignTick(data as CampaignRow);
-        return textResult(
-          [
-            `"${result.campaign}": ${summarize(result)}`,
-            result.skipped.length ? `\nSkipped:\n${result.skipped.map((s) => `  • ${s}`).join("\n")}` : "",
-            result.errors.length ? `\nErrors:\n${result.errors.slice(0, 10).map((s) => `  • ${s}`).join("\n")}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        );
-      }
-
-      if (args.action === "update") {
-        const patch: Record<string, unknown> = {};
-        for (const key of [
-          "active", "auto_send", "max_score", "daily_send_limit", "target_pipeline",
-          "follow_ups", "queries", "seed_urls", "angle", "sender_name", "reply_to",
-        ] as const) {
-          if (args[key] !== undefined) patch[key] = args[key];
-        }
-        if (!Object.keys(patch).length) return errorResult("Nothing to change.");
-        const { data, error } = await sb
-          .from("outreach_campaigns")
-          .update(patch)
-          .eq("project_id", project.id)
-          .ilike("name", args.name)
-          .select(CAMPAIGN_COLUMNS)
-          .maybeSingle();
-        if (error) return errorResult(error.message);
-        if (!data) return errorResult(`No campaign named "${args.name}".`);
-        const c = data as CampaignRow;
-        return textResult(
-          `"${c.name}" updated — ${c.active ? "active" : "PAUSED"}, auto_send ${c.auto_send ? "ON" : "off"}, ${c.daily_send_limit}/day, pitching ≤${c.max_score}/100.`,
-        );
-      }
-
-      // create
-      if (!args.queries?.length && !args.seed_urls?.length) {
-        return errorResult("A campaign needs at least one search query or seed URL, or it finds nothing.");
-      }
-      const { data, error } = await sb
-        .from("outreach_campaigns")
-        .upsert(
-          {
-            project_id: project.id,
-            owner_id: userId,
-            name: args.name,
-            channel: "email",
-            active: args.active !== false,
-            queries: args.queries ?? [],
-            seed_urls: args.seed_urls ?? [],
-            max_score: args.max_score ?? 70,
-            daily_send_limit: args.daily_send_limit ?? 10,
-            target_pipeline: args.target_pipeline ?? 25,
-            auto_send: args.auto_send === true,
-            follow_ups: args.follow_ups !== false,
-            angle: args.angle ?? null,
-            sender_name: args.sender_name ?? null,
-            reply_to: args.reply_to ?? null,
-          },
-          { onConflict: "project_id,name" },
-        )
-        .select(CAMPAIGN_COLUMNS)
-        .maybeSingle();
-      if (error || !data) return errorResult(error?.message ?? "Could not create the campaign.");
-      const c = data as CampaignRow;
-      return textResult(
-        [
-          `Campaign "${c.name}" ${c.active ? "is active" : "is paused"}.`,
-          `Sources: ${[...(c.queries ?? []), ...(c.seed_urls ?? [])].join(" | ") || "none"}`,
-          `Pitches sites ≤${c.max_score}/100, up to ${c.daily_send_limit} sends/day, funnel target ${c.target_pipeline}.`,
-          c.auto_send
-            ? "⚠ auto_send is ON — this will email real people on the cron tick."
-            : "auto_send is OFF: it discovers, scans, researches and drafts, logging each message as a dry run. Read a few, then turn sending on.",
-          "",
-          `Run one tick now: campaign({ action: "run", name: "${c.name}" }).`,
-        ].join("\n"),
       );
     },
   );

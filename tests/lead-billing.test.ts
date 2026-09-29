@@ -122,24 +122,6 @@ describe("the meter is actually connected", () => {
   const read = async (p: string) =>
     (await import("node:fs")).readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 
-  it("charges the campaign tick", async () => {
-    const src = await read("lib/outreach/runner.ts");
-    expect(src).toContain("leadRunBilling");
-  });
-
-  it("gates discovery, the most expensive stage, on being able to pay", async () => {
-    const src = await read("lib/outreach/runner.ts");
-    const discovery = src.slice(src.indexOf("---- 4. Top the funnel up"));
-    // Read the gate's own condition rather than a fixed byte window. The block
-    // picked up a discovery back-off check ahead of the gate, which pushed
-    // canSpend() past the old 400-character slice without weakening anything
-    // this test exists to protect.
-    const gateStart = discovery.indexOf("if (liveCount");
-    expect(gateStart).toBeGreaterThan(-1);
-    const gate = discovery.slice(gateStart, discovery.indexOf("{", gateStart));
-    expect(gate).toMatch(/canSpend\(\)/);
-  });
-
   it("charges the manual finder", async () => {
     const src = await read("app/actions/leads.ts");
     expect(src).toContain("manualRunPrice");

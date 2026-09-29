@@ -53,22 +53,6 @@ describe("every contact source the code emits is storable", () => {
   });
 });
 
-describe("people are output worth paying for", () => {
-  // A run against a people-directory names humans without necessarily adding
-  // a prospect. Leaving them out of the produced-something test refunded
-  // every such run: eleven CTOs rendered, paginated, parsed — billed as zero.
-  const runner = readFileSync(new URL("../lib/outreach/runner.ts", import.meta.url), "utf8");
-
-  it("counts recorded people when deciding whether to refund", () => {
-    const block = runner.slice(runner.indexOf("const producedSomething"));
-    expect(block.slice(0, 300)).toContain("result.peopleRecorded");
-  });
-
-  it("still refunds a run that truly did nothing", () => {
-    expect(runner).toMatch(/if \(billing\.charged\(\) && !producedSomething\)/);
-  });
-});
-
 describe("a link ends where the URL characters end", () => {
   const guard = unsupportedCustomClaims;
   const declared = ["download it at https://threatcrush.com/get-whitepaper"];

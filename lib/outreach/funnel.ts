@@ -103,59 +103,6 @@ export async function projectFunnel(projectId: string): Promise<FunnelCounts> {
   );
 }
 
-/** Per campaign, ordered by volume so the busiest reads first. */
-export async function campaignFunnels(projectId: string): Promise<CampaignFunnel[]> {
-  const sb = serviceClient();
-  const [{ data: sends }, { data: prospects }] = await Promise.all([
-    sb
-      .from("outreach_sends")
-      .select("campaign, track_token, opened_at")
-      .eq("project_id", projectId)
-      .eq("channel", "email")
-      .eq("dry_run", false),
-    sb
-      .from("outreach_prospects")
-      .select("status, campaign_id")
-      .eq("project_id", projectId)
-      .eq("channel", "email")
-      .in("status", ["contacted", "replied", "won", "lost"]),
-  ]);
-
-  // Sends record the campaign by name; prospects by id. Names are what the
-  // user sees, so they are the join key here and the id is mapped onto it.
-  const { data: campaigns } = await sb
-    .from("outreach_campaigns")
-    .select("id, name")
-    .eq("project_id", projectId);
-  const nameById = new Map(
-    ((campaigns as { id: string; name: string }[] | null) ?? []).map((c) => [c.id, c.name]),
-  );
-
-  const sendsByCampaign = new Map<string, SendRow[]>();
-  for (const s of ((sends as (SendRow & { campaign: string | null })[] | null) ?? [])) {
-    const key = s.campaign ?? "(manual)";
-    const list = sendsByCampaign.get(key) ?? [];
-    list.push(s);
-    sendsByCampaign.set(key, list);
-  }
-
-  const statusesByCampaign = new Map<string, { status: string }[]>();
-  for (const p of ((prospects as { status: string; campaign_id: string | null }[] | null) ?? [])) {
-    const key = (p.campaign_id && nameById.get(p.campaign_id)) || "(manual)";
-    const list = statusesByCampaign.get(key) ?? [];
-    list.push({ status: p.status });
-    statusesByCampaign.set(key, list);
-  }
-
-  const names = new Set([...sendsByCampaign.keys(), ...statusesByCampaign.keys()]);
-  return [...names]
-    .map((campaign) => ({
-      campaign,
-      ...rates(tally(sendsByCampaign.get(campaign) ?? [], statusesByCampaign.get(campaign) ?? [])),
-    }))
-    .sort((a, b) => b.sent - a.sent);
-}
-
 /** What the funnel needs off a send row. */
 type SendRow = { track_token: string | null; opened_at: string | null };
 

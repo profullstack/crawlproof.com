@@ -89,26 +89,8 @@ describe("a guess is not a reason to contact somebody", () => {
   });
 });
 
-describe("the alert is wired and bounded", () => {
-  const runner = readFileSync(new URL("../lib/outreach/runner.ts", import.meta.url), "utf8");
+describe("the intent sweep is bounded", () => {
   const sources = readFileSync(new URL("../lib/outreach/intentSources.ts", import.meta.url), "utf8");
-
-  it("tells somebody when a signal is found", () => {
-    // A signal sitting in a table until someone opens the page is
-    // indistinguishable from one that was never found.
-    expect(runner).toContain("alertNewIntent");
-    expect(runner).toContain("sendIntentAlertEmail");
-  });
-
-  it("never alerts the same signal twice", () => {
-    expect(runner).toContain('.is("alerted_at", null)');
-  });
-
-  it("marks alerted only after the send succeeds", () => {
-    // The other order loses a whole batch to one SMTP hiccup.
-    const fn = runner.slice(runner.indexOf("async function alertNewIntent"));
-    expect(fn.indexOf("if (!res.sent) return 0;")).toBeLessThan(fn.indexOf("alerted_at: new Date()"));
-  });
 
   it("caps how many model judgements a sweep can make", () => {
     // An index that suddenly returns three hundred results must not become

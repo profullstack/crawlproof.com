@@ -5,7 +5,6 @@ import { requireProjectAccess } from "@/lib/lx/currentSite";
 import { env } from "@/lib/env";
 import { LeadFinder } from "@/components/leads/lead-finder";
 import { LeadActions } from "@/components/leads/lead-actions";
-import { CampaignPanel, type CampaignSummary } from "@/components/leads/campaign-panel";
 import { SenderAddress } from "@/components/leads/sender-address";
 import { MailboxConnect, type ConnectedMailbox } from "@/components/leads/mailbox-connect";
 import { SeedLogins } from "@/components/leads/seed-logins";
@@ -14,7 +13,7 @@ import { RepliesPanel, type ReplyRow } from "@/components/leads/replies-panel";
 import { ContactsPanel } from "@/components/leads/contacts-panel";
 import { IntentPanel, type IntentSignalRow } from "@/components/leads/intent-panel";
 import { contactNiches } from "@/lib/outreach/contactsExport";
-import { campaignFunnels, projectFunnel } from "@/lib/outreach/funnel";
+import { projectFunnel } from "@/lib/outreach/funnel";
 import { listSeedCredentials, type StoredSeedCredential } from "@/lib/outreach/seedCredentials";
 import { RefreshLeads } from "@/components/leads/refresh-leads";
 import { loadAddressSettings } from "@/lib/outreach/postalAddress";
@@ -74,7 +73,7 @@ export default async function LeadsPage({
   // project pages work. It also keeps outreach_sends unwritable from a
   // browser, so the record of what was sent stays honest.
   const supabase = serviceClient();
-  const [{ data: prospectData }, { data: sendData }, { data: campaignData }] = await Promise.all([
+  const [{ data: prospectData }, { data: sendData }] = await Promise.all([
     supabase
       .from("outreach_prospects")
       .select(
@@ -89,51 +88,10 @@ export default async function LeadsPage({
       .eq("project_id", projectId)
       .order("sent_at", { ascending: false })
       .limit(10),
-    supabase
-      .from("outreach_campaigns")
-      .select(
-        "id, name, active, auto_send, daily_send_limit, max_score, queries, seed_urls, last_run_at, last_run_note, auth_required_hosts, pitch_mode, pitch_intro, pitch_ask, pitch_facts, scan_prospects, min_intent, sells_description, angle, sender_name, reply_to",
-      )
-      .eq("project_id", projectId)
-      .order("updated_at", { ascending: false })
-      .limit(10),
   ]);
 
   const prospects = (prospectData as ProspectRow[] | null) ?? [];
   const sends = (sendData as SendRow[] | null) ?? [];
-  const campaignRows = (campaignData as (CampaignSummary & { id: string })[] | null) ?? [];
-
-  // Recent ticks per campaign. last_run_note holds only the newest line, so
-  // without this there is no way to see that a campaign has been erroring for
-  // an hour, or that it has never found anything at all.
-  const { data: runData } = await supabase
-    .from("outreach_campaign_runs")
-    .select("campaign_id, ran_at, summary, ok, errors")
-    .in("campaign_id", campaignRows.map((c) => c.id))
-    .order("ran_at", { ascending: false })
-    .limit(60);
-
-  const runsByCampaign = new Map<string, CampaignSummary["runs"]>();
-  for (const r of (runData as Record<string, unknown>[] | null) ?? []) {
-    const key = r.campaign_id as string;
-    const list = runsByCampaign.get(key) ?? [];
-    if (list.length >= 8) continue;
-    list.push({
-      ran_at: r.ran_at as string,
-      summary: (r.summary as string) ?? "",
-      ok: (r.ok as boolean) ?? true,
-      errors: Array.isArray(r.errors) ? (r.errors as string[]) : [],
-    });
-    runsByCampaign.set(key, list);
-  }
-
-  const campaigns: CampaignSummary[] = campaignRows.map((c) => ({
-    ...c,
-    pitch_facts: Array.isArray(c.pitch_facts) ? c.pitch_facts : [],
-    auth_required_hosts: Array.isArray(c.auth_required_hosts) ? c.auth_required_hosts : [],
-    runs: runsByCampaign.get(c.id) ?? [],
-  }));
-
   const byStatus = new Map<string, number>();
   for (const p of prospects) byStatus.set(p.status, (byStatus.get(p.status) ?? 0) + 1);
 
@@ -152,7 +110,6 @@ export default async function LeadsPage({
     projectId,
     ownerId: access.userId,
   });
-  const canSendLive = Boolean(addressSettings.address);
 
   // The org's default email sender, when it's a connected mailbox rather than
   // an API-key provider — that's what the connect panel reflects back.
@@ -162,12 +119,10 @@ export default async function LeadsPage({
     .eq("id", projectId)
     .maybeSingle();
   const orgId = (projectRow?.organization_id as string | null) ?? null;
-  // Measured outcomes, project-wide and per campaign. Both read the same
-  // tables the pipeline already writes, so this costs two queries rather than
-  // any new bookkeeping.
-  const [funnel, perCampaignFunnel, contacts] = await Promise.all([
+  // Measured outcomes, read from the same tables the pipeline already writes,
+  // so this costs a query rather than any new bookkeeping.
+  const [funnel, contacts] = await Promise.all([
     projectFunnel(projectId),
-    campaignFunnels(projectId),
     contactNiches(projectId),
   ]);
 
@@ -194,17 +149,6 @@ export default async function LeadsPage({
 
   let seedCredentials: StoredSeedCredential[] = [];
   if (orgId) seedCredentials = await listSeedCredentials(orgId);
-
-  // Hosts any campaign in this project is parked on, waiting for a sign-in.
-  const waitingHosts = [
-    ...new Set(
-      campaigns.flatMap((c) =>
-        Array.isArray((c as { auth_required_hosts?: string[] }).auth_required_hosts)
-          ? ((c as { auth_required_hosts?: string[] }).auth_required_hosts as string[])
-          : [],
-      ),
-    ),
-  ];
 
   let mailbox: ConnectedMailbox | null = null;
   if (orgId) {
@@ -249,11 +193,9 @@ export default async function LeadsPage({
 
       <LeadFinder projectId={projectId} />
 
-      <CampaignPanel projectId={projectId} campaigns={campaigns} canSendLive={canSendLive} />
-
       <IntentPanel signals={intentSignals} />
 
-      <FunnelPanel project={funnel} campaigns={perCampaignFunnel} />
+      <FunnelPanel project={funnel} campaigns={[]} />
 
       <RepliesPanel replies={replies} />
 
@@ -266,7 +208,7 @@ export default async function LeadsPage({
 
       <SeedLogins
         projectId={projectId}
-        waitingHosts={waitingHosts}
+        waitingHosts={[]}
         credentials={seedCredentials}
       />
 
@@ -284,8 +226,7 @@ export default async function LeadsPage({
 
         {prospects.length === 0 ? (
           <p className="mt-4 text-sm text-[var(--color-muted)]">
-            Nothing yet. Search for businesses above, or set up a campaign to keep the funnel full on
-            its own.
+            Nothing yet. Search for businesses above.
           </p>
         ) : (
           <ul className="mt-4 divide-y divide-[var(--color-border)]">
