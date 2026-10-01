@@ -58,6 +58,26 @@ adapted from does:
 - **No Caddy.** dev2 already terminates TLS with nginx for every other vhost.
   The gateway is published on `127.0.0.1:8000` and nginx proxies to it.
 
+#### Changing Postgres tuning later
+
+`supabase-db` is shared by every app on dev2, and `supabase/` is root-owned, so
+`deploy-app.sh` (which runs as `anthony`) cannot rewrite its config and never
+restarts it. A tuning change ships by re-running only the tuning step as root:
+
+```sh
+scp ops/selfhost/server/setup-supabase.sh root@dev2.profullstack.com:/root/
+ssh root@dev2.profullstack.com 'bash /root/setup-supabase.sh --tuning-only'
+```
+
+It diffs the new `crawlproof.conf` against the live one, keeps a numbered
+`.bak-NNN` copy, and restarts Postgres (checkpoint first, 300 s stop timeout)
+only when the file changed. Every app on the box sees a few seconds of
+refused connections during that restart.
+
+`shared_buffers` is capped at 8 GB (`PG_SHARED_BUFFERS_CAP_MB`) rather than the
+usual 25% of RAM: at 25% it was 23 GB of shared memory on a box whose ~20 apps
+then ran it out of RAM and swap, and earlyoom killed Postgres.
+
 ### 2. Dump the cloud
 
 From anywhere with the cloud credentials (read-only, safe to rehearse):

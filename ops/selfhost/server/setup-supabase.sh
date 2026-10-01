@@ -38,6 +38,12 @@
 #   KONG_HTTP_PORT 8000                 published on loopback only
 #   SMTP_*                              GoTrue outbound mail (Resend)
 #   SKIP_SYSTEM    0                    1 = no apt/ufw/docker
+#   PG_SHARED_BUFFERS_CAP_MB 8192       ceiling on shared_buffers (box is shared)
+#
+# Usage:
+#   setup-supabase.sh                 full, idempotent setup
+#   setup-supabase.sh --tuning-only   rewrite crawlproof.conf; restart the db
+#                                     only if it changed
 #
 set -euo pipefail
 
@@ -551,15 +557,27 @@ host    all  all            ::/0                     reject
 EOF
 }
 
-write_tuning() {
+# The textbook "shared_buffers = 25% of RAM" assumes Postgres owns the box.
+# On dev2 it does not: ~20 apps and ~170 Node processes share this one
+# Postgres and the 91 GB, and 25% (23 GB of shared memory that never pages
+# back) plus the apps filled RAM and swap until earlyoom started killing
+# Postgres. So shared_buffers is capped, and effective_cache_size counts only
+# the page cache Postgres can realistically expect to get, not 70% of RAM.
+PG_SHARED_BUFFERS_CAP_MB=${PG_SHARED_BUFFERS_CAP_MB:-8192}
+
+write_tuning() { # write_tuning [out]  (defaults to the live conf.d file)
+  local out=${1:-$DIR/volumes/crawlproof/crawlproof.conf}
   detect_resources
-  local sb=$((MEM_MB / 4)) ecs=$((MEM_MB * 7 / 10))
-  local mwm=$((MEM_MB / 16)); [ $mwm -gt 2048 ] && mwm=2048
+  local sb=$((MEM_MB / 4)); [ $sb -gt "$PG_SHARED_BUFFERS_CAP_MB" ] && sb=$PG_SHARED_BUFFERS_CAP_MB
+  local ecs=$((sb + MEM_MB / 4))
+  # Each autovacuum worker may take maintenance_work_mem; keep 4 of them to 4 GB.
+  local mwm=$((MEM_MB / 16)); [ $mwm -gt 1024 ] && mwm=1024
   local half=$((CPUS / 2)); [ $half -lt 1 ] && half=1; [ $half -gt 4 ] && half=4
   log "Postgres tuning for ${MEM_MB} MB RAM, ${CPUS} CPUs"
-  cat > "$DIR/volumes/crawlproof/crawlproof.conf" <<EOF
+  cat > "$out" <<EOF
 # crawlproof: managed by ops/selfhost/server/setup-supabase.sh
-# Sized for ${MEM_MB} MB RAM / ${CPUS} CPUs. Loaded last from conf.d, so it wins.
+# Sized for ${MEM_MB} MB RAM / ${CPUS} CPUs, shared with every other app on the
+# box (shared_buffers capped at ${PG_SHARED_BUFFERS_CAP_MB} MB). Loaded last from conf.d, so it wins.
 hba_file = '/etc/crawlproof/pg_hba.conf'
 ssl = on
 ssl_cert_file = '/etc/crawlproof/tls/server.crt'
@@ -569,6 +587,8 @@ max_connections = 300
 shared_buffers = ${sb}MB
 effective_cache_size = ${ecs}MB
 maintenance_work_mem = ${mwm}MB
+autovacuum_work_mem = 512MB
+# Per sort/hash node, per backend: 300 connections can in theory multiply it.
 work_mem = 32MB
 wal_buffers = 64MB
 max_wal_size = 8GB
@@ -650,17 +670,49 @@ write_overlay() {
 # ------------------------------------------------------------------ 5. start
 compose() { (cd "$DIR" && docker compose "$@"); }
 
+# shared_buffers and max_connections only change on a restart. The db stops on
+# SIGINT (fast shutdown), but compose gives it 10 s before SIGKILL, and the
+# shutdown checkpoint of a large shared_buffers can take longer than that — a
+# SIGKILL there means crash recovery for every app on the box. So checkpoint
+# while it is still serving, then allow a generous stop timeout.
+restart_db() {
+  log "Checkpointing, then restarting supabase-db"
+  sql_admin -c checkpoint || warn "checkpoint failed; restarting anyway"
+  compose restart -t 300 db >/dev/null
+
+  for _ in $(seq 1 90); do
+    docker exec supabase-db pg_isready -U postgres -h localhost >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  die "supabase-db not ready 180 s after restart"
+}
+
 start_stack() {
   log "Starting the stack"
   compose up -d --wait || compose up -d
   # A config change on an already-running db needs a restart to take effect.
-  compose restart db >/dev/null
+  restart_db
+}
 
-  local i
-  for i in $(seq 1 90); do
-    docker exec supabase-db pg_isready -U postgres -h localhost >/dev/null 2>&1 && break
-    sleep 2
-  done
+# --tuning-only: rewrite crawlproof.conf from the current formula and restart
+# Postgres only if the file actually changed. Touches nothing else — no apt,
+# no .env, no compose up — so it is the safe way to roll a tuning change out.
+retune() {
+  local conf="$DIR/volumes/crawlproof/crawlproof.conf" next
+  [ -f "$DIR/.env" ] || die "no Supabase project at $DIR; run a full setup first"
+  next=$(mktemp)
+  write_tuning "$next"
+  if [ -f "$conf" ] && cmp -s "$next" "$conf"; then
+    rm -f "$next"
+    log "crawlproof.conf unchanged; no restart"
+  else
+    [ -f "$conf" ] && diff -u "$conf" "$next" || true
+    backup "$conf"
+    mv "$next" "$conf"
+    fix_perms
+    restart_db
+  fi
+  check_postgres
 }
 
 sql_admin() { docker exec -i supabase-db psql -U supabase_admin -h localhost -d postgres -v ON_ERROR_STOP=1 -X -q -At "$@"; }
@@ -810,6 +862,10 @@ EOF
 }
 
 # ------------------------------------------------------------------- main
+if [ "${1:-}" = --tuning-only ]; then
+  retune
+  exit 0
+fi
 [ "$SKIP_SYSTEM" = 1 ] || system_setup
 supabase_setup
 mkdir -p "$DIR/volumes/crawlproof"
