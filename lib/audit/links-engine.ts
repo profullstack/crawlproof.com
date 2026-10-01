@@ -50,6 +50,9 @@ function childEntryPath(): string {
 function childExecArgv(entry: string): string[] {
   const inherited = process.execArgv;
   if (!entry.endsWith(".ts")) return inherited;
+  // Bun runs .ts natively, and fork() under Bun starts another Bun: no loader needed
+  // (and `--import tsx` is not a Bun flag).
+  if (typeof process.versions.bun === "string") return inherited;
   if (inherited.some((a) => a.includes("tsx"))) return inherited;
   return [...inherited, "--import", "tsx"];
 }

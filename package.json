@@ -8,20 +8,20 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build",
+    "start": "bun --bun next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "worker": "tsx worker/index.ts",
+    "worker": "bun worker/index.ts",
     "worker:build": "tsc -p worker/tsconfig.json",
-    "cli": "tsx cli/index.ts",
-    "download-geolite2": "node scripts/download-geolite2.mjs",
-    "rotate-secret": "tsx bin/rotate-secret.ts"
+    "cli": "bun cli/index.ts",
+    "download-geolite2": "bun scripts/download-geolite2.mjs",
+    "rotate-secret": "bun bin/rotate-secret.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
@@ -75,5 +75,6 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.6"
-  }
+  },
+  "packageManager": "bun@1.4.2"
 }

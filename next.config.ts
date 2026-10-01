@@ -27,6 +27,12 @@ const nextConfig: NextConfig = {
   // imapflow opens raw TLS sockets and resolves its own compiled deps at
   // runtime; bundling it breaks both. nodemailer is here for the same reason.
   serverExternalPackages: ["playwright", "playwright-core", "imapflow", "nodemailer"],
+  // sharp 0.35 loads libvips-cpp.so through a path the tracer does not follow, so
+  // the standalone output would ship without it and image routes would 500
+  // (ERR_DLOPEN_FAILED). Name it explicitly.
+  outputFileTracingIncludes: {
+    "*": ["node_modules/@img/sharp-libvips-linux*/lib/**"],
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",
