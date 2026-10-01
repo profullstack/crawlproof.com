@@ -65,9 +65,20 @@ adapted from does:
 restarts it. A tuning change ships by re-running only the tuning step as root:
 
 ```sh
-scp ops/selfhost/server/setup-supabase.sh root@dev2.profullstack.com:/root/
-ssh root@dev2.profullstack.com 'bash /root/setup-supabase.sh --tuning-only'
+git fetch origin
+git show origin/master:ops/selfhost/server/setup-supabase.sh \
+  | ssh root@dev2.profullstack.com 'cat > /root/setup-supabase.sh.new &&
+      grep -q -- "--tuning-only" /root/setup-supabase.sh.new &&
+      mv /root/setup-supabase.sh.new /root/setup-supabase.sh &&
+      bash /root/setup-supabase.sh --tuning-only'
 ```
+
+Take the script from `origin/master`, not from whatever branch the local
+checkout is on. A copy older than `--tuning-only` ignores the flag and runs
+the **full** setup: it rewrites `crawlproof.conf` with the old 25%-of-RAM
+formula and restarts Postgres. That happened twice on 2026-10-01 (09:22 and
+09:58 UTC), and both times the box stayed at 23 GB `shared_buffers`. The
+`grep` guard refuses such a copy.
 
 It diffs the new `crawlproof.conf` against the live one, keeps a numbered
 `.bak-NNN` copy, and restarts Postgres (checkpoint first, 300 s stop timeout)
