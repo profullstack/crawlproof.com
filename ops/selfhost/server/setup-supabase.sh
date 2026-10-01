@@ -39,11 +39,19 @@
 #   SMTP_*                              GoTrue outbound mail (Resend)
 #   SKIP_SYSTEM    0                    1 = no apt/ufw/docker
 #   PG_SHARED_BUFFERS_CAP_MB 8192       ceiling on shared_buffers (box is shared)
+#   TENANTS_CONF   ./tenants.conf       per-tenant limits, next to this script
+#   TENANTS_FORCE  0                    1 = apply a connection limit even when a
+#                                       tenant is already near it
 #
 # Usage:
 #   setup-supabase.sh                 full, idempotent setup
 #   setup-supabase.sh --tuning-only   rewrite crawlproof.conf; restart the db
 #                                     only if it changed
+#   setup-supabase.sh --tenants-only  apply tenants.conf (connection limits and
+#                                     timeouts); no restart, new sessions only
+#   setup-supabase.sh --print-tenants-sql DB...
+#                                     print the SQL --tenants-only would run for
+#                                     these databases; needs no root, no docker
 #
 set -euo pipefail
 
@@ -66,6 +74,8 @@ SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL:-support@crawlproof.com}
 DOCKER_SUBNET=${DOCKER_SUBNET:-172.31.251.0/24}
 DOCKER_GATEWAY=${DOCKER_GATEWAY:-172.31.251.1}
 SKIP_SYSTEM=${SKIP_SYSTEM:-0}
+TENANTS_CONF=${TENANTS_CONF:-$(dirname "${BASH_SOURCE[0]}")/tenants.conf}
+TENANTS_FORCE=${TENANTS_FORCE:-0}
 
 DIR="$INSTALL_ROOT/$PROJECT"
 PG_UID=100 # postgres inside supabase/postgres:17.6.1.x
@@ -75,7 +85,8 @@ log() { printf '\n===> %s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-[ "$SKIP_SYSTEM" = 1 ] || [ "$(id -u)" = 0 ] || die "run as root (or SKIP_SYSTEM=1 for a rehearsal)"
+[ "${1:-}" = --print-tenants-sql ] || [ "$SKIP_SYSTEM" = 1 ] || [ "$(id -u)" = 0 ] ||
+  die "run as root (or SKIP_SYSTEM=1 for a rehearsal)"
 
 backup() { # never overwrite without a numbered copy beside the original
   local f=$1 n=1 dir name base ext
@@ -861,11 +872,189 @@ EOF
   log "Wrote $DIR/crawlproof-connection.env"
 }
 
+# ------------------------------------------------------------- 7. tenants
+# supabase-db is one Postgres shared by ~40 app databases, and until this
+# existed nothing stopped one of them from taking it over: rssamplifier alone
+# held 126 of the 300 connections, and one tenant's runaway query or
+# connection storm is everybody's outage. tenants.conf holds the per-tenant
+# guardrails, one row per database plus a `*` row for every database not
+# listed:
+#
+#   db  role  conn_limit  statement_timeout  idle_in_tx_timeout  lock_timeout
+#
+# Applied as ALTER DATABASE ... CONNECTION LIMIT and ALTER ROLE <role> IN
+# DATABASE <db> SET <timeout>, which Postgres reads at connect time: no
+# restart, existing sessions are untouched, new sessions get the new values.
+#
+# Two limits of the mechanism, both stated loudly at apply time:
+#   - Postgres does not enforce CONNECTION LIMIT against superusers, and every
+#     tenant here connects as `postgres`, a superuser. The limits are recorded
+#     and start binding the day a tenant gets its own non-superuser role; the
+#     hard cap available today is the Supavisor pool (README, "Connection
+#     pooling").
+#   - The timeouts DO apply to `postgres` in those databases, and that includes
+#     migrations an app runs on boot. A migration that legitimately needs
+#     longer must `SET statement_timeout = 0` in its own session (pg_dump
+#     already does, so the backups are unaffected).
+#
+# The shared databases (postgres = crawlproof's own + Supabase's services,
+# _supabase = Supavisor's state, the templates) are never touched.
+TENANT_GUCS=(statement_timeout idle_in_transaction_session_timeout lock_timeout)
+RESERVED_DBS=" postgres _supabase template0 template1 "
+declare -A T_ROLE=() T_CONN=() T_GUC=()
+T_ROLES=""
+
+valid_ident() { [[ ${#1} -le 63 && $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; }
+# A unit is required: a bare number means milliseconds to Postgres, and
+# "300" meaning 0.3 s is exactly the mistake a config file invites.
+valid_duration() { [[ $1 =~ ^(-|0|[1-9][0-9]*(ms|s|min|h|d))$ ]]; }
+
+load_tenants() { # load_tenants FILE
+  local conf=$1 n=0 line db role conn stmt idle lock extra
+  [ -f "$conf" ] || die "tenants file not found: $conf (scp it next to this script, or set TENANTS_CONF)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    line=${line%%#*}
+    read -r db role conn stmt idle lock extra <<<"$line" || true
+    [ -n "${db:-}" ] || continue
+    [ -n "${lock:-}" ] && [ -z "${extra:-}" ] ||
+      die "$conf:$n: want 6 fields: db role conn_limit statement_timeout idle_in_tx_timeout lock_timeout"
+    [ "$db" = '*' ] || valid_ident "$db" || die "$conf:$n: bad database name '$db'"
+    valid_ident "$role" || die "$conf:$n: bad role name '$role'"
+    [[ $conn =~ ^(-|[0-9]+)$ ]] || die "$conf:$n: conn_limit must be a number or '-', not '$conn'"
+    local v
+    for v in "$stmt" "$idle" "$lock"; do
+      valid_duration "$v" || die "$conf:$n: '$v' is not a duration (use '-', 0, or a number with ms/s/min/h/d)"
+    done
+    case "$RESERVED_DBS" in *" $db "*) die "$conf:$n: $db is shared infrastructure, not a tenant; it cannot be limited here" ;; esac
+    [ -z "${T_ROLE[$db]+set}" ] || die "$conf:$n: $db is listed twice"
+    T_ROLE[$db]=$role
+    T_CONN[$db]=$conn
+    T_GUC[$db,statement_timeout]=$stmt
+    T_GUC[$db,idle_in_transaction_session_timeout]=$idle
+    T_GUC[$db,lock_timeout]=$lock
+    case " $T_ROLES " in *" $role "*) ;; *) T_ROLES="${T_ROLES:+$T_ROLES }$role" ;; esac
+  done <"$conf"
+  [ -n "${T_ROLE['*']+set}" ] || die "$conf: no '*' row; every database not listed needs a default"
+}
+
+# The limits row for a database: its own, or the '*' default.
+tenant_key() { if [ -n "${T_ROLE[$1]+set}" ]; then echo "$1"; else echo '*'; fi; }
+
+# render_tenants_sql DB... -> one transaction that brings every given
+# database in line with tenants.conf. Pure: no docker, no psql, so it can be
+# tested and reviewed (--print-tenants-sql) before anything touches the box.
+# Names are validated above and contain no double quotes, so "%s" quoting is
+# exact; values are validated durations, so '%s' is too.
+render_tenants_sql() {
+  local db key role conn g v other
+  echo "begin;"
+  for db in "$@"; do
+    case "$RESERVED_DBS" in *" $db "*) continue ;; esac
+    valid_ident "$db" || { warn "skipping database with an unexpected name: $db"; continue; }
+    key=$(tenant_key "$db")
+    role=${T_ROLE[$key]}
+    conn=${T_CONN[$key]}
+    [ "$conn" = - ] && conn=-1
+    printf -- '-- %s (%s)\n' "$db" "$([ "$key" = '*' ] && echo 'default row' || echo 'own row')"
+    printf 'alter database "%s" connection limit %s;\n' "$db" "$conn"
+    for g in "${TENANT_GUCS[@]}"; do
+      v=${T_GUC[$key,$g]}
+      if [ "$v" = - ]; then
+        printf 'alter role "%s" in database "%s" reset %s;\n' "$role" "$db" "$g"
+      else
+        printf "alter role \"%s\" in database \"%s\" set %s = '%s';\n" "$role" "$db" "$g" "$v"
+      fi
+    done
+    # A tenant that moved to its own role must not keep the old role's
+    # timeouts in this database.
+    for other in $T_ROLES; do
+      [ "$other" = "$role" ] && continue
+      for g in "${TENANT_GUCS[@]}"; do
+        printf 'alter role "%s" in database "%s" reset %s;\n' "$other" "$db" "$g"
+      done
+    done
+  done
+  echo "commit;"
+}
+
+# Refuse a CONNECTION LIMIT that would immediately turn a live tenant away.
+# Only non-superuser sessions count, because only they are subject to it.
+check_tenant_headroom() { # check_tenant_headroom DB...
+  local db key conn now tight=""
+  local -A used=()
+  while IFS='|' read -r db now; do
+    [ -n "$db" ] && used[$db]=$now
+  done < <(sql_admin -c "select a.datname, count(*) from pg_stat_activity a join pg_roles r on r.rolname = a.usename where not r.rolsuper and a.backend_type = 'client backend' group by 1")
+  for db in "$@"; do
+    case "$RESERVED_DBS" in *" $db "*) continue ;; esac
+    key=$(tenant_key "$db")
+    conn=${T_CONN[$key]}
+    [ "$conn" = - ] && continue
+    now=${used[$db]:-0}
+    # Under 20% headroom is too tight: a rolling deploy runs old and new
+    # containers side by side and briefly doubles a tenant's connections.
+    if [ $((now * 5)) -gt $((conn * 4)) ]; then
+      tight+="    $db: $now non-superuser connections now, limit would be $conn
+"
+    fi
+  done
+  [ -z "$tight" ] && return 0
+  printf '%s' "$tight" >&2
+  [ "$TENANTS_FORCE" = 1 ] && { warn "TENANTS_FORCE=1: applying anyway"; return 0; }
+  die "these limits leave under 20% headroom; raise them in tenants.conf, or TENANTS_FORCE=1"
+}
+
+apply_tenants() {
+  log "Per-tenant limits from $TENANTS_CONF"
+  load_tenants "$TENANTS_CONF"
+  local dbs role key
+  mapfile -t dbs < <(sql_admin -c "select datname from pg_database where not datistemplate order by 1")
+  [ "${#dbs[@]}" -gt 0 ] || die "could not list databases"
+  for role in $T_ROLES; do
+    [ "$(sql_admin -c "select count(*) from pg_roles where rolname = '$role'")" = 1 ] ||
+      die "role $role in $TENANTS_CONF does not exist"
+  done
+  for key in "${!T_ROLE[@]}"; do
+    [ "$key" = '*' ] && continue
+    printf '%s\n' "${dbs[@]}" | grep -qxF -- "$key" ||
+      warn "$key is in $(basename "$TENANTS_CONF") but not in the cluster yet; skipped until it exists"
+  done
+  check_tenant_headroom "${dbs[@]}"
+  render_tenants_sql "${dbs[@]}" | sql_admin
+  sql_admin -c "select format('    %-28s limit=%-5s now=%-4s %s', d.datname, d.datconnlimit,
+      (select count(*) from pg_stat_activity a where a.datname = d.datname),
+      coalesce((select string_agg(r.rolname || ': ' || array_to_string(s.setconfig, ' '), '; ')
+                from pg_db_role_setting s join pg_roles r on r.oid = s.setrole
+                where s.setdatabase = d.oid), ''))
+    from pg_database d where not d.datistemplate order by d.datname"
+  for role in $T_ROLES; do
+    if [ "$(sql_admin -c "select rolsuper from pg_roles where rolname = '$role'")" = t ]; then
+      warn "role $role is a SUPERUSER: Postgres does not enforce CONNECTION LIMIT against it, so the connection limits for tenants using it are recorded but not binding (the timeouts are). The hard per-database cap today is the Supavisor pool; see README, Connection pooling."
+    fi
+  done
+}
+
 # ------------------------------------------------------------------- main
-if [ "${1:-}" = --tuning-only ]; then
-  retune
-  exit 0
-fi
+case "${1:-}" in
+  --tuning-only)
+    retune
+    exit 0
+    ;;
+  --tenants-only)
+    [ -f "$DIR/.env" ] || die "no Supabase project at $DIR; run a full setup first"
+    apply_tenants
+    exit 0
+    ;;
+  --print-tenants-sql)
+    shift
+    load_tenants "$TENANTS_CONF"
+    render_tenants_sql "$@"
+    exit 0
+    ;;
+  "") ;;
+  *) die "unknown option: $1 (see the usage at the top of this script)" ;;
+esac
 [ "$SKIP_SYSTEM" = 1 ] || system_setup
 supabase_setup
 mkdir -p "$DIR/volumes/crawlproof"
@@ -877,6 +1066,11 @@ write_overlay
 fix_perms
 start_stack
 create_extensions
+if [ -f "$TENANTS_CONF" ]; then
+  apply_tenants
+else
+  warn "no $TENANTS_CONF beside this script; per-tenant limits not applied (run --tenants-only once it is there)"
+fi
 check_postgres
 write_connection
 log "Done. Supabase for crawlproof is up in $DIR"

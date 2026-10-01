@@ -78,6 +78,91 @@ refused connections during that restart.
 usual 25% of RAM: at 25% it was 23 GB of shared memory on a box whose ~20 apps
 then ran it out of RAM and swap, and earlyoom killed Postgres.
 
+#### Per-tenant limits
+
+`supabase-db` hosts ~40 app databases, and one tenant's runaway query or
+connection storm used to be everyone's outage (rssamplifier alone held 126 of
+the 300 connections). `server/tenants.conf` declares a connection limit and
+timeouts per database, with a `*` row for every database not listed:
+
+| db | conn limit | statement_timeout | idle_in_transaction | lock_timeout |
+| --- | --- | --- | --- | --- |
+| `*` (everyone else) | 40 | 5 min | 10 min | unset |
+| `rssamplifier` | 200 | 15 min | 10 min | unset |
+| `nichedb` | 100 | 1 h | 10 min | unset |
+
+Applied as `ALTER DATABASE … CONNECTION LIMIT` and `ALTER ROLE <role> IN
+DATABASE <db> SET …`. Postgres reads those at connect time, so this needs **no
+restart**: open sessions keep what they had and new sessions get the limits.
+
+```sh
+scp ops/selfhost/server/setup-supabase.sh ops/selfhost/server/tenants.conf root@dev2.profullstack.com:/root/
+ssh root@dev2.profullstack.com 'bash /root/setup-supabase.sh --print-tenants-sql nichedb rssamplifier d1sks_com'  # preview
+ssh root@dev2.profullstack.com 'bash /root/setup-supabase.sh --tenants-only'
+```
+
+Re-runnable: it rewrites every tenant to match the file, and a `-` value
+resets the setting, so removing a value really removes it. It refuses to set
+a connection limit that leaves a tenant with under 20% headroom over its
+current non-superuser sessions (`TENANTS_FORCE=1` overrides), warns about rows
+for databases that do not exist yet, and never touches `postgres`, `_supabase`
+or the templates.
+
+Two things to know:
+
+- **Connection limits do not bind yet.** Every tenant connects as `postgres`,
+  a superuser, and Postgres does not enforce `CONNECTION LIMIT` against
+  superusers. The limits are recorded and start binding when a tenant moves to
+  its own non-superuser role (give it its own row in `tenants.conf`; the old
+  role's timeouts in that database are reset automatically). Until then the
+  enforceable cap is the pooler, below.
+- **The timeouts do bind, migrations included.** Apps run their boot-time
+  migrations as `postgres` too, so the values are an order of magnitude above
+  the slowest statement each tenant was measured running (nichedb 101 s,
+  rssamplifier 11 s, everyone else under 2 s). A migration that needs longer
+  runs `SET statement_timeout = 0` in its own session. `lock_timeout` stays
+  unset on purpose: a short one would fail a migration's `ALTER TABLE` queued
+  behind ordinary traffic, which is a failed deploy. pg_dump disables all three
+  for its own session, so backups are unaffected.
+
+#### Connection pooling
+
+The stack already runs **Supavisor** (`supabase-pooler`, `supabase/supavisor`)
+in **transaction mode**, so there is no PgBouncer to add. It honours the
+database name the client asks for and keeps a separate pool per database:
+`default_pool_size` 20 server connections and up to 100 clients each. That
+makes it the per-tenant connection cap that actually binds today.
+
+It is reachable only from inside: `127.0.0.1:6543` on the host, and
+`supabase-pooler:6543` on the `supabase_default` docker network. Nothing about
+it is exposed publicly, and adopting it widens nothing.
+
+An app that opts in joins that network and uses:
+
+```
+postgres://postgres.crawlproof:<POSTGRES_PASSWORD>@supabase-pooler:6543/<db>
+```
+
+```yaml
+# the app's compose file
+services:
+  app:
+    networks: [default, supabase]
+networks:
+  supabase:
+    name: supabase_default
+    external: true
+```
+
+The user is `postgres.<tenant id>`; the tenant id is `crawlproof`
+(`POOLER_TENANT_ID`) for every database, and the password is the `postgres`
+one. Transaction mode means no session state across transactions: no `SET`
+outside a transaction, no `LISTEN/NOTIFY`, no session advisory locks, and
+postgres.js needs `prepare: false`. Keep **migrations on the direct URL**
+(session semantics), and size an app's own pool at or below 100 clients per
+database, or raise that tenant's limits in Supavisor first. No app has been
+switched over yet.
+
 ### 2. Dump the cloud
 
 From anywhere with the cloud credentials (read-only, safe to rehearse):
