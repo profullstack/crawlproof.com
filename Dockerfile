@@ -3,8 +3,17 @@
 # worker (WORKER_PORT, listening on localhost only). Includes Chromium for
 # Playwright rendering + pandoc for Markdown -> HTML conversion.
 
+# Bun is the package manager and the runtime for BOTH processes (Next standalone
+# server and the audit worker). The runtime stays on the Playwright image for
+# Chromium, fonts, pandoc and ffmpeg; the Bun binary is copied onto it. Node is
+# still present in that base image, which keeps dev2's compose healthcheck
+# (`node -e fetch(...)`) working unchanged.
+FROM oven/bun:1.4.2-slim AS bun
+
 # ---------- builder ----------
-FROM node:20-bullseye AS builder
+FROM oven/bun:1.4.2-slim AS builder
+# git: @profullstack/autoblog is a GitHub dependency.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Build-time args for NEXT_PUBLIC_* values — Next.js inlines these into the
@@ -21,20 +30,22 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 ENV NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}
 
 # App + worker deps share lib/audit, so install both.
-COPY package.json package-lock.json* ./
-RUN npm install --no-audit --no-fund
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
-COPY worker/package.json ./worker/package.json
-RUN cd worker && npm install --no-audit --no-fund
+COPY worker/package.json worker/bun.lock ./worker/
+RUN cd worker && bun install --frozen-lockfile
 
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# `bun --bun next build`: Next builds on Bun.
+RUN bun run build
 
 # ---------- runtime ----------
 # Playwright base — ships Chromium + system fonts + the deps Chromium needs.
 FROM mcr.microsoft.com/playwright:v1.60.0-jammy AS runtime
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 
 # pandoc for canonical Markdown -> HTML conversion in the worker.

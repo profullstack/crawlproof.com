@@ -7,11 +7,11 @@ set -euo pipefail
 : "${HOSTNAME:=0.0.0.0}"
 
 echo "[start] launching worker on :${WORKER_PORT}"
-( cd /app && WORKER_PORT="${WORKER_PORT}" npx --no-install tsx worker/index.ts ) &
+( cd /app && WORKER_PORT="${WORKER_PORT}" bun worker/index.ts ) &
 WORKER_PID=$!
 
 echo "[start] launching next.js on :${PORT}"
-( cd /app && PORT="${PORT}" HOSTNAME="${HOSTNAME}" node server.js ) &
+( cd /app && PORT="${PORT}" HOSTNAME="${HOSTNAME}" bun server.js ) &
 APP_PID=$!
 
 term() {
