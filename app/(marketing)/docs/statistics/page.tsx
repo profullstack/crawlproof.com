@@ -130,6 +130,34 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
 </a>`}</pre>
       </section>
 
+      <section id="declared-actors" className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">Declared actors (opt-in)</h2>
+        <p className="text-sm leading-relaxed">
+          Nothing on the wire separates a person from an agent driving a real
+          browser, so visitors may say who they are. A CrawlProof account
+          registers actors (an email and a kind: human or agent) and mints a{" "}
+          <code className="font-mono">cpa_</code> token for each browser or
+          agent. The token is the credential; an email alone claims nothing.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`# an agent: send the header on every request
+Crawlproof-Actor: cpa_…
+
+# a person: open each site once (stored for that site, removed from the URL)
+https://example.com/?crp_actor=cpa_…
+
+# or from page code
+window.crawlproof?.("actor", "cpa_…");   // null forgets it`}</pre>
+        <p className="text-sm leading-relaxed">
+          It is self-reported, so the rule is one-way: a declared agent is
+          believed and counted as a bot; a declared human is recorded but never
+          overrides bot detection, and a mismatch is counted as a contradiction
+          against that actor. Names are visible only to the actor&apos;s owner
+          unless made public; other site owners see per-kind counts. Manage
+          actors under Settings → Declared actors, or with{" "}
+          <code className="font-mono">crawlproof actors</code>.
+        </p>
+      </section>
+
       <section id="careers" className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Careers widget</h2>
         <p className="text-sm leading-relaxed">
@@ -217,10 +245,10 @@ window.crawlproof?.track("purchase", "pro_plan");`}</pre>
         <h2 className="text-2xl font-bold">Privacy model</h2>
         <ul className="list-disc pl-5 text-sm leading-relaxed">
           <li>No cookies.</li>
-          <li>No localStorage.</li>
           <li>
-            Session ids use <code className="font-mono">sessionStorage</code>{" "}
-            when available and reset when the tab session ends.
+            A random visitor id and a session id (30 minutes of inactivity)
+            live in this site&apos;s <code className="font-mono">localStorage</code>,
+            plus a declared-actor token only for visitors who opt in.
           </li>
           <li>No fingerprinting.</li>
           <li>No auth tokens or API keys in the browser.</li>

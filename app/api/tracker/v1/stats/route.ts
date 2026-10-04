@@ -13,6 +13,8 @@ import { serviceClient } from "@/lib/supabase/service";
 import { authenticateBearer } from "@/lib/sp/apiAuth";
 import { projectStats, resolveProject } from "@/lib/tracker/apiStats";
 import { trackerRange } from "@/lib/tracker/ranges";
+import { DECLARED_DEFINITION } from "@/lib/tracker/actors";
+import { declaredSummary } from "@/lib/tracker/actorStore";
 import { DEFAULT_WHO, parseWho, WHO_PARAM, whoToKind } from "@/lib/tracker/who";
 
 export const runtime = "nodejs";
@@ -48,6 +50,11 @@ export async function GET(req: NextRequest) {
   const detail = parseDetail(sp.get("detail"));
 
   const range = trackerRange(sp.get("range"));
-  const stats = await projectStats(sb, resolved.project, range, whoToKind(who), who, detail);
-  return NextResponse.json(stats);
+  const [stats, declared] = await Promise.all([
+    projectStats(sb, resolved.project, range, whoToKind(who), who, detail),
+    // Opt-in declared actors: per-kind totals, plus names only for the
+    // caller's own actors or ones made public. Null before the migration.
+    declaredSummary(sb, auth.userId, resolved.project.id, range, DECLARED_DEFINITION).catch(() => null),
+  ]);
+  return NextResponse.json({ ...stats, declared });
 }

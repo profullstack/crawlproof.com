@@ -6,7 +6,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/service";
 import { categorize } from "@/lib/tracker/categorize";
-import { kindFromBucket } from "@/lib/tracker/humans";
 import {
   SCRIPTED_CAP_EVENTS,
   SCRIPTED_CAP_PAGEVIEWS,
@@ -20,6 +19,7 @@ import { enqueuePostHogEvent } from "@/lib/posthog/events";
 import { pruneExitSessions, updateExitRollup } from "@/lib/tracker/exit";
 import { gateAgent } from "@/lib/tracker/agent-gate";
 import { refuse } from "@/lib/tracker/agent-response";
+import { actorTokenFrom, applyDeclaration, resolveActor, type ResolvedActor } from "@/lib/tracker/actors";
 
 export const runtime = "nodejs";
 
@@ -39,6 +39,8 @@ const bodySchema = z.object({
   timezone: z.string().max(128).optional(),
   visitorId: z.string().max(128).optional(),
   sessionId: z.string().max(128).optional(),
+  // Opt-in declared actor token (cpa_…), see lib/tracker/actors.ts.
+  actor: z.string().max(128).nullable().optional(),
   viewport: z
     .object({
       width: z.number().int().nonnegative().optional(),
@@ -190,6 +192,14 @@ async function ingest(request: NextRequest, parseBody: boolean) {
   if (gate.action !== "allow") return refuse(gate);
 
   const categorized = categorize({ referrer, userAgent, url: pageUrl });
+
+  // Declared actor, before the visitor rollup: a declared agent in a stock
+  // Chrome must not be counted as a human visitor. The rule only ever moves a
+  // hit toward the bot side (applyDeclaration). No token, or a failed lookup,
+  // is simply undeclared.
+  const actorToken = actorTokenFrom(request.headers, parsed.data.actor);
+  const actor: ResolvedActor | null = actorToken ? await resolveActor(sb, actorToken) : null;
+  const declared = applyDeclaration(categorized.bucket, actor?.kind ?? null);
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
 
   // Visitor rollup: one row per (project, day, visitor id), bumped per beacon.
@@ -207,7 +217,7 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         p_project: site,
         p_day: today,
         p_visitor: visitorId.slice(0, 128),
-        p_kind: kindFromBucket(categorized.bucket),
+        p_kind: declared.kind,
         p_pageview: event === "pageview",
         p_cap_events: SCRIPTED_CAP_EVENTS,
         p_cap_pageviews: SCRIPTED_CAP_PAGEVIEWS,
@@ -217,13 +227,31 @@ async function ingest(request: NextRequest, parseBody: boolean) {
       // Silent — the beacon must never fail closed on a counter table.
     }
   }
-  const demotion = applyScriptedDemotion(categorized.bucket, touch);
+  const demotion = applyScriptedDemotion(declared.bucket, touch);
   const bucket = demotion.bucket;
-  const isAi = demotion.demoted ? false : categorized.isAi;
+  const isAi = demotion.demoted || declared.bucket !== categorized.bucket ? false : categorized.isAi;
   // Which side of the human / bot line this hit counts on. The bucket table
   // carries the whole bucket; the other rollups record only this, so the
   // stats page can split every breakdown, not just the headline.
   const kind = demotion.kind;
+
+  // Per-actor rollup. A declared human that detection (user agent or the
+  // scripted cap) still calls a bot is a contradiction: the token is being
+  // used by something that does not look like its owner.
+  if (actor) {
+    try {
+      await sb.rpc("tracker_touch_actor", {
+        p_project: site,
+        p_day: today,
+        p_actor: actor.actorId,
+        p_declared_kind: actor.kind,
+        p_pageview: event === "pageview",
+        p_contradiction: actor.kind === "human" && kind === "bot",
+      });
+    } catch {
+      // Silent — the beacon must never fail closed on a counter table.
+    }
+  }
 
   // UPSERT increment. Supabase JS doesn't expose a raw .increment() helper
   // so we read + write under the unique key. The PK protects against
@@ -369,6 +397,9 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         // bot came and never which one, which is the question every customer
         // actually asks.
         user_agent: gate.userAgent,
+        // Only when declared, so an undeclared beacon never names a column
+        // the database may not have yet (deploys run ahead of migrations).
+        ...(actor ? { actor_id: actor.actorId } : {}),
       });
       // Prune stale rows (best-effort; skip on error).
       await sb

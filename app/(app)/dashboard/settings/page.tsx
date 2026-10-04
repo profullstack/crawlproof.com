@@ -55,6 +55,21 @@ export default async function SettingsPage() {
               Manage →
             </Link>
           </li>
+          <li className="flex items-center justify-between gap-3 p-3">
+            <div>
+              <p className="text-sm font-medium">Declared actors</p>
+              <p className="text-xs text-[var(--color-muted)]">
+                Tell tracked sites who you are, and whether you are a
+                person or an agent. Opt-in, self-reported.
+              </p>
+            </div>
+            <Link
+              href="/dashboard/settings/actors"
+              className="btn btn-secondary text-sm"
+            >
+              Manage →
+            </Link>
+          </li>
         </ul>
       </div>
       <SettingsForm

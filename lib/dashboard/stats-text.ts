@@ -15,7 +15,13 @@ export type StatsAnswerish = {
   pages?: StatsItem[] | null;
   countries?: StatsItem[] | null;
   cities?: StatsItem[] | null;
+  declared?: {
+    totals?: Record<string, DeclaredLine | undefined>;
+    actors?: (DeclaredLine & { name?: string; email?: string; kind?: string })[];
+  } | null;
 };
+
+type DeclaredLine = { actors?: number; events?: number; pageviews?: number; contradictions?: number };
 
 const list = (v: StatsItem[] | null | undefined): StatsItem[] => (Array.isArray(v) ? v : []);
 
@@ -50,6 +56,27 @@ export function renderStats(
   // operator, not an audience.
   section("Countries", list(answer.countries));
   section("Cities", list(answer.cities));
+
+  // Declared actors (opt-in). Printed only when someone declared, and kept
+  // apart from the numbers above: it is what visitors said, not what we saw.
+  const human = answer.declared?.totals?.human;
+  const agent = answer.declared?.totals?.agent;
+  if ((human?.events ?? 0) + (agent?.events ?? 0) > 0) {
+    out.push("", "Declared (self-reported)");
+    const line = (label: string, t: DeclaredLine | undefined) => {
+      if (!t?.events) return;
+      const flags = t.contradictions ? `, ${t.contradictions} contradicted by detection` : "";
+      const n = t.actors ?? 0;
+      out.push(`  ${label.padEnd(7)} ${n} actor${n === 1 ? "" : "s"}, ${t.pageviews ?? 0} pageviews, ${t.events} events${flags}`);
+    };
+    line("humans", human);
+    line("agents", agent);
+    for (const a of answer.declared?.actors ?? []) {
+      const who = a.name ? `${a.name} <${a.email}>` : (a.email ?? "");
+      const flags = a.contradictions ? `  (${a.contradictions} contradicted)` : "";
+      out.push(`    ${String(a.kind).padEnd(5)} ${who}  ${a.pageviews ?? 0} pv, ${a.events ?? 0} ev${flags}`);
+    }
+  }
 
   // Nothing at all is a real answer, and the likeliest cause is worth naming.
   if (!(totals.pageviews ?? 0) && !(totals.events ?? 0) && !list(answer.sources).length) {
