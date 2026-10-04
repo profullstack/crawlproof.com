@@ -86,8 +86,9 @@ describe("actors revoke --token-id (regression)", () => {
     // --token is the CLI-wide API key override; the token id must not land there.
     expect(args.flags.token).toBeUndefined();
     const prev = process.env.CRAWLPROOF_TOKEN;
-    process.env.CRAWLPROOF_TOKEN = "crp_from_env_xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-    expect(apiToken(args)).toBe("crp_from_env_xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const FAKE_KEY = "crp_" + "x".repeat(40); // fixture, not a credential
+    process.env.CRAWLPROOF_TOKEN = FAKE_KEY;
+    expect(apiToken(args)).toBe(FAKE_KEY);
     if (prev === undefined) delete process.env.CRAWLPROOF_TOKEN;
     else process.env.CRAWLPROOF_TOKEN = prev;
 
