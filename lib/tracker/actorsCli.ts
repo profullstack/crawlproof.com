@@ -8,6 +8,10 @@
 // Model and trust rule: lib/tracker/actors.ts. Opt-in and self-reported; an
 // agent is believed, a human never overrides bot detection.
 
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { declareExtensionFiles } from "./declareExtension";
+
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 type ApiCall = (method: Method, path: string, body?: Record<string, unknown>) => Promise<{ status: number; json: Record<string, unknown> }>;
 type Out = { write: (line: string) => void; error: (line: string) => void };
@@ -27,7 +31,8 @@ export const ACTORS_USAGE = `  actors [list] [--json]
   actors add <email> --kind=human|agent [--name=…] [--operator=<human email>]
              [--public] [--token-label=…] [--no-token] [--json]
   actors token <email|id> [--label=…]
-  actors revoke <email|id> [--token=<token id>]
+  actors revoke <email|id> [--token-id=<id>]
+  actors extension <email|id> [--out=./crawlproof-declare] [--label=…]
       Declared actors: say who you are, and whether you are a person, on every
       site with the CrawlProof tracker. Opt-in and self-reported. A token
       (cpa_…) is the credential, never the email; send it as the
@@ -36,6 +41,13 @@ export const ACTORS_USAGE = `  actors [list] [--json]
       is counted as a contradiction. Names are visible to you only unless
       --public. Your login address is verified on creation; any other gets a
       verification email. Needs an API token.
+
+      \`actors extension\` mints a token and writes an unpacked Chrome
+      extension that sends it on <site>/api/track requests ONLY, for an agent's
+      browser: chrome --load-extension=<dir> --disable-extensions-except=<dir>.
+      (A blanket extra header on every request would hand the token to every
+      site the agent visits.) Chromium or Chrome for Testing; branded Chrome
+      137+ ignores --load-extension.
 `;
 
 /** How to send a fresh actor token. Pure, for tests. */
@@ -57,6 +69,7 @@ export async function runActors(
   flags: Record<string, string | boolean>,
   call: ApiCall,
   out: Out,
+  opts: { base?: string } = {},
 ): Promise<number> {
   const sub = positional[0] ?? "list";
   const json = Boolean(flags.json);
@@ -141,10 +154,12 @@ export async function runActors(
     if (r.status >= 400) return fail("revoke", r);
     const actor = find(actors, positional[1]);
     if (!actor) {
-      out.error("usage: crawlproof actors revoke <email|id> [--token=<token id>]   (no --token revokes the actor and every token)");
+      out.error("usage: crawlproof actors revoke <email|id> [--token-id=<id>]   (no --token-id revokes the actor and every token)");
       return 2;
     }
-    const tokenId = typeof flags.token === "string" ? flags.token : undefined;
+    // Not --token: both CLIs read --token as the API key override, so a token id
+    // there was sent as the bearer and came back 401 "Malformed token".
+    const tokenId = typeof flags["token-id"] === "string" ? flags["token-id"] : undefined;
     const d = tokenId
       ? await call("DELETE", `/api/tracker/v1/actors/${actor.id}/tokens?token=${encodeURIComponent(tokenId)}`)
       : await call("DELETE", `/api/tracker/v1/actors/${actor.id}`);
@@ -153,6 +168,39 @@ export async function runActors(
     return 0;
   }
 
-  out.error(`unknown: crawlproof actors ${sub} (expected: list | add | token | revoke)`);
+  if (sub === "extension") {
+    const { r, actors } = await list();
+    if (r.status >= 400) return fail("extension", r);
+    const actor = find(actors, positional[1]);
+    if (!actor) {
+      out.error("usage: crawlproof actors extension <email|id> [--out=./crawlproof-declare] [--label=…]   (crawlproof actors list shows yours)");
+      return 2;
+    }
+    const dir = resolve(typeof flags.out === "string" ? flags.out : "crawlproof-declare");
+    const label = typeof flags.label === "string" ? flags.label : "browser extension";
+    const m = await call("POST", `/api/tracker/v1/actors/${actor.id}/tokens`, { label });
+    if (m.status >= 400) return fail("extension", m);
+    const files = declareExtensionFiles({
+      token: String(m.json.token),
+      base: opts.base ?? "https://crawlproof.com",
+      who: `${actor.name || actor.email} (${actor.kind})`,
+    });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body, { mode: 0o600 });
+    if (json) {
+      out.write(JSON.stringify({ dir, token_id: m.json.id, prefix: m.json.prefix }, null, 2));
+      return 0;
+    }
+    out.write(`wrote ${dir} for ${actor.email} (${actor.kind}), token ${String(m.json.prefix)}… id ${String(m.json.id)}`);
+    out.write("");
+    out.write(`  chrome --load-extension=${dir} --disable-extensions-except=${dir} …`);
+    out.write(`  chrome-devtools-mcp --chromeArg=--load-extension=${dir} --chromeArg=--disable-extensions-except=${dir}`);
+    out.write("");
+    out.write(`Revoke: crawlproof actors revoke ${actor.email} --token-id=${String(m.json.id)}`);
+    return 0;
+  }
+
+  out.error(`unknown: crawlproof actors ${sub} (expected: list | add | token | revoke | extension)`);
   return 2;
 }

@@ -1057,7 +1057,7 @@ async function main() {
         return await runActors(args.positional, args.flags as Record<string, string | boolean>, (method, path, body) => apiCall(args, method, path, body), {
           write: (line: string) => process.stdout.write(`${line}\n`),
           error: (line: string) => console.error(line),
-        });
+        }, { base: apiBase(args) });
       case "dashboard":
       case "roi":
       case "tui":
