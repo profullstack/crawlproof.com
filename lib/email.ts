@@ -743,6 +743,69 @@ export async function sendWatchConfirmEmail(input: {
   return { sent: true };
 }
 
+export function actorVerifyEmailHtml(input: {
+  kind: "human" | "agent";
+  name: string;
+  verifyUrl: string;
+}): string {
+  const who = input.kind === "agent" ? "an agent" : "a person";
+  const label = input.name ? ` as <strong style="color:#e7e9ee;">${escapeHtml(input.name)}</strong>` : "";
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">
+                Confirm this address as ${who}
+              </h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">
+                A CrawlProof account registered this address${label}, so that
+                visits it declares are counted as ${who} on sites using the
+                CrawlProof tracker. Confirming marks the address verified;
+                until then it is shown as unverified.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 8px;">
+              <a href="${input.verifyUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                Confirm this address →
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <p style="margin:8px 0 0;font-size:12px;line-height:1.6;color:#64748b;">
+                Or copy this link into your browser:<br>
+                <a href="${input.verifyUrl}" style="color:#9aa3b2;word-break:break-all;">${input.verifyUrl}</a>
+              </p>
+            </td>
+          </tr>`;
+  return emailShell({
+    title: "Confirm a declared actor",
+    innerHtml,
+    footerNote:
+      "If you did not expect this, ignore it: an unverified address is never shown as verified, " +
+      "and no one can claim it as verified without this link.",
+  });
+}
+
+export async function sendActorVerifyEmail(input: {
+  to: string;
+  kind: "human" | "agent";
+  name: string;
+  verifyUrl: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: `Confirm: ${input.to} as ${input.kind === "agent" ? "an agent" : "a person"} on CrawlProof`,
+    html: actorVerifyEmailHtml(input),
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}
+
 export function watchChangeEmailHtml(input: {
   host: string;
   label: string;

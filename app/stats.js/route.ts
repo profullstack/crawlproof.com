@@ -80,6 +80,26 @@ ${VISITOR_SNIPPET}
       return fresh;
     }
     var visitorId = getVisitorId();
+
+    // Declared actor (opt-in, see lib/tracker/actors.ts). A link carrying
+    // ?crp_actor=<cpa_ token> stores the token for this site and is stripped
+    // from the address bar at once; ?crp_actor=off forgets it. The token rides
+    // every beacon. Nothing is stored or sent for a visitor who never opts in.
+    var ACTOR_KEY = 'crawlproof.actor';
+    function setActor(token) {
+      try {
+        if (token && /^cpa_[A-Za-z0-9_-]{32,124}$/.test(token)) lsSet(ACTOR_KEY, token);
+        else localStorage.removeItem(ACTOR_KEY);
+      } catch (_) {}
+    }
+    try {
+      var u = new URL(location.href);
+      if (u.searchParams.has('crp_actor')) {
+        setActor(u.searchParams.get('crp_actor'));
+        u.searchParams.delete('crp_actor');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+      }
+    } catch (_) {}
     function labelFor(el) {
       try {
         return el.getAttribute('data-cp-label')
@@ -105,6 +125,7 @@ ${VISITOR_SNIPPET}
             height: Math.max(0, window.innerHeight || 0)
           },
           visitorId: visitorId,
+          actor: lsGet(ACTOR_KEY) || null,
           sessionId: getSessionId(),
           language: navigator.language || '',
           timezone: (window.Intl && Intl.DateTimeFormat) ? Intl.DateTimeFormat().resolvedOptions().timeZone : '',
@@ -136,6 +157,7 @@ ${VISITOR_SNIPPET}
       var args = Array.prototype.slice.call(arguments, 1);
       try {
         if (method === 'track') return cpTrack(args[0], args[1]);
+        if (method === 'actor') return setActor(args[0]);
         return cpTrack(method, args[0]);
       } catch (_) {}
     }
