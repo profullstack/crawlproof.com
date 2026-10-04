@@ -23,6 +23,10 @@ import { AutoInstall } from "./auto-install";
 import { LiveVisitors } from "./live-visitors";
 import { StatsSubnav } from "./stats-subnav";
 import { WhoToggle } from "./who-toggle";
+import { DeclaredCard } from "./declared-card";
+import { serviceClient } from "@/lib/supabase/service";
+import { declaredSummary } from "@/lib/tracker/actorStore";
+import { DECLARED_DEFINITION } from "@/lib/tracker/actors";
 import { getOrMintInstallationToken } from "@/lib/github/installations";
 import { listInstallationRepos } from "@/lib/github/app";
 
@@ -122,6 +126,14 @@ export default async function ProjectStatsPage({
   // no connected installations, we just hide the button.
   const ghConfigured = !!(env.githubAppId && env.githubAppPrivateKey);
   const { data: { user } } = await supabase.auth.getUser();
+
+  // Declared actors (opt-in, self-reported). Read with the service client
+  // because naming an actor needs a join the viewer's RLS cannot see;
+  // declaredSummary itself filters names to the viewer's own or public ones.
+  // Best-effort: a failure hides the card instead of breaking the page.
+  const declared = user
+    ? await declaredSummary(serviceClient(), user.id, id, range, DECLARED_DEFINITION).catch(() => null)
+    : null;
   const installations: Array<{ installation_id: number; account_login: string }> = [];
   const ghRepos: Array<{
     full_name: string;
@@ -294,6 +306,8 @@ export default async function ProjectStatsPage({
         {visitorsCaption && (
           <p className="-mt-1 text-xs text-[var(--color-muted)]">{visitorsCaption}</p>
         )}
+
+        <DeclaredCard summary={declared} rangeLabel={range.description} />
 
         {grandTotal === 0 && eventTotal === 0 ? (
           <section className="card p-4">

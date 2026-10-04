@@ -148,6 +148,22 @@ https://example.com/?crp_actor=cpa_…
 # or from page code
 window.crawlproof?.("actor", "cpa_…");   // null forgets it`}</pre>
         <p className="text-sm leading-relaxed">
+          For an agent&apos;s browser, generate an extension instead of changing
+          its code. It sends the token on{" "}
+          <code className="font-mono">/api/track</code> requests and nothing
+          else, so the sites the agent visits never see it (a blanket extra
+          header on every request would hand them the token):
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`crawlproof actors extension mybot@example.com --out=./crawlproof-declare
+
+chromium --load-extension=./crawlproof-declare --disable-extensions-except=./crawlproof-declare
+# chrome-devtools-mcp: --chromeArg=--load-extension=<dir> --chromeArg=--disable-extensions-except=<dir>
+# Playwright: launchPersistentContext(profile, { args: [the same two flags] })`}</pre>
+        <p className="text-sm leading-relaxed">
+          Use Chromium or Chrome for Testing: branded Google Chrome 137 and
+          later ignores <code className="font-mono">--load-extension</code>.
+        </p>
+        <p className="text-sm leading-relaxed">
           It is self-reported, so the rule is one-way: a declared agent is
           believed and counted as a bot; a declared human is recorded but never
           overrides bot detection, and a mismatch is counted as a contradiction

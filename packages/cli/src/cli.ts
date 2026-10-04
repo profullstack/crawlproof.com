@@ -17,7 +17,7 @@ import { FINANCE_DAYS, runDashboard } from "../../../cli/dashboard";
 import { EMAIL_TRACKING_USAGE, runEmailTracking } from "../../../lib/emailTracking/cli";
 import { ACTORS_USAGE, runActors } from "../../../lib/tracker/actorsCli";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 type Args = {
   command: string;
@@ -420,7 +420,7 @@ export async function main(argv: string[]): Promise<number> {
         return await runActors(args.positional, args.flags, (method, path, body) => apiCall(args, method, path, body), {
           write: (line: string) => process.stdout.write(`${line}\n`),
           error: (line: string) => console.error(line),
-        });
+        }, { base: apiBase(args) });
       case "email-tracking":
         return await runEmailTracking(args.positional, args.flags, (method, path) => apiCall(args, method, path), {
       write: (line: string) => process.stdout.write(`${line}\n`),

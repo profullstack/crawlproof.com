@@ -324,6 +324,6 @@ describe("runActors (shared by both CLIs)", () => {
   it("is wired into the published CLI, not only the in-repo one", () => {
     const src = readFileSync("packages/cli/src/cli.ts", "utf8");
     expect(src).toContain('case "actors":');
-    expect(src).toContain('export const VERSION = "0.4.0";');
+    expect(src).toContain('export const VERSION = "0.5.0";');
   });
 });
