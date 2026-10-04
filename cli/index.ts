@@ -15,6 +15,7 @@
 
 import { readFileSync } from "node:fs";
 import { EMAIL_TRACKING_USAGE, runEmailTracking } from "../lib/emailTracking/cli";
+import { ACTORS_USAGE, runActors } from "../lib/tracker/actorsCli";
 
 import { isAllowedTargetUrl } from "../lib/rateLimit";
 
@@ -572,126 +573,6 @@ async function cmdStats(args: Args): Promise<number> {
   return 0;
 }
 
-/**
- * `crawlproof actors` — declared actors: who you are when you visit a tracked
- * site, and whether you are a person. Opt-in and self-reported; an agent is
- * believed, a human never overrides bot detection (lib/tracker/actors.ts).
- */
-async function cmdActors(args: Args): Promise<number> {
-  const sub = args.positional[0] ?? "list";
-  const json = Boolean(args.flags.json);
-  const fail = (what: string, r: { status: number; json: Record<string, unknown> }) => {
-    console.error(`actors ${what} failed: ${r.status} ${String(r.json.error ?? "")}`);
-    return 1;
-  };
-  type Row = { id: string; email: string; name: string; kind: string; email_verified: boolean; visibility: string; tokens: { id: string; prefix: string; label: string; last_used_at: string | null }[]; last30: { events: number; pageviews: number; contradictions: number; sites: number } };
-  const list = async () => {
-    const r = await apiCall(args, "GET", "/api/tracker/v1/actors");
-    return { r, actors: (r.json.actors as Row[] | undefined) ?? [] };
-  };
-  const find = (actors: Row[], key: string | undefined) =>
-    key ? actors.find((a) => a.id === key || a.email === key.toLowerCase()) : undefined;
-
-  if (sub === "list") {
-    const { r, actors } = await list();
-    if (r.status >= 400) return fail("list", r);
-    if (json) {
-      process.stdout.write(`${JSON.stringify(actors, null, 2)}\n`);
-      return 0;
-    }
-    if (!actors.length) process.stdout.write("No actors yet. crawlproof actors add <email> --kind=human|agent\n");
-    for (const a of actors) {
-      const verified = a.email_verified ? "verified" : "unverified";
-      const u = a.last30;
-      const flags = u.contradictions ? `, ${u.contradictions} contradicted` : "";
-      process.stdout.write(`${a.kind.padEnd(5)} ${a.email}${a.name ? ` (${a.name})` : ""}  ${verified}, ${a.visibility}  ${a.id}\n`);
-      process.stdout.write(`      30d: ${u.pageviews} pv, ${u.events} ev on ${u.sites} site${u.sites === 1 ? "" : "s"}${flags}\n`);
-      for (const t of a.tokens) {
-        process.stdout.write(`      token ${t.prefix}…  ${t.label || "(no label)"}  last used ${t.last_used_at?.slice(0, 16).replace("T", " ") ?? "never"}  ${t.id}\n`);
-      }
-    }
-    return 0;
-  }
-
-  if (sub === "add") {
-    const email = args.positional[1];
-    const kind = args.flags.kind as string | undefined;
-    if (!email || (kind !== "human" && kind !== "agent")) {
-      console.error("usage: crawlproof actors add <email> --kind=human|agent [--name=…] [--operator=<human email>] [--public] [--token-label=…] [--no-token] [--json]");
-      return 2;
-    }
-    const body: Record<string, unknown> = { email, kind, visibility: args.flags.public ? "public" : "private" };
-    if (typeof args.flags.name === "string") body.name = args.flags.name;
-    if (typeof args.flags.operator === "string") body.operator = args.flags.operator;
-    if (!args.flags["no-token"]) body.token_label = typeof args.flags["token-label"] === "string" ? args.flags["token-label"] : "cli";
-    const r = await apiCall(args, "POST", "/api/tracker/v1/actors", body);
-    if (r.status >= 400) return fail("add", r);
-    if (json) {
-      process.stdout.write(`${JSON.stringify(r.json, null, 2)}\n`);
-      return 0;
-    }
-    const actor = r.json.actor as { id: string; email: string; kind: string };
-    const verification = {
-      "owner-login": "verified (it is your login)",
-      sent: "verification email sent",
-      "not-sent": `NOT verified: email could not be sent (${String(r.json.verificationError ?? "unknown")})`,
-    }[String(r.json.verification)] ?? "";
-    process.stdout.write(`${actor.kind} ${actor.email}  ${actor.id}\n${verification}\n`);
-    if (r.json.token) process.stdout.write(`\n${actorTokenHowTo(String(r.json.token))}`);
-    return 0;
-  }
-
-  if (sub === "token") {
-    const { r, actors } = await list();
-    if (r.status >= 400) return fail("token", r);
-    const actor = find(actors, args.positional[1]);
-    if (!actor) {
-      console.error("usage: crawlproof actors token <email|id> [--label=…]");
-      return 2;
-    }
-    const label = typeof args.flags.label === "string" ? args.flags.label : "cli";
-    const m = await apiCall(args, "POST", `/api/tracker/v1/actors/${actor.id}/tokens`, { label });
-    if (m.status >= 400) return fail("token", m);
-    if (json) process.stdout.write(`${JSON.stringify(m.json, null, 2)}\n`);
-    else process.stdout.write(actorTokenHowTo(String(m.json.token)));
-    return 0;
-  }
-
-  if (sub === "revoke") {
-    const { r, actors } = await list();
-    if (r.status >= 400) return fail("revoke", r);
-    const actor = find(actors, args.positional[1]);
-    if (!actor) {
-      console.error("usage: crawlproof actors revoke <email|id> [--token=<token id>]   (no --token revokes the actor and every token)");
-      return 2;
-    }
-    const tokenId = args.flags.token as string | undefined;
-    const d = tokenId
-      ? await apiCall(args, "DELETE", `/api/tracker/v1/actors/${actor.id}/tokens?token=${encodeURIComponent(tokenId)}`)
-      : await apiCall(args, "DELETE", `/api/tracker/v1/actors/${actor.id}`);
-    if (d.status >= 400) return fail("revoke", d);
-    process.stdout.write(tokenId ? `revoked token ${tokenId} of ${actor.email}\n` : `revoked ${actor.email} and all its tokens\n`);
-    return 0;
-  }
-
-  console.error(`unknown: crawlproof actors ${sub} (expected: list | add | token | revoke)`);
-  return 2;
-}
-
-/** How to send a fresh actor token. Pure, for tests. */
-export function actorTokenHowTo(token: string): string {
-  return [
-    `token (shown once): ${token}`,
-    "",
-    "Send it with your visits by any of:",
-    `  header   Crawlproof-Actor: ${token}        (Playwright extraHTTPHeaders, Puppeteer setExtraHTTPHeaders)`,
-    `  link     https://<tracked site>/?crp_actor=${token}   (stored for that site, stripped from the URL)`,
-    `  script   crawlproof('actor', '${token}')`,
-    "Or, for a person: Dashboard → Settings → Declared actors → Declare this browser.",
-    "",
-  ].join("\n");
-}
-
 async function cmdSlots(args: Args): Promise<number> {
   const sub = args.positional[0];
   if (sub === "create") {
@@ -1095,20 +976,7 @@ ${EMAIL_TRACKING_USAGE}
       project name; with one project it can be left out. Needs an API token.
       Lists declared actors seen on the site when there are any.
 
-  actors [list] [--json]
-  actors add <email> --kind=human|agent [--name=…] [--operator=<human email>]
-             [--public] [--token-label=…] [--no-token] [--json]
-  actors token <email|id> [--label=…]
-  actors revoke <email|id> [--token=<token id>]
-      Declared actors: say who you are, and whether you are a person, on every
-      site with the CrawlProof tracker. Opt-in and self-reported. A token
-      (cpa_…) is the credential, never the email; send it as the
-      Crawlproof-Actor header or open a site once with ?crp_actor=. An
-      agent is believed; a human never overrides bot detection and a mismatch
-      is counted as a contradiction. Names are visible to you only unless
-      --public. Your login address is verified on creation; any other gets a
-      verification email.
-
+${ACTORS_USAGE}
   dashboard [--range=1h|4h|1d|1w|1m] [--who=humans|bots|all] [--interval=60]
             [--sites=a.com,b.com] [--sort=score|visitors|pageviews]
             [--concurrency=8] [--no-coinpay] [--json]
@@ -1186,7 +1054,10 @@ async function main() {
       case "stats":
         return await cmdStats(args);
       case "actors":
-        return await cmdActors(args);
+        return await runActors(args.positional, args.flags as Record<string, string | boolean>, (method, path, body) => apiCall(args, method, path, body), {
+          write: (line: string) => process.stdout.write(`${line}\n`),
+          error: (line: string) => console.error(line),
+        });
       case "dashboard":
       case "roi":
       case "tui":
