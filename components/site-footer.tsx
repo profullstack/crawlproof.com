@@ -29,11 +29,9 @@ export function SiteFooter() {
             <li><Link href="/bot">Bot info</Link></li>
             {/* Member of the Profullstack OpenWebring (logicsrc.com/openwebring): the ring reads these links. */}
             <li>
-              <a href="https://rssamplifier.com/ring/profullstack/previous?from=https://crawlproof.com/blog">← previous</a>
-              {" · "}
-              <a href="https://rssamplifier.com/ring/profullstack">Profullstack ring</a>
-              {" · "}
-              <a href="https://rssamplifier.com/ring/profullstack/next?from=https://crawlproof.com/blog">next →</a>
+              <a href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Fcrawlproof.com%2F" rel="prev">{"<<"}</a>{" "}
+              <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>{" "}
+              <a href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Fcrawlproof.com%2F" rel="next">{">>"}</a>
             </li>
           </ul>
         </div>
