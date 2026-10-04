@@ -18,7 +18,8 @@ import { hashApiToken } from "@/lib/sp/apiToken";
 import { rangeSinceDay } from "@/lib/tracker/actorStore";
 import { trackerRange } from "@/lib/tracker/ranges";
 import { renderStats } from "@/lib/dashboard/stats-text";
-import { actorTokenHowTo } from "@/cli/index";
+import { actorTokenHowTo, runActors } from "@/lib/tracker/actorsCli";
+import { readFileSync } from "node:fs";
 
 // Declared actors are on the honor system, and others will try to game it.
 // These pin the parts that make lying cheap to spot and useless to profit
@@ -284,5 +285,45 @@ describe("/api/track with a declared actor", () => {
     const calls = await beacon("human", CHROME);
     expect(calls.find(([n]) => n === "tracker_touch_visitor")![1].p_kind).toBe("human");
     expect(calls.find(([n]) => n === "tracker_touch_actor")![1].p_contradiction).toBe(false);
+  });
+});
+
+describe("runActors (shared by both CLIs)", () => {
+  function harness(reply: { status: number; json: Record<string, unknown> }) {
+    const calls: [string, string, Record<string, unknown> | undefined][] = [];
+    const lines: string[] = [];
+    const errors: string[] = [];
+    const call = async (method: string, path: string, body?: Record<string, unknown>) => {
+      calls.push([method, path, body]);
+      return reply;
+    };
+    return { calls, lines, errors, out: { write: (l: string) => lines.push(l), error: (l: string) => errors.push(l) }, call };
+  }
+
+  it("runs `actors add <email> --kind=agent --operator=<email>` as one POST", async () => {
+    const h = harness({ status: 201, json: { actor: { id: "a2", email: "riotcoder@profullstack.com", kind: "agent" }, verification: "sent", token: TOKEN } });
+    const code = await runActors(["add", "riotcoder@profullstack.com"], { kind: "agent", operator: "anthony@profullstack.com" }, h.call, h.out);
+    expect(code).toBe(0);
+    expect(h.calls).toEqual([["POST", "/api/tracker/v1/actors", { email: "riotcoder@profullstack.com", kind: "agent", visibility: "private", operator: "anthony@profullstack.com", token_label: "cli" }]]);
+    expect(h.lines.join("\n")).toContain("verification email sent");
+    expect(h.lines.join("\n")).toContain(`Crawlproof-Actor: ${TOKEN}`);
+  });
+
+  it("says why when the server refuses, e.g. an actor that already exists", async () => {
+    const h = harness({ status: 409, json: { error: "anthony@profullstack.com is already an actor on this account." } });
+    expect(await runActors(["add", "anthony@profullstack.com"], { kind: "human" }, h.call, h.out)).toBe(1);
+    expect(h.errors[0]).toBe("actors add failed: 409 anthony@profullstack.com is already an actor on this account.");
+  });
+
+  it("prints usage without --kind instead of guessing", async () => {
+    const h = harness({ status: 200, json: {} });
+    expect(await runActors(["add", "x@example.com"], {}, h.call, h.out)).toBe(2);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("is wired into the published CLI, not only the in-repo one", () => {
+    const src = readFileSync("packages/cli/src/cli.ts", "utf8");
+    expect(src).toContain('case "actors":');
+    expect(src).toContain('export const VERSION = "0.4.0";');
   });
 });

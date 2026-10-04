@@ -15,8 +15,9 @@ import { collectDashboard } from "../../../lib/dashboard/collect";
 import { renderStats } from "../../../lib/dashboard/stats-text";
 import { FINANCE_DAYS, runDashboard } from "../../../cli/dashboard";
 import { EMAIL_TRACKING_USAGE, runEmailTracking } from "../../../lib/emailTracking/cli";
+import { ACTORS_USAGE, runActors } from "../../../lib/tracker/actorsCli";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 type Args = {
   command: string;
@@ -131,7 +132,9 @@ COMMANDS
       Who arrived and from where: sources, referrers and top pages. Defaults
       to the last day and humans only, because a launch is invisible inside a
       month of crawler traffic. With one project the site can be left out.
+      Lists declared actors seen on the site when there are any.
 
+${ACTORS_USAGE}
   ad <url> [--name=N] [--budget=CENTS] [--bid=CREDITS] [--draft] [--json]
       Run an ad for a URL. CrawlProof reads the page, writes the creatives and
       starts serving. A URL that already has a live campaign gets that campaign
@@ -413,6 +416,11 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdAd(args);
       case "ads":
         return await cmdAds(args);
+      case "actors":
+        return await runActors(args.positional, args.flags, (method, path, body) => apiCall(args, method, path, body), {
+          write: (line: string) => process.stdout.write(`${line}\n`),
+          error: (line: string) => console.error(line),
+        });
       case "email-tracking":
         return await runEmailTracking(args.positional, args.flags, (method, path) => apiCall(args, method, path), {
       write: (line: string) => process.stdout.write(`${line}\n`),
