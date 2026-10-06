@@ -1,80 +1,69 @@
 name: deploy-prober
 
-# Deploys the port-drift prober (docs/uptime-monitoring-prd.md §12) to the
-# DigitalOcean droplet ubuntu@scan.crawlproof.com on merges to master.
+# Deploys the port-drift prober (docs/uptime-monitoring-prd.md §12) to dev2 on
+# merges to master. It used to run on its own DigitalOcean droplet
+# (scan.crawlproof.com) reaching dev2's Redis through an ssh tunnel; since
+# 2026-10-06 it runs on dev2 itself, as the container crawlproof-prober.
 #
-# FULLY SELF-BOOTSTRAPPING + IDEMPOTENT: the workflow installs every system
-# dependency (nmap, Node 20, build tools), writes the Redis env file, installs
-# the systemd unit, builds, and (re)starts the service on EVERY run. First run
-# provisions a bare droplet; later runs just update. You never SSH in to set up.
+# CI ships prober/ to /home/anthony/www/crawlproof.com/prober-src and rebuilds
+# the container there (prober/deploy/docker-compose.dev2.yml). REDIS_URL lives
+# in /home/anthony/www/crawlproof.com/prober.env on the box, never in CI.
 #
-# The prober connects OUTBOUND to Redis — nothing here opens an inbound port on
-# the droplet (only sshd, which already exists).
-#
-# Required repo secrets:
-#   DROPLET_SSH_KEY   - private SSH key for ubuntu@scan.crawlproof.com
-#   PROBER_REDIS_URL  - rediss://... broker URL (scoped to the "prober" queue)
+# Secrets: the same DEV2_* set deploy-dev2.yml uses.
 
 on:
   push:
     branches: [master]
     paths:
       - "prober/**"
-      - "lib/**"                       # prober shares job-payload types from lib/
       - ".github/workflows/deploy-prober.yml"
-  workflow_dispatch:                    # allow manual redeploys
+  workflow_dispatch:
 
-# Never let two deploys race on the droplet.
+# Never let two deploys race on the box.
 concurrency:
   group: deploy-prober
   cancel-in-progress: false
 
 env:
-  DEPLOY_HOST: scan.crawlproof.com
-  DEPLOY_USER: ubuntu
-  DEPLOY_PATH: /home/ubuntu/crawlproof.com
+  DEPLOY_PATH: /home/anthony/www/crawlproof.com/prober-src
 
 jobs:
   deploy:
-    name: provision + deploy prober
-    runs-on: ubuntu-24.04
+    name: build + restart prober on dev2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - name: Configure SSH
+      - name: Set up ssh
         env:
-          DROPLET_SSH_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          SSH_KEY: ${{ secrets.DEV2_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEV2_KNOWN_HOSTS }}
         run: |
-          install -m 700 -d ~/.ssh
-          # Write the deploy key robustly: tolerate CRLF (a common cause of
-          # "error in libcrypto"), and accept either a raw OpenSSH/PEM key or a
-          # base64-encoded one.
-          if printf '%s' "$DROPLET_SSH_KEY" | grep -q 'BEGIN'; then
-            printf '%s\n' "$DROPLET_SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy
-          else
-            printf '%s' "$DROPLET_SSH_KEY" | tr -d '\r' | base64 -d > ~/.ssh/id_deploy
-          fi
-          chmod 600 ~/.ssh/id_deploy
-          # Fail fast with a clear message if the key is malformed, instead of a
-          # confusing "Permission denied (publickey)" later.
-          if ! ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1; then
-            echo "::error::DROPLET_SSH_KEY is not a valid private key. Re-add it preserving newlines, e.g. 'gh secret set DROPLET_SSH_KEY --repo profullstack/crawlproof.com < id_deploy' (or store it base64-encoded)."
-            exit 1
-          fi
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
-      - name: Ship prober + lib to droplet
+      - name: Ship prober/ to dev2
+        env:
+          TARGET: ${{ secrets.DEV2_USER }}@${{ secrets.DEV2_HOST }}
         run: |
-          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
-          # --delete keeps the droplet in sync; node_modules/dist are excluded so
-          # they are neither shipped nor deleted (rebuilt on the box).
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/id_deploy" \
+          ssh -o BatchMode=yes "$TARGET" mkdir -p "$DEPLOY_PATH"
+          # node_modules/dist are built inside the image, never shipped.
+          rsync -az --delete -e "ssh -o BatchMode=yes" \
             --exclude node_modules --exclude dist \
-            prober lib \
-            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+            prober/ "$TARGET:$DEPLOY_PATH/"
 
-      - name: Provision + restart (idempotent)
+      - name: Build + restart, then check it is running
+        env:
+          TARGET: ${{ secrets.DEV2_USER }}@${{ secrets.DEV2_HOST }}
         run: |
-          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
-            "REDIS_URL='${{ secrets.PROBER_REDIS_URL }}' DEPLOY_PATH='$DEPLOY_PATH' bash '$DEPLOY_PATH/prober/deploy/provision.sh'"
+          ssh -o BatchMode=yes "$TARGET" \
+            docker compose -f "$DEPLOY_PATH/deploy/docker-compose.dev2.yml" up -d --build
+          sleep 10
+          state=$(ssh -o BatchMode=yes "$TARGET" docker inspect -f '{{.State.Status}}/{{.RestartCount}}' crawlproof-prober)
+          echo "crawlproof-prober: $state"
+          ssh -o BatchMode=yes "$TARGET" docker logs --tail 5 crawlproof-prober
+          [ "$state" = "running/0" ]
