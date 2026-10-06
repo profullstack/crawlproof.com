@@ -8,6 +8,8 @@ import { isNavigation } from "@/lib/affiliate/cookie";
 type Cookie = { name: string; value: string; options?: CookieOptions };
 
 export async function proxy(request: NextRequest) {
+  // The status page's health probe: no gateway, no session refresh.
+  if (request.nextUrl.pathname === "/api/health") return NextResponse.next();
   // Ad routes enforce their gate themselves, before DB work. Avoid counting a
   // request twice or making an unrelated Supabase Auth call for each click.
   if (isAdClickPath(request.nextUrl.pathname)) return NextResponse.next();
