@@ -1,0 +1,21 @@
+# The prober on dev2, beside the crawlproof.com app. Host networking because
+# the BullMQ broker is crawlproof-redis, published on dev2's 127.0.0.1:6379
+# only, and because nmap results should come from the box's own address.
+#
+# prober.env (REDIS_URL, 0600) lives on the box at
+# /home/anthony/www/crawlproof.com/prober.env and never in git.
+name: crawlproof-prober
+services:
+  prober:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: crawlproof-prober:latest
+    container_name: crawlproof-prober
+    network_mode: host
+    env_file: /home/anthony/www/crawlproof.com/prober.env
+    restart: unless-stopped
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
