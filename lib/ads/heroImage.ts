@@ -6,7 +6,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import type { SiteBrand } from "./brand";
 
 // The ad hero image shown behind the Medium Rectangle. Chooses, in order:
-//   1. a gpt-image-1 hero generated from the brand + ad copy, uploaded to the
+//   1. a gpt-image-2.5 hero generated from the brand + ad copy, uploaded to the
 //      public ad-assets bucket — purpose-built ad art reads far better than a
 //      site's share image, so we prefer it.
 //   2. the advertiser's own og:image / share image (free, already hosted) as a
@@ -15,7 +15,8 @@ import type { SiteBrand } from "./brand";
 // accent-tinted wash, never a broken image.
 
 const ASSET_BUCKET = "ad-assets";
-const IMAGE_MODEL = "gpt-image-1";
+// gpt-image-1 is shut down by OpenAI on 2026-10-23 (#346).
+const IMAGE_MODEL = "gpt-image-2.5-sunburst";
 const VALIDATE_TIMEOUT_MS = 4000;
 const MIN_IMAGE_BYTES = 2000; // <2KB is almost certainly a tracking pixel/placeholder
 
@@ -114,7 +115,7 @@ async function uploadHero(bytes: Buffer): Promise<string | null> {
   return svc.storage.from(ASSET_BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
-// Resolve the hero image URL for a set of ad creatives. A gpt-image-1 hero
+// Resolve the hero image URL for a set of ad creatives. A gpt-image-2.5 hero
 // first (purpose-built ad art), then the advertiser's og:image as a fallback
 // when AI is unavailable/fails. Returns null if neither works — the renderer
 // then uses the accent-tinted fallback.
