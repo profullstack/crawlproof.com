@@ -29,6 +29,7 @@ import {
   ArticleSchema,
   INLINE_IMAGE_COUNT,
   buildSystemPrompt,
+  dropUnfilledInlineMarkers,
   extractSectionForMarker,
   generateImage,
   generateInlineImage,
@@ -284,6 +285,7 @@ export async function generateGuestPost(
           : "",
     );
   }
+  bodyWithImages = dropUnfilledInlineMarkers(bodyWithImages);
   bodyWithImages = bodyWithImages.replace(
     /^(#{1,6}[^\n]*?)\s*\{#[a-z0-9][a-z0-9-]*\}\s*$/gim,
     "$1",

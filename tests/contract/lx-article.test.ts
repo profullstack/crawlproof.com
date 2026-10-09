@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  ArticleSchema,
+  INLINE_IMAGE_COUNT,
+  buildSystemPrompt,
+  dropUnfilledInlineMarkers,
   ensureTableOfContentsLinks,
+  normalizeArticleOutput,
   extractSectionForMarker,
   slugify,
   validateInternalLinks,
@@ -192,5 +197,38 @@ That's it.
     const out = extractSectionForMarker(huge, 1);
     expect(out.length).toBeLessThanOrEqual(1500);
     expect(out.startsWith('Section heading: "Topic title"')).toBe(true);
+  });
+});
+
+describe("hero-only images (INLINE_IMAGE_COUNT = 0)", () => {
+  const base = {
+    title: "A title long enough",
+    slug: "a-title",
+    meta_description: "m".repeat(60),
+    excerpt: "e".repeat(60),
+    tags: ["one", "two", "three"],
+    markdown_body: "b".repeat(7500),
+    used_internal_link_urls: [],
+  };
+  const extra = { alt: "an extra image", prompt: "p".repeat(30) };
+
+  it("asks the model for no inline images", () => {
+    expect(INLINE_IMAGE_COUNT).toBe(0);
+    expect(buildSystemPrompt()).toContain("Inline images: none.");
+    expect(buildSystemPrompt()).not.toContain("<!--INLINE_IMAGE_1-->");
+  });
+
+  it("accepts an article with no inline_image_prompts", () => {
+    expect(ArticleSchema.parse(base).inline_image_prompts).toEqual([]);
+  });
+
+  it("drops inline images a model returns anyway instead of failing", () => {
+    const parsed = ArticleSchema.parse({ ...base, inline_image_prompts: [extra, extra] });
+    expect(normalizeArticleOutput(parsed).inline_image_prompts).toEqual([]);
+  });
+
+  it("removes stray placeholders from the body", () => {
+    const md = "## One\n\n<!--INLINE_IMAGE_1-->\n\nText <!-- INLINE_IMAGE_2 --> here.\n";
+    expect(dropUnfilledInlineMarkers(md)).toBe("## One\n\n\nText  here.\n");
   });
 });
