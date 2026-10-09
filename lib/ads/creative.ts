@@ -494,7 +494,7 @@ export async function generateAdCreatives(
     anthropicEffort: "low",
   });
 
-  // Hero image: the advertiser's og:image when it exists, else a gpt-image-1
+  // Hero image: the advertiser's og:image when it exists, else a gpt-image-2.5
   // fallback (only when we have a Supabase client to host the upload). Best-
   // effort — a failure just leaves the accent-tint background.
   let heroUrl: string | null = null;
