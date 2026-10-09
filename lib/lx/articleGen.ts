@@ -43,11 +43,10 @@ const EMBED_MODEL = "text-embedding-3-small";
 const CLAUDE_MODEL = env.backendAiAnthropicModel;
 const IMAGE_MODEL = "gpt-image-2";
 const IMAGE_SIZE = "1536x1024";
-// gpt-image-2 quality tier: low / medium / high / auto. We pay the premium
-// "high" tier on the hero + 3 inline images for visibly sharper textures,
-// better composition, and stronger instruction-following — readers spot
-// AI-art at low/medium quality immediately.
-const IMAGE_QUALITY: "low" | "medium" | "high" | "auto" = "high";
+// gpt-image-2 quality tier: low / medium / high / auto. "medium" since
+// 2026-10-09: "high" on a hero + 3 inline images was ~$0.165 an image,
+// 60 images and ~$10 a day across the fleet. Medium is ~$0.04.
+const IMAGE_QUALITY: "low" | "medium" | "high" | "auto" = "medium";
 const BUCKET = "lx-article-images";
 
 // Cap on input to the LLM so a malicious or oversized sitemap can't
@@ -87,7 +86,9 @@ type LinkCandidate = {
   distance: number;
 };
 
-export const INLINE_IMAGE_COUNT = 3;
+// Hero only since 2026-10-09 (cost, see IMAGE_QUALITY). Raise this to bring
+// inline images back: the prompt, schema and render loop all follow it.
+export const INLINE_IMAGE_COUNT = 0;
 const MAX_PRIOR_ARTICLE_LINKS = 3;
 
 export const ArticleSchema = z.object({
@@ -137,8 +138,11 @@ export const ArticleSchema = z.object({
         labels: z.array(z.string().max(80)).max(12).default([]),
       }),
     )
+    // A model that adds extra slots anyway should not cost us the article:
+    // normalizeArticleOutput trims to INLINE_IMAGE_COUNT.
     .min(INLINE_IMAGE_COUNT)
-    .max(INLINE_IMAGE_COUNT),
+    .max(12)
+    .default([]),
 });
 
 type ArticleOutput = z.infer<typeof ArticleSchema>;
@@ -156,13 +160,21 @@ export function normalizeArticleOutput(article: ArticleOutput): ArticleOutput {
     meta_description: truncateText(article.meta_description, 160),
     excerpt: truncateText(article.excerpt, 240),
     tags: article.tags.slice(0, 8).map((t) => truncateText(t, 40)),
-    inline_image_prompts: article.inline_image_prompts.map((p) => ({
+    inline_image_prompts: article.inline_image_prompts.slice(0, INLINE_IMAGE_COUNT).map((p) => ({
       ...p,
       alt: truncateText(p.alt, 200),
       prompt: truncateText(p.prompt, 500),
       labels: (p.labels ?? []).slice(0, 6).map((l) => truncateText(l, 24)),
     })),
   };
+}
+
+// Remove any `<!--INLINE_IMAGE_N-->` the model placed beyond the slots we
+// render, so an unfilled placeholder never reaches the page.
+export function dropUnfilledInlineMarkers(markdown: string): string {
+  return markdown
+    .replace(/^[ \t]*<!--\s*INLINE_IMAGE_\d+\s*-->[ \t]*\n?/gm, "")
+    .replace(/<!--\s*INLINE_IMAGE_\d+\s*-->/g, "");
 }
 
 export function stripInPageAnchorLinks(markdown: string): string {
@@ -297,21 +309,28 @@ export function buildSystemPrompt(): string {
     "",
     "Internal links: insert each provided URL inline exactly once as a standard markdown `[anchor](url)` link where the surrounding sentence is genuinely about that URL's topic. Never create a \"Further reading\" list. Never invent URLs — use only those provided. Link candidates may include both site pages AND prior blog posts on this same site — treat both the same way (inline contextual anchor; the prior posts are clearly labeled in the candidate list).",
     "",
-    `Inline images: place exactly ${INLINE_IMAGE_COUNT} placeholder lines of the form '<!--INLINE_IMAGE_1-->', '<!--INLINE_IMAGE_2-->', '<!--INLINE_IMAGE_3-->' (each on its own line, in numeric order) inside markdown_body. Place each marker on a blank line immediately after a major H2 boundary, distributed across the body — never inside the intro, the TOC, a blockquote, a table, or inside the final '### Try {brand}' CTA block.`,
-    "",
-    `For each placeholder, return one object in inline_image_prompts (same 1→${INLINE_IMAGE_COUNT} order). Each object MUST set a kind that fits what the surrounding section is doing — this is the difference between a decorative blob and an informative graphic:`,
-    "",
-    "- kind=\"chart\" — when the section discusses metrics, percentages, comparisons of magnitudes, or trends. Provide 2–5 short labels (≤24 chars each) that should appear on bars/segments. Plausible numbers are fine; the chart is illustrative.",
-    "- kind=\"flow\" — when the section walks through a process or workflow with 3–5 steps. Provide the step labels in order.",
-    "- kind=\"comparison\" — when the section explicitly contrasts two approaches (good/bad, before/after, wrong/right). Provide exactly 2 labels (e.g., [\"Before\", \"After\"]).",
-    "- kind=\"checklist\" — when the section is a 'do these things' list of 3–6 items. Provide the checklist labels.",
-    "- kind=\"concept\" — fallback for atmospheric / opening sections where no data, flow, comparison, or list is being presented. No labels needed.",
-    "",
-    "Aim for a MIX across the three inline images — at least one should be chart/flow/comparison/checklist when the article has any quantitative or procedural content. 'concept' is fine for at most one of the three.",
-    "",
-    "alt: a short accessibility description of what the image shows.",
-    "prompt: a one-sentence brief describing the image's content (this becomes the image-model prompt). Don't include style direction — the renderer adds it.",
-    "",
+    ...(INLINE_IMAGE_COUNT > 0
+      ? [
+          `Inline images: place exactly ${INLINE_IMAGE_COUNT} placeholder lines of the form '<!--INLINE_IMAGE_1-->', '<!--INLINE_IMAGE_2-->', '<!--INLINE_IMAGE_3-->' (each on its own line, in numeric order) inside markdown_body. Place each marker on a blank line immediately after a major H2 boundary, distributed across the body — never inside the intro, the TOC, a blockquote, a table, or inside the final '### Try {brand}' CTA block.`,
+          "",
+          `For each placeholder, return one object in inline_image_prompts (same 1→${INLINE_IMAGE_COUNT} order). Each object MUST set a kind that fits what the surrounding section is doing — this is the difference between a decorative blob and an informative graphic:`,
+          "",
+          "- kind=\"chart\" — when the section discusses metrics, percentages, comparisons of magnitudes, or trends. Provide 2–5 short labels (≤24 chars each) that should appear on bars/segments. Plausible numbers are fine; the chart is illustrative.",
+          "- kind=\"flow\" — when the section walks through a process or workflow with 3–5 steps. Provide the step labels in order.",
+          "- kind=\"comparison\" — when the section explicitly contrasts two approaches (good/bad, before/after, wrong/right). Provide exactly 2 labels (e.g., [\"Before\", \"After\"]).",
+          "- kind=\"checklist\" — when the section is a 'do these things' list of 3–6 items. Provide the checklist labels.",
+          "- kind=\"concept\" — fallback for atmospheric / opening sections where no data, flow, comparison, or list is being presented. No labels needed.",
+          "",
+          "Aim for a MIX across the three inline images — at least one should be chart/flow/comparison/checklist when the article has any quantitative or procedural content. 'concept' is fine for at most one of the three.",
+          "",
+          "alt: a short accessibility description of what the image shows.",
+          "prompt: a one-sentence brief describing the image's content (this becomes the image-model prompt). Don't include style direction — the renderer adds it.",
+          "",
+        ]
+      : [
+          "Inline images: none. Put no image placeholders, HTML comments or image markdown in markdown_body, and return inline_image_prompts as an empty array.",
+          "",
+        ]),
     "Output: strict JSON matching the schema. The markdown_body is the article body only.",
   ].join("\n");
 }
@@ -1479,6 +1498,8 @@ export async function generateArticle(
           : "",
     );
   }
+
+  bodyWithImages = dropUnfilledInlineMarkers(bodyWithImages);
 
   // Strip pandoc-style `## Heading {#anchor-id}` attributes from headings.
   // Both our renderers (pandoc with gfm_auto_identifiers, marked with the
