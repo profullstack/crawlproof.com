@@ -63,16 +63,62 @@ async function isUsableImage(url: string): Promise<boolean> {
   }
 }
 
-function buildPrompt(brand: SiteBrand, copy: AdHeroCopy): string {
+// One house look for every hero: launch-grade key art for the agentic AI era,
+// so a network of very different sites still reads as one premium ad product.
+const ART_DIRECTION = [
+  "Art direction: flagship-launch quality, cinematic 3D render with photoreal materials,",
+  "volumetric light, subtle holographic interface glints and luminous data threads",
+  "suggesting AI agents at work, shallow depth of field, one crisp high-detail focal",
+  "subject, refined editorial composition.",
+].join(" ");
+
+const FRAMING = [
+  "Clear negative space along the bottom for an overlaid caption.",
+  "No text, no letters, no logos, no watermarks, no UI chrome. Landscape 3:2.",
+].join(" ");
+
+export function buildPrompt(brand: SiteBrand, copy: AdHeroCopy): string {
   const subject = [brand.title, brand.description].filter(Boolean).join(" — ");
   return [
-    `Advertising hero image for a display ad promoting: ${subject || brand.domain}.`,
-    `The ad's message is "${copy.headline}"${copy.body ? ` (${copy.body})` : ""}.`,
-    `On-brand palette built around background ${copy.bgColor} and accent ${copy.accentColor}.`,
-    "A single striking focal subject, photographic or richly illustrative, dramatic lighting,",
-    "scroll-stopping, with clear negative space toward the bottom for an overlaid caption.",
-    "No on-image text, no words, no logos, no watermarks, no UI chrome. Landscape 3:2.",
+    "Premium key art for a display ad, made for the agentic AI era.",
+    `Product: ${subject || brand.domain}.`,
+    `Ad message: "${copy.headline}"${copy.body ? ` (${copy.body})` : ""}.`,
+    ART_DIRECTION,
+    `Palette built around deep background ${copy.bgColor} and accent ${copy.accentColor}.`,
+    FRAMING,
   ].join(" ");
+}
+
+// The retry when the safety system refuses the subject prompt. Advertiser copy
+// trips it on harmless products ("zombie love story" reads as violence, and is
+// blocked at the output stage), so this one carries no copy at all: just the
+// domain, the palette and an abstract focal object.
+export function buildSafePrompt(brand: SiteBrand, copy: AdHeroCopy): string {
+  return [
+    "Premium key art for a display ad, made for the agentic AI era.",
+    `Product category: a web product (${brand.domain}).`,
+    ART_DIRECTION,
+    "The focal subject is an abstract sculptural object; calm and friendly in tone; no people.",
+    `Palette built around deep background ${copy.bgColor} and accent ${copy.accentColor}.`,
+    FRAMING,
+  ].join(" ");
+}
+
+function isModerationBlock(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  return e?.code === "moderation_blocked" || /safety system/i.test(e?.message ?? "");
+}
+
+async function generateOnce(openai: OpenAI, prompt: string): Promise<Buffer | null> {
+  const res = await openai.images.generate({
+    model: IMAGE_MODEL,
+    prompt,
+    size: "1536x1024",
+    quality: "high",
+    n: 1,
+  });
+  const b64 = res.data?.[0]?.b64_json;
+  return b64 ? Buffer.from(b64, "base64") : null;
 }
 
 async function generateAiHero(
@@ -81,19 +127,27 @@ async function generateAiHero(
   copy: AdHeroCopy,
 ): Promise<Buffer | null> {
   try {
-    const res = await openai.images.generate({
-      model: IMAGE_MODEL,
-      prompt: buildPrompt(brand, copy),
-      size: "1536x1024",
-      quality: "medium",
-      n: 1,
-    });
-    const b64 = res.data?.[0]?.b64_json;
-    return b64 ? Buffer.from(b64, "base64") : null;
+    return await generateOnce(openai, buildPrompt(brand, copy));
+  } catch (err) {
+    if (!isModerationBlock(err)) {
+      console.warn("[ads] hero image gen failed", err instanceof Error ? err.message : err);
+      return null;
+    }
+    console.warn("[ads] hero prompt refused by the safety system; retrying abstract");
+  }
+  try {
+    return await generateOnce(openai, buildSafePrompt(brand, copy));
   } catch (err) {
     console.warn("[ads] hero image gen failed", err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+// An app icon is not a share image: a 512px square logo stretched behind a
+// banner is what an ad looked like when generation failed and og:image was the
+// site's icon (pwamart's apps all point og:image at /icon-512.png).
+export function looksLikeIcon(url: string): boolean {
+  return /(^|[\/_-])(icon|favicon|apple-touch|logo)[^\/]*\.(png|jpe?g|webp|svg|ico)(\?|$)/i.test(url);
 }
 
 // Heroes are server-generated ad art, not user uploads. The ad-assets bucket's
@@ -137,7 +191,7 @@ export async function resolveAdHeroImage(args: {
     }
   }
 
-  if (brand.ogImage && (await isUsableImage(brand.ogImage))) {
+  if (brand.ogImage && !looksLikeIcon(brand.ogImage) && (await isUsableImage(brand.ogImage))) {
     return { url: brand.ogImage, source: "og" };
   }
 
