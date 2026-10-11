@@ -107,19 +107,24 @@ User-Agent:         @profullstack/autoblog/0.3`}</pre>
       "canonical_url": "https://your-site/blog/{slug}",
       "title":         "string",
       "slug":          "kebab-case-slug",
-      "excerpt":       "≤240-char prose summary" | null,
+      "excerpt":       "≤240-char prose summary",
       "html":          "<p>…</p>",
-      "markdown":      "..." | null,
+      "markdown":      "...",
       "status":        "published",
       "published_at":  "ISO-8601",
       "updated_at":    "ISO-8601",
       "author":        null,
       "tags":          ["seo", "ai bots"],
       "categories":    [],
-      "featured_image": { "url": "https://...", "alt": "..." } | null
+      "featured_image": { "url": "https://...", "alt": "..." }
     }
   }
 }`}</pre>
+        <p className="text-sm text-[var(--color-muted)]">
+          <code>post.excerpt</code>, <code>post.markdown</code>, and{" "}
+          <code>post.featured_image</code> may each be <code>null</code>
+          {" "}when unavailable. The example above shows non-null values.
+        </p>
         <p className="text-sm text-[var(--color-muted)]">
           <code className="font-mono">meta_description</code> (≤160 chars,
           SEO copy) is sent inside the legacy fields when present but the

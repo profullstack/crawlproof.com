@@ -67,25 +67,37 @@ export function SignupForm({ redirectTo, defaultEmail }: { redirectTo?: string; 
         </>
       )}
       <form onSubmit={onSubmit} className="space-y-3">
-        <input
-          type="email"
-          className="input"
-          placeholder="you@company.com"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="email"
-        />
-        <input
-          type="password"
-          className="input"
-          placeholder="Password (8+ chars)"
-          required
-          minLength={8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="new-password"
-        />
+        <div className="space-y-1">
+          <label htmlFor="signup-email" className="block text-sm font-medium">
+            Email
+          </label>
+          <input
+            id="signup-email"
+            type="email"
+            className="input"
+            placeholder="you@company.com"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+          />
+        </div>
+        <div className="space-y-1">
+          <label htmlFor="signup-password" className="block text-sm font-medium">
+            Password
+          </label>
+          <input
+            id="signup-password"
+            type="password"
+            className="input"
+            placeholder="Password (8+ chars)"
+            required
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+          />
+        </div>
         {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
         <button type="submit" className="btn btn-primary w-full" disabled={pending}>
           {pending ? "Creating account…" : "Create account"}
