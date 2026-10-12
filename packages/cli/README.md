@@ -3,7 +3,7 @@
 What the fleet costs and what it returns, in a terminal.
 
 ```
-npm install -g @profullstack/crawlproof
+curl -fsSL https://crawlproof.com/install.sh | sh   # or: npm install -g @profullstack/crawlproof
 crawlproof dashboard
 ```
 

@@ -135,7 +135,7 @@ own, ad delivery, and the bank feed behind it. Published from
 [/docs/cli](https://crawlproof.com/docs/cli).
 
 ```sh
-npm install -g @profullstack/crawlproof
+curl -fsSL https://crawlproof.com/install.sh | sh   # or: npm install -g @profullstack/crawlproof
 echo '{ "token": "crp_…" }' > ~/.crawlproof.json && chmod 600 ~/.crawlproof.json
 
 crawlproof dashboard                # five live screens: ROI, Traffic, Ads, Money, Spend
