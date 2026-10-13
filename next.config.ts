@@ -41,6 +41,15 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },
+  // The curl installer: shown as text in a browser, never offered as a download.
+  async headers() {
+    return [
+      {
+        source: "/install.sh",
+        headers: [{ key: "Content-Type", value: "text/plain; charset=utf-8" }],
+      },
+    ];
+  },
   // Permanent redirect: www.crawlproof.com → crawlproof.com (308 preserves
   // the HTTP method and body, making it the correct choice for permanent moves
   // on non-GET requests as well as GET).
