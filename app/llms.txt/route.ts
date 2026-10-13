@@ -27,6 +27,11 @@ const body = `# CrawlProof
 - AI-bot rules for GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, CCBot
 - Positioning clarity: who, what, audience, pricing, CTA
 
+## CLI
+- Install: curl -fsSL ${env.siteUrl}/install.sh | sh (or npm install -g @profullstack/crawlproof; the unscoped "crawlproof" package is not ours)
+- crawlproof dashboard, crawlproof stats <site>, crawlproof ads; authenticates with an API token (CRAWLPROOF_TOKEN or ~/.crawlproof.json)
+- Docs: ${env.siteUrl}/docs/cli
+
 ## Contact
 - General: hello@crawlproof.com
 - Sales: sales@crawlproof.com

@@ -38,7 +38,10 @@ export default function CliDocsPage() {
 
       <section className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Install</h2>
-        <Cmd note="Needs Node 22.6 or newer for the dashboard. stats and --json run anywhere.">
+        <Cmd note="Uses bun if present, otherwise npm with Node 22.6 or newer. Never asks for sudo.">
+          curl -fsSL https://crawlproof.com/install.sh | sh
+        </Cmd>
+        <Cmd note="Or with npm. Needs Node 22.6 or newer for the dashboard. stats and --json run anywhere.">
           npm install -g @profullstack/crawlproof
         </Cmd>
         <p className="text-sm leading-relaxed">
