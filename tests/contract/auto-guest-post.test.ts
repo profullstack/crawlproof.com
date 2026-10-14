@@ -22,12 +22,15 @@ const matcher = vi.mocked(findGuestPostOpportunities);
  * getting one of those wrong is precisely the kind of mistake that returns
  * `undefined` and silently disables the feature rather than failing.
  */
-function stubSupabase(opts: {
-  articleCount?: number;
-  countError?: string;
-  recentGuestTargets?: string[];
-  existingRequests?: Array<{ target_site_id: string; topic: string }>;
-}) {
+function stubSupabase(
+  opts: {
+    articleCount?: number;
+    countError?: string;
+    recentGuestTargets?: string[];
+    existingRequests?: Array<{ target_site_id: string; topic: string }>;
+  },
+  filters: string[] = [],
+) {
   return {
     from(table: string) {
       if (table === "lx_article") {
@@ -35,23 +38,27 @@ function stubSupabase(opts: {
           select(_cols: string, o?: { count?: string; head?: boolean }) {
             if (o?.head) {
               return {
-                eq: () =>
-                  Promise.resolve(
+                or: (f: string) => {
+                  filters.push(`or:${f}`);
+                  return Promise.resolve(
                     opts.countError
                       ? { count: null, error: { message: opts.countError } }
                       : { count: opts.articleCount ?? 0, error: null },
-                  ),
+                  );
+                },
               };
             }
             return {
-              eq: () => ({
-                eq: () => ({
-                  gte: () =>
-                    Promise.resolve({
+              eq: (col: string, val: unknown) => ({
+                eq: (col2: string, val2: unknown) => ({
+                  gte: () => {
+                    filters.push(`eq:${col}=${String(val)}`, `eq:${col2}=${String(val2)}`);
+                    return Promise.resolve({
                       data: (opts.recentGuestTargets ?? []).map((id) => ({
                         target_site_id: id,
                       })),
-                    }),
+                    });
+                  },
                 }),
               }),
             };
@@ -107,6 +114,16 @@ describe("guest post cadence", () => {
     );
     expect(slot).toBe(false);
   });
+
+  it("counts the guest posts this site wrote, which live under the partner", async () => {
+    // Counting by site_id alone never saw them, so a site one short of a
+    // multiple of ten was handed a guest slot on every tick, for ever.
+    const filters: string[] = [];
+    await isGuestPostSlot(stubSupabase({}, filters), "author");
+    expect(filters).toEqual([
+      "or:and(site_id.eq.author,is_guest_post.eq.false),author_site_id.eq.author",
+    ]);
+  });
 });
 
 describe("choosing a partner", () => {
@@ -140,6 +157,15 @@ describe("choosing a partner", () => {
     );
 
     expect(plan?.targetSiteId).toBe("fresh");
+  });
+
+  it("looks up the cooldown by author, not by the site the post lives on", async () => {
+    // The same mistake as the cadence count: by site_id the cooldown found
+    // nothing, and one partner got the same post seventeen days running.
+    matcher.mockResolvedValue([opportunity("partner", ["topic a"])]);
+    const filters: string[] = [];
+    await planGuestPost(stubSupabase({}, filters), "author");
+    expect(filters).toEqual(["eq:author_site_id=author", "eq:is_guest_post=true"]);
   });
 
   it("does not commission a topic a human already requested", async () => {

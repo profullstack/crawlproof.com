@@ -68,10 +68,19 @@ export async function isGuestPostSlot(
   supabase: SupabaseClient<any>,
   authorSiteId: string,
 ): Promise<boolean> {
+  // A guest post is stored under the PARTNER's site_id, with the author in
+  // author_site_id. Counting by site_id alone missed every guest post this site
+  // wrote, so once its own count sat one short of a multiple of ten the slot
+  // stayed a guest slot for ever: pairux.com published nothing to its own blog
+  // from 2026-08-19 while writing the same guest post daily. Count what this
+  // site authored — its own posts plus the guest posts it wrote elsewhere —
+  // and not the guest posts partners wrote onto it.
   const { count, error } = await supabase
     .from("lx_article")
     .select("id", { count: "exact", head: true })
-    .eq("site_id", authorSiteId);
+    .or(
+      `and(site_id.eq.${authorSiteId},is_guest_post.eq.false),author_site_id.eq.${authorSiteId}`,
+    );
 
   // A failed count must not silently turn every slot into a guest post, nor
   // silently turn none of them into one. Falling back to "no" keeps the
@@ -114,10 +123,11 @@ export async function planGuestPost(
   // Who we have written for lately. One query for the whole cooldown rather
   // than one per candidate: the list is short and the cron is walking every
   // active site.
+  // By author_site_id, not site_id: the article lives under the partner.
   const { data: recent } = await supabase
     .from("lx_article")
     .select("target_site_id")
-    .eq("site_id", authorSiteId)
+    .eq("author_site_id", authorSiteId)
     .eq("is_guest_post", true)
     .gte("created_at", since);
 
