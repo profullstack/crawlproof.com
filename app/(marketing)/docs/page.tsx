@@ -33,6 +33,12 @@ const DOCS: DocCard[] = [
       "Read your traffic, ad delivery and spend from a terminal. Live five-screen dashboard, plain-text stats, and one-command ad campaigns over the same bearer-token API.",
   },
   {
+    href: "/docs/crawl-access",
+    title: "Crawler access ($1/day)",
+    description:
+      "Why crawlproof.com/crawl answers 402, what the $1 USDC pass buys (24 hours of every public page), the exact receipt it returns, and how to pay with or without an x402 client.",
+  },
+  {
     href: "/docs/autoblog-webhook",
     title: "Autoblog webhook",
     description:

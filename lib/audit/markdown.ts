@@ -1,4 +1,5 @@
 import type { AuditResult, Finding } from "./types";
+import { buildTodoList } from "./recommendations";
 
 // Render a canonical Markdown report for the AEO audit. The document is
 // designed as a *fix prompt* — paste-ready for an LLM coding assistant
@@ -89,7 +90,17 @@ export function toMarkdown(input: {
     return items.map(bullet).join("\n");
   };
 
-  const todo = findings
+  const steps = buildTodoList(findings, targetUrl);
+  const todo = steps.length > 0
+    ? steps
+        .map(
+          (t) =>
+            `- [ ] **P${t.priority}** — ${t.step} _(+${t.points} pts; found: ${t.why})_${
+              t.value ? `\n\n  \`\`\`\n  ${t.value.split("\n").join("\n  ")}\n  \`\`\`` : ""
+            }`,
+        )
+        .join("\n")
+    : findings
     .filter((f) => f.section === "Priority To-Do List")
     .sort((a, b) => a.priority - b.priority)
     .map(

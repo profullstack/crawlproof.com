@@ -1,6 +1,8 @@
 import { SECTIONS } from "@/lib/audit/prompt";
 import { SectionFindings, type FixRun } from "./section";
 import { DataFoundTable } from "./data-found";
+import { TodoList } from "./todo-list";
+import { buildTodoList, type TodoItem } from "@/lib/audit/recommendations";
 import { SlopMeter } from "./slop-meter";
 import { SLOP_SECTION } from "@/lib/audit/checks/slop";
 import type { Finding } from "@/lib/audit/types";
@@ -49,7 +51,8 @@ export function ReportView({
     source: string | null;
     notes: string | null;
   }>;
-  const sections = reportSections(findings, audit.engine);
+  const todo = buildTodoList(findings, audit.target_url);
+  const sections = todoFirst(reportSections(findings, audit.engine), todo);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[16rem_1fr] lg:gap-8">
@@ -91,6 +94,13 @@ export function ReportView({
 
         {sections.map((s, i) => {
           const sectionFindings = findings.filter((f) => f.section === s);
+          if (s === TODO_SECTION && todo.length > 0) {
+            return (
+              <SectionShell key={s} index={i + 1} title={s}>
+                <TodoList items={todo} score={audit.score} />
+              </SectionShell>
+            );
+          }
           if (s === "Data Found") {
             return (
               <SectionShell key={s} index={i + 1} title={s}>
@@ -229,7 +239,8 @@ function EngineReport({
     source: string | null;
     notes: string | null;
   }>;
-  const sections = reportSections(findings, audit.engine);
+  const todo = buildTodoList(findings, audit.target_url);
+  const sections = todoFirst(reportSections(findings, audit.engine), todo);
   const summary = audit.summary as { pass?: number; warn?: number; fail?: number } | null;
 
   return (
@@ -272,6 +283,13 @@ function EngineReport({
       ) : (
         sections.map((s, i) => {
           const sectionFindings = findings.filter((f) => f.section === s);
+          if (s === TODO_SECTION && todo.length > 0) {
+            return (
+              <SectionShell key={`${audit.id}-${s}`} index={i + 1} title={s}>
+                <TodoList items={todo} score={audit.score} />
+              </SectionShell>
+            );
+          }
           if (s === "Data Found") {
             return (
               <SectionShell key={`${audit.id}-${s}`} index={i + 1} title={s}>
@@ -292,6 +310,17 @@ function EngineReport({
       )}
     </section>
   );
+}
+
+const TODO_SECTION = "Priority To-Do List";
+
+/**
+ * When the findings yield a to-do list, it leads the report: a score of
+ * 47/100 is only useful next to the steps that raise it.
+ */
+export function todoFirst(sections: string[], todo: TodoItem[]): string[] {
+  if (todo.length === 0) return sections;
+  return [TODO_SECTION, ...sections.filter((s) => s !== TODO_SECTION)];
 }
 
 export function reportSections(findings: Finding[], engine?: string | null): string[] {

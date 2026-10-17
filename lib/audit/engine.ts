@@ -15,7 +15,7 @@ import { checkPerformance } from "./checks/performance";
 import { checkSpecCompliance } from "./checks/spec-compliance";
 import { checkGeo } from "./checks/geo";
 import { scoreFindings } from "./score";
-import { deriveRecommendations } from "./recommendations";
+import { buildTodoList, deriveRecommendations } from "./recommendations";
 import type { AuditResult, CrawlContext, FetchedPage, Finding } from "./types";
 
 const PRIORITY_PATHS = [
@@ -223,7 +223,8 @@ export async function runAudit(
   }
 
   // Recommended fixes (derived from failed/warn findings).
-  const recs = deriveRecommendations(findings);
+  const recs = deriveRecommendations(findings, target);
+  const todo = buildTodoList(findings, target);
   for (const r of recs) {
     findings.push({
       section: "Recommended Fixes",
@@ -236,18 +237,20 @@ export async function runAudit(
     });
   }
 
-  // Priority to-do — same list, sorted, just labeled differently for the report.
-  for (const r of recs.slice(0, 20)) {
+  // Priority to-do: one imperative step per fix, naming the exact URL, header
+  // or tag, ordered by the score points each is worth. `rank` keeps that order
+  // through storage, which only sorts by priority.
+  todo.slice(0, 30).forEach((t, i) => {
     findings.push({
       section: "Priority To-Do List",
-      check_key: `todo.${r.check_key}`,
+      check_key: `todo.${t.check_key}`,
       status: "warn",
-      title: `[ ] ${r.title}`,
-      detail: r.how,
-      evidence: { priority: r.priority },
-      priority: r.priority,
+      title: `[ ] ${t.step}`,
+      detail: t.value ? `${t.value}\n\n${t.how}` : t.how,
+      evidence: { rank: i + 1, points: t.points, for: t.check_key, why: t.why, ...(t.value ? { value: t.value } : {}) },
+      priority: t.priority,
     });
-  }
+  });
 
   ctx.findings = findings;
   const score = scoreFindings(findings.filter((f) => !f.check_key.startsWith("rec.") && !f.check_key.startsWith("todo.")));

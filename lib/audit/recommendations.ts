@@ -443,18 +443,213 @@ export type Recommendation = {
   how: string;
 };
 
-export function deriveRecommendations(findings: Finding[]): Recommendation[] {
+/**
+ * One concrete step of the to-do list. `step` is an imperative sentence that
+ * names the exact URL, header or tag; `value` is the literal thing to add
+ * when there is one (a header line, a tag, a robots.txt block); `points` is
+ * how much of the 0–100 score this step is worth under lib/audit/score.ts.
+ */
+export type TodoItem = {
+  check_key: string;
+  section: string;
+  priority: 1 | 2 | 3 | 4 | 5;
+  status: "fail" | "warn";
+  step: string;
+  value?: string;
+  why: string;
+  how: string;
+  points: number;
+};
+
+// The same weights lib/audit/score.ts scores with, so "worth N points" is true.
+const WEIGHT = { 1: 25, 2: 15, 3: 8, 4: 4, 5: 1 } as const;
+const LOSS = { fail: 1, warn: 0.5, unknown: 0.7, pass: 0 } as const;
+
+/** Exact header values recommended for each missing security header. */
+export const RECOMMENDED_HEADERS: Record<string, { name: string; value: string }> = {
+  "security.hsts": { name: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+  "security.csp": {
+    name: "Content-Security-Policy-Report-Only",
+    value: "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'",
+  },
+  "security.xfo": { name: "X-Frame-Options", value: "SAMEORIGIN" },
+  "security.xcto": { name: "X-Content-Type-Options", value: "nosniff" },
+  "security.referrer": { name: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  "security.permissions": { name: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  "perf.caching": { name: "Cache-Control", value: "public, max-age=300, s-maxage=3600" },
+};
+
+const HEADER_HOW: Record<string, string> = {
+  "security.hsts": "Only once every subdomain serves https. ",
+  "security.csp":
+    "Start in Report-Only so nothing breaks; once the reports are clean, rename the header to Content-Security-Policy and add any third-party sources it reported. ",
+};
+
+function originOf(target?: string): string {
+  if (!target) return "https://yoursite.com";
+  try {
+    return new URL(target).origin;
+  } catch {
+    return "https://yoursite.com";
+  }
+}
+
+function brokenLinks(f: Finding): Array<{ url: string; status: number }> {
+  // The detail lists every broken link ("· 503 — https://…"); evidence keeps five.
+  const out: Array<{ url: string; status: number }> = [];
+  for (const m of (f.detail ?? "").matchAll(/^· (\d+|timeout) — (\S+)$/gm)) {
+    out.push({ url: m[2]!, status: m[1] === "timeout" ? 0 : Number(m[1]) });
+  }
+  if (out.length > 0) return out;
+  const ex = (f.evidence as { examples?: Array<{ url?: string; status?: number }> } | undefined)?.examples;
+  return (ex ?? []).filter((e) => typeof e?.url === "string").map((e) => ({ url: e.url!, status: Number(e.status) || 0 }));
+}
+
+type Step = { step: string; value?: string; how: string };
+
+/**
+ * The finding-specific wording: names the URL, header or file, with the exact
+ * value to add. Null falls back to the generic template title.
+ */
+function specificSteps(f: Finding, origin: string): Step[] | null {
+  const k = f.check_key;
+  const header = RECOMMENDED_HEADERS[k];
+  if (header) {
+    const line = `${header.name}: ${header.value}`;
+    return [{
+      step: `Add header ${line}`,
+      value: line,
+      how:
+        `${HEADER_HOW[k] ?? ""}Send it on every HTML response. ` +
+        `nginx: add_header ${header.name} "${header.value}" always;  ` +
+        `Next.js: headers() in next.config; Cloudflare: a Transform Rule (modify response header).`,
+    }];
+  }
+  if (k === "links.broken_sample") {
+    const links = brokenLinks(f);
+    if (links.length === 0) return null;
+    return links.map((l) => ({
+      step: `Fix ${l.url} (${l.status ? `returns ${l.status}` : "timed out"})`,
+      how: "Make the target answer 2xx again, or change the link on the homepage to a working URL, or remove it.",
+    }));
+  }
+  if (k === "security.mixed_content") {
+    const ex = (f.evidence as { examples?: string[] } | undefined)?.examples ?? [];
+    if (ex.length === 0) return null;
+    return ex.map((u) => ({
+      step: `Load ${u} over https:// (change it to ${u.replace(/^http:/i, "https:")})`,
+      how: "Browsers block or downgrade http:// assets on an https page. If the host has no https, self-host the file.",
+    }));
+  }
+  if (k.startsWith("aibot.")) {
+    const bot = k.slice("aibot.".length);
+    const block = `User-agent: ${bot}\nAllow: /`;
+    return [{ step: `Allow ${bot} in ${origin}/robots.txt: add "User-agent: ${bot}" then "Allow: /"`, value: block, how: "Put the block above any catch-all Disallow." }];
+  }
+  const files: Record<string, Step> = {
+    "security.https": { step: `Serve ${origin.replace(/^http:/, "https:")} with a TLS certificate and 301-redirect http:// to it`, how: "Let's Encrypt (certbot or Caddy) or your host's automatic certificate." },
+    "robots.exists": { step: `Create ${origin}/robots.txt`, value: `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml`, how: "Serve it as text/plain at the root." },
+    "robots.sitemap_ref": { step: `Add the line "Sitemap: ${origin}/sitemap.xml" to ${origin}/robots.txt`, value: `Sitemap: ${origin}/sitemap.xml`, how: "Use the full URL; crawlers will not guess it." },
+    "sitemap.exists": { step: `Publish ${origin}/sitemap.xml listing every canonical URL`, how: "Generate it at build time (Next.js: app/sitemap.ts; WordPress: Yoast or core wp-sitemap.xml)." },
+    "sitemap.empty": { step: `Add a <url><loc>…</loc></url> entry for every canonical page to ${origin}/sitemap.xml`, how: "An empty sitemap is worse than none." },
+    "llms_txt": { step: `Publish ${origin}/llms.txt`, value: `# Your Brand\n\n> One-line description of the site.\n\n## Docs\n\n- [Pricing](${origin}/pricing): plans and prices`, how: "Markdown: H1, one-line summary, then sections of links with a short description each (llmstxt.org)." },
+    "geo.llms_txt": { step: `Publish or extend ${origin}/llms.txt to at least 2 sections and 3 described links`, how: "Follow llmstxt.org: H1, > summary, ## sections of [title](url): description." },
+    "geo.llms_full_txt": { step: `Publish ${origin}/llms-full.txt with the full Markdown of every page llms.txt links`, how: "Generate it at build time from the same sources as llms.txt." },
+    "skill_md": { step: `Publish ${origin}/skill.md describing what an agent can do on the site`, how: "List the tasks (search, pricing lookup, sign-up) and any API endpoints with their auth." },
+    "security_txt": { step: `Publish ${origin}/.well-known/security.txt`, value: `Contact: mailto:security@${originHost(origin)}\nExpires: ${nextYear()}-01-01T00:00:00.000Z\nPreferred-Languages: en`, how: "Contact and Expires are required by RFC 9116." },
+    "homepage.canonical": { step: `Add <link rel="canonical" href="${origin}/"> to the homepage <head>`, value: `<link rel="canonical" href="${origin}/">`, how: "One canonical per page, pointing at its own preferred URL." },
+    "homepage.lang": { step: `Add lang="en" to the homepage <html> tag (or your content's language code)`, value: `<html lang="en">`, how: "Use the BCP 47 code of the page's language." },
+    "meta.charset": { step: `Add <meta charset="utf-8"> as the first tag in <head>`, value: `<meta charset="utf-8">`, how: "It must appear within the first 1024 bytes." },
+    "meta.favicon": { step: `Add <link rel="icon" href="/favicon.ico"> to <head> and serve ${origin}/favicon.ico`, value: `<link rel="icon" href="/favicon.ico">`, how: "Add an apple-touch-icon too so citation cards show your mark." },
+    "meta.robots_noindex": { step: `Remove "noindex" from <meta name="robots"> on ${origin}/`, how: "The homepage must be indexable." },
+    "meta.x_robots_noindex": { step: `Stop sending X-Robots-Tag: noindex on ${origin}/`, how: "Limit that header to admin and preview routes." },
+    "meta.hreflang": { step: `Add <link rel="alternate" hreflang="x-default" href="${origin}/"> to <head>`, value: `<link rel="alternate" hreflang="x-default" href="${origin}/">`, how: "Engines fall back to it when a visitor's locale is not listed." },
+  };
+  const one = files[k];
+  return one ? [one] : null;
+}
+
+function originHost(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return "yourdomain.com";
+  }
+}
+
+function nextYear(): number {
+  return new Date().getUTCFullYear() + 1;
+}
+
+function isBase(f: Finding): boolean {
+  return !f.check_key.startsWith("rec.") && !f.check_key.startsWith("todo.");
+}
+
+/**
+ * The audit as a to-do list: every fail/warn finding we know how to fix, as
+ * imperative steps naming the exact URL, header or tag, ordered by how many
+ * score points each one is worth (then severity, then fail before warn).
+ * Derived from the stored findings, so it works for audits run before it
+ * existed, in the UI, the API and the Markdown export alike.
+ */
+export function buildTodoList(findings: Finding[], target?: string): TodoItem[] {
+  const base = findings.filter(isBase);
+  const max = base.reduce((sum, f) => sum + (WEIGHT[f.priority] ?? 5), 0);
+  const origin = originOf(target);
+  const items: TodoItem[] = [];
+  for (const f of base) {
+    if (f.status !== "fail" && f.status !== "warn") continue;
+    const tmpl = RECS[f.check_key] ?? (f.check_key.startsWith("aibot.") ? aibotRec(f.check_key) : null);
+    if (!tmpl) continue;
+    const lost = max > 0 ? ((WEIGHT[f.priority] ?? 5) * LOSS[f.status] * 100) / max : 0;
+    const steps = specificSteps(f, origin) ?? [{ step: tmpl.title, how: tmpl.how }];
+    for (const s of steps) {
+      // Two checks can ask for the same change; list it once, worth both.
+      const dup = items.find((t) => t.step === s.step);
+      if (dup) {
+        dup.points = Math.round((dup.points + lost / steps.length) * 10) / 10;
+        if (dup.priority > f.priority) dup.priority = f.priority;
+        continue;
+      }
+      items.push({
+        check_key: f.check_key,
+        section: f.section,
+        priority: f.priority,
+        status: f.status,
+        step: s.step,
+        ...(s.value ? { value: s.value } : {}),
+        why: f.title,
+        how: s.how,
+        points: Math.round((lost / steps.length) * 10) / 10,
+      });
+    }
+  }
+  items.sort(
+    (a, b) =>
+      b.points - a.points ||
+      a.priority - b.priority ||
+      (a.status === b.status ? 0 : a.status === "fail" ? -1 : 1) ||
+      a.section.localeCompare(b.section),
+  );
+  return items;
+}
+
+export function deriveRecommendations(findings: Finding[], target?: string): Recommendation[] {
   const recs: Recommendation[] = [];
+  const origin = originOf(target);
   for (const f of findings) {
     if (f.status !== "fail" && f.status !== "warn") continue;
     const tmpl = RECS[f.check_key] ?? (f.check_key.startsWith("aibot.") ? aibotRec(f.check_key) : null);
     if (!tmpl) continue;
+    // A finding that resolves to a single concrete step gets that wording.
+    const steps = specificSteps(f, origin);
+    const one = steps?.length === 1 ? steps[0]! : null;
     recs.push({
       check_key: f.check_key,
       section: f.section,
       priority: f.priority,
-      title: tmpl.title,
-      how: tmpl.how,
+      title: one ? one.step : tmpl.title,
+      how: one ? `${one.value ? "```\n" + one.value + "\n```\n\n" : ""}${one.how}\n\n${tmpl.how}` : tmpl.how,
     });
   }
   // Sort by priority (1 first), then section.
