@@ -40,12 +40,18 @@ export type TrafficRow = {
   humans: number;
   bots: number;
   total: number;
+  /** Distinct human visitor ids (tracker_visitor_daily_stats); null when the rollup is unreadable. */
+  visitors?: number | null;
+  /** Human visitors with two or more beacons: read a second page, scrolled or clicked. */
+  engaged?: number | null;
 };
 
 export type TrafficSummary = {
   humans: number;
   bots: number;
   total: number;
+  visitors?: number | null;
+  engaged?: number | null;
   /** Most to least traffic. */
   properties: TrafficRow[];
 };
@@ -183,6 +189,20 @@ async function aggregateTraffic(
     )
     .gte("day", since);
 
+  // Visitors, not beacons, are what a reader means by "visits". Optional: a
+  // failed read leaves the event counts standing rather than zeroing the email.
+  const { data: engagement, error: engagementError } = await supabase.rpc("tracker_visitor_engagement", {
+    p_projects: projects.map((project) => project.id),
+    p_since: since,
+  });
+  const people = new Map<string, { visitors: number; engaged: number }>();
+  if (!engagementError) {
+    for (const row of (engagement ?? []) as { project_id: string; visitors: number | string; engaged: number | string }[]) {
+      people.set(row.project_id, { visitors: Number(row.visitors) || 0, engaged: Number(row.engaged) || 0 });
+    }
+  }
+  const haveVisitors = !engagementError && Array.isArray(engagement);
+
   const byProject = new Map<string, { humans: number; bots: number }>();
   for (const row of (data ?? []) as { project_id: string; bucket: string; count: number }[]) {
     const tally = byProject.get(row.project_id) ?? { humans: 0, bots: 0 };
@@ -200,14 +220,21 @@ async function aggregateTraffic(
         humans: tally.humans,
         bots: tally.bots,
         total: tally.humans + tally.bots,
+        visitors: haveVisitors ? (people.get(project.id)?.visitors ?? 0) : null,
+        engaged: haveVisitors ? (people.get(project.id)?.engaged ?? 0) : null,
       };
     })
-    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+    .sort(
+      (a, b) =>
+        (b.engaged ?? 0) - (a.engaged ?? 0) || b.total - a.total || a.name.localeCompare(b.name),
+    );
 
   return {
     humans: properties.reduce((sum, row) => sum + row.humans, 0),
     bots: properties.reduce((sum, row) => sum + row.bots, 0),
     total: properties.reduce((sum, row) => sum + row.total, 0),
+    visitors: haveVisitors ? properties.reduce((sum, row) => sum + (row.visitors ?? 0), 0) : null,
+    engaged: haveVisitors ? properties.reduce((sum, row) => sum + (row.engaged ?? 0), 0) : null,
     properties,
   };
 }
@@ -356,7 +383,9 @@ export function renderPerfReportEmail(r: PerfReport): {
   // The nightly one leads with the number the reader actually wants.
   const subject =
     r.cadence === "daily"
-      ? `CrawlProof nightly — ${fmt(r.traffic.humans)} human visit${r.traffic.humans === 1 ? "" : "s"}, ${fmt(r.traffic.bots)} bot`
+      ? r.traffic.engaged != null && r.traffic.visitors != null
+        ? `CrawlProof nightly — ${fmt(r.traffic.engaged)} engaged visitor${r.traffic.engaged === 1 ? "" : "s"} of ${fmt(r.traffic.visitors)}, ${fmt(r.traffic.bots)} bot hits`
+        : `CrawlProof nightly — ${fmt(r.traffic.humans)} human hit${r.traffic.humans === 1 ? "" : "s"}, ${fmt(r.traffic.bots)} bot`
       : r.projects.length === 0 && !r.autoblog
         ? `Your CrawlProof ${r.cadence} digest`
         : `CrawlProof ${r.cadence} digest — ${r.projects.length} project${r.projects.length === 1 ? "" : "s"}${r.autoblog ? " + Autoblog" : ""}`;
@@ -421,7 +450,7 @@ export function renderPerfReportEmail(r: PerfReport): {
                 <tr>
                   <td style="vertical-align:top;">
                     <div style="color:#e7e9ee;font-size:14px;font-weight:600;">${escapeHtml(row.name)}</div>
-                    <div style="color:#94a3b8;font-size:12px;margin-top:4px;">${fmt(row.humans)} human · ${fmt(row.bots)} bot (${share}%)</div>
+                    <div style="color:#94a3b8;font-size:12px;margin-top:4px;">${row.engaged != null && row.visitors != null ? `${fmt(row.engaged)} engaged of ${fmt(row.visitors)} visitors · ` : ""}${fmt(row.humans)} human hits · ${fmt(row.bots)} bot (${share}%)</div>
                   </td>
                   <td align="right" style="vertical-align:top;white-space:nowrap;padding-left:12px;color:#e7e9ee;font-size:16px;font-weight:700;">
                     ${fmt(row.total)}
@@ -442,9 +471,13 @@ export function renderPerfReportEmail(r: PerfReport): {
         <td>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border-spacing:8px 0;">
             <tr>
-              ${statCell("Humans", r.traffic.humans, "#6ee7b7")}
-              ${statCell("Bots", r.traffic.bots)}
-              ${statCell("All hits", r.traffic.total)}
+              ${
+                r.traffic.engaged != null && r.traffic.visitors != null
+                  ? `${statCell("Engaged", r.traffic.engaged, "#6ee7b7")}
+              ${statCell("Visitors", r.traffic.visitors)}`
+                  : statCell("Human hits", r.traffic.humans, "#6ee7b7")
+              }
+              ${statCell("Bot hits", r.traffic.bots)}
             </tr>
           </table>
         </td>

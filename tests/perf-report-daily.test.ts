@@ -69,7 +69,7 @@ const report = (overrides: Partial<PerfReport> = {}): PerfReport => ({
 describe("the nightly email", () => {
   it("leads its subject with humans, and formats big numbers", () => {
     const { subject, html } = renderPerfReportEmail(report());
-    expect(subject).toBe("CrawlProof nightly — 1,234 human visits, 91,011 bot");
+    expect(subject).toBe("CrawlProof nightly — 1,234 human hits, 91,011 bot");
     expect(html).toContain("genrewatch.com");
     expect(html).toContain("90,027");
   });
@@ -81,7 +81,7 @@ describe("the nightly email", () => {
 
   it("shows each property's bot share", () => {
     const { html } = renderPerfReportEmail(report());
-    expect(html).toContain("27 human · 90,000 bot (100%)");
+    expect(html).toContain("27 human hits · 90,000 bot (100%)");
   });
 
   it("says so plainly when nothing was recorded", () => {
@@ -89,6 +89,26 @@ describe("the nightly email", () => {
       report({ traffic: { humans: 0, bots: 0, total: 0, properties: [] } }),
     );
     expect(html).toContain("No traffic recorded");
+  });
+
+  it("leads with engaged visitors once the visitor rollup is readable", () => {
+    const { subject, html } = renderPerfReportEmail(
+      report({
+        traffic: {
+          humans: 60516,
+          bots: 42,
+          total: 60558,
+          visitors: 37409,
+          engaged: 18,
+          properties: [
+            { projectId: "p1", name: "nichedb.dev", humans: 60516, bots: 42, total: 60558, visitors: 37409, engaged: 18 },
+          ],
+        },
+      }),
+    );
+    expect(subject).toBe("CrawlProof nightly — 18 engaged visitors of 37,409, 42 bot hits");
+    expect(html).toContain("18 engaged of 37,409 visitors · 60,516 human hits · 42 bot (0%)");
+    expect(html).toContain("Engaged");
   });
 
   it("keeps the weekly subject unchanged", () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { adFromUrl, bucketLabel, categorize } from "@/lib/tracker/categorize";
 import { kindFromBucket } from "@/lib/tracker/humans";
 
-const CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36";
+const CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/999.0 Safari/537.36";
 
 describe("ad attribution", () => {
   it("our own click redirect is the campaign's ref slug", () => {
