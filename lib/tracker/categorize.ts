@@ -105,6 +105,35 @@ const AI_BOT_NAMES = new Set([
   "meta_external",
 ]);
 
+const HEADLESS_ENGINES =
+  /lightpanda|phantomjs|slimerjs|htmlunit|puppeteer|playwright|selenium|webdriver|cypress|python-requests|python-urllib|aiohttp|httpx|go-http-client|node-fetch|undici|axios\/|okhttp|java\/|libwww-perl|^curl\/|^wget\//i;
+
+const DAY_MS = 86_400_000;
+const FOUR_WEEKS_MS = 28 * DAY_MS;
+/** Both browsers ship a major every four weeks. Anchors: Chrome 120 on 2023-12-05, Firefox 121 on 2023-12-19. */
+const CHROME_ANCHOR = { major: 120, at: Date.UTC(2023, 11, 5) };
+const FIREFOX_ANCHOR = { major: 121, at: Date.UTC(2023, 11, 19) };
+/**
+ * How far behind the expected current major a browser may be before it is
+ * called stale: 26 releases, about two years. The estimate runs a few majors
+ * ahead of reality (holiday gaps), which only makes the floor more lenient.
+ */
+const STALE_MAJORS = 26;
+
+function staleFloor(anchor: { major: number; at: number }, now: number): number {
+  return anchor.major + Math.floor((now - anchor.at) / FOUR_WEEKS_MS) - STALE_MAJORS;
+}
+
+/** True for a Chrome/Chromium/Edge or Firefox UA about two years out of date, or a quote-wrapped UA. */
+export function isStaleBrowser(ua: string, now: number = Date.now()): boolean {
+  if (/^["']/.test(ua)) return true;
+  const chrome = /(?:Chrome|Chromium|CriOS)\/(\d+)\./.exec(ua);
+  if (chrome) return Number(chrome[1]) < staleFloor(CHROME_ANCHOR, now);
+  const firefox = /(?:Firefox|FxiOS)\/(\d+)\./.exec(ua);
+  if (firefox) return Number(firefox[1]) < staleFloor(FIREFOX_ANCHOR, now);
+  return false;
+}
+
 function hostnameFromReferrer(ref: string | null): string | null {
   if (!ref) return null;
   try {
@@ -182,6 +211,22 @@ export function categorize({
   // as human pageviews. AI bots are matched above, so this is non-AI bots.
   if (/bot\b|crawler|spider|scraper|headless/i.test(ua)) {
     return { bucket: "bot:other", isAi: false };
+  }
+
+  // Headless engines and automation stacks that name themselves without
+  // saying "headless". Lightpanda/1.0 alone was 9,680 "human" page views on
+  // rssamplifier.com in one day (2026-10-17).
+  if (HEADLESS_ENGINES.test(ua)) {
+    return { bucket: "bot:headless", isAi: false };
+  }
+
+  // A browser that executes our script but claims a version years out of
+  // date, or a UA that arrives still wrapped in quotes, is a scraper reading
+  // from a stale UA list. Chrome and Firefox auto-update; nobody browses on a
+  // two-year-old one. 88% of watchnews.now's "humans" were Chrome 119/120 and
+  // Firefox 120/121 in October 2026.
+  if (isStaleBrowser(ua)) {
+    return { bucket: "bot:stale_ua", isAi: false };
   }
 
   // An ad click beats the referrer: the referrer of a paid visit is whatever

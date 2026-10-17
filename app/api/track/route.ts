@@ -155,10 +155,15 @@ async function ingest(request: NextRequest, parseBody: boolean) {
 
   const event = cleanEvent(parsed.data.event ?? parsed.data.type);
   const eventTarget = cleanTarget(parsed.data.target);
+  // stats.js always sends `referrer`, null for a direct visit. Falling back to
+  // the beacon's own Referer header there turned every direct visit into
+  // "referral:<the site itself>", so only beacons that never send the field
+  // (pixel / GET integrations) borrow the header.
+  const bodyHasReferrer = parsed.data.ref !== undefined || parsed.data.referrer !== undefined;
   const referrer =
     textOrNull(parsed.data.ref) ??
     textOrNull(parsed.data.referrer) ??
-    textOrNull(request.headers.get("referer"));
+    (bodyHasReferrer ? null : textOrNull(request.headers.get("referer")));
   const pageUrl =
     textOrNull(parsed.data.url) ??
     textOrNull(parsed.data.href) ??
