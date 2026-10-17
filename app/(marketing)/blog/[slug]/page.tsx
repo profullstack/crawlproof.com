@@ -1,6 +1,7 @@
 import { notFound, permanentRedirect } from "next/navigation";
 import { allSlugs, findAnyPost } from "@/lib/blog/posts";
 import { fixBlogLinks, resolveMissingSlug } from "@/lib/blog/links";
+import { stripDeadLinks } from "@/lib/dead-links";
 import { splitHtmlForMidAd } from "@/lib/blog/split-html";
 import { AdUnit } from "@/components/ads/ad-unit";
 import { env } from "@/lib/env";
@@ -56,7 +57,7 @@ export default async function BlogPost({
     if (target) permanentRedirect(target);
     notFound();
   }
-  if (post.html) post.html = fixBlogLinks(post.html, slugs);
+  if (post.html) post.html = stripDeadLinks(fixBlogLinks(post.html, slugs));
 
   // Null for short posts and for plain-text (non-HTML) bodies — those render
   // straight through with just the top and bottom units.
