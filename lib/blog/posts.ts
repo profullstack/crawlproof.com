@@ -110,3 +110,21 @@ export async function findAnyPost(slug: string): Promise<Post | undefined> {
     return undefined;
   }
 }
+
+let slugCache: { at: number; slugs: Set<string> } | null = null;
+const SLUG_TTL_MS = 10 * 60_000;
+
+/** Every published slug, held ten minutes: what a /blog/ link may point at. */
+export async function allSlugs(): Promise<Set<string>> {
+  if (slugCache && Date.now() - slugCache.at < SLUG_TTL_MS) return slugCache.slugs;
+  const slugs = new Set(posts.map((p) => p.slug));
+  try {
+    const { data, error } = await serviceClient().from("blog_posts").select("slug");
+    if (error || !data) return slugCache?.slugs ?? slugs;
+    for (const r of data as { slug: string }[]) slugs.add(r.slug);
+  } catch {
+    return slugCache?.slugs ?? slugs;
+  }
+  slugCache = { at: Date.now(), slugs };
+  return slugs;
+}

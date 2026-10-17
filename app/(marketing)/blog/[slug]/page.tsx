@@ -1,5 +1,6 @@
-import { notFound } from "next/navigation";
-import { findAnyPost } from "@/lib/blog/posts";
+import { notFound, permanentRedirect } from "next/navigation";
+import { allSlugs, findAnyPost } from "@/lib/blog/posts";
+import { fixBlogLinks, resolveMissingSlug } from "@/lib/blog/links";
 import { splitHtmlForMidAd } from "@/lib/blog/split-html";
 import { AdUnit } from "@/components/ads/ad-unit";
 import { env } from "@/lib/env";
@@ -48,7 +49,14 @@ export default async function BlogPost({
 }) {
   const { slug } = await params;
   const post = await findAnyPost(slug);
-  if (!post) notFound();
+  const slugs = await allSlugs();
+  if (!post) {
+    // A retired or mistyped slug goes to the page it meant instead of a 404.
+    const target = resolveMissingSlug(slug, slugs);
+    if (target) permanentRedirect(target);
+    notFound();
+  }
+  if (post.html) post.html = fixBlogLinks(post.html, slugs);
 
   // Null for short posts and for plain-text (non-HTML) bodies — those render
   // straight through with just the top and bottom units.
