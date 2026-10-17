@@ -10,6 +10,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { serviceClient } from "@/lib/supabase/service";
+import { buildTodoList } from "@/lib/audit/recommendations";
+import type { Finding } from "@/lib/audit/types";
 import { isAllowedTargetUrl, consumeCredit, refundCredit, checkPerTargetLimit } from "@/lib/rateLimit";
 import {
   ENGINES,
@@ -132,11 +134,13 @@ export function registerAuditTools(server: McpServer): void {
       const userId = getUserId(extra);
       const { data } = await serviceClient()
         .from("audits")
-        .select("engine, status, score, failed_reason, share_token")
+        .select("id, target_url, engine, status, score, failed_reason, share_token")
         .eq("scan_run_id", args.run_id)
         .eq("owner_id", userId);
       const rows =
         (data as {
+          id: string;
+          target_url: string;
           engine: string;
           status: string;
           score: number | null;
@@ -155,7 +159,28 @@ export function registerAuditTools(server: McpServer): void {
       });
       const done = rows.filter((a) => a.status === "complete" || a.status === "failed").length;
       const header = done === rows.length ? "Done." : `${done}/${rows.length} engines finished (still running)…`;
-      return textResult(`${header}\n${lines.join("\n")}`);
+
+      // The to-do list: concrete steps (exact URL / header / tag), highest impact first.
+      const complete = rows.filter((a) => a.status === "complete");
+      let todoText = "";
+      if (complete.length) {
+        const { data: f } = await serviceClient()
+          .from("audit_findings")
+          .select("audit_id, section, check_key, status, title, detail, evidence, priority")
+          .in("audit_id", complete.map((a) => a.id));
+        const findings = (f ?? []) as Array<Finding & { audit_id: string }>;
+        const seen = new Set<string>();
+        const steps = complete
+          .flatMap((a) => buildTodoList(findings.filter((x) => x.audit_id === a.id), a.target_url))
+          .sort((a, b) => b.points - a.points)
+          .filter((t) => (seen.has(t.step) ? false : (seen.add(t.step), true)))
+          .slice(0, 15);
+        if (steps.length)
+          todoText = `\n\nTo-do (highest impact first):\n${steps
+            .map((t, i) => `${i + 1}. ${t.step} (+${t.points} pts; found: ${t.why})`)
+            .join("\n")}`;
+      }
+      return textResult(`${header}\n${lines.join("\n")}${todoText}`);
     },
   );
 }

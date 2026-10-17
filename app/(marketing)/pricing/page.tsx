@@ -149,6 +149,27 @@ export default function PricingPage() {
         })}
       </div>
 
+      {/* Agents that hit /crawl's 402 come here to learn what it sells, so the
+          page says it in the same words as the 402 body and /docs/crawl-access. */}
+      <section id="crawler-access" className="mx-auto mt-14 max-w-3xl card p-6">
+        <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          For automated crawlers · not needed by people or search engines
+        </div>
+        <h2 className="mt-1 text-2xl font-bold">Crawler pass: $1 USDC for 24 hours</h2>
+        <p className="mt-2 text-sm">
+          <code className="font-mono">GET /crawl</code> answers <strong>402 Payment Required</strong> on
+          purpose: it sells training and commercial crawlers a pass, not an audit. $1 USDC on Base,
+          Polygon or Ethereum buys 24 hours of access to every public page on crawlproof.com (up to 30
+          days in one payment). Paying returns a JSON receipt with a signed token you send as{" "}
+          <code className="font-mono">x-crawl-pass</code>. No x402 client? Pay from a browser wallet
+          with <code className="font-mono">npx @profullstack/coinpay x402 pay https://crawlproof.com/crawl</code>,
+          or buy a Power Key by crypto checkout at profullstack.com/shop.
+        </p>
+        <Link href="/docs/crawl-access" className="btn mt-4">
+          What the pass returns and how to pay
+        </Link>
+      </section>
+
       <p className="mt-8 text-center text-xs text-[var(--color-muted)]">
         Sign-ups include {SIGNUP_CREDITS} free credits ({SIGNUP_CREDITS / SCAN_CREDITS}{" "}
         AI-model scan). Anonymous visitors get {ANON_DAILY_SCANS} free rule-based scans

@@ -1,6 +1,7 @@
 import { createGateway, readPass, renderPage, type Sale } from "@profullstack/x402-gateway";
 import { x402Proxy } from "@profullstack/x402-gateway/next";
 import { crawlerFamily, isAdClickPath, isPaidCrawler, PAID_CRAWLERS } from "./crawl-policy";
+import { aboutHtml, CRAWL_DOCS_PATH, explainOffer } from "./crawl-offer";
 import { limitCrawlRequest, recordCrawlerOutcome, CRAWLER_IP_PER_MINUTE, CRAWLER_FAMILY_PER_HOUR } from "./crawl-limits";
 
 /**
@@ -54,13 +55,47 @@ export const gateway = createGateway({
   onSale: recordSale,
   training: PAID_CRAWLERS,
   isPaidAgent: isPaidCrawler,
+  // A refused crawler must be able to read what it is being asked to buy.
+  openPaths: [CRAWL_DOCS_PATH],
+  benefits: [
+    "Every public page on crawlproof.com for 24 hours per $1 (up to 30 days in one payment)",
+    "A JSON receipt with a signed pass token; send it as x-crawl-pass or Authorization: Bearer",
+    "No account, no API key, no subscription",
+  ],
   page: (ctx) => renderPage(ctx)
+    .replace('<div class="price">', `${aboutHtml(siteUrl)}<div class="price">`)
     .replace("Training crawlers pay for access here.", "Commercial and training crawlers pay for access here.")
     .replace("A crawler that copies pages into a training corpus sends nobody back, so it pays for the time it spends.", "Commercial data collection and training access require a paid pass.")
     .replace("<h2>How it works</h2>", `<p>All crawlers, including paid crawlers, are limited to ${CRAWLER_IP_PER_MINUTE} requests per minute per IP and ${CRAWLER_FAMILY_PER_HOUR} requests per hour per crawler family. Honour Retry-After. A pass grants access to public resources; it does not grant account access. Automated ad-link requests never count as ad clicks or earn publisher payouts.</p><h2>How it works</h2>`),
 });
 
-const paidGate = x402Proxy(gateway);
+const rawGate = x402Proxy(gateway);
+
+/**
+ * Every JSON 402 the gateway writes goes out with the plain-language
+ * explanation from lib/crawl-offer.ts: what the $1 buys, a sample of the
+ * receipt, the docs, and the ways to pay without an x402 client. The HTML
+ * page carries the same block via `page` above.
+ */
+async function paidGate(request: Request): Promise<Response | undefined> {
+  const answer = await rawGate(request as never);
+  if (!answer) return undefined;
+  const docsLink = `<${siteUrl}${CRAWL_DOCS_PATH}>; rel="help"`;
+  if (answer.status !== 402 || !(answer.headers.get("content-type") ?? "").includes("application/json")) {
+    if (answer.status === 402) answer.headers.set("link", docsLink);
+    return answer;
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = await answer.clone().json();
+  } catch {
+    return answer;
+  }
+  const headers = new Headers(answer.headers);
+  headers.delete("content-length");
+  headers.set("link", docsLink);
+  return new Response(JSON.stringify(explainOffer(body, siteUrl), null, 2), { status: 402, headers });
+}
 
 async function hasPass(request: Request): Promise<boolean> {
   const token = request.headers.get(gateway.options.header)?.trim()
