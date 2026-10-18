@@ -17,6 +17,7 @@ import {
   NARRATION_CHARS_PER_SEC,
 } from "./profiles";
 import type { VideoDesignSnapshot } from "./snapshot";
+import { spokenDomain, spokenText } from "./spoken";
 
 /**
  * The longest line worth sending to the synthesiser.
@@ -88,9 +89,11 @@ export function narrationScript(snapshot: VideoDesignSnapshot): string {
  * break where there is no picture to read it from.
  */
 export function narrationVariants(snapshot: VideoDesignSnapshot): string[] {
-  const headline = snapshot.headline.trim().replace(/\s+/g, " ");
-  const cta = snapshot.ctaText.trim().replace(/\s+/g, " ");
-  const domain = snapshot.domain.trim();
+  // Rewritten for the ear (./spoken): our names and domains are not words a
+  // speech engine knows, and "logicsrc.com" was heard as gibberish.
+  const headline = spokenText(snapshot.headline.trim().replace(/\s+/g, " "));
+  const cta = spokenText(snapshot.ctaText.trim().replace(/\s+/g, " "));
+  const domain = spokenDomain(snapshot.domain.trim()) || snapshot.domain.trim();
 
   // A headline that already ends in punctuation should not gain a second full
   // stop; one that does not needs one, or the two clauses run together.
