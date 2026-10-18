@@ -65,7 +65,7 @@ describe("the snapshot is derived from approved copy", () => {
     // not is a compliance problem, not a stylistic one.
     expect(snap.audioMode).toBe("narrated");
     expect(snap.narration).toContain(snap.headline);
-    expect(snap.narration).toContain(snap.domain);
+    expect(snap.narration).toContain("niche d b dot dev");
     // Deterministic, because it is part of the render hash.
     const again = snapshotFromCreatives({
       creatives: [design("banner_300x250")],

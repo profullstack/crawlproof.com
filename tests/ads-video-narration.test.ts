@@ -35,13 +35,13 @@ describe("the script is the approved copy, spoken", () => {
     // Derived, never written afresh: an ad whose voiceover claims something its
     // banner does not is a compliance problem, not a stylistic one.
     expect(narrationScript(snapshot())).toBe(
-      "All fixtures, one feed. View feeds at nichedb.dev.",
+      "All fixtures, one feed. View feeds at niche d b dot dev.",
     );
   });
 
   it("does not double the full stop on a headline that has one", () => {
     expect(narrationScript(snapshot({ headline: "Sources in, feeds out!" }))).toBe(
-      "Sources in, feeds out! View feeds at nichedb.dev.",
+      "Sources in, feeds out! View feeds at niche d b dot dev.",
     );
   });
 
@@ -57,7 +57,7 @@ describe("the script is the approved copy, spoken", () => {
     // A voice cut off mid-word is worse than a shorter line.
     expect(long).not.toMatch(/\s\w{1,2}\.$/);
     expect(long.endsWith(".")).toBe(true);
-    expect(long).toContain("nichedb.dev");
+    expect(long).toContain("niche d b dot dev");
   });
 
   it("keeps the address when the address alone is over the estimate", () => {
@@ -83,8 +83,8 @@ describe("the script is the approved copy, spoken", () => {
     const long = narrationScript(
       snapshot({ headline: "Independent podcasts, every one of them self-hosted" }),
     );
-    expect(long).toContain("nichedb.dev");
-    expect(long.endsWith("nichedb.dev.")).toBe(true);
+    expect(long).toContain("niche d b dot dev");
+    expect(long.endsWith("niche d b dot dev.")).toBe(true);
   });
 
   it("keeps the read inside what five seconds can hold", () => {
@@ -92,7 +92,7 @@ describe("the script is the approved copy, spoken", () => {
     // truncated ads came from: the spot is five seconds and it wins.
     expect(MAX_NARRATION_CHARS).toBeLessThan(70);
     for (const line of narrationVariants(snapshot())) {
-      expect(line.endsWith("nichedb.dev.")).toBe(true);
+      expect(line.endsWith("niche d b dot dev.")).toBe(true);
     }
   });
 
@@ -173,7 +173,7 @@ describe("synthesis never fails a render", () => {
         fetchImpl: (async () => new Response(bytes, { status: 200 })) as typeof fetch,
       });
       expect(res).not.toBeNull();
-      expect(res!.script).toBe("All fixtures, one feed. View feeds at nichedb.dev.");
+      expect(res!.script).toBe("All fixtures, one feed. View feeds at niche d b dot dev.");
       expect((await stat(res!.filePath)).size).toBe(bytes.byteLength);
     } finally {
       await rm(dir, { recursive: true, force: true });
