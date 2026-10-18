@@ -3,6 +3,10 @@
 //   npx tsx scripts/backfill-ad-videos.ts --env ~/crawlproof-env-backup-2026-07-28.txt --dry-run
 //   npx tsx scripts/backfill-ad-videos.ts --env ~/crawlproof-env-backup-2026-07-28.txt --limit 3
 //   npx tsx scripts/backfill-ad-videos.ts --env ~/crawlproof-env-backup-2026-07-28.txt
+//   npx tsx scripts/backfill-ad-videos.ts --env ~/crawlproof-env-backup-2026-07-28.txt --campaign <uuid>
+//
+// --campaign re-queues one campaign, so a narration change can be heard on a
+// single spot before the whole set spends voice credits.
 //
 // TypeScript through tsx, like backfill-ad-summaries, so it can call the same
 // queueCampaignVideo the dashboard calls. Reimplementing the snapshot here
@@ -29,6 +33,7 @@ const has = (name: string) => args.includes(`--${name}`);
 const envPath = flag("env") ?? `${process.env.HOME}/crawlproof-env-backup-2026-07-28.txt`;
 const dryRun = has("dry-run");
 const limit = Number(flag("limit") ?? "0") || 0;
+const onlyCampaign = flag("campaign");
 /** Pause between queued campaigns, so a backfill does not spike the queue. */
 const DELAY_MS = Number(flag("delay") ?? "150") || 150;
 
@@ -101,7 +106,8 @@ console.log(
   `${all.length} campaigns: ${tally.product} product, ${tally.blog} blog, ${tally.social} social.`,
 );
 
-const targets = limit > 0 ? products.slice(0, limit) : products;
+const chosen = onlyCampaign ? products.filter((c) => c.id === onlyCampaign) : products;
+const targets = limit > 0 ? chosen.slice(0, limit) : chosen;
 console.log(`${targets.length} to queue${dryRun ? " (dry run — nothing written)" : ""}.\n`);
 
 let queued = 0;
