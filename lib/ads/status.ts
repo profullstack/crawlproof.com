@@ -22,6 +22,9 @@ export type CampaignBudgetFields = {
   spend_today_cents?: number | null;
   spend_date?: string | null;
   bid_credits?: number | null;
+  /** 'dead_link' when the link sweep paused it (lib/ads/linkHealth). */
+  paused_reason?: string | null;
+  link_http_status?: number | null;
 };
 
 /** Which inventory a campaign can win right now. */
@@ -103,11 +106,13 @@ export function campaignDisplayStatus(
     return {
       label: c.status,
       hint:
-        c.status === "paused"
-          ? "Paused by you. Press Activate to resume."
-          : "Not live yet. Press Activate to start serving.",
+        c.status === "paused" && c.paused_reason === "dead_link"
+          ? `Paused automatically: the destination page is gone (${c.link_http_status ? `HTTP ${c.link_http_status}` : "the domain no longer resolves"}). It resumes on its own once the page is back, or fix the URL and press Activate.`
+          : c.status === "paused"
+            ? "Paused by you. Press Activate to resume."
+            : "Not live yet. Press Activate to start serving.",
       serving: false,
-      resumesAutomatically: false,
+      resumesAutomatically: c.status === "paused" && c.paused_reason === "dead_link",
       tier,
     };
   }

@@ -38,8 +38,18 @@ export const CLICK_DEDUPE_WINDOW_MS = 6 * 60 * 60 * 1000; // 6h
 export const CLICK_MAX_AGE_BROWSER_MS = CLICK_DEDUPE_WINDOW_MS;
 export const CLICK_MAX_AGE_TERMINAL_MS = 24 * 60 * 60 * 1000;
 
-/** Longest a click may trail the impression it cites, or null for no ceiling. */
-export function maxClickAgeMs(impressionDevice?: string | null): number | null {
+/**
+ * Longest a click may trail the impression it cites, or null for no ceiling.
+ *
+ * A terminal_ascii creative gets the terminal ceiling whatever the device
+ * says. /api/ads/motd records the device from the fetcher's user agent, so a
+ * MOTD pulled by anything browser-shaped was stored as `desktop` and its
+ * printed /a/<code> link expired after 6h while the text stayed on screen. A
+ * person clicking it the next day got "This ad link has expired"
+ * (eL1mRXhx3k4C, 2026-10-19: a motd fill stored as desktop, clicked 17h on).
+ */
+export function maxClickAgeMs(impressionDevice?: string | null, format?: string | null): number | null {
+  if (format === "terminal_ascii" && impressionDevice !== "feed") return CLICK_MAX_AGE_TERMINAL_MS;
   switch (impressionDevice) {
     case "feed":
       return null;
@@ -52,10 +62,10 @@ export function maxClickAgeMs(impressionDevice?: string | null): number | null {
 
 /** Is a click at `now` too long after an impression served at `ts` to `device`? */
 export function isStaleImpression(
-  imp: { ts?: string | null; device?: string | null },
+  imp: { ts?: string | null; device?: string | null; format?: string | null },
   now: number = Date.now(),
 ): boolean {
-  const max = maxClickAgeMs(imp.device);
+  const max = maxClickAgeMs(imp.device, imp.format);
   if (max == null || !imp.ts) return false;
   const served = Date.parse(imp.ts);
   if (Number.isNaN(served)) return false;
@@ -142,7 +152,7 @@ async function checkClickValidity(input: Parameters<typeof assessClickValidity>[
   if (input.impressionId) {
     const { data: imp, error } = await sb
       .from("ad_impressions")
-      .select("campaign_id, slot_id, ts, device")
+      .select("campaign_id, slot_id, ts, device, ad_creatives(format)")
       .eq("id", input.impressionId)
       .maybeSingle();
     if (error) return { valid: false, reason: "validation_unavailable" };
@@ -151,7 +161,8 @@ async function checkClickValidity(input: Parameters<typeof assessClickValidity>[
     if (input.slotId && imp.slot_id !== input.slotId) return { valid: false, reason: "impression_mismatch" };
     // A real impression, but too old for whoever saw it to still be the one
     // clicking. See maxClickAgeMs for where each ceiling comes from.
-    if (isStaleImpression(imp)) return { valid: false, reason: "stale_impression" };
+    const creative = (imp as { ad_creatives?: { format?: string | null } | null }).ad_creatives;
+    if (isStaleImpression({ ...imp, format: creative?.format ?? null })) return { valid: false, reason: "stale_impression" };
   }
 
   // 3. Dedupe on this campaign by visitor id or ip hash within the window.

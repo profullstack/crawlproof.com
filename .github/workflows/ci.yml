@@ -19,7 +19,9 @@ jobs:
           bun-version-file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # Match prod (node 24 in the playwright runtime image). linkinator 8's
+          # undici needs >=22.19 and dies on import under 20 (zstd .bind).
+          node-version: 24
 
       - name: Install (root)
         run: bun install --frozen-lockfile

@@ -104,7 +104,7 @@ export default async function AdsPage({
       supabase
         .from("ad_campaigns")
         .select(
-          "id, ref_slug, name, destination_domain, daily_budget_cents, bid_credits, spend_today_cents, spend_date, status, created_at",
+          "id, ref_slug, name, destination_domain, daily_budget_cents, bid_credits, spend_today_cents, spend_date, status, created_at, paused_reason, link_http_status",
         )
         .order("created_at", { ascending: false }),
       supabase
