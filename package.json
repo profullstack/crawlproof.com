@@ -1,6 +1,6 @@
 {
   "name": "crawlproof",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "bin": {
     "crawlproof": "./bin/crawlproof.mjs"
   },
