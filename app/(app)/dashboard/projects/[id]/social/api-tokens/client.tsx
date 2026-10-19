@@ -14,6 +14,7 @@ type TokenRow = {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  scope?: string | null;
 };
 
 function fmt(iso: string | null): string {
@@ -29,6 +30,7 @@ export function ApiTokensClient({ tokens }: { tokens: TokenRow[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
+  const [readOnly, setReadOnly] = useState(false);
   const [justMinted, setJustMinted] = useState<{ name: string; token: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,13 +38,14 @@ export function ApiTokensClient({ tokens }: { tokens: TokenRow[] }) {
     e.preventDefault();
     setError(null);
     start(async () => {
-      const r = await createApiToken({ name });
+      const r = await createApiToken({ name, readOnly });
       if (!r.ok) {
         setError(r.error);
         return;
       }
       setJustMinted({ name, token: r.token });
       setName("");
+      setReadOnly(false);
       router.refresh();
     });
   }
@@ -65,6 +68,14 @@ export function ApiTokensClient({ tokens }: { tokens: TokenRow[] }) {
               onChange={(e) => setName(e.target.value)}
             />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={readOnly}
+              onChange={(e) => setReadOnly(e.target.checked)}
+            />
+            Read-only (stats only, for CoinPay)
+          </label>
           <button
             type="submit"
             className="btn btn-primary"
@@ -118,6 +129,9 @@ export function ApiTokensClient({ tokens }: { tokens: TokenRow[] }) {
                     <code className="text-xs text-[var(--color-muted)]">
                       {t.prefix}…
                     </code>
+                    {t.scope && (
+                      <span className="badge">read-only</span>
+                    )}
                     {t.revoked_at && (
                       <span className="badge badge-fail">revoked</span>
                     )}

@@ -12,6 +12,7 @@ type TokenRow = {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  scope?: string | null;
 };
 
 export default async function ApiTokensPage({
@@ -28,7 +29,7 @@ export default async function ApiTokensPage({
 
   const { data: tokens } = await supabase
     .from("sp_api_token")
-    .select("id, name, prefix, last_used_at, revoked_at, created_at")
+    .select("id, name, prefix, last_used_at, revoked_at, created_at, scope")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -52,6 +53,14 @@ export default async function ApiTokensPage({
           >sh1pt CLI</a> (<code>sh1pt promote</code>), your own scripts, CI
           jobs, etc. Each token grants the same posting power your logged-in
           session has on this account. Revoke any token at any time.
+        </p>
+        <p id="coinpay" className="mt-2 text-[var(--color-muted)]">
+          <strong>Connecting CoinPay?</strong> Tick <em>Read-only</em> when you
+          generate the token. A read-only token can read your sites&apos; stats
+          (<code>/api/tracker/v1/sites</code>, <code>/stats</code>,{" "}
+          <code>/report</code>) and nothing else: it cannot post, spend ad
+          budget or use the MCP server. Paste it into CoinPay under Finances →
+          Business report.
         </p>
         <p className="mt-2 text-xs text-[var(--color-muted)]">
           API base URL: <code>{`${process.env.NEXT_PUBLIC_SITE_URL ?? "https://crawlproof.com"}/api/sp/v1`}</code>

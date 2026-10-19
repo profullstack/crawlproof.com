@@ -18,6 +18,7 @@ import {
 } from "@/lib/sp/platforms/telegram";
 import { postViaAccount, type PostInput } from "@/lib/sp/post";
 import { mintApiToken } from "@/lib/sp/apiToken";
+import { STATS_READ } from "@/lib/sp/apiAuth";
 import { serviceClient } from "@/lib/supabase/service";
 import { processProjectSocialFeed, type FeedType } from "@/lib/sp/feedAutopost";
 import { fetchSiteText, extractBrandProfile } from "@/lib/sp/brandProfileFetch";
@@ -391,6 +392,8 @@ export async function disconnectAccount(
 // ------------------------------------------------------------
 export async function createApiToken(input: {
   name: string;
+  /** Mint a stats:read token: tracker reads only (e.g. for CoinPay reports). */
+  readOnly?: boolean;
 }): Promise<Ok<{ id: string; token: string; prefix: string }> | Err> {
   const supabase = await createClient();
   const {
@@ -419,6 +422,7 @@ export async function createApiToken(input: {
       name,
       prefix: minted.prefix,
       token_hash: minted.hash,
+      ...(input.readOnly ? { scope: STATS_READ } : {}),
     })
     .select("id")
     .single();

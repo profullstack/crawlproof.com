@@ -10,7 +10,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { serviceClient } from "@/lib/supabase/service";
-import { authenticateBearer } from "@/lib/sp/apiAuth";
+import { authenticateBearer, STATS_READ } from "@/lib/sp/apiAuth";
 import { projectStats, resolveProject } from "@/lib/tracker/apiStats";
 import { trackerRange } from "@/lib/tracker/ranges";
 import { DECLARED_DEFINITION } from "@/lib/tracker/actors";
@@ -26,7 +26,7 @@ export function parseDetail(raw: string | null): boolean {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await authenticateBearer(req);
+  const auth = await authenticateBearer(req, { allowScopes: [STATS_READ] });
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const sp = req.nextUrl.searchParams;
