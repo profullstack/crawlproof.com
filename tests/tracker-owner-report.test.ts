@@ -120,6 +120,7 @@ describe("GET /api/tracker/v1/report", () => {
   it("summarises totals, top 5 pages and the trend", async () => {
     const body = await (await reportGET(req("?range=1m"))).json();
     expect(body.range).toBe("1m");
+    expect(body.token_scope).toBe(STATS_READ);
     expect(body.sites[0].top_pages).toHaveLength(5);
     expect(body.sites[0].hits).toEqual({ humans: 8, bots: 8, ai: 4 });
     expect(body.sites[0].trend).toEqual({ first_half: 2, second_half: 6, change_pct: 200 });

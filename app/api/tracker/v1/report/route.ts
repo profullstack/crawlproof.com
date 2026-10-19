@@ -1,6 +1,6 @@
 // /api/tracker/v1/report — every site on the token's account, summarised.
 //
-//   GET ?range=1w|1m → { range, generated_at, sites: [...], truncated, totals }
+//   GET ?range=1w|1m → { range, generated_at, sites: [...], truncated, totals, token_scope }
 //
 // What CoinPay's business report reads when a merchant connects CrawlProof.
 // Accepts read-only `stats:read` tokens as well as full ones; the sites are
@@ -24,5 +24,7 @@ export async function GET(req: NextRequest) {
 
   const result = await ownerReport(serviceClient(), auth.userId, range);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
-  return NextResponse.json(result.report);
+  // The token's own scope rides along, so a client that should only ever hold
+  // a read-only token (CoinPay) can refuse a full-access one.
+  return NextResponse.json({ ...result.report, token_scope: auth.scope });
 }
