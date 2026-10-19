@@ -89,4 +89,19 @@ describe("probing", () => {
     expect(r.get("https://a.test/gone")?.verdict).toBe("dead");
     expect(r.get("https://b.test/")?.verdict).toBe("ok");
   });
+  it("hands each answer over as it lands, before the batch finishes", async () => {
+    const seen: string[] = [];
+    let fetched = 0;
+    const fetchImpl = async () => {
+      fetched++;
+      return new Response(null, { status: 200 });
+    };
+    await probeAll(["https://a.test/1", "https://a.test/2"], {
+      fetchImpl,
+      gapMs: 1,
+      sleep: async () => void expect(seen).toHaveLength(fetched),
+      onProbe: async (url) => void seen.push(url),
+    });
+    expect(seen).toEqual(["https://a.test/1", "https://a.test/2"]);
+  });
 });

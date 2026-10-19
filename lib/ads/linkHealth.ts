@@ -139,7 +139,13 @@ function hostOf(url: string): string {
  */
 export async function probeAll(
   urls: string[],
-  opts: { fetchImpl?: FetchLike; gapMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+  opts: {
+    fetchImpl?: FetchLike;
+    gapMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    /** Called as each URL is answered, so results land before the batch ends. */
+    onProbe?: (url: string, probe: LinkProbe) => Promise<void>;
+  } = {},
 ): Promise<Map<string, LinkProbe>> {
   const gap = opts.gapMs ?? HOST_GAP_MS;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -154,7 +160,9 @@ export async function probeAll(
     for (let list = queue.shift(); list; list = queue.shift()) {
       for (let i = 0; i < list.length; i++) {
         if (i > 0 && gap > 0) await sleep(gap);
-        out.set(list[i], await probeLink(list[i], opts.fetchImpl));
+        const probe = await probeLink(list[i], opts.fetchImpl);
+        out.set(list[i], probe);
+        await opts.onProbe?.(list[i], probe);
       }
     }
   };
@@ -200,14 +208,23 @@ export async function runAdLinkHealthSweep(
   const rows = [...((ours.data ?? []) as CampaignRow[]), ...((live.data ?? []) as CampaignRow[])].slice(0, batch);
   if (!rows.length) return result;
 
-  const probes = await probeAll(
-    rows.map((r) => r.destination_url),
-    { fetchImpl: opts.fetchImpl, gapMs: opts.gapMs },
-  );
   const checkedAt = new Date(now).toISOString();
+  const byUrl = new Map<string, CampaignRow[]>();
+  for (const r of rows) byUrl.set(r.destination_url, [...(byUrl.get(r.destination_url) ?? []), r]);
 
-  for (const row of rows) {
-    const probe = probes.get(row.destination_url) ?? { verdict: "unknown" as const, httpStatus: null, error: "not_probed" };
+  // Each URL's campaigns are written the moment it is answered. A full batch
+  // takes minutes (same-host requests are spaced out), and a redeploy that
+  // restarts the worker mid-batch must not throw away what was already checked.
+  await probeAll([...byUrl.keys()], {
+    fetchImpl: opts.fetchImpl,
+    gapMs: opts.gapMs,
+    onProbe: async (url, probe) => {
+      for (const row of byUrl.get(url) ?? []) await record(row, probe);
+    },
+  });
+  return result;
+
+  async function record(row: CampaignRow, probe: LinkProbe) {
     const next = nextLinkState(row, probe, now);
     result.checked++;
     result[next.link_status]++;
@@ -229,12 +246,11 @@ export async function runAdLinkHealthSweep(
       update.paused_reason = null;
       result.resumed.push(row.id);
     }
-    if (opts.dryRun) continue;
+    if (opts.dryRun) return;
 
     // Guard the status flip on the status we read, so a campaign the
     // advertiser changed mid-sweep keeps their change.
     const { error: upErr } = await sb.from("ad_campaigns").update(update).eq("id", row.id).eq("status", row.status);
     if (upErr) result.failed = upErr.message;
   }
-  return result;
 }
