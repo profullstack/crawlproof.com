@@ -20,18 +20,20 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function load(userId: string, id: string) {
   if (!UUID.test(id)) return null;
   const sb = serviceClient();
-  const { data: slot } = await sb
+  const { data: slot, error } = await sb
     .from("ad_slots")
-    .select("id, name, status, payout_address, payout_currency")
+    .select("id, placement, status, payout_address, payout_currency")
     .eq("id", id)
     .eq("owner_id", userId)
     .maybeSingle();
+  // A failed query is not a missing slot: say so instead of answering 404.
+  if (error) throw new Error(error.message);
   if (!slot) return null;
   const { data: accruals } = await sb.from("ad_ledger").select("amount_cents").eq("slot_id", id).eq("kind", "publisher_accrual");
   const earned = (accruals ?? []).reduce((s, r) => s + (r.amount_cents ?? 0), 0);
   return {
     id: slot.id,
-    name: slot.name,
+    placement: slot.placement,
     status: slot.status,
     payout_address: slot.payout_address,
     payout_currency: slot.payout_currency,
