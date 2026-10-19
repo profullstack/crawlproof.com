@@ -24,11 +24,11 @@ import {
   type AdSummary,
 } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
-import { MIN_PAYOUT_CENTS, DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
+import { DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
 import { cleanTopics } from "@/lib/ads/trending";
 import { grantTrendingPromo } from "@/lib/ads/promos";
 import { recordManualBid } from "@/lib/ads/bids";
-import { createCryptoPayout } from "@/lib/coinpay";
+import { requestSlotPayout } from "@/lib/ads/payouts";
 
 const ASSET_BUCKET = "ad-assets";
 const MAX_ASSET_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -761,7 +761,8 @@ export async function saveSlotPayout(input: {
 }
 
 // Request a crypto withdrawal of a slot's accrued earnings. Records an
-// ad_payouts row; outbound CoinPay execution is processed separately.
+// ad_payouts row and sends it through CoinPay (lib/ads/payouts.ts, shared with
+// the bearer API).
 export async function requestPayout(input: {
   slotId: string;
 }): Promise<{ ok: true; amountCents: number } | { ok: false; error: string }> {
@@ -770,108 +771,9 @@ export async function requestPayout(input: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
-
-  const { data: slot } = await supabase
-    .from("ad_slots")
-    .select("id, payout_address, payout_currency")
-    .eq("id", input.slotId)
-    .maybeSingle();
-  if (!slot) return { ok: false, error: "Slot not found." };
-  if (!slot.payout_address) return { ok: false, error: "Add a payout wallet address first." };
-
-  // Available = accrued earnings − already-requested/sent/confirmed payouts.
-  const [{ data: accruals }, { data: payouts }] = await Promise.all([
-    supabase.from("ad_ledger").select("amount_cents").eq("slot_id", input.slotId).eq("kind", "publisher_accrual"),
-    supabase.from("ad_payouts").select("amount_cents, status").eq("slot_id", input.slotId),
-  ]);
-  const earned = (accruals ?? []).reduce((s, r) => s + (r.amount_cents ?? 0), 0);
-  const withdrawn = (payouts ?? [])
-    .filter((p) => p.status !== "failed")
-    .reduce((s, r) => s + (r.amount_cents ?? 0), 0);
-  const available = earned - withdrawn;
-
-  if (available < MIN_PAYOUT_CENTS) {
-    return { ok: false, error: `Minimum withdrawal is ${(MIN_PAYOUT_CENTS / 100).toFixed(2)}. You have ${(available / 100).toFixed(2)}.` };
-  }
-
-  // Solvency backstop: cumulative publisher payouts can never exceed cumulative
-  // real advertiser cash in. The floor-rate math already guarantees this per
-  // click; this is belt-and-braces against pricing/promo misconfiguration.
-  const svc = serviceClient();
-  const [{ data: deposits }, { data: allPayouts }] = await Promise.all([
-    svc.from("credit_purchases").select("amount_cents").eq("status", "complete"),
-    svc.from("ad_payouts").select("amount_cents, status"),
-  ]);
-  const cashIn = (deposits ?? []).reduce((s, r) => s + (r.amount_cents ?? 0), 0);
-  const paidOut = (allPayouts ?? [])
-    .filter((p) => p.status !== "failed")
-    .reduce((s, r) => s + (r.amount_cents ?? 0), 0);
-  if (paidOut + available > cashIn) {
-    return {
-      ok: false,
-      error: "Withdrawals are briefly paused for reconciliation. Please try again later.",
-    };
-  }
-
-  const currency = slot.payout_currency || "usdc_pol";
-  const { data: payout, error } = await supabase
-    .from("ad_payouts")
-    .insert({
-      owner_id: user.id,
-      slot_id: input.slotId,
-      amount_cents: available,
-      currency,
-      address: slot.payout_address,
-      status: "requested",
-    })
-    .select("id")
-    .single();
-  if (error || !payout) return { ok: false, error: error?.message ?? "Failed to record payout." };
-
-  // Execute the on-chain transfer via CoinPay's payout API. On an explicit
-  // rejection we mark the payout failed (which frees the balance to retry). On
-  // a transient/config error we leave it 'requested' so it can be processed
-  // later without double-paying.
-  const result = await createCryptoPayout({
-    recipientEmail: user.email ?? `${user.id}@users.crawlproof.com`,
-    recipientWallet: slot.payout_address,
-    amountUsd: available / 100,
-    currency,
-  });
-
-  if (result.ok) {
-    const settled = result.status === "completed";
-    await supabase
-      .from("ad_payouts")
-      .update({
-        status: settled ? "confirmed" : "sent",
-        coinpay_payout_id: result.payoutId,
-        tx_hash: result.txHash,
-        settled_at: settled ? new Date().toISOString() : null,
-      })
-      .eq("id", payout.id);
-    await supabase.from("ad_ledger").insert({
-      kind: "publisher_payout",
-      owner_id: user.id,
-      slot_id: input.slotId,
-      amount_cents: -available,
-      currency,
-      coinpay_payment_id: result.payoutId,
-      tx_hash: result.txHash,
-    });
-    revalidatePath("/dashboard/ads/slots");
-    return { ok: true, amountCents: available };
-  }
-
-  if (!result.retryable) {
-    await supabase.from("ad_payouts").update({ status: "failed" }).eq("id", payout.id);
-    revalidatePath("/dashboard/ads/slots");
-    return { ok: false, error: result.error };
-  }
-
-  // Transient: keep the request queued (counts against the balance) and report.
+  const result = await requestSlotPayout({ sb: serviceClient(), userId: user.id, email: user.email ?? null, slotId: input.slotId });
   revalidatePath("/dashboard/ads/slots");
-  return { ok: true, amountCents: available };
+  return result.ok ? { ok: true, amountCents: result.amountCents } : result;
 }
 
 // Upload an advertiser's own image (logo or hero) to the public ad-assets
