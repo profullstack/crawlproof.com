@@ -295,15 +295,11 @@ export async function slopAudit(
     priority: 5,
   });
 
-  // The headline slop.score finding summarizes the others, and the systemic
-  // rollups restate defects already counted per page — both are excluded from
-  // the 0-100 AEO score so nothing is counted twice.
-  const scored = findings.filter(
-    (f) => f.check_key !== "slop.score" && !f.check_key.startsWith("slop.systemic."),
-  );
-
+  // The 0-100 AEO score is the slop score turned the right way up: 0 slop (pristine)
+  // is 100, maximum slop is 0. Scoring the leftover findings instead gave a clean
+  // site 50, because the only finding left was the informational crawl note.
   return {
-    score: scoreFindings(scored),
+    score: Math.max(0, Math.min(100, 100 - report.score)),
     findings,
     markdown: slopMarkdown({
       targetUrl,

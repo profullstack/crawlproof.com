@@ -192,7 +192,8 @@ export async function linksAudit(
   const findings = buildFindings(agg);
 
   return {
-    score: scoreFindings(findings),
+    // Outbound links to other sites are reported, not scored: their state is not this site's.
+    score: scoreFindings(findings.filter((f) => f.check_key !== "links.external_broken")),
     findings,
     markdown: buildMarkdown({ ...agg, durationMs: Date.now() - started }),
     summary: {
@@ -222,9 +223,42 @@ type Agg = {
   crashed: string | null;
 };
 
+/** Same host as the audited site (www. and the apex count as one). */
+function isInternal(url: string, root: string): boolean {
+  try {
+    const bare = (h: string) => h.toLowerCase().replace(/^www\./, "");
+    return bare(new URL(url).host) === bare(new URL(root).host);
+  } catch {
+    return false;
+  }
+}
+
 function buildFindings(agg: Agg): Finding[] {
-  const { root, pagesCrawled, checked, broken, skippedCount, capped, crashed } = agg;
+  const { root, pagesCrawled, checked, skippedCount, capped, crashed } = agg;
   const out: Finding[] = [];
+
+  // The site's own broken links decide pass or fail. An outbound link that a third-party
+  // site answers with 403 to a bot, or that has since died, is the other site's state, not
+  // this one's defect: it is reported below at low weight instead of failing the audit.
+  const broken = agg.broken.filter((b) => isInternal(b.url, root));
+  const external = agg.broken.filter((b) => !isInternal(b.url, root));
+  if (external.length) {
+    out.push({
+      section: "Links & Images",
+      check_key: "links.external_broken",
+      status: "warn",
+      title: `${external.length} outbound link${external.length === 1 ? "" : "s"} to other sites did not answer`,
+      detail:
+        "Other sites refused the checker (403s to bots are common) or no longer resolve. Worth pruning the dead ones; this does not count against the site's own links.\n" +
+        external
+          .slice(0, MAX_BROKEN_LISTED)
+          .map((b) => `· ${statusLabel(b)} — ${b.url}${b.parent ? `  (on ${b.parent})` : ""}`)
+          .join("\n") +
+        (external.length > MAX_BROKEN_LISTED ? `\n… and ${external.length - MAX_BROKEN_LISTED} more` : ""),
+      evidence: { external: external.length, examples: external.slice(0, 10).map((b) => ({ url: b.url, status: b.status ?? 0, parent: b.parent ?? null })) },
+      priority: 5,
+    });
+  }
 
   // Broken-link finding — the headline of a link checker.
   const brokenCount = broken.length;
@@ -241,7 +275,7 @@ function buildFindings(agg: Agg): Finding[] {
         : `${brokenCount} broken link${brokenCount === 1 ? "" : "s"} across ${pagesCrawled} page${pagesCrawled === 1 ? "" : "s"}`,
     detail:
       brokenCount === 0
-        ? `Recursively checked ${checked} link${checked === 1 ? "" : "s"} from ${root} — all resolved 2xx/3xx.`
+        ? `Recursively checked ${checked} link${checked === 1 ? "" : "s"} from ${root} — every link to ${root} resolved 2xx/3xx.`
         : broken
             .slice(0, MAX_BROKEN_LISTED)
             .map(
