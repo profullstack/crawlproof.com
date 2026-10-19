@@ -1,5 +1,6 @@
-// What a published article carries besides the article: an ad unit, and links
-// out to the rest of the network.
+// What a published article carries besides the article: an ad unit, placed at
+// the end of the article's introduction, and links out to the rest of the
+// network, appended after it.
 //
 // Both are governed by one column — `lx_site.ads_enabled`, default true — and
 // that is deliberate. Splitting "show ads" from "join the link network" into
@@ -176,7 +177,79 @@ export function networkLinksHtml(links: NetworkLink[]): string {
 }
 
 /**
- * Everything appended to an article, for a site that is in the network.
+ * Top-level block containers. A paragraph or heading inside one of these is
+ * not a place an ad can go: splitting a list, a quote or a table with a
+ * leaderboard breaks the markup the author wrote.
+ */
+const CONTAINER_TAGS = new Set([
+  "aside", "blockquote", "details", "div", "dl", "figure", "ol", "pre",
+  "section", "table", "ul",
+]);
+
+/**
+ * Where in an article the ad unit goes, as a character offset.
+ *
+ * The end of the introduction: before the first top-level `<h2>` that follows
+ * at least one top-level paragraph. Failing that, after the first top-level
+ * paragraph; failing that, the very top of the article.
+ *
+ * Never the end. The block used to be appended after the article, which on
+ * every receiver put a 728x90 leaderboard directly above the site footer
+ * (Anthony, 2026-10-19: "no ads in footers"). Mid-article, after the reader
+ * has committed to the piece, is both where an ad belongs and where it earns.
+ *
+ * A tag scan, not a parser: the input is our own generated article HTML, and
+ * the only question asked of it is "how deep in block containers is this
+ * tag". `<script>`, `<style>` and comments are skipped whole so the JSON-LD
+ * (or anything else that is not markup) can never be mistaken for a tag.
+ */
+export function adInsertionOffset(html: string): number {
+  const tag = /<!--[\s\S]*?-->|<(script|style)\b[\s\S]*?<\/\1\s*>|<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+  let depth = 0;
+  let afterFirstParagraph = -1;
+  let m: RegExpExecArray | null;
+  while ((m = tag.exec(html)) !== null) {
+    const name = m[3]?.toLowerCase();
+    if (!name) continue; // comment, script or style
+    const closing = m[2] === "/";
+    if (CONTAINER_TAGS.has(name)) {
+      depth = Math.max(0, depth + (closing ? -1 : 1));
+      continue;
+    }
+    if (depth > 0) continue;
+    if (closing && name === "p" && afterFirstParagraph < 0) {
+      afterFirstParagraph = m.index + m[0].length;
+    } else if (!closing && name === "h2" && afterFirstParagraph >= 0) {
+      return m.index;
+    }
+  }
+  return afterFirstParagraph >= 0 ? afterFirstParagraph : 0;
+}
+
+/**
+ * The article with the ad unit placed in it (see `adInsertionOffset`).
+ *
+ * @returns the article unchanged when there is no ad to place
+ */
+export function placeAdInArticle(articleHtml: string, adHtml: string): string {
+  if (!adHtml) return articleHtml;
+  const html = articleHtml ?? "";
+  const at = adInsertionOffset(html);
+  const before = html.slice(0, at);
+  const after = html.slice(at);
+  return [before, adHtml, after].filter((part) => part !== "").join("\n");
+}
+
+export type NetworkBlock = {
+  /** The ad unit, placed inside the article body by `placeAdInArticle`. */
+  ad: string;
+  /** The "elsewhere on this topic" links, appended after the article. */
+  links: string;
+};
+
+/**
+ * What a site in the network gets with each article: an ad unit for inside
+ * the article, and a links block for after it.
  *
  * @param supabase service client — this runs from the delivery path, no session
  * @param site the blog that will HOST the post (the guest-post target, when
@@ -184,7 +257,7 @@ export function networkLinksHtml(links: NetworkLink[]): string {
  *        block and that site's owner who opted in
  * @param topics subjects to pull directory posts for
  * @param partnerLinks already-ranked exchange candidates from the caller
- * @returns HTML to append, or "" when the site is opted out or nothing resolved
+ * @returns both parts, either "" when the site is opted out or nothing resolved
  */
 export async function buildNetworkBlock(
   supabase: SupabaseClient<any>,
@@ -198,12 +271,10 @@ export async function buildNetworkBlock(
   topics: string[],
   partnerLinks: NetworkLink[],
   origin: string,
-): Promise<string> {
+): Promise<NetworkBlock> {
   // Absent column reads as opted in, matching the migration default, so this
   // behaves the same before and after the schema lands.
-  if (site.ads_enabled === false) return "";
-
-  const parts: string[] = [];
+  if (site.ads_enabled === false) return { ad: "", links: "" };
 
   // Read from the crawl cache, never live. A publish must not wait on the
   // directory's server; a topic the sweep has not reached yet costs this
@@ -214,11 +285,10 @@ export async function buildNetworkBlock(
     )
     .catch(() => []);
 
-  const block = networkLinksHtml([
+  const links = networkLinksHtml([
     ...partnerLinks.slice(0, MAX_PARTNER_LINKS),
     ...feedLinks,
   ]);
-  if (block) parts.push(block);
 
   const slotId = await resolveAdSlot(
     supabase,
@@ -226,7 +296,6 @@ export async function buildNetworkBlock(
     site.user_id,
     site.niche,
   );
-  if (slotId) parts.push(adUnitHtml(slotId, origin));
 
-  return parts.join("\n");
+  return { ad: slotId ? adUnitHtml(slotId, origin) : "", links };
 }
