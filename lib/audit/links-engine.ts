@@ -136,7 +136,7 @@ function messageOf(err: unknown): string {
 export async function linksAudit(
   targetUrl: string,
   // Test seam: shortens the per-link abort so the mid-body race is deterministic.
-  opts: { perLinkTimeoutMs?: number } = {},
+  opts: { perLinkTimeoutMs?: number; confirm?: Partial<typeof CONFIRM> } = {},
 ): Promise<LinksAuditResult> {
   const started = Date.now();
   const root = rootOf(targetUrl);
@@ -176,7 +176,11 @@ export async function linksAudit(
     links: outcome.acc?.links ?? [],
   };
   const checked = checkedCount(acc);
-  const broken = acc.links.filter((l) => l.state === LinkState.BROKEN);
+  const broken = await confirmNoResponse(
+    acc.links.filter((l) => l.state === LinkState.BROKEN),
+    root,
+    opts.confirm,
+  );
   const skippedCount = acc.links.filter((l) => l.state === LinkState.SKIPPED).length;
 
   const agg: Agg = {
@@ -192,8 +196,9 @@ export async function linksAudit(
   const findings = buildFindings(agg);
 
   return {
-    // Outbound links to other sites are reported, not scored: their state is not this site's.
-    score: scoreFindings(findings.filter((f) => f.check_key !== "links.external_broken")),
+    // Reported, not scored: outbound links are other sites' state, and coverage says how far
+    // the checker looked (a 250-page cap on a large site) — unless the crawl crashed partway.
+    score: scoreFindings(findings.filter((f) => f.check_key !== "links.external_broken" && (f.check_key !== "links.crawl_coverage" || outcome.crashed !== null))),
     findings,
     markdown: buildMarkdown({ ...agg, durationMs: Date.now() - started }),
     summary: {
@@ -222,6 +227,48 @@ type Agg = {
   capped: Capped;
   crashed: string | null;
 };
+
+/**
+ * A "no response" (status 0) on the site's own link is often the crawler's fault, not the
+ * site's: linkinator parses every crawled page on the same event loop as its requests, so on
+ * link-dense pages its 10 s AbortSignal fires on responses that already arrived (a plain fetch
+ * of the same 1,264 URLs at the same concurrency: 0 errors, max 785 ms). Before blaming the
+ * site, each such link is asked once more with a plain GET; only the ones that fail again stay.
+ * Real HTTP errors (404, 500, …) are kept as they are.
+ */
+export const CONFIRM = { max: 300, concurrency: 10, timeoutMs: 10_000, budgetMs: 45_000 };
+
+export async function confirmNoResponse(
+  broken: CrawlLink[],
+  root: string,
+  cfg: Partial<typeof CONFIRM> = {},
+): Promise<CrawlLink[]> {
+  const { max, concurrency, timeoutMs, budgetMs } = { ...CONFIRM, ...cfg };
+  const toCheck = broken.filter((b) => (b.status ?? 0) === 0 && isInternal(b.url, root)).slice(0, max);
+  if (!toCheck.length) return broken;
+  const recovered = new Set<string>();
+  const deadline = Date.now() + budgetMs;
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, toCheck.length) }, async () => {
+      while (next < toCheck.length && Date.now() < deadline) {
+        const link = toCheck[next++]!;
+        try {
+          const res = await fetch(link.url, {
+            redirect: "follow",
+            headers: { "user-agent": "CrawlProofBot/1.0 (+https://crawlproof.com/bot)" },
+            signal: AbortSignal.timeout(Math.min(timeoutMs, Math.max(1, deadline - Date.now()))),
+          });
+          await res.body?.cancel();
+          if (res.status >= 200 && res.status < 400) recovered.add(link.url);
+        } catch {
+          // Still no answer: it stays broken.
+        }
+      }
+    }),
+  );
+  return broken.filter((b) => !recovered.has(b.url));
+}
 
 /** Same host as the audited site (www. and the apex count as one). */
 function isInternal(url: string, root: string): boolean {
