@@ -1,13 +1,23 @@
 import Link from "next/link";
 import { HeroAuditForm } from "@/components/hero-audit-form";
-import { ANON_DAILY_SCANS, SCAN_CREDITS, SIGNUP_CREDITS, SCAN_RACK_CENTS, SCAN_MIN_CENTS, dollars } from "@/lib/credits";
+import { ANON_DAILY_SCANS, ENGINES, SCAN_CREDITS, SIGNUP_CREDITS, SCAN_RACK_CENTS, SCAN_MIN_CENTS, dollars } from "@/lib/credits";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
 import { PerformancePreview } from "@/components/report/performance-preview";
 import { UptimePreview } from "@/components/report/uptime-preview";
 import { SecurityPreview } from "@/components/report/security-preview";
 import { env } from "@/lib/env";
 
+// The AI-model engines are the paid ones; derive the list so the copy never
+// drifts from what the scan dialog actually offers.
+const aiModels = Object.values(ENGINES).filter((e) => e.available && e.cost > 0);
+const aiModelNames = aiModels.map((e) => e.label);
+const engineCount = Object.values(ENGINES).filter((e) => e.available).length;
+
 const faqs = [
+  {
+    q: "Does CrawlProof ask real AI models, or just read robots.txt?",
+    a: `It asks the models. Each AI scan sends your site to live models — ${aiModelNames.join(", ")} — with the same brief: pretend you've never heard of this company, find out everything you can from the public web, and say exactly where you found each fact and what you couldn't find. The models with live search (Claude, GPT, Gemini, Perplexity) search the web as they go. robots.txt and AI-crawler access are one check among ${engineCount} engines, not the whole product.`,
+  },
   {
     q: "How does the ad network work?",
     a: "It's two-sided and crypto-settled. Advertisers give a landing-page URL and CrawlProof auto-designs on-brand display ads (edit the copy/colours or upload your own), then run them across the network for a daily budget paid from credits. Publishers opt a verified project in as an ad slot, drop one tag (or open an install PR), and earn a share of every click — paid on-chain to their wallet via CoinPay. Bot and duplicate clicks are filtered so they never bill.",
@@ -69,7 +79,11 @@ export default function HomePage() {
             AI crawlers
           </strong>{" "}
           do — SEO, AEO &amp; GEO audits for ChatGPT, Claude, Perplexity, and
-          Google AI Overviews. Now it&apos;s a full platform: <strong className="font-semibold text-[var(--color-text)]">uptime
+          Google AI Overviews — and{" "}
+          <strong className="font-semibold text-[var(--color-text)]">
+            asks {aiModels.length} live AI models
+          </strong>{" "}
+          what they can actually find out about you. Now it&apos;s a full platform: <strong className="font-semibold text-[var(--color-text)]">uptime
           monitoring</strong> with downtime alerts, <strong className="font-semibold text-[var(--color-text)]">exposed-services
           security scans</strong>, automated content, backlinks, and analytics —
           all from one dashboard. Start with a free audit:
@@ -103,7 +117,7 @@ export default function HomePage() {
           separate subscriptions for monitoring, security, and content.
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <ModuleCard emoji="🔍" title="SEO · AEO · GEO Audits" body="See your site the way ChatGPT, Claude, Perplexity, and Google AI crawlers do — with a priority to-do list." />
+          <ModuleCard emoji="🔍" title="SEO · AEO · GEO Audits" body={`Ask ${aiModels.length} live AI models what they can find about you, and see your site the way their crawlers do — with a priority to-do list.`} />
           <ModuleCard emoji="📈" title="Uptime Monitoring" body="HTTP, keyword, SSL &amp; TCP checks with instant down/recovery alerts to email, Slack, and Discord." />
           <ModuleCard emoji="🛡️" title="Exposed Services" body="Full-port security scans of your verified hosts — get alerted the moment a database or admin port is exposed." />
           <ModuleCard emoji="✍️" title="Autoblog" body={`Research, draft, illustrate, and publish long-form SEO posts to your CMS on a schedule — ${dollars(SCAN_RACK_CENTS)} each before volume discounts.`} />
@@ -123,6 +137,10 @@ export default function HomePage() {
           citation) — unified in a single audit and priority to-do list.
         </p>
         <div className="grid gap-4 md:grid-cols-3">
+          <FeatureCard
+            title="Live AI answers (AEO · GEO)"
+            body={`We ask ${aiModels.length} real models — ${aiModelNames.join(", ")} — to research your company from scratch, and report what each one found, missed, and where it looked.`}
+          />
           <FeatureCard
             title="Crawlability (SEO)"
             body="Raw HTML vs. JS-rendered diff, sitemap coverage, robots rules, fetch-time, broken links."
