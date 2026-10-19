@@ -8,9 +8,9 @@ vi.mock("@/lib/crawl-limits", () => ({
 }));
 const SECRET = "test-crawl-secret-not-a-real-key";
 const SEMRUSH = "Mozilla/5.0 (compatible; SemrushBot/7~bl; +http://www.semrush.com/bot.html)";
-function request(path = "/a/AbCdEf123456", ua = SEMRUSH, pass?: string, accept?: string) {
+function request(path = "/a/AbCdEf123456", ua = SEMRUSH, pass?: string, accept?: string, ip = "85.208.96.196") {
   return new Request(`https://crawlproof.com${path}`, { headers: {
-    "user-agent": ua, "x-real-ip": "85.208.96.196", ...(pass ? { "x-crawl-pass": pass } : {}),
+    "user-agent": ua, "x-real-ip": ip, ...(pass ? { "x-crawl-pass": pass } : {}),
     ...(accept ? { accept } : {}),
   } });
 }
@@ -52,8 +52,12 @@ describe("crawler access through x402-gateway", () => {
   });
   it("allows search indexing of content while refusing unpaid ad redirects", async () => {
     const { gate } = await import("@/lib/crawl-gateway");
-    expect(await gate(request("/blog", "Googlebot"))).toBeUndefined();
-    expect((await gate(request("/a/AbCdEf123456", "Googlebot")))?.status).toBe(403);
+    // Googlebot from Google's published range (x402-gateway 0.10 checks the address).
+    const google = "66.249.66.1";
+    expect(await gate(request("/blog", "Googlebot", undefined, undefined, google))).toBeUndefined();
+    expect((await gate(request("/a/AbCdEf123456", "Googlebot", undefined, undefined, google)))?.status).toBe(403);
+    // The same string from anywhere else is an impostor and is charged.
+    expect((await gate(request("/blog", "Googlebot")))?.status).toBe(402);
   });
   it("keeps all generated robots groups away from ad redirects", async () => {
     const { gateway } = await import("@/lib/crawl-gateway");
