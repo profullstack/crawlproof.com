@@ -112,3 +112,15 @@ export function splitHtmlForMidAd(html: string | null | undefined): SplitHtml | 
 
   return { before, after };
 }
+
+// A network-delivered post used to carry its ad unit appended after the article
+// (see lib/lx/networkBlock.ts, which now places it mid-article). Rendered here,
+// that trailing unit lands directly above the site footer, so it is dropped:
+// the page already renders its own top and mid units.
+const TRAILING_AD =
+  /\s*<div\s+data-cp-ad\b[^>]*>\s*<\/div>\s*(?:<script\b[^>]*\bsrc="[^"]*\/ad\.js"[^>]*>\s*<\/script>\s*)?$/i;
+
+/** The post HTML without an ad unit (and its ad.js tag) at the very end. */
+export function stripTrailingAd(html: string): string {
+  return html.replace(TRAILING_AD, "");
+}

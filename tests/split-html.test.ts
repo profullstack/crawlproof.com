@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitHtmlForMidAd } from "@/lib/blog/split-html";
+import { splitHtmlForMidAd, stripTrailingAd } from "@/lib/blog/split-html";
 
 const para = (n: number) => `<p>Paragraph ${n} ${"filler ".repeat(20)}</p>`;
 const longArticle = Array.from({ length: 12 }, (_, i) => para(i)).join("\n");
@@ -81,5 +81,20 @@ describe("splitHtmlForMidAd", () => {
       (_, i) => `<li>Item ${i} ${"text ".repeat(10)}</li>`,
     ).join("")}</ul>`;
     expect(splitHtmlForMidAd(oneBigList)).toBeNull();
+  });
+});
+
+describe("stripTrailingAd", () => {
+  const unit =
+    '<div data-cp-ad data-slot="94cd644a-bcc2-4bba-ab66-b4a89f3727cc" data-format="banner_728x90"></div>\n<script async src="https://crawlproof.com/ad.js"></script>';
+
+  it("drops an ad unit appended after the article, so none sits above the footer", () => {
+    const html = `<p>Body.</p>\n<aside class="cp-network-links"><ul><li>x</li></ul></aside>\n${unit}`;
+    expect(stripTrailingAd(html)).toBe('<p>Body.</p>\n<aside class="cp-network-links"><ul><li>x</li></ul></aside>');
+  });
+
+  it("keeps an ad unit placed inside the article", () => {
+    const html = `<p>Intro.</p>\n${unit}\n<h2>More</h2><p>Body.</p>`;
+    expect(stripTrailingAd(html)).toBe(html);
   });
 });
