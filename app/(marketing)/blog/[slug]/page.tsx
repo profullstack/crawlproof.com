@@ -60,7 +60,7 @@ export default async function BlogPost({
   if (post.html) post.html = stripDeadLinks(fixBlogLinks(post.html, slugs));
 
   // Null for short posts and for plain-text (non-HTML) bodies — those render
-  // straight through with just the top and bottom units.
+  // straight through with just the top unit.
   const split = splitHtmlForMidAd(post.html);
 
   return (
@@ -124,9 +124,6 @@ export default async function BlogPost({
           {post.body}
         </article>
       )}
-
-      {/* Bottom unit: after the article. */}
-      <AdUnit className="mt-10" />
     </main>
   );
 }
