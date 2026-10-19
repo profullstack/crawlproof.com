@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { ReferralProvider } from "@profullstack/referrals/react";
 import "./globals.css";
+import { PitFooter } from "@/components/pit-footer";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -150,6 +151,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           strategy="afterInteractive"
         />
         </ReferralProvider>
+        <PitFooter />
       </body>
     </html>
   );
