@@ -170,6 +170,7 @@ The endpoints underneath are the same ones anything else can call:
 | --- | --- |
 | `GET /api/tracker/v1/sites` | the projects this token can read |
 | `GET /api/tracker/v1/stats?site=&range=&who=&detail=1` | who arrived and from where; `detail=1` adds the series and the unfiltered human / bot mix |
+| `GET /api/tracker/v1/report?range=1w\|1m` | every site on the account summarised (visitors, bot / AI hits, top pages, trend); what CoinPay's business report reads |
 | `GET /api/ads/v1/earnings?days=` | ad delivery and money, both sides |
 | `GET/POST /api/ads/v1/campaigns` | list and run campaigns |
 | `GET/POST /api/ads/v1/slots` | list and create publisher slots |

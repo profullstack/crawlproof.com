@@ -9,14 +9,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { serviceClient } from "@/lib/supabase/service";
-import { authenticateBearer } from "@/lib/sp/apiAuth";
+import { authenticateBearer, STATS_READ } from "@/lib/sp/apiAuth";
 import { listProjects } from "@/lib/tracker/apiStats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const auth = await authenticateBearer(req);
+  const auth = await authenticateBearer(req, { allowScopes: [STATS_READ] });
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const listed = await listProjects(serviceClient(), auth.userId);
