@@ -1,8 +1,10 @@
-import { TRAINING_AGENTS, isTrainingAgent } from "@profullstack/x402-gateway";
+import { HEADLESS_AGENTS, TRAINING_AGENTS, isTrainingAgent } from "@profullstack/x402-gateway";
 import { parseDevice } from "@/lib/tracker/device";
 
 export const COMMERCIAL_CRAWLERS = ["SemrushBot", "SiteAuditBot", "AhrefsBot", "AhrefsSiteAudit", "MJ12bot", "DotBot", "BLEXBot", "DataForSeoBot"];
-export const PAID_CRAWLERS = [...TRAINING_AGENTS, ...COMMERCIAL_CRAWLERS];
+// Headless browsers that say so (Lightpanda, HeadlessChrome, PhantomJS): nobody
+// reads a page through one; the gateway's default list charges them since 0.8.
+export const PAID_CRAWLERS = [...TRAINING_AGENTS, ...COMMERCIAL_CRAWLERS, ...HEADLESS_AGENTS];
 const FAMILIES = [...PAID_CRAWLERS, "Amazonbot", "Googlebot", "Bingbot", "Applebot", "OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User"];
 
 /** Labels bound counter cardinality. A user agent identifies policy, not ownership. */
