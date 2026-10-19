@@ -28,9 +28,15 @@ declare global {
 export function AdUnit({
   format,
   className,
+  slot = SLOT_ID,
+  adNetwork,
 }: {
   format?: AdFormatId;
   className?: string;
+  /** A different slot than the site default (e.g. the ad.network listing's). */
+  slot?: string;
+  /** The ad.network claim code; renders the unit as its tagged <aside>. */
+  adNetwork?: string;
 }) {
   useEffect(() => {
     if (window.crawlproofAds) {
@@ -45,7 +51,16 @@ export function AdUnit({
     document.body.appendChild(s);
   }, []);
 
-  return (
-    <div data-cp-ad data-slot={SLOT_ID} data-format={format} className={className} />
-  );
+  if (adNetwork) {
+    return (
+      <aside
+        data-ad-network={adNetwork}
+        data-cp-ad
+        data-slot={slot}
+        data-format={format}
+        className={className}
+      />
+    );
+  }
+  return <div data-cp-ad data-slot={slot} data-format={format} className={className} />;
 }
