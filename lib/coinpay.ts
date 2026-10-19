@@ -149,7 +149,9 @@ export async function createPayment(
   const base = env.coinpayApiUrl.replace(/\/$/, "");
   const apiUrl = `${base}/api/payments/create`;
   const descriptionParts = [
-    `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
+    input.packId === "ad-budget"
+      ? `CrawlProof ad budget $${(input.amountCents / 100).toFixed(2)}`
+      : `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
   ];
   if (input.metadata?.purchase_id) {
     descriptionParts.push(`purchase=${input.metadata.purchase_id}`);

@@ -173,6 +173,9 @@ The endpoints underneath are the same ones anything else can call:
 | `GET /api/ads/v1/earnings?days=` | ad delivery and money, both sides |
 | `GET/POST /api/ads/v1/campaigns` | list and run campaigns |
 | `GET/POST /api/ads/v1/slots` | list and create publisher slots |
+| `GET/PATCH /api/ads/v1/slots/:id` | a slot's payout wallet, status, earned and withdrawable cents |
+| `POST /api/ads/v1/slots/:id/payout` | withdraw a slot's earnings to its wallet through CoinPay |
+| `GET/POST /api/ads/v1/deposits`, `GET /api/ads/v1/deposits/:payment_id` | ad budget in crypto at ad value ($1 = 20 credits); partner accounts only (`ADS_PARTNER_USER_IDS`), e.g. [ad.network](https://ad.network.pit.world) |
 | `GET /api/ads/v1/trends` | what is trending, and how old the list is |
 
 ### Trending-topic targeting
