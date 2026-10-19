@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { itemsToFindings, parsePlan, specScore } from "../lib/audit/spec-engine";
-import { linksAudit } from "../lib/audit/links-engine";
+import { confirmNoResponse, linksAudit } from "../lib/audit/links-engine";
 import type { FetchedPage } from "../lib/audit/types";
 
 const PLAN = `
@@ -43,6 +43,31 @@ describe("spec engine verifies what it can", () => {
   it("with nothing verifiable (page unreachable) the score stays neutral", () => {
     expect(specScore(itemsToFindings(parsePlan(PLAN), null, {}))).toBe(50);
   });
+});
+
+describe("a crawler timeout is re-checked before the site is blamed", () => {
+  it("drops own-site 'no response' links that answer a plain request; keeps real failures and other sites", async () => {
+    const site = createServer((req, res) => {
+      if (req.url === "/gone") return void res.writeHead(404).end();
+      if (req.url === "/hang") return; // never answers
+      res.writeHead(200).end("ok");
+    }).listen(0, "localhost");
+    await new Promise((r) => site.once("listening", r));
+    const root = `http://localhost:${(site.address() as AddressInfo).port}/`;
+    try {
+      const links = [
+        { url: `${root}fine`, status: 0, state: "BROKEN", parent: root },
+        { url: `${root}hang`, status: 0, state: "BROKEN", parent: root },
+        { url: `${root}gone`, status: 404, state: "BROKEN", parent: root },
+        { url: "http://other.invalid/x", status: 0, state: "BROKEN", parent: root },
+      ];
+      const kept = await confirmNoResponse(links, root, { timeoutMs: 500, budgetMs: 3_000 });
+      expect(kept.map((l) => l.url)).toEqual([`${root}hang`, `${root}gone`, "http://other.invalid/x"]);
+    } finally {
+      site.closeAllConnections();
+      site.close();
+    }
+  }, 15_000);
 });
 
 describe("link checker scores the site's own links", () => {
