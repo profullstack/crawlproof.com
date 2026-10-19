@@ -15,7 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildEvent, sendWebhook, type Post } from "@profullstack/autoblog";
 import { env } from "../env";
 import { findExchangeCandidates } from "./exchangeMatcher";
-import { buildNetworkBlock } from "./networkBlock";
+import { buildNetworkBlock, placeAdInArticle, type NetworkBlock } from "./networkBlock";
 
 type ArticleRow = {
   id: string;
@@ -118,7 +118,11 @@ export type DeliveryResult = {
   error?: string;
 };
 
-function articleToPost(article: ArticleRow, site: SiteRow, networkHtml = ""): Post {
+function articleToPost(
+  article: ArticleRow,
+  site: SiteRow,
+  network: NetworkBlock = { ad: "", links: "" },
+): Post {
   const blogRoot = site.blog_root_url.replace(/\/$/, "");
   const url = `${blogRoot}/${article.slug}`;
 
@@ -149,10 +153,14 @@ function articleToPost(article: ArticleRow, site: SiteRow, networkHtml = ""): Po
     title: article.title,
     slug: article.slug,
     excerpt: article.excerpt || article.meta_description || null,
-    // The network block goes after the article and outside the JSON-LD, so an
-    // ad unit and a list of other people's links are never described to a
-    // crawler as part of this article's body.
-    html: [jsonLd, article.content_html, networkHtml].filter(Boolean).join("\n"),
+    // The ad sits at the end of the article's introduction, never after the
+    // article: appended last, it rendered directly above every receiver's
+    // footer. The links block still follows the article. Neither is inside
+    // the JSON-LD, so an ad unit and a list of other people's links are never
+    // described to a crawler as part of this article's body.
+    html: [jsonLd, placeAdInArticle(article.content_html, network.ad), network.links]
+      .filter(Boolean)
+      .join("\n"),
     // Markdown deliberately does NOT carry the block. A receiver rendering the
     // markdown path would have to trust our HTML through its own sanitiser,
     // and the ad unit needs a script tag that no markdown renderer will emit.
@@ -247,7 +255,7 @@ export async function deliverArticle(
     )
     .catch(() => []);
 
-  const networkHtml = await buildNetworkBlock(
+  const network = await buildNetworkBlock(
     supabase,
     site,
     claimed.tags ?? [],
@@ -255,10 +263,10 @@ export async function deliverArticle(
     env.siteUrl,
   ).catch((err: unknown) => {
     console.warn("[lx] network block failed:", err);
-    return "";
+    return { ad: "", links: "" };
   });
 
-  const post = articleToPost(claimed, site, networkHtml);
+  const post = articleToPost(claimed, site, network);
   // Reuse the saved delivery id on retries so receivers idempotently
   // dedupe. SDK uses event.id as the webhook-id header.
   const event = buildEvent(post, {

@@ -7,10 +7,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  adInsertionOffset,
   adUnitHtml,
   escapeHtml,
   isSafeHref,
   networkLinksHtml,
+  placeAdInArticle,
   type NetworkLink,
 } from "@/lib/lx/networkBlock";
 import { itemEntries } from "@/lib/lx/feedTopics";
@@ -105,6 +107,47 @@ describe("adUnitHtml", () => {
 
   it("does not double the slash when the origin has a trailing one", () => {
     expect(adUnitHtml("s", "https://crawlproof.com/")).toContain("https://crawlproof.com/ad.js");
+  });
+});
+
+describe("placeAdInArticle", () => {
+  const AD = '<div data-cp-ad data-slot="s"></div>';
+
+  it("puts the ad at the end of the introduction, before the first h2", () => {
+    const html = "<p>One.</p>\n<p>Two.</p>\n<h2>First section</h2>\n<p>Body.</p>";
+    const out = placeAdInArticle(html, AD);
+    expect(out.indexOf(AD)).toBeGreaterThan(out.indexOf("Two."));
+    expect(out.indexOf(AD)).toBeLessThan(out.indexOf("<h2>"));
+  });
+
+  it("never puts the ad last, where it would sit on the site footer", () => {
+    const html = "<p>Intro.</p><h2>A</h2><p>a</p><h2>B</h2><p>b</p>";
+    expect(placeAdInArticle(html, AD).trimEnd().endsWith("<p>b</p>")).toBe(true);
+  });
+
+  it("falls back to after the first paragraph when the article has no h2", () => {
+    const html = "<p>First.</p><p>Second.</p><p>Third.</p>";
+    expect(placeAdInArticle(html, AD)).toBe(`<p>First.</p>\n${AD}\n<p>Second.</p><p>Third.</p>`);
+  });
+
+  it("goes at the top when there is no top-level paragraph at all", () => {
+    expect(placeAdInArticle("<ul><li><p>x</p></li></ul>", AD)).toBe(`${AD}\n<ul><li><p>x</p></li></ul>`);
+  });
+
+  it("does not split a list, quote or table", () => {
+    const html = "<blockquote><p>quoted</p><h2>not here</h2></blockquote><p>Intro.</p><h2>Here</h2>";
+    const out = placeAdInArticle(html, AD);
+    expect(out.indexOf(AD)).toBeGreaterThan(out.indexOf("</blockquote>"));
+    expect(out.indexOf(AD)).toBe(out.indexOf("<h2>Here") - AD.length - 1);
+  });
+
+  it("ignores markup-looking text inside scripts and comments", () => {
+    const html = '<script type="application/ld+json">{"x":"</p><h2>"}</script><!-- <p>no</p> --><p>Intro.</p><h2>S</h2>';
+    expect(adInsertionOffset(html)).toBe(html.indexOf("<h2>S"));
+  });
+
+  it("is a no-op without an ad", () => {
+    expect(placeAdInArticle("<p>x</p>", "")).toBe("<p>x</p>");
   });
 });
 
