@@ -124,9 +124,6 @@ export default async function BlogPost({
           {post.body}
         </article>
       )}
-
-      {/* Bottom unit: after the article. */}
-      <AdUnit className="mt-10" />
     </main>
   );
 }

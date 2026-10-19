@@ -93,8 +93,6 @@ export default async function BlogIndex() {
           </Fragment>
         ))}
       </ul>
-      {/* Bottom unit: after the list. */}
-      <AdUnit className="mt-10" />
     </main>
   );
 }
