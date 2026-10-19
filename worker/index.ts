@@ -48,6 +48,7 @@ import { reapStalePublishingJobs } from "../lib/promote/jobs";
 import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
 import { runAutobidSweep } from "../lib/ads/bids";
+import { runAdLinkHealthSweep } from "../lib/ads/linkHealth";
 import { startVideoRenderWorker } from "./video";
 import { processDueVideoRenders } from "../lib/ads/video/sweep";
 
@@ -1560,6 +1561,31 @@ setInterval(
   AUTOBID_TICK_MS,
 );
 
+// Pause campaigns whose destination page is gone (404/410/NXDOMAIN on two
+// checks 12h+ apart) and resume the ones it paused once the page is back. A
+// tick checks the stalest batch; each campaign comes round every ~6h.
+const AD_LINK_TICK_MS = 30 * 60 * 1000; // 30min
+let adLinkRunning = false;
+async function adLinkSweep() {
+  if (adLinkRunning) return;
+  adLinkRunning = true;
+  try {
+    const r = await runAdLinkHealthSweep(supabase);
+    if (r.failed) console.error(`[worker] ad link sweep failed: ${r.failed}`);
+    if (r.checked > 0) {
+      console.log(
+        `[worker] ad links checked=${r.checked} ok=${r.ok} dead=${r.dead} unknown=${r.unknown} paused=${r.paused.length} resumed=${r.resumed.length}`,
+      );
+    }
+  } finally {
+    adLinkRunning = false;
+  }
+}
+setInterval(
+  () => adLinkSweep().catch((e) => console.error("[worker] ad link sweep", e)),
+  AD_LINK_TICK_MS,
+);
+
 // Reschedule render jobs whose BullMQ job never materialised — Redis down at
 // save time, or a crash between the row insert and the enqueue. Without this
 // those rows sit `queued` forever, and a backfill that only inserts rows would
@@ -1588,6 +1614,7 @@ server.listen(port, bindHost, () => {
   sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
   feedCrawlSweep().catch((e) => console.error("[worker] feed crawl sweep", e));
   autobidSweep().catch((e) => console.error("[worker] autobid sweep", e));
+  adLinkSweep().catch((e) => console.error("[worker] ad link sweep", e));
   // Long-lived BullMQ consumer rather than an interval sweep: a render takes
   // tens of seconds and the queue, not a timer, decides when the next one runs.
   startVideoRenderWorker(supabase);

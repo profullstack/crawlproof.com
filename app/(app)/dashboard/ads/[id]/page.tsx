@@ -63,7 +63,7 @@ export default async function CampaignDetailPage({
   const { data: campaign } = await supabase
     .from("ad_campaigns")
     .select(
-      "id, name, destination_url, destination_domain, daily_budget_cents, bid_credits, status, ref_slug, created_at, spend_today_cents, spend_date, total_spent_cents",
+      "id, name, destination_url, destination_domain, daily_budget_cents, bid_credits, status, ref_slug, created_at, spend_today_cents, spend_date, total_spent_cents, paused_reason, link_http_status",
     )
     .eq("id", id)
     .eq("owner_id", user.id)

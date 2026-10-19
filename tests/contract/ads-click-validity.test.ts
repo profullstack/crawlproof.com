@@ -71,6 +71,15 @@ describe("stale impressions", () => {
     state.impression = { ...fresh(), ts: ago(2 * 24 * HOUR), device: "terminal" };
     expect((await assessClickValidity(cited)).reason).toBe("stale_impression");
   });
+  it("gives a terminal creative a day even when a browser fetched the MOTD", async () => {
+    state.impression = { ...fresh(), ts: ago(17 * HOUR), ad_creatives: { format: "terminal_ascii" } } as typeof state.impression;
+    expect(await assessClickValidity(cited)).toEqual({ valid: true });
+    state.impression = { ...fresh(), ts: ago(25 * HOUR), ad_creatives: { format: "terminal_ascii" } } as typeof state.impression;
+    expect((await assessClickValidity(cited)).reason).toBe("stale_impression");
+    state.impression = { ...fresh(), ts: ago(17 * HOUR), ad_creatives: { format: "banner_300x250" } } as typeof state.impression;
+    expect((await assessClickValidity(cited)).reason).toBe("stale_impression");
+    expect(maxClickAgeMs("feed", "terminal_ascii")).toBeNull();
+  });
   it("never ages out a feed reader's click; unread items sit for days", async () => {
     state.impression = { ...fresh(), ts: ago(9 * 24 * HOUR), device: "feed" };
     expect(await assessClickValidity(cited)).toEqual({ valid: true });
