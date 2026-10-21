@@ -20,6 +20,19 @@ export type PurchaseCheckoutInput = {
   description: string;
   kind: "credits" | "ad_budget";
   reference?: string;
+  /**
+   * A partner checking out for one of its own users (ad.network): the buyer's
+   * email and the partner's id for them, the partner's hostname as property,
+   * and where CoinPay sends the buyer back. Omitted, the session is for the
+   * crawlproof account itself and returns to the billing page.
+   */
+  partner?: {
+    customerEmail?: string;
+    accountId?: string;
+    property?: string;
+    successUrl?: string;
+    cancelUrl?: string;
+  };
 };
 
 export function siteBase(): string {
@@ -30,28 +43,33 @@ export function purchaseMetadata(input: Omit<PurchaseCheckoutInput, "sb" | "desc
   const meta: Record<string, string> = {
     purchase_id: input.purchaseId,
     user_id: input.userId,
+    owner_id: input.userId,
     pack_id: input.packId,
     credits: String(input.credits),
     kind: input.kind,
   };
-  const email = String(input.email ?? "").trim();
+  const email = String(input.partner?.customerEmail || input.email || "").trim();
   if (email) meta.customer_email = email;
   if (input.reference) meta.reference = input.reference.slice(0, 120);
+  if (input.partner?.accountId) meta.partner_account_id = input.partner.accountId.slice(0, 200);
+  if (input.partner?.property) meta.partner_property = input.partner.property;
   return meta;
 }
 
 export async function openPurchaseCheckout(input: PurchaseCheckoutInput): Promise<CreateSessionResult> {
-  const email = String(input.email ?? "").trim();
+  const partner = input.partner ?? {};
+  const email = String(partner.customerEmail || input.email || "").trim();
   if (!email) throw new Error("Your account has no email address, which CoinPay needs for the receipt.");
   const site = siteBase();
   const session = await createCheckoutSession({
     amountCents: input.amountCents,
     description: input.description,
     customerEmail: email,
-    accountId: input.userId,
+    accountId: partner.accountId || input.userId,
     metadata: purchaseMetadata(input),
-    successUrl: `${site}/dashboard/settings/billing?purchase=success&session={CHECKOUT_SESSION_ID}`,
-    cancelUrl: `${site}/dashboard/settings/billing?purchase=cancel`,
+    successUrl: partner.successUrl || `${site}/dashboard/settings/billing?purchase=success&session={CHECKOUT_SESSION_ID}`,
+    cancelUrl: partner.cancelUrl || `${site}/dashboard/settings/billing?purchase=cancel`,
+    ...(partner.property ? { property: partner.property } : {}),
   });
   const { error } = await input.sb
     .from("credit_purchases")

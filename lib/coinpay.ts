@@ -49,6 +49,8 @@ export type CreateSessionInput = {
   metadata: Record<string, string>;
   successUrl: string;
   cancelUrl: string;
+  /** Site hostname shown on CoinPay rows; partners pass their own (ad.network.pit.world). */
+  property?: string;
 };
 
 export type CreateSessionResult = {
@@ -66,8 +68,8 @@ export function checkoutSessionBody(input: CreateSessionInput): Record<string, u
     description: input.description,
     customer_email: input.customerEmail,
     account_id: input.accountId,
-    property: PAYMENT_PROPERTY,
-    metadata: { property: PAYMENT_PROPERTY, ...input.metadata },
+    property: input.property || PAYMENT_PROPERTY,
+    metadata: { property: input.property || PAYMENT_PROPERTY, ...input.metadata },
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     expires_in_minutes: CHECKOUT_WINDOW_MINUTES,

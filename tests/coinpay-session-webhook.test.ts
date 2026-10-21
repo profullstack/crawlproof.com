@@ -118,6 +118,18 @@ describe("CoinPay webhook, checkout sessions", () => {
     expect(db.balance.get("owner-1")).toBe(100);
   });
 
+  it("settles a PayPal capture (payment.confirmed, status completed, rail paypal)", async () => {
+    const res = await POST(signed(event("payment.confirmed", "completed", { rail: "paypal", property: "ad.network.pit.world", metadata: { purchase_id: PURCHASE, kind: "ad_budget" } })));
+    expect(res.status).toBe(200);
+    expect(db.rows[0].status).toBe("complete");
+    expect(db.balance.get("owner-1")).toBe(100);
+  });
+
+  it("settles on forwarded alone (a failed confirmed is not retried)", async () => {
+    await POST(signed(event("payment.forwarded", "forwarded")));
+    expect(db.balance.get("owner-1")).toBe(100);
+  });
+
   it("does not fail the purchase when one coin attempt expires", async () => {
     const res = await POST(signed(event("payment.expired", "expired")));
     expect(res.status).toBe(200);

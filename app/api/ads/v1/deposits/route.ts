@@ -3,6 +3,11 @@
 //   POST { amount_usd, currency? }  A CoinPay invoice for that much ad budget
 //        at its ad value ($1 = 20 credits). Answers with the address and exact
 //        amount to send; credits land on this account once CoinPay sees it.
+//   POST { amount_usd, checkout: "session", customer_email?, account_id?,
+//          property?, success_url?, cancel_url?, reference? }
+//        A CoinPay hosted checkout session for the partner's own buyer, who
+//        picks any coin or PayPal there. Answers { checkout_session_id, url,
+//        status: "open", ... }; GET /:checkout_session_id follows it.
 //        Partner accounts only (ADS_PARTNER_USER_IDS): see lib/ads/deposits.ts.
 //   GET  This account's ad-budget deposits, newest first.
 //
