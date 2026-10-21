@@ -9,13 +9,14 @@
 // a sixth of their price. Cash still sits behind every credit (5c in, at most
 // 1.4c out to a publisher), well above MIN_CASH_PER_CREDIT_CENTS.
 //
-// The purchase is an ordinary credit_purchases row (pack_id "ad-budget"), so
-// the CoinPay webhook, the status poll and the receipt all work unchanged.
+// The purchase is an ordinary credit_purchases row (pack_id "ad-budget") on a
+// CoinPay checkout session, so the webhook, the status poll and the receipt
+// all work unchanged. payment_id in the answer is the cs_ session id.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CREDIT_CENTS } from "@/lib/ads/pricing";
-import { createPayment } from "@/lib/coinpay";
-import { env } from "@/lib/env";
+import { getPaymentStatus, selectSessionMethod } from "@/lib/coinpay";
+import { adBudgetDescription, openPurchaseCheckout } from "@/lib/credits-checkout";
 
 export const AD_BUDGET_PACK = "ad-budget";
 export const MIN_DEPOSIT_CENTS = 500;
@@ -78,32 +79,35 @@ export async function createAdDeposit(input: {
     .single();
   if (error || !purchase) return { ok: false, status: 500, error: error?.message ?? "Could not record the deposit." };
 
-  const site = (env.siteUrl || "https://crawlproof.com").replace(/\/$/, "");
   try {
-    const payment = await createPayment({
+    const session = await openPurchaseCheckout({
+      sb,
+      purchaseId: purchase.id,
+      userId,
+      email: input.email,
       packId: AD_BUDGET_PACK,
       credits,
       amountCents: request.amountCents,
-      ownerId: userId,
-      ownerEmail: input.email,
-      currency: request.currency,
-      successUrl: `${site}/dashboard/settings/billing?purchase=success`,
-      cancelUrl: `${site}/dashboard/settings/billing?purchase=cancel`,
-      webhookUrl: `${site}/api/coinpay/webhook`,
-      metadata: { purchase_id: purchase.id, ...(input.reference ? { reference: input.reference.slice(0, 120) } : {}) },
+      description: adBudgetDescription(request.amountCents),
+      kind: "ad_budget",
+      ...(input.reference ? { reference: input.reference } : {}),
     });
-    await sb.from("credit_purchases").update({ coinpay_payment_id: payment.paymentId }).eq("id", purchase.id);
+    // Partners render their own address + QR, so pre-pick the coin they asked
+    // for on the session. If CoinPay will not open it, the deposit still works
+    // through checkout_url, where the buyer can also pick another coin or PayPal.
+    const paymentId = await selectSessionMethod(session.sessionId, request.currency);
+    const payment = paymentId ? await getPaymentStatus(paymentId).catch(() => null) : null;
     return {
       ok: true,
       deposit: {
-        payment_id: payment.paymentId,
+        payment_id: session.sessionId,
         amount_usd: request.amountCents / 100,
         credits,
-        currency: payment.currency,
-        address: payment.address,
-        amount_crypto: payment.amountCrypto === null ? null : String(payment.amountCrypto),
-        expires_at: payment.expiresAt,
-        checkout_url: payment.hostedUrl,
+        currency: request.currency,
+        address: payment?.address ?? null,
+        amount_crypto: payment?.amountCrypto == null ? null : String(payment.amountCrypto),
+        expires_at: payment?.expiresAt ?? session.expiresAt,
+        checkout_url: session.url,
         status: "pending",
       },
     };

@@ -54,8 +54,8 @@ export function PurchaseStatusBanner({ initial }: { initial: Purchase }) {
   if (status === "failed") {
     return (
       <div className="card border-[rgba(251,191,36,0.4)] p-4 text-sm text-[var(--color-warn)]">
-        Payment expired or failed before CoinPay confirmed it — your card was
-        not charged. Please try again, or contact support if you were charged.
+        The checkout expired or failed before CoinPay confirmed a payment, so
+        nothing was charged. Please try again, or contact support if you paid.
       </div>
     );
   }

@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 const SECRET = "stub_webhook_secret";
 process.env.COINPAY_WEBHOOK_SECRET = SECRET;
 
-import { createCheckout, verifyWebhookSignature } from "@/lib/coinpay";
+import { createCheckoutSession, readCoinpayWebhook, verifyWebhookSignature } from "@/lib/coinpay";
 
 function sign(body: string, ts: number, secret = SECRET): string {
   const sig = crypto
@@ -66,8 +66,9 @@ describe("verifyWebhookSignature (CoinPay/Stripe-style t=…,v1=…)", () => {
   });
 });
 
-describe("createCheckout", () => {
+describe("createCheckoutSession", () => {
   let originalFetch: typeof globalThis.fetch;
+  const SID = "cs_Ju1h16BXSobdRs7XWg9MUIj0";
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -77,105 +78,108 @@ describe("createCheckout", () => {
     vi.restoreAllMocks();
   });
 
-  it("POSTs to /api/payments/create with business_id + amount_usd + redirect_url", async () => {
+  const input = {
+    amountCents: 1000,
+    description: "10 CrawlProof scan credits",
+    customerEmail: "u@example.com",
+    accountId: "user_123",
+    metadata: { purchase_id: "pur_abc", user_id: "user_123" },
+    successUrl: "https://crawlproof.com/ok?session={CHECKOUT_SESSION_ID}",
+    cancelUrl: "https://crawlproof.com/cancel",
+  };
+
+  it("POSTs email, account, property and metadata to /api/checkout/sessions", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
-        JSON.stringify({
-          success: true,
-          payment: { id: "payment-456", payment_address: "0xabc", status: "pending" },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+        JSON.stringify({ success: true, id: SID, url: `https://stub.coinpayportal.com/checkout/${SID}`, status: "open", methods: [{ code: "USDC_POL" }, { code: "PAYPAL" }] }),
+        { status: 201, headers: { "content-type": "application/json" } },
       ),
     );
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
-    const r = await createCheckout({
-      packId: "pack-10",
-      credits: 10,
-      amountCents: 1000,
-      ownerId: "user_123",
-      ownerEmail: "u@example.com",
-      successUrl: "https://crawlproof.com/ok",
-      cancelUrl: "https://crawlproof.com/cancel",
-      webhookUrl: "https://crawlproof.com/api/coinpay/webhook",
-      metadata: { purchase_id: "pur_abc" },
-    });
-
-    expect(r.paymentId).toBe("payment-456");
-    expect(r.hostedUrl).toMatch(/\/pay\/payment-456$/);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    const [url, init] = call;
-    expect(String(url)).toMatch(/\/api\/payments\/create$/);
+    const r = await createCheckoutSession(input);
+    expect(r.sessionId).toBe(SID);
+    expect(r.url).toBe(`https://stub.coinpayportal.com/checkout/${SID}`);
+    expect(r.methods).toEqual(["USDC_POL", "PAYPAL"]);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    // COINPAY_API_URL ending in /api must not double the /api.
+    expect(String(url)).toBe("https://stub.coinpayportal.com/api/checkout/sessions");
     const headers = init?.headers as Record<string, string>;
     expect(headers.authorization).toMatch(/^Bearer /);
     const body = JSON.parse(String(init?.body));
-    expect(body.business_id).toBeTruthy();
-    expect(body.amount_usd).toBe(10);
-    expect(body.payment_method).toBe("crypto");
-    expect(body.redirect_url).toMatch(/crawlproof\.com\/ok$/);
-    expect(body.description).toMatch(/purchase=pur_abc/);
+    expect(body).toMatchObject({
+      amount: 10,
+      currency: "USD",
+      customer_email: "u@example.com",
+      account_id: "user_123",
+      property: "crawlproof.com",
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      expires_in_minutes: 60,
+    });
+    expect(body.metadata).toMatchObject({ purchase_id: "pur_abc", property: "crawlproof.com" });
+    expect(body.business_id).toBeUndefined();
   });
 
-  it("throws a helpful error when CoinPay returns HTML (wrong endpoint)", async () => {
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response("<!DOCTYPE html><h1>404 Not Found</h1>", {
-          status: 404,
-          headers: { "content-type": "text/html" },
-        }),
-    ) as unknown as typeof globalThis.fetch;
-
-    await expect(
-      createCheckout({
-        packId: "pack-1",
-        credits: 1,
-        amountCents: 100,
-        ownerId: "u",
-        successUrl: "https://x",
-        cancelUrl: "https://x",
-        webhookUrl: "https://x",
+  it("refuses a checkout URL on another origin", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ success: true, id: SID, url: "https://evil.example/checkout" }), {
+        status: 201, headers: { "content-type": "application/json" },
       }),
-    ).rejects.toThrow(/got HTML — endpoint wrong/);
+    ) as unknown as typeof globalThis.fetch;
+    await expect(createCheckoutSession(input)).rejects.toThrow(/another origin/);
   });
 
-  it("throws when CoinPay returns non-2xx", async () => {
-    globalThis.fetch = vi.fn(
-      async () => new Response("server error", { status: 500 }),
-    ) as unknown as typeof globalThis.fetch;
-
-    await expect(
-      createCheckout({
-        packId: "pack-1",
-        credits: 1,
-        amountCents: 100,
-        ownerId: "u",
-        successUrl: "https://x",
-        cancelUrl: "https://x",
-        webhookUrl: "https://x",
+  it("surfaces CoinPay's error code", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ success: false, code: "NO_PAYMENT_METHODS", error: "none" }), {
+        status: 400, headers: { "content-type": "application/json" },
       }),
-    ).rejects.toThrow(/CoinPay createCheckout failed/);
+    ) as unknown as typeof globalThis.fetch;
+    await expect(createCheckoutSession(input)).rejects.toThrow(/NO_PAYMENT_METHODS/);
   });
 
-  it("throws when the response is missing payment.id", async () => {
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(JSON.stringify({ success: true, payment: {} }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+  it("throws on an HTML answer (wrong endpoint)", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response("<!DOCTYPE html>", { status: 404, headers: { "content-type": "text/html" } }),
     ) as unknown as typeof globalThis.fetch;
+    await expect(createCheckoutSession(input)).rejects.toThrow(/non-JSON/);
+  });
 
-    await expect(
-      createCheckout({
-        packId: "pack-1",
-        credits: 1,
-        amountCents: 100,
-        ownerId: "u",
-        successUrl: "https://x",
-        cancelUrl: "https://x",
-        webhookUrl: "https://x",
-      }),
-    ).rejects.toThrow(/missing payment\.id/);
+  it("requires an email before calling CoinPay", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    await expect(createCheckoutSession({ ...input, customerEmail: "" })).rejects.toThrow(/email/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("readCoinpayWebhook", () => {
+  it("reads the nested payload, never the event id", () => {
+    const e = readCoinpayWebhook({
+      id: "evt_pay1_123",
+      type: "payment.confirmed",
+      data: {
+        payment_id: "pay1",
+        status: "confirmed",
+        checkout_session_id: "cs_Ju1h16BXSobdRs7XWg9MUIj0",
+        account_id: "user_1",
+        metadata: { purchase_id: "p1" },
+      },
+    });
+    expect(e).toMatchObject({
+      eventType: "payment.confirmed",
+      paymentId: "pay1",
+      status: "confirmed",
+      sessionId: "cs_Ju1h16BXSobdRs7XWg9MUIj0",
+      accountId: "user_1",
+    });
+    expect(e.metadata.purchase_id).toBe("p1");
+  });
+
+  it("falls back to a flat body", () => {
+    const e = readCoinpayWebhook({ payment_id: "pay2", status: "forwarded", metadata: { checkout_session_id: "cs_Ju1h16BXSobdRs7XWg9MUIj0" } });
+    expect(e.paymentId).toBe("pay2");
+    expect(e.sessionId).toBe("cs_Ju1h16BXSobdRs7XWg9MUIj0");
   });
 });

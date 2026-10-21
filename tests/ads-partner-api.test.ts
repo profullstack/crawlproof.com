@@ -4,7 +4,9 @@ import { cleanPayoutTarget, requestSlotPayout, slotAvailableCents } from "@/lib/
 
 vi.mock("@/lib/coinpay", () => ({
   createCryptoPayout: vi.fn(async () => ({ ok: true, payoutId: "po_1", txHash: "0xabc", status: "completed" })),
-  createPayment: vi.fn(),
+  createCheckoutSession: vi.fn(),
+  selectSessionMethod: vi.fn(),
+  getPaymentStatus: vi.fn(),
 }));
 
 describe("ad-budget deposits", () => {
