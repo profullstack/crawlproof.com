@@ -34,7 +34,54 @@ export function isAdsPartner(userId: string, raw?: string): boolean {
   return partnerUserIds(raw).has(userId);
 }
 
-export type DepositRequest = { amountCents: number; currency: string };
+/**
+ * checkout "session" (partners that redirect the buyer): answer the hosted
+ * CoinPay checkout URL, where the buyer picks any coin or PayPal. The buyer's
+ * own email and the partner's id for them go on the session, with the
+ * partner's hostname as property and its return URLs.
+ * checkout "coin" (default, older callers): pre-pick `currency` and answer the
+ * address + exact amount for the partner to render.
+ */
+export type DepositRequest = {
+  amountCents: number;
+  currency: string;
+  checkout: "coin" | "session";
+  customerEmail?: string;
+  accountId?: string;
+  property?: string;
+  successUrl?: string;
+  cancelUrl?: string;
+};
+
+const EMAIL_RE = /^[^\s@<>()]{1,64}@[^\s@<>()]{1,190}\.[a-z0-9-]{2,63}$/i;
+const HOST_RE = /^(?=.{3,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/** A partner return URL: https only, at most 500 chars. */
+export function cleanReturnUrl(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length > 500) return null;
+  // {CHECKOUT_SESSION_ID} is CoinPay's placeholder; URL() would escape the braces.
+  const probe = raw.replace(/\{CHECKOUT_SESSION_ID\}/g, "cs_placeholder");
+  try {
+    const u = new URL(probe);
+    return u.protocol === "https:" && u.hostname ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A site hostname for CoinPay's property: a bare host, or the host of a URL. */
+export function cleanProperty(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  let host = raw.trim().toLowerCase();
+  if (host.includes("/")) {
+    try {
+      host = new URL(host.includes("://") ? host : `https://${host}`).hostname;
+    } catch {
+      return null;
+    }
+  }
+  return HOST_RE.test(host) ? host : null;
+}
 
 export function parseDepositRequest(body: Record<string, unknown>): { ok: true; request: DepositRequest } | { ok: false; error: string } {
   const usd = Number(body.amount_usd);
@@ -45,7 +92,33 @@ export function parseDepositRequest(body: Record<string, unknown>): { ok: true; 
   }
   const currency = String(body.currency ?? "usdc_pol").trim().toLowerCase();
   if (!/^[a-z0-9_]{2,20}$/.test(currency)) return { ok: false, error: "currency is a CoinPay coin id, e.g. usdc_pol, usdc_sol, btc, eth." };
-  return { ok: true, request: { amountCents, currency } };
+  const checkout = String(body.checkout ?? "coin").trim().toLowerCase();
+  if (checkout !== "coin" && checkout !== "session") return { ok: false, error: "checkout is 'session' (hosted CoinPay page) or 'coin' (address + amount)." };
+  if (checkout === "coin") return { ok: true, request: { amountCents, currency, checkout } };
+
+  const request: DepositRequest = { amountCents, currency, checkout };
+  if (body.customer_email != null && body.customer_email !== "") {
+    const email = String(body.customer_email).trim();
+    if (!EMAIL_RE.test(email)) return { ok: false, error: "customer_email must be an email address." };
+    request.customerEmail = email;
+  }
+  if (body.account_id != null && body.account_id !== "") {
+    const id = String(body.account_id).trim();
+    if (!/^[\w.@:+-]{1,200}$/.test(id)) return { ok: false, error: "account_id is up to 200 letters, digits or ._@:+-" };
+    request.accountId = id;
+  }
+  if (body.property != null && body.property !== "") {
+    const property = cleanProperty(body.property);
+    if (!property) return { ok: false, error: "property must be a hostname, e.g. ad.network.pit.world." };
+    request.property = property;
+  }
+  for (const [key, field] of [["success_url", "successUrl"], ["cancel_url", "cancelUrl"]] as const) {
+    if (body[key] == null || body[key] === "") continue;
+    const url = cleanReturnUrl(body[key]);
+    if (!url) return { ok: false, error: `${key} must be an https URL.` };
+    request[field] = url;
+  }
+  return { ok: true, request };
 }
 
 /** Credits a deposit buys at ad value. */
@@ -63,13 +136,26 @@ export type DepositInvoice = {
   status: "pending";
 };
 
+export type DepositSession = {
+  checkout_session_id: string;
+  /** Same id, under the name the status route and older callers use. */
+  payment_id: string;
+  url: string;
+  checkout_url: string;
+  amount_usd: number;
+  credits: number;
+  methods: string[];
+  expires_at: string | null;
+  status: "open";
+};
+
 export async function createAdDeposit(input: {
   sb: SupabaseClient;
   userId: string;
   email: string | null;
   request: DepositRequest;
   reference?: string;
-}): Promise<{ ok: true; deposit: DepositInvoice } | { ok: false; status: number; error: string }> {
+}): Promise<{ ok: true; deposit: DepositInvoice | DepositSession } | { ok: false; status: number; error: string }> {
   const { sb, userId, request } = input;
   const credits = depositCredits(request.amountCents);
   const { data: purchase, error } = await sb
@@ -91,7 +177,34 @@ export async function createAdDeposit(input: {
       description: adBudgetDescription(request.amountCents),
       kind: "ad_budget",
       ...(input.reference ? { reference: input.reference } : {}),
+      ...(request.checkout === "session"
+        ? {
+            partner: {
+              customerEmail: request.customerEmail,
+              accountId: request.accountId,
+              property: request.property,
+              successUrl: request.successUrl,
+              cancelUrl: request.cancelUrl,
+            },
+          }
+        : {}),
     });
+    if (request.checkout === "session") {
+      return {
+        ok: true,
+        deposit: {
+          checkout_session_id: session.sessionId,
+          payment_id: session.sessionId,
+          url: session.url,
+          checkout_url: session.url,
+          amount_usd: request.amountCents / 100,
+          credits,
+          methods: session.methods,
+          expires_at: session.expiresAt,
+          status: "open",
+        },
+      };
+    }
     // Partners render their own address + QR, so pre-pick the coin they asked
     // for on the session. If CoinPay will not open it, the deposit still works
     // through checkout_url, where the buyer can also pick another coin or PayPal.

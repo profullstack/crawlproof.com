@@ -16,8 +16,8 @@ describe("ad-budget deposits", () => {
   });
 
   it("parses dollars and a coin, and refuses amounts out of range", () => {
-    expect(parseDepositRequest({ amount_usd: 25, currency: "USDC_SOL" })).toEqual({ ok: true, request: { amountCents: 2500, currency: "usdc_sol" } });
-    expect(parseDepositRequest({ amount_usd: "10" })).toEqual({ ok: true, request: { amountCents: 1000, currency: "usdc_pol" } });
+    expect(parseDepositRequest({ amount_usd: 25, currency: "USDC_SOL" })).toEqual({ ok: true, request: { amountCents: 2500, currency: "usdc_sol", checkout: "coin" } });
+    expect(parseDepositRequest({ amount_usd: "10" })).toEqual({ ok: true, request: { amountCents: 1000, currency: "usdc_pol", checkout: "coin" } });
     expect(parseDepositRequest({ amount_usd: 4.99 })).toMatchObject({ ok: false });
     expect(parseDepositRequest({ amount_usd: 20_000 })).toMatchObject({ ok: false });
     expect(parseDepositRequest({ amount_usd: "lots" })).toMatchObject({ ok: false });
