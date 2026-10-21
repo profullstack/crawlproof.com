@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AdUnit } from "@/components/ads/ad-unit";
 import { HeroAuditForm } from "@/components/hero-audit-form";
 import { ANON_DAILY_SCANS, ENGINES, SCAN_CREDITS, SIGNUP_CREDITS, SCAN_RACK_CENTS, SCAN_MIN_CENTS, dollars } from "@/lib/credits";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
@@ -118,13 +117,6 @@ export default function HomePage() {
           )}
         </div>
       </section>
-
-      <AdUnit
-        adNetwork={AD_NETWORK_CODE}
-        slot="f63c4161-2f5f-4da5-943e-d0d026ce0a9b"
-        format="banner_300x250"
-        className="mx-auto flex max-w-6xl justify-center px-4 pb-16 sm:px-6"
-      />
 
       <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
         <h2 className="mb-2 text-center text-2xl font-bold">One platform, every angle</h2>

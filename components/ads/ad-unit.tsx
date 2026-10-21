@@ -18,15 +18,13 @@ declare global {
 }
 
 /**
- * A single ad container filled by /ad.js.
- *
- * Omitting `format` lets the script pick by container width (leaderboard on
- * desktop, mobile banner on narrow screens), which is what we want in the blog
- * column. The script only auto-scans once at load, so mounting a unit via
- * client-side navigation has to re-trigger the scan by hand.
+ * A single ad container filled by /ad.js. Defaults to the low-profile
+ * text_link line (one per page, never on the home page). The script only
+ * auto-scans once at load, so mounting a unit via client-side navigation has
+ * to re-trigger the scan by hand.
  */
 export function AdUnit({
-  format,
+  format = "text_link",
   className,
   slot = SLOT_ID,
   adNetwork,

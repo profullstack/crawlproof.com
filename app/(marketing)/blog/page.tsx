@@ -3,10 +3,6 @@ import Link from "next/link";
 import { loadAllPosts } from "@/lib/blog/posts";
 import { AdUnit } from "@/components/ads/ad-unit";
 
-// Drop a mid-list unit after this many posts, but only when the list is long
-// enough that it does not sit at the bottom of the list, against the footer.
-const MID_AD_AFTER = 3;
-const MID_AD_MIN_POSTS = 6;
 
 export const metadata = {
   title: "Blog",
@@ -30,15 +26,14 @@ export const revalidate = 60;
 
 export default async function BlogIndex() {
   const all = await loadAllPosts();
-  const midAdAfter = all.length >= MID_AD_MIN_POSTS ? MID_AD_AFTER : -1;
   return (
     <main className="mx-auto max-w-3xl px-4 sm:px-6 py-16">
       <h1 className="text-4xl font-extrabold">Blog</h1>
       <p className="mt-2 text-[var(--color-muted)]">
         Notes on AEO, AI crawlers, and how to make sites legible to LLMs.
       </p>
-      {/* Top unit: above the list. */}
-      <AdUnit className="mt-8" />
+      {/* The page's one unit: a text_link line above the list. */}
+      <AdUnit className="mt-3" />
       <ul className="mt-10 space-y-6">
         {all.map((p, i) => (
           <Fragment key={p.slug}>
@@ -83,13 +78,6 @@ export default async function BlogIndex() {
                 </div>
               </Link>
             </li>
-            {/* Mid unit: between cards, styled as a plain row so it doesn't
-             * masquerade as a post. */}
-            {i + 1 === midAdAfter && (
-              <li className="list-none">
-                <AdUnit />
-              </li>
-            )}
           </Fragment>
         ))}
       </ul>
