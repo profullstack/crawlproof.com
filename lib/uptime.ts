@@ -1,7 +1,8 @@
 // Uptime monitoring engine (uptime-monitoring-prd.md §3–§7). Runs due checks
 // (HTTP / keyword / SSL / TCP), advances the up/down state machine with
 // multi-failure confirmation, opens/closes incidents, and sends down/recovery
-// email alerts. Called from worker/index.ts on a short interval.
+// email alerts (plus a phone call via smshub when alert_phone is set). Called
+// from worker/index.ts on a short interval.
 import net from "node:net";
 import tls from "node:tls";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -22,6 +23,7 @@ export interface MonitorRow {
   consecutive_failures: number;
   consecutive_successes: number;
   alert_email: string | null;
+  alert_phone: string | null;
   last_down_alert_at: string | null;
 }
 
@@ -193,6 +195,38 @@ async function sendAlert(
   }
 }
 
+// Phone alerts go through smshub's alerts API with the operator's key. Severity
+// "critical" always places a call (smshub reads the message twice and hangs up);
+// smshub dedupes the same text to the same phone within 10 minutes.
+const SMSHUB_URL = (process.env.SMSHUB_URL ?? "https://smshub.dev").replace(/\/$/, "");
+
+export function phoneAlertText(m: Pick<MonitorRow, "name">, kind: "down" | "up", detail: string): string {
+  return kind === "down"
+    ? `CrawlProof uptime: ${m.name} is DOWN. ${detail}`.trim()
+    : `CrawlProof uptime: ${m.name} is back UP. ${detail}`.trim();
+}
+
+export async function callAlert(
+  m: Pick<MonitorRow, "name" | "alert_phone">,
+  kind: "down" | "up",
+  detail: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const key = process.env.SMSHUB_ALERT_API_KEY;
+  if (!m.alert_phone || !key) return;
+  try {
+    const res = await fetchImpl(`${SMSHUB_URL}/api/v1/alerts`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({ to: m.alert_phone, message: phoneAlertText(m, kind, detail), severity: "critical" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) console.warn("[uptime] phone alert failed", res.status, (await res.text()).slice(0, 200));
+  } catch (e) {
+    console.warn("[uptime] phone alert failed", (e as Error).message);
+  }
+}
+
 async function processOne(
   supabase: SupabaseClient,
   resend: Resend | null,
@@ -266,6 +300,7 @@ async function processOne(
       cause: result.error ?? "check failed",
     });
     if (resend) await sendAlert(resend, m, "down", result.error ?? "Check failed.");
+    await callAlert(m, "down", result.error ?? "Check failed.");
   } else if (reminderDue && resend) {
     // Report how long it's been down using the open incident's start time.
     const { data: open } = await supabase
@@ -306,8 +341,10 @@ async function processOne(
       if (resend) {
         await sendAlert(resend, m, "up", `Back up after ${durationS}s of downtime.`);
       }
-    } else if (resend) {
-      await sendAlert(resend, m, "up", "Back up.");
+      await callAlert(m, "up", `It was down for ${formatDuration(durationS)}.`);
+    } else {
+      if (resend) await sendAlert(resend, m, "up", "Back up.");
+      await callAlert(m, "up", "");
     }
   }
 
@@ -323,7 +360,7 @@ export async function processDueMonitors(
   const { data: due } = await supabase
     .from("monitors")
     .select(
-      "id, project_id, name, type, target, config, interval_s, timeout_s, fail_threshold, recover_threshold, current_state, consecutive_failures, consecutive_successes, alert_email, last_down_alert_at",
+      "id, project_id, name, type, target, config, interval_s, timeout_s, fail_threshold, recover_threshold, current_state, consecutive_failures, consecutive_successes, alert_email, alert_phone, last_down_alert_at",
     )
     .eq("enabled", true)
     .lte("due_at", new Date().toISOString())
