@@ -3,48 +3,207 @@ import { env } from "./env";
 
 // CoinPay HTTP client.
 //
+// Every purchase (scan credit packs, partner ad-budget deposits) opens a CoinPay
+// hosted checkout session: POST {base}/api/checkout/sessions. The buyer lands
+// on CoinPay's page and picks any coin the business holds a wallet for, or
+// PayPal. The session carries customer_email, account_id (the crawlproof user
+// id), property and our metadata (purchase_id), and CoinPay echoes all of it on
+// every webhook as data.checkout_session_id / account_id / metadata.
+//
+// The cs_ session id is stored in credit_purchases.coinpay_payment_id, so the
+// completion RPC, receipts, affiliate conversions and the deposit bonus all key
+// on it unchanged. Purchases opened before sessions keep their raw payment id
+// there and still settle by data.payment_id.
+//
 // Webhook signature format (Stripe-style):
 //
 //   X-CoinPay-Signature: t=<unix-timestamp>,v1=<hex hmac-sha256>
 //
 // where v1 = HMAC-SHA256(`${t}.${rawBody}`, COINPAY_WEBHOOK_SECRET).
-// Multiple `v1=` parts are allowed during secret rotation — any match is OK.
+// Multiple `v1=` parts are allowed during secret rotation; any match is OK.
 
-export type CreateCheckoutInput = {
-  packId: string;
-  credits: number;
+/** Sent as `property` on every session so CoinPay rows map back to this site. */
+export const PAYMENT_PROPERTY = "crawlproof.com";
+export const CHECKOUT_WINDOW_MINUTES = 60;
+
+export function isSessionId(id: string | null | undefined): boolean {
+  return typeof id === "string" && /^cs_[A-Za-z0-9]{8,64}$/.test(id);
+}
+
+function coinpayBase(): string {
+  // COINPAY_API_URL has been set both with and without a trailing /api.
+  return env.coinpayApiUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+}
+
+function requireConfig(): void {
+  if (!env.coinpayApiKey || !env.coinpayApiUrl) {
+    throw new Error("CoinPay is not configured (COINPAY_API_URL/KEY).");
+  }
+}
+
+export type CreateSessionInput = {
   amountCents: number;
-  ownerId: string;
-  ownerEmail?: string | null;
+  description: string;
+  customerEmail: string;
+  accountId: string;
+  metadata: Record<string, string>;
   successUrl: string;
   cancelUrl: string;
-  webhookUrl: string;
-  metadata?: Record<string, string>;
 };
 
-export type CreateCheckoutResult = {
-  paymentId: string;
-  hostedUrl: string;
-};
-
-export type CreatePaymentInput = CreateCheckoutInput & {
-  currency: string; // lowercase code, e.g. "usdc_pol", "btc"
-};
-
-export type CreatePaymentResult = {
-  paymentId: string;
-  address: string | null;
-  amountCrypto: number | null;
-  currency: string;
+export type CreateSessionResult = {
+  sessionId: string;
+  url: string;
   expiresAt: string | null;
-  hostedUrl: string;
+  methods: string[];
 };
+
+/** The body CoinPay gets for a session; exported for tests. */
+export function checkoutSessionBody(input: CreateSessionInput): Record<string, unknown> {
+  return {
+    amount: Number((input.amountCents / 100).toFixed(2)),
+    currency: "USD",
+    description: input.description,
+    customer_email: input.customerEmail,
+    account_id: input.accountId,
+    property: PAYMENT_PROPERTY,
+    metadata: { property: PAYMENT_PROPERTY, ...input.metadata },
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    expires_in_minutes: CHECKOUT_WINDOW_MINUTES,
+  };
+}
+
+export async function createCheckoutSession(input: CreateSessionInput): Promise<CreateSessionResult> {
+  requireConfig();
+  if (!input.customerEmail) throw new Error("An email address is required to check out.");
+  const base = coinpayBase();
+  const apiUrl = `${base}/api/checkout/sessions`;
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.coinpayApiKey}`,
+    },
+    body: JSON.stringify(checkoutSessionBody(input)),
+  });
+  const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+  if (!isJson) {
+    throw new Error(`CoinPay returned non-JSON (${res.status}) from ${apiUrl}. Check COINPAY_API_URL.`);
+  }
+  const json = (await res.json()) as {
+    id?: string;
+    url?: string;
+    expires_at?: string;
+    methods?: unknown[];
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok || !json.id || !json.url) {
+    throw new Error(
+      `CoinPay checkout session failed ${res.status}: ${json.code ?? ""} ${json.error ?? ""}`.trim(),
+    );
+  }
+  if (!isSessionId(json.id)) throw new Error("CoinPay returned an unexpected session id.");
+  // Only ever send buyers to CoinPay's own origin.
+  const origin = new URL(base).origin;
+  const u = new URL(json.url, origin);
+  if (u.origin !== origin) throw new Error("CoinPay returned a checkout URL on another origin.");
+  const methods = (json.methods ?? [])
+    .map((m) => (typeof m === "string" ? m : String((m as { code?: string })?.code ?? "")))
+    .filter(Boolean);
+  return { sessionId: json.id, url: u.toString(), expiresAt: json.expires_at ?? null, methods };
+}
+
+/**
+ * Pre-pick a coin on a session (partners that render their own address + QR).
+ * Answers the underlying payment id, or null if CoinPay would not open it; the
+ * session URL still works then, so the caller degrades to the hosted page.
+ */
+export async function selectSessionMethod(sessionId: string, method: string): Promise<string | null> {
+  if (!isSessionId(sessionId)) return null;
+  try {
+    const res = await fetch(`${coinpayBase()}/api/checkout/sessions/${sessionId}/select`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ method: method.toUpperCase() }),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { payment_id?: string };
+    return json.payment_id ? String(json.payment_id) : null;
+  } catch {
+    return null;
+  }
+}
+
+export type SessionStatusResult = {
+  sessionId: string;
+  status: "open" | "paid" | "expired" | string;
+  paymentId: string | null;
+  paidMethod: string | null;
+};
+
+/** Owner view of a session (with our key): status and the payment behind it. */
+export async function getCheckoutSession(sessionId: string): Promise<SessionStatusResult | null> {
+  if (!isSessionId(sessionId) || !env.coinpayApiUrl) return null;
+  const res = await fetch(`${coinpayBase()}/api/checkout/sessions/${sessionId}`, {
+    headers: env.coinpayApiKey ? { authorization: `Bearer ${env.coinpayApiKey}` } : {},
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const json = (await res.json().catch(() => ({}))) as {
+    session?: { id?: string; status?: string; payment_id?: string | null; paid_method?: string | null };
+  };
+  const s = json.session;
+  if (!s?.id) return null;
+  return {
+    sessionId: s.id,
+    status: String(s.status ?? "open"),
+    paymentId: s.payment_id ?? null,
+    paidMethod: s.paid_method ?? null,
+  };
+}
+
+export type CoinpayWebhookEvent = {
+  eventType: string;
+  paymentId: string | null;
+  status: string;
+  sessionId: string | null;
+  accountId: string | null;
+  metadata: Record<string, unknown>;
+  txHash: string | null;
+};
+
+/**
+ * CoinPay nests the payment under `data`; the top-level `id` is the EVENT id,
+ * never the payment. Read `data` first and fall back to a flat body (the older
+ * test sender).
+ */
+export function readCoinpayWebhook(payload: unknown): CoinpayWebhookEvent {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const nested = p.data && typeof p.data === "object";
+  const d = (nested ? p.data : p) as Record<string, unknown>;
+  const meta = ((d.metadata ?? p.metadata) as Record<string, unknown> | undefined) ?? {};
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const sessionId = str(d.checkout_session_id) ?? str(meta.checkout_session_id);
+  return {
+    eventType: String(p.type ?? p.event ?? "").toLowerCase(),
+    paymentId: str(d.payment_id) ?? (nested ? str(d.id) : null),
+    status: String(d.status ?? "").toLowerCase(),
+    sessionId: isSessionId(sessionId) ? sessionId : null,
+    accountId: str(d.account_id) ?? str(meta.account_id),
+    metadata: meta,
+    txHash: str(d.tx_hash),
+  };
+}
 
 export type PaymentStatusResult = {
   paymentId: string;
   status: string;
   amountCrypto: number | null;
   currency: string | null;
+  address: string | null;
+  expiresAt: string | null;
   txHash: string | null;
 };
 
@@ -54,171 +213,21 @@ type CoinPayPayment = {
   amount_crypto?: number | string;
   crypto_amount?: number | string;
   currency?: string;
+  blockchain?: string;
   expires_at?: string;
-  stripe_checkout_url?: string;
   status?: string;
   tx_hash?: string;
 };
 
-type CoinPayResponse = {
-  success?: boolean;
-  payment?: CoinPayPayment;
-  error?: string;
-};
-
-export async function createCheckout(
-  input: CreateCheckoutInput,
-): Promise<CreateCheckoutResult> {
-  if (!env.coinpayApiKey || !env.coinpayApiUrl || !env.coinpayMerchantId) {
-    throw new Error("CoinPay is not configured (COINPAY_API_URL/KEY/MERCHANT_ID).");
-  }
-
-  // CoinPay API surface (per docs at https://coinpayportal.com/docs):
-  //   POST {COINPAY_API_URL}/api/payments/create   — create the payment
-  //   GET  {COINPAY_API_URL}/pay/{payment_id}      — customer-facing hosted page
-  // payment_method "both" gives the customer crypto + Stripe Checkout tabs.
-  // metadata.purchase_id is encoded in `description` since the API doesn't
-  // document a separate metadata passthrough — we match webhooks by payment_id.
-  const base = env.coinpayApiUrl.replace(/\/$/, "");
-  const apiUrl = `${base}/api/payments/create`;
-  const descriptionParts = [
-    `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
-  ];
-  if (input.metadata?.purchase_id) {
-    descriptionParts.push(`purchase=${input.metadata.purchase_id}`);
-  }
-
-  const res = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${env.coinpayApiKey}`,
-    },
-    body: JSON.stringify({
-      business_id: env.coinpayMerchantId,
-      amount_usd: Number((input.amountCents / 100).toFixed(2)),
-      currency: "usdc_pol", // low-fee default; customer picks chain on the hosted page
-      payment_method: "crypto", // card requires Stripe Connect onboarding — we don't support it
-      description: descriptionParts.join(" · "),
-      redirect_url: input.successUrl,
-    }),
-  });
-
-  const contentType = res.headers.get("content-type") ?? "";
-  const isJson = contentType.includes("application/json");
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    const hint =
-      !isJson && body.trim().startsWith("<")
-        ? " (got HTML — endpoint wrong; check COINPAY_API_URL)"
-        : "";
-    throw new Error(
-      `CoinPay createCheckout failed: ${res.status} ${res.statusText}${hint}. Tried ${apiUrl}. ${body.slice(0, 200)}`,
-    );
-  }
-  if (!isJson) {
-    throw new Error(
-      `CoinPay returned non-JSON (${contentType}). Check COINPAY_API_URL.`,
-    );
-  }
-
-  const json = (await res.json()) as CoinPayResponse;
-  const payment = json.payment;
-  if (!payment?.id) {
-    throw new Error(
-      `CoinPay response missing payment.id: ${JSON.stringify(json).slice(0, 200)}`,
-    );
-  }
-
-  // Customer-facing checkout — combines crypto QR + Stripe tabs (since
-  // payment_method=both).
-  const hostedUrl = `${base}/pay/${payment.id}`;
-  return { paymentId: payment.id, hostedUrl };
-}
-
-// Currency-aware payment creation — used by the in-app modal flow so the
-// user picks a coin without ever leaving the site. Returns the address,
-// amount_crypto, and expires_at so the client can render a QR code and
-// poll for confirmation.
-export async function createPayment(
-  input: CreatePaymentInput,
-): Promise<CreatePaymentResult> {
-  if (!env.coinpayApiKey || !env.coinpayApiUrl || !env.coinpayMerchantId) {
-    throw new Error("CoinPay is not configured (COINPAY_API_URL/KEY/MERCHANT_ID).");
-  }
-  const base = env.coinpayApiUrl.replace(/\/$/, "");
-  const apiUrl = `${base}/api/payments/create`;
-  const descriptionParts = [
-    input.packId === "ad-budget"
-      ? `CrawlProof ad budget $${(input.amountCents / 100).toFixed(2)}`
-      : `${input.credits} CrawlProof scan credit${input.credits === 1 ? "" : "s"}`,
-  ];
-  if (input.metadata?.purchase_id) {
-    descriptionParts.push(`purchase=${input.metadata.purchase_id}`);
-  }
-  const isCard = input.currency === "card";
-  const body = {
-    business_id: env.coinpayMerchantId,
-    amount_usd: Number((input.amountCents / 100).toFixed(2)),
-    // payment_method "both" + currency "usdc_pol" is what CoinPay actually
-    // accepts for the card path today (raw "card" returns 500). When card
-    // is picked, we navigate straight to the returned stripe_checkout_url.
-    ...(isCard
-      ? { payment_method: "both", currency: "usdc_pol" }
-      : { payment_method: "crypto", currency: input.currency }),
-    description: descriptionParts.join(" · "),
-    // success_url / cancel_url get used verbatim as Stripe Checkout's
-    // post-payment URLs (see coinpayportal /api/payments/create:117-118).
-    // Omit them and CoinPay defaults to /pay/<id>?status=success on its
-    // own portal, stranding the user. redirect_url is the crypto-flow
-    // analogue and is honored by CoinPay's hosted pay page only.
-    success_url: input.successUrl,
-    cancel_url: input.cancelUrl,
-    redirect_url: input.successUrl,
-  };
-  const res = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${env.coinpayApiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`CoinPay createPayment failed ${res.status}: ${text.slice(0, 200)}`);
-  }
-  const json = (await res.json()) as CoinPayResponse;
-  const payment = json.payment;
-  if (!payment?.id) {
-    throw new Error(`CoinPay response missing payment.id: ${JSON.stringify(json).slice(0, 200)}`);
-  }
-  const amountCrypto =
-    typeof payment.amount_crypto !== "undefined"
-      ? Number(payment.amount_crypto)
-      : typeof payment.crypto_amount !== "undefined"
-        ? Number(payment.crypto_amount)
-        : null;
-  return {
-    paymentId: payment.id,
-    address: payment.payment_address ?? null,
-    amountCrypto: Number.isFinite(amountCrypto) ? amountCrypto : null,
-    currency: payment.currency ?? input.currency,
-    expiresAt: payment.expires_at ?? null,
-    hostedUrl: payment.stripe_checkout_url ?? `${base}/pay/${payment.id}`,
-  };
-}
-
-// Poll-target. Returns the public payment view; status drives the modal's
-// state machine on the client.
+// The public payment view: status for purchases opened before sessions, and the
+// address + amount a partner renders after selectSessionMethod.
 export async function getPaymentStatus(
   paymentId: string,
 ): Promise<PaymentStatusResult | null> {
   if (!env.coinpayApiUrl) return null;
-  const base = env.coinpayApiUrl.replace(/\/$/, "");
-  const res = await fetch(`${base}/api/payments/${paymentId}`, { cache: "no-store" });
+  const res = await fetch(`${coinpayBase()}/api/payments/${encodeURIComponent(paymentId)}`, { cache: "no-store" });
   if (!res.ok) return null;
-  const json = (await res.json()) as CoinPayResponse & { payment?: CoinPayPayment };
+  const json = (await res.json()) as { payment?: CoinPayPayment };
   const p = json.payment;
   if (!p?.id) return null;
   const amountCrypto =
@@ -231,7 +240,9 @@ export async function getPaymentStatus(
     paymentId: p.id,
     status: p.status ?? "pending",
     amountCrypto: Number.isFinite(amountCrypto) ? amountCrypto : null,
-    currency: p.currency ?? null,
+    currency: p.blockchain ?? p.currency ?? null,
+    address: p.payment_address ?? null,
+    expiresAt: p.expires_at ?? null,
     txHash: p.tx_hash ?? null,
   };
 }

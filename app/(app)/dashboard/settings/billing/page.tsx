@@ -42,7 +42,7 @@ export default async function BillingPage({
 
   // For the success banner, latch onto the most recent purchase from the last
   // hour so we can show the real status (and poll if pending) instead of the
-  // optimistic "Payment received" message that Stripe's redirect carried.
+  // optimistic "Payment received" message the checkout redirect carried.
   const latest = purchases?.[0];
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
   const recent =

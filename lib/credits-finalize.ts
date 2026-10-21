@@ -1,5 +1,5 @@
 import { serviceClient } from "./supabase/service";
-import { getPaymentStatus } from "./coinpay";
+import { getCheckoutSession, getPaymentStatus, isSessionId, type CoinpayWebhookEvent } from "./coinpay";
 import { sendPurchaseReceiptEmail } from "./email";
 import { env } from "./env";
 import { findPack } from "./credits";
@@ -102,6 +102,47 @@ export async function failPurchase(input: {
     .eq("coinpay_payment_id", paymentId);
 }
 
+// Which credit_purchases.coinpay_payment_id a webhook settles. A session
+// payment carries data.checkout_session_id (and our purchase_id in metadata);
+// a purchase opened before sessions is keyed by the raw payment id. Answers
+// null when nothing here matches (another site's payment, a deleted row).
+export async function resolvePurchaseRef(
+  svc: SvcClient,
+  evt: Pick<CoinpayWebhookEvent, "paymentId" | "sessionId" | "metadata">,
+): Promise<{ ref: string; viaSession: boolean } | null> {
+  if (evt.sessionId) {
+    const { data } = await svc
+      .from("credit_purchases")
+      .select("coinpay_payment_id")
+      .eq("coinpay_payment_id", evt.sessionId)
+      .maybeSingle();
+    if (data?.coinpay_payment_id) return { ref: data.coinpay_payment_id as string, viaSession: true };
+  }
+  const purchaseId = typeof evt.metadata?.purchase_id === "string" ? evt.metadata.purchase_id : null;
+  if (purchaseId && /^[0-9a-f-]{36}$/i.test(purchaseId)) {
+    const { data } = await svc
+      .from("credit_purchases")
+      .select("coinpay_payment_id")
+      .eq("id", purchaseId)
+      .maybeSingle();
+    const ref = data?.coinpay_payment_id as string | null | undefined;
+    // Only a session purchase can be found this way: the session id must match
+    // when the event names one, so a metadata copy cannot settle another row.
+    if (ref && isSessionId(ref) && (!evt.sessionId || evt.sessionId === ref)) {
+      return { ref, viaSession: true };
+    }
+  }
+  if (evt.paymentId) {
+    const { data } = await svc
+      .from("credit_purchases")
+      .select("coinpay_payment_id")
+      .eq("coinpay_payment_id", evt.paymentId)
+      .maybeSingle();
+    if (data?.coinpay_payment_id) return { ref: evt.paymentId, viaSession: false };
+  }
+  return null;
+}
+
 // Polling-endpoint entrypoint: if local DB still says pending, ask CoinPay
 // directly and reconcile. Returns the final local status.
 export async function reconcileFromCoinpay(input: {
@@ -116,6 +157,24 @@ export async function reconcileFromCoinpay(input: {
   if (!row) return "not_found";
   if (row.status === "complete" || row.status === "failed") {
     return row.status as "complete" | "failed";
+  }
+
+  if (isSessionId(input.paymentId)) {
+    const session = await getCheckoutSession(input.paymentId);
+    if (!session) return "pending";
+    if (session.status === "paid") {
+      await completePurchase({
+        svc,
+        paymentId: input.paymentId,
+        event: { source: "poll_fallback", session },
+      });
+      return "complete";
+    }
+    if (session.status === "expired") {
+      await failPurchase({ svc, paymentId: input.paymentId, event: { source: "poll_fallback", session } });
+      return "failed";
+    }
+    return "pending";
   }
 
   const remote = await getPaymentStatus(input.paymentId);

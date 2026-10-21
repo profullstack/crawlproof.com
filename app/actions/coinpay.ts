@@ -3,8 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { findPack } from "@/lib/credits";
-import { createCheckout } from "@/lib/coinpay";
-import { env } from "@/lib/env";
+import { creditsDescription, openPurchaseCheckout } from "@/lib/credits-checkout";
 
 export async function startCreditPurchase(input: {
   packId: string;
@@ -18,7 +17,7 @@ export async function startCreditPurchase(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
 
-  // Pre-create the purchase row so the webhook can match by payment_id later.
+  // Pre-create the purchase row; the webhook matches it by checkout session id.
   const svc = serviceClient();
   const { data: purchase, error } = await svc
     .from("credit_purchases")
@@ -37,25 +36,18 @@ export async function startCreditPurchase(input: {
   }
 
   try {
-    const checkout = await createCheckout({
+    const session = await openPurchaseCheckout({
+      sb: svc,
+      purchaseId: purchase.id,
+      userId: user.id,
+      email: user.email,
       packId: pack.id,
       credits: pack.credits,
       amountCents: pack.amountCents,
-      ownerId: user.id,
-      ownerEmail: user.email ?? null,
-      successUrl: `${env.siteUrl}/dashboard/settings/billing?purchase=success`,
-      cancelUrl: `${env.siteUrl}/dashboard/settings/billing?purchase=cancel`,
-      webhookUrl: `${env.siteUrl}/api/coinpay/webhook`,
-      metadata: { purchase_id: purchase.id },
+      description: creditsDescription(pack.credits),
+      kind: "credits",
     });
-
-    // Store the CoinPay payment id on the row so the webhook can find it.
-    await svc
-      .from("credit_purchases")
-      .update({ coinpay_payment_id: checkout.paymentId })
-      .eq("id", purchase.id);
-
-    return { ok: true, url: checkout.hostedUrl };
+    return { ok: true, url: session.url };
   } catch (err) {
     await svc
       .from("credit_purchases")

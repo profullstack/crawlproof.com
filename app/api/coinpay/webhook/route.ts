@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
-import { verifyWebhookSignature } from "@/lib/coinpay";
+import { readCoinpayWebhook, verifyWebhookSignature } from "@/lib/coinpay";
+import { resolvePurchaseRef } from "@/lib/credits-finalize";
 import { sendPurchaseReceiptEmail } from "@/lib/email";
 import { env } from "@/lib/env";
 import { findPack } from "@/lib/credits";
@@ -18,10 +19,16 @@ export const runtime = "nodejs";
 //   {
 //     id: "evt_...",
 //     type: "payment.completed" | "payment.failed" | ...,
-//     data: { payment_id, status, amount_usd, currency, ... },
+//     data: { payment_id, status, amount_usd, currency, checkout_session_id,
+//             customer_email, account_id, property, metadata, ... },
 //     created_at: ISO8601,
 //     business_id: "<merchant id>"
 //   }
+//
+// A checkout-session payment settles the purchase whose coinpay_payment_id is
+// data.checkout_session_id (fallback: metadata.purchase_id). Purchases opened
+// before sessions settle by data.payment_id as before. The completion RPC is a
+// no-op on a complete row, so confirmed then forwarded credits once.
 //
 // We respond 200 to any signed event we don't process so CoinPay doesn't
 // retry. Signature failures return 401.
@@ -79,16 +86,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "bad_json" }, { status: 400 });
   }
 
-  const eventType = (payload.type ?? "").toLowerCase();
+  const evt = readCoinpayWebhook(payload);
+  const eventType = evt.eventType;
 
   // Test pings (e.g. type: "test.webhook") — ack and move on.
   if (eventType === "test.webhook" || eventType === "ping") {
     return NextResponse.json({ ok: true, test: true });
   }
 
-  const paymentId = payload.data?.payment_id;
-  const status = (payload.data?.status ?? "").toLowerCase();
-  if (!paymentId) {
+  const status = evt.status;
+  if (!evt.paymentId && !evt.sessionId) {
     return NextResponse.json(
       { ok: false, error: "missing_payment_id" },
       { status: 400 },
@@ -98,6 +105,19 @@ export async function POST(req: Request) {
   const svc = serviceClient();
   const isComplete = COMPLETE_EVENTS.has(eventType) || COMPLETE_STATUSES.has(status);
   const isFail = FAIL_EVENTS.has(eventType) || FAIL_STATUSES.has(status);
+
+  if (!isComplete && !isFail) {
+    // Other signed events (e.g. payment.pending) — ack without state change.
+    console.log("[coinpay] ignored event", eventType, status, evt.paymentId, evt.sessionId);
+    return NextResponse.json({ ok: true, ignored: eventType || status });
+  }
+
+  const match = await resolvePurchaseRef(svc, evt);
+  if (!match) {
+    console.warn("[coinpay] no purchase for event", eventType, evt.paymentId, evt.sessionId);
+    return NextResponse.json({ ok: true, settled: false, reason: "unknown payment" });
+  }
+  const paymentId = match.ref;
 
   if (isComplete) {
     const { error } = await svc.rpc("credit_purchase_complete", {
@@ -125,16 +145,21 @@ export async function POST(req: Request) {
   }
 
   if (isFail) {
+    // One coin attempt on a session expiring does not end the session: the
+    // buyer can still pick another coin or PayPal. Session expiry is picked up
+    // by the status poll (reconcileFromCoinpay).
+    if (match.viaSession) {
+      return NextResponse.json({ ok: true, settled: false, reason: "session attempt ended" });
+    }
     await svc
       .from("credit_purchases")
       .update({ status: "failed", coinpay_event: payload as unknown as object })
-      .eq("coinpay_payment_id", paymentId);
+      .eq("coinpay_payment_id", paymentId)
+      .neq("status", "complete");
     return NextResponse.json({ ok: true });
   }
 
-  // Other signed events (e.g. payment.pending) — ack without state change.
-  console.log("[coinpay] ignored event", eventType, status, paymentId);
-  return NextResponse.json({ ok: true, ignored: eventType });
+  return NextResponse.json({ ok: true });
 }
 
 type SvcClient = ReturnType<typeof serviceClient>;
@@ -186,7 +211,7 @@ async function mailReceiptIfNeeded(
   const amount = `$${(purchase.amount_cents / 100).toLocaleString(undefined, {
     minimumFractionDigits: purchase.amount_cents % 100 === 0 ? 0 : 2,
   })}`;
-  const txHash = event.data?.tx_hash ?? null;
+  const txHash = readCoinpayWebhook(event).txHash;
   const txLine = txHash ? `\n**Transaction:** \`${txHash}\`\n` : "";
 
   const markdown = `# Receipt

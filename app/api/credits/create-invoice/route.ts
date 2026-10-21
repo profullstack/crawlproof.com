@@ -3,16 +3,17 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { findPack } from "@/lib/credits";
-import { createPayment } from "@/lib/coinpay";
-import { env } from "@/lib/env";
+import { creditsDescription, openPurchaseCheckout } from "@/lib/credits-checkout";
 import { attributeUser } from "@/lib/affiliate/attribution";
 import { cookieFromHeader } from "@/lib/affiliate/cookie";
 
 export const runtime = "nodejs";
 
+// `currency` is accepted and ignored: older clients sent the coin they picked,
+// the buyer now picks it (or PayPal) on CoinPay's hosted checkout page.
 const Body = z.object({
   packId: z.string().min(1),
-  currency: z.string().min(1).max(20),
+  currency: z.string().max(20).optional(),
 });
 
 export async function POST(req: Request) {
@@ -28,7 +29,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { packId, currency } = parsed.data;
+  const { packId } = parsed.data;
 
   const pack = findPack(packId);
   if (!pack) return NextResponse.json({ ok: false, error: "Unknown pack." }, { status: 400 });
@@ -68,33 +69,23 @@ export async function POST(req: Request) {
   }
 
   try {
-    const payment = await createPayment({
+    const session = await openPurchaseCheckout({
+      sb: svc,
+      purchaseId: purchase.id,
+      userId: user.id,
+      email: user.email,
       packId: pack.id,
       credits: pack.credits,
       amountCents: pack.amountCents,
-      ownerId: user.id,
-      ownerEmail: user.email ?? null,
-      currency: currency.toLowerCase(),
-      successUrl: `${env.siteUrl}/dashboard/settings/billing?purchase=success`,
-      cancelUrl: `${env.siteUrl}/dashboard/settings/billing?purchase=cancel`,
-      webhookUrl: `${env.siteUrl}/api/coinpay/webhook`,
-      metadata: { purchase_id: purchase.id },
+      description: creditsDescription(pack.credits),
+      kind: "credits",
     });
-
-    await svc
-      .from("credit_purchases")
-      .update({ coinpay_payment_id: payment.paymentId })
-      .eq("id", purchase.id);
 
     return NextResponse.json({
       ok: true,
-      payment_id: payment.paymentId,
-      address: payment.address,
-      amount_crypto: payment.amountCrypto,
-      currency: payment.currency,
-      expires_at: payment.expiresAt,
-      checkout_url: payment.hostedUrl,
-      is_card: currency.toLowerCase() === "card",
+      payment_id: session.sessionId,
+      checkout_url: session.url,
+      expires_at: session.expiresAt,
     });
   } catch (err) {
     await svc.from("credit_purchases").update({ status: "failed" }).eq("id", purchase.id);
