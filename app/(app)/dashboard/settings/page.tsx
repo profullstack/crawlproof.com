@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { SettingsForm } from "./form";
+import { ProfileCard } from "./profile-card";
 import { listTimezones } from "@/lib/timezones";
 
 export const metadata = { title: "Settings" };
@@ -72,6 +73,7 @@ export default async function SettingsPage() {
           </li>
         </ul>
       </div>
+      <ProfileCard />
       <SettingsForm
         displayName={profile?.display_name ?? ""}
         retainRawHtml={!!profile?.retain_raw_html}
