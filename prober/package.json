@@ -9,7 +9,7 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "bullmq": "^6.4.2"
+    "bullmq": "^5.81.5"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
