@@ -25,8 +25,8 @@ export const runtime = "nodejs";
 export const APPLY_HOURLY_CAP = 8;
 
 const bodySchema = z.object({
-  site: z.string().uuid(),
-  job: z.string().uuid(),
+  site: z.guid(),
+  job: z.guid(),
   fullName: z.string().min(1).max(200),
   email: z.string().min(3).max(254),
   link: z.string().max(500).nullable().optional(),

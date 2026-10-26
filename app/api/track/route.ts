@@ -24,8 +24,8 @@ import { actorTokenFrom, applyDeclaration, resolveActor, type ResolvedActor } fr
 export const runtime = "nodejs";
 
 const bodySchema = z.object({
-  site: z.string().uuid().optional(),
-  websiteId: z.string().uuid().optional(),
+  site: z.guid().optional(),
+  websiteId: z.guid().optional(),
   event: z.string().max(80).optional(),
   type: z.string().max(80).optional(),
   ref: z.string().max(2048).nullable().optional(),
