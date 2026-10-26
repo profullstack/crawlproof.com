@@ -2,7 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { ProfileFields } from "@profullstack/profile/react";
+import type { ProfileField } from "@profullstack/profile";
 import { signUpWithPassword, startGoogleOAuth } from "@/app/actions/auth";
+
+// Email has its own input above; the package renders the other five.
+const PROFILE_FIELDS: ProfileField[] = ["first_name", "last_name", "company_domain", "job_title", "linkedin_url"];
 
 const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
@@ -10,6 +15,8 @@ export function SignupForm({ redirectTo, defaultEmail }: { redirectTo?: string; 
   const router = useRouter();
   const [email, setEmail] = useState(defaultEmail ?? "");
   const [password, setPassword] = useState("");
+  const [profile, setProfile] = useState<Partial<Record<ProfileField, string | null>>>({});
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<ProfileField, string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [pending, start] = useTransition();
@@ -17,10 +24,15 @@ export function SignupForm({ redirectTo, defaultEmail }: { redirectTo?: string; 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setFieldErrors({});
     start(async () => {
-      const res = await signUpWithPassword({ email, password, redirectTo });
+      const fields = Object.fromEntries(
+        PROFILE_FIELDS.map((k) => [k, profile[k] ?? ""]),
+      ) as Partial<Record<ProfileField, string>>;
+      const res = await signUpWithPassword({ email, password, redirectTo, profile: fields });
       if (!res.ok) {
-        setError(res.error);
+        setFieldErrors(res.fieldErrors ?? {});
+        setError(res.fieldErrors?.email ?? res.error);
         return;
       }
       if (res.needsConfirmation) {
@@ -82,6 +94,13 @@ export function SignupForm({ redirectTo, defaultEmail }: { redirectTo?: string; 
             autoComplete="email"
           />
         </div>
+        <ProfileFields
+          fields={PROFILE_FIELDS}
+          idPrefix="signup-"
+          values={profile}
+          onChange={setProfile}
+          errors={fieldErrors}
+        />
         <div className="space-y-1">
           <label htmlFor="signup-password" className="block text-sm font-medium">
             Password
