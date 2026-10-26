@@ -20,11 +20,11 @@
     "prepublishOnly": "node build.mjs"
   },
   "dependencies": {
-    "@profullstack/coinpay": "^0.9.0",
-    "@profullstack/hqtui": "^0.6.3"
+    "@profullstack/coinpay": "^0.25.0",
+    "@profullstack/hqtui": "^0.11.0"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.28.2"
   },
   "publishConfig": {
     "access": "public"

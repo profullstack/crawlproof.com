@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.60.0-jammy
+FROM mcr.microsoft.com/playwright:v1.64.1-jammy
 
 # pandoc for Markdown -> HTML (the PDF path renders that via Playwright).
 # ffmpeg for the five-second ad renderer: it encodes the compositor's PNG frames

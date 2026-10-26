@@ -8,10 +8,10 @@
 # Chromium, fonts, pandoc and ffmpeg; the Bun binary is copied onto it. Node is
 # still present in that base image, which keeps dev2's compose healthcheck
 # (`node -e fetch(...)`) working unchanged.
-FROM oven/bun:1.4.2-slim AS bun
+FROM oven/bun:1.4.4-slim AS bun
 
 # ---------- builder ----------
-FROM oven/bun:1.4.2-slim AS builder
+FROM oven/bun:1.4.4-slim AS builder
 # git: @profullstack/autoblog is a GitHub dependency.
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -44,7 +44,7 @@ RUN bun run build
 
 # ---------- runtime ----------
 # Playwright base — ships Chromium + system fonts + the deps Chromium needs.
-FROM mcr.microsoft.com/playwright:v1.60.0-jammy AS runtime
+FROM mcr.microsoft.com/playwright:v1.64.1-jammy AS runtime
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 

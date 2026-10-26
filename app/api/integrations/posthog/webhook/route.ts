@@ -44,12 +44,12 @@ const WebhookSchema = z.object({
     .optional(),
   target: z
     .object({
-      user_id: z.string().uuid().optional(),
-      org_id: z.string().uuid().optional(),
-      domain_id: z.string().uuid().optional(),
+      user_id: z.guid().optional(),
+      org_id: z.guid().optional(),
+      domain_id: z.guid().optional(),
     })
     .default({}),
-  properties: z.record(z.unknown()).default({}),
+  properties: z.record(z.string(), z.unknown()).default({}),
 });
 
 export async function POST(req: NextRequest) {

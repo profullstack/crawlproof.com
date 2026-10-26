@@ -30,7 +30,7 @@ const bodySchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
   installation_id: z.number().int().positive(),
-  audit_id: z.string().uuid(),
+  audit_id: z.guid(),
   finding_key: z.string().min(1),
   prompt: z.string().max(MAX_APPLY_FIX_PROMPT_LENGTH).optional(),
   fix_prompt: z.string().max(MAX_LEGACY_FIX_PROMPT_LENGTH).optional(),

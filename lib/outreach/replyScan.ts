@@ -510,7 +510,7 @@ export async function scanMailbox(box: ReplyMailbox, now = new Date()): Promise<
           subject,
           snippet: snippetOf(part?.toString("utf8") ?? ""),
           messageId: msg.envelope?.messageId ?? null,
-          receivedAt: msg.envelope?.date ?? now,
+          receivedAt: msg.envelope?.date ? new Date(msg.envelope.date) : now,
           autoReply: auto,
         });
         if (recorded === "duplicate") continue;
