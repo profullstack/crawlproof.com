@@ -4,6 +4,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import Link from "next/link";
 import { GrantCreditsForm, Vu1nzIntegrationForm } from "./form";
 import { IntegrationsManager } from "./integrations-form";
+import { CreditCodesForm } from "./credit-codes-form";
 import { env } from "@/lib/env";
 import { getVu1nzIntegrationStatus } from "@/lib/platform-integrations";
 import { ProviderCostsPanel } from "./provider-costs-panel";
@@ -104,6 +105,14 @@ export default async function AdminPage() {
       <section className="card p-5">
         <h2 className="text-lg font-semibold">Grant credits</h2>
         <GrantCreditsForm />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">Credit codes</h2>
+        <p className="text-sm text-[var(--color-muted)]">
+          A code someone redeems on Billing for scan credits. Also: <code>bun scripts/credit-codes.ts mint 100</code>.
+        </p>
+        <CreditCodesForm />
       </section>
 
       <section className="card p-5">

@@ -16,6 +16,7 @@
 import { readFileSync } from "node:fs";
 import { EMAIL_TRACKING_USAGE, runEmailTracking } from "../lib/emailTracking/cli";
 import { ACTORS_USAGE, runActors } from "../lib/tracker/actorsCli";
+import { runInvites, runRedeem } from "../lib/creditCodesCli";
 
 import { isAllowedTargetUrl } from "../lib/rateLimit";
 
@@ -996,6 +997,14 @@ ${ACTORS_USAGE}
       A component with no data is dropped, not counted as zero; ~ marks a
       sample under 25 human visits.
 
+  redeem <CR-XXXX-XXXX-XXXX-XXXX> [--json]
+      Redeem a credit code someone gave you; the scan credits land on your
+      balance. Needs an API token.
+
+  invites [list|create [--note N]|accept <INV-…>|revoke <id>] [--json]
+      Your scarce invites (3 per account). When a new account joins on one and
+      confirms its email, you each get bonus scan credits. Needs an API token.
+
   help
       Print this message.
 
@@ -1003,8 +1012,8 @@ ENV
   ANTHROPIC_API_KEY      Required for --engine=claude.
   CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', 'track', 'ads' and 'slots'.
   CRAWLPROOF_PROJECT     Default project UUID for 'track'.
-  CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'affiliate', 'stats' and
-                         'dashboard'; --token overrides. Falls back to the
+  CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'affiliate', 'stats',
+                         'redeem', 'invites' and 'dashboard'; --token overrides. Falls back to the
                          'token' field of ~/.crawlproof.json.
   COINPAY_SESSION_TOKEN  CoinPay merchant JWT for the money half of
                          'dashboard'. Defaults to jwtToken in ~/.coinpay.json,
@@ -1058,6 +1067,16 @@ async function main() {
           write: (line: string) => process.stdout.write(`${line}\n`),
           error: (line: string) => console.error(line),
         }, { base: apiBase(args) });
+      case "redeem":
+        return await runRedeem(args.positional, args.flags as Record<string, string | boolean>, (method, path, body) => apiCall(args, method, path, body), {
+          write: (line: string) => process.stdout.write(`${line}\n`),
+          error: (line: string) => console.error(line),
+        });
+      case "invites":
+        return await runInvites(args.positional, args.flags as Record<string, string | boolean>, (method, path, body) => apiCall(args, method, path, body), {
+          write: (line: string) => process.stdout.write(`${line}\n`),
+          error: (line: string) => console.error(line),
+        });
       case "dashboard":
       case "roi":
       case "tui":

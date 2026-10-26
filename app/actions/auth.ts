@@ -4,9 +4,19 @@ import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { validateProfile, saveSignupProfile, type ProfileField } from "@profullstack/profile";
 import { profileStore } from "@/lib/profile";
+import { cookies } from "next/headers";
+import { INVITE_COOKIE, onSignedIn } from "@/lib/creditCodes";
 
 type Ok<T = Record<string, unknown>> = { ok: true } & T;
 type Err = { ok: false; error: string; fieldErrors?: Partial<Record<ProfileField, string>> };
+
+async function inviteCookie(): Promise<string | null> {
+  try {
+    return (await cookies()).get(INVITE_COOKIE)?.value ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function siteOrigin(): string {
   return env.siteUrl.replace(/\/$/, "");
@@ -36,6 +46,8 @@ export async function signUpWithPassword(input: {
   password: string;
   redirectTo?: string;
   profile?: Partial<Record<ProfileField, string>>;
+  /** An invite code (INV-…) from /i/<code>; accepted once the account exists. */
+  invite?: string;
 }): Promise<(Ok<{ needsConfirmation: boolean }>) | Err> {
   const fields = { ...(input.profile ?? {}), email: input.email };
   const check = validateProfile(fields);
@@ -45,6 +57,11 @@ export async function signUpWithPassword(input: {
   const p = check.profile;
   const supabase = await createClient();
   const next = input.redirectTo ?? "/dashboard";
+  // The invite rides in user metadata too, so confirming the email on another
+  // device (no cp_invite cookie there) still accepts it in /auth/callback.
+  const invite = String(input.invite ?? (await inviteCookie()) ?? "")
+    .replace(/[^A-Za-z0-9-]/g, "")
+    .slice(0, 64);
   const { data, error } = await supabase.auth.signUp({
     email: input.email,
     password: input.password,
@@ -57,6 +74,7 @@ export async function signUpWithPassword(input: {
         company_domain: p.company_domain ?? null,
         job_title: p.job_title ?? null,
         linkedin_url: p.linkedin_url ?? null,
+        ...(invite ? { invite_code: invite } : {}),
       },
     },
   });
@@ -70,6 +88,16 @@ export async function signUpWithPassword(input: {
       // The account exists; the fields are also in user metadata and can be
       // filled in from Settings. Do not fail the signup over them.
       console.error("[signup] profile save failed", e);
+    }
+  }
+  // Signed in straight away (no confirmation step): accept the invite now. The
+  // bonus itself still waits for a confirmed email (settleInviteBonus).
+  if (invite && data.session && data.user) {
+    await onSignedIn(data.user.id, invite);
+    try {
+      (await cookies()).set(INVITE_COOKIE, "", { maxAge: 0, path: "/" });
+    } catch {
+      /* outside a request (tests); the cookie expires on its own */
     }
   }
   return { ok: true, needsConfirmation: !data.session };
