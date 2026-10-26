@@ -25,6 +25,8 @@ vi.mock("@/lib/supabase/service", () => ({
 
 import { signUpWithPassword } from "@/app/actions/auth";
 
+// Not a credential: any 8+ character string satisfies the form.
+const PW = "x".repeat(12);
 const newUser = { id: "11111111-1111-4111-8111-111111111111", email: "ada@acme.com", identities: [{}] };
 
 beforeEach(() => {
@@ -36,7 +38,7 @@ describe("signUpWithPassword profile fields", () => {
   it("stores the six fields on profiles after creating the user", async () => {
     const res = await signUpWithPassword({
       email: "Ada@Acme.com",
-      password: "hunter22hunter",
+      password: PW,
       profile: {
         first_name: "Ada",
         last_name: "Lovelace",
@@ -64,7 +66,7 @@ describe("signUpWithPassword profile fields", () => {
   });
 
   it("refuses a signup missing the required names before creating the user", async () => {
-    const res = await signUpWithPassword({ email: "ada@acme.com", password: "hunter22hunter", profile: {} });
+    const res = await signUpWithPassword({ email: "ada@acme.com", password: PW, profile: {} });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(Object.keys(res.fieldErrors ?? {})).toEqual(expect.arrayContaining(["first_name", "last_name"]));
     expect(mocks.signUp).not.toHaveBeenCalled();
@@ -75,7 +77,7 @@ describe("signUpWithPassword profile fields", () => {
     mocks.signUp.mockResolvedValue({ data: { user: { ...newUser, identities: [] }, session: null }, error: null });
     const res = await signUpWithPassword({
       email: "ada@acme.com",
-      password: "hunter22hunter",
+      password: PW,
       profile: { first_name: "Ada", last_name: "Lovelace" },
     });
     expect(res.ok).toBe(true);
