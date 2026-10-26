@@ -11,7 +11,15 @@ const PROFILE_FIELDS: ProfileField[] = ["first_name", "last_name", "company_doma
 
 const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
-export function SignupForm({ redirectTo, defaultEmail }: { redirectTo?: string; defaultEmail?: string }) {
+export function SignupForm({
+  redirectTo,
+  defaultEmail,
+  inviteCode,
+}: {
+  redirectTo?: string;
+  defaultEmail?: string;
+  inviteCode?: string;
+}) {
   const router = useRouter();
   const [email, setEmail] = useState(defaultEmail ?? "");
   const [password, setPassword] = useState("");
@@ -29,7 +37,7 @@ export function SignupForm({ redirectTo, defaultEmail }: { redirectTo?: string; 
       const fields = Object.fromEntries(
         PROFILE_FIELDS.map((k) => [k, profile[k] ?? ""]),
       ) as Partial<Record<ProfileField, string>>;
-      const res = await signUpWithPassword({ email, password, redirectTo, profile: fields });
+      const res = await signUpWithPassword({ email, password, redirectTo, profile: fields, invite: inviteCode });
       if (!res.ok) {
         setFieldErrors(res.fieldErrors ?? {});
         setError(res.fieldErrors?.email ?? res.error);

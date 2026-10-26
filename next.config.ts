@@ -9,6 +9,7 @@ const APP_ROUTE_PREFIXES = [
   "audits",
   "autoblog",
   "github",
+  "invites",
   "projects",
   "promote",
   "settings",

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { BuyCreditsButton } from "./buy-credits-button";
 import { PurchaseStatusBanner } from "./purchase-status-banner";
+import { RedeemCodeCard } from "@/components/credits/redeem-code-card";
 import {
   CREDIT_PACKS,
   CREDIT_RACK_CENTS,
@@ -83,6 +84,8 @@ export default async function BillingPage({
           1 AI-model scan = {SCAN_CREDITS} credits ({dollars(SCAN_RACK_CENTS)} before volume discounts). Scheduled re-runs spend the same per engine.
         </div>
       </div>
+
+      <RedeemCodeCard />
 
       <section>
         <h2 className="mb-3 text-lg font-semibold">Buy more credits</h2>
