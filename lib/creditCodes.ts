@@ -405,8 +405,10 @@ export async function acceptInvite(
   const auth = await deps.authUser(userId);
   if (!auth) return fail("no_account");
   if (ageDays(auth.createdAt, deps.now()) > INVITE_ACCEPT_MAX_ACCOUNT_AGE_DAYS) return fail("not_new");
-  if (await deps.affiliates.invitedBy(userId)) return fail("already_invited");
-
+  // No invitedBy() pre-check (a racy read): since @profullstack/affiliates 0.3 the
+  // database lets an account redeem ONE invite, atomically (aff_claim_invite + unique
+  // index aff_invites_one_per_user), so a second or concurrent accept comes back
+  // `already_invited` and leaves that invite unused.
   const r = await deps.affiliates.redeemInvite(String(code ?? "").trim().slice(0, 64), userId);
   if (!r.ok) return fail(r.reason);
 

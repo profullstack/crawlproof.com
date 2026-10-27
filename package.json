@@ -28,7 +28,7 @@
     "@ip-location-db/geolite2-city-mmdb": "^2.3.2026061719",
     "@libsql/client": "^0.18.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@profullstack/affiliates": "^0.2.0",
+    "@profullstack/affiliates": "^0.3.0",
     "@profullstack/autoblog": "github:profullstack/autoblog#75e54af",
     "@profullstack/coinpay": "^0.25.0",
     "@profullstack/footer": "latest",
