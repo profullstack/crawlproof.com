@@ -206,6 +206,20 @@ describe("invites", () => {
     expect((await acceptInvite("alice", c.code, deps)).ok).toBe(false);
   });
 
+  it("two simultaneous accepts of different invites: one is paid, the other is already_invited and stays unused", async () => {
+    const { deps, balances } = setup({ alice: {}, bob: {}, dan: { createdAt: fresh() }, erin: { createdAt: fresh() } });
+    const a = await createInvite("alice", "", deps);
+    const b = await createInvite("bob", "", deps);
+    const [r1, r2] = await Promise.all([acceptInvite("dan", a.code, deps), acceptInvite("dan", b.code, deps)]);
+    expect([r1, r2].filter((r) => r.ok)).toHaveLength(1);
+    expect([r1, r2].find((r) => !r.ok)).toMatchObject({ ok: false, reason: "already_invited" });
+    // Dan is paid once and exactly one inviter is paid.
+    expect(balances.dan).toBe(40);
+    expect([balances.alice, balances.bob].sort()).toEqual([20, 40]);
+    // The losing invite was not burned.
+    expect((await acceptInvite("erin", (r1.ok ? b : a).code, deps)).ok).toBe(true);
+  });
+
   it("canonicalizes gmail aliases", () => {
     expect(canonicalEmail("A.Lice+x@GoogleMail.com")).toBe("alice@gmail.com");
     expect(canonicalEmail("a.lice+x@example.com")).toBe("a.lice@example.com");
