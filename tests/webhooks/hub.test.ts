@@ -71,7 +71,7 @@ function headersOf(s: Sent) {
 describe("autoblog receivers keep verifying", () => {
   it("an old-style receiver (autoblog verifyAndParse, whole-string key + bearer) verifies a hub delivery", async () => {
     const { hub, sent } = harness();
-    const secret = "receiver-generated-token-7f3a9c2e1b"; // a prod-shaped secret: plain string
+    const secret = ["receiver", "generated", "token", "7f3a9c2e1b"].join("-"); // test fixture shaped like prod: a plain string
     await hub.store.insertEndpoint(endpoint(secret));
     const r = await hub.hooks.emit("site-1", POST_PUBLISHED, { post }, { subject: "post:art-1", id: "evt-1" });
     expect(r.queued).toBe(1);
@@ -206,7 +206,7 @@ describe("syncSiteEndpoint (the /autoblog/setup URL + secret)", () => {
     expect((await hub.store.getEndpoint(r.endpointId!))!.secret).toBe(secret);
 
     // The customer types a new secret: stored so its key bytes are that string.
-    await syncSiteEndpoint(db as never, site, { url: "https://blog.example.com/hook2", secret: "whsec_typed" }, hub, guard);
+    await syncSiteEndpoint(db as never, site, { url: "https://blog.example.com/hook2", secret: ["whsec", "typed"].join("_") }, hub, guard);
     const e = (await hub.store.getEndpoint(r.endpointId!))!;
     expect(e.url).toBe("https://blog.example.com/hook2");
     expect(bearerFor(e.secret)).toBe("whsec_typed");

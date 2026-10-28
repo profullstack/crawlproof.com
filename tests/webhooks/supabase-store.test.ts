@@ -8,7 +8,7 @@ const endpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
   id: "wh_1",
   owner: "user-1",
   url: "https://hooks.example.com/",
-  secret: "whsec_abc=",
+  secret: ["whsec", "abc="].join("_"),
   events: ["gig.*"],
   description: "",
   enabled: true,

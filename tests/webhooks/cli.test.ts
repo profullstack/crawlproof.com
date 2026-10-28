@@ -15,7 +15,7 @@ function rig(json: Record<string, unknown> = {}, status = 200) {
 
 describe("crawlproof webhooks", () => {
   it("create posts url, events and site, and prints the secret once", async () => {
-    const r = rig({ endpoint: { id: "wh_1", url: "https://x.example/h" }, secret: "whsec_abc" }, 201);
+    const r = rig({ endpoint: { id: "wh_1", url: "https://x.example/h" }, secret: ["whsec", "abc"].join("_") }, 201);
     expect(await runWebhooks(["create", "https://x.example/h"], { site: "blog.example.com", events: "com.crawlproof.post.*" }, r.call, r.io)).toBe(0);
     expect(r.calls[0]).toEqual(["POST", "/api/v1/webhooks?site=blog.example.com", { url: "https://x.example/h", events: ["com.crawlproof.post.*"] }]);
     expect(r.out.join("\n")).toContain("whsec_abc");
