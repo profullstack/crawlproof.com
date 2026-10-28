@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { SiteFooter } from "@/components/site-footer";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -63,6 +64,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">{children}</main>
+      <SiteFooter />
     </div>
   );
 }
