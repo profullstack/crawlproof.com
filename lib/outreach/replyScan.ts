@@ -16,7 +16,8 @@
 // they are recorded, flagged, and kept out of the count.
 
 import { serviceClient } from "@/lib/supabase/service";
-import { decryptSecret } from "@/lib/sp/vault";
+import { decryptSecret, orgOwnerId, canOpen } from "@/lib/sp/vault";
+import { noteLockedWork } from "@/lib/sealed/lockedWork";
 
 /** How far back a mailbox with no cursor looks on its first scan. */
 const FIRST_SCAN_DAYS = 14;
@@ -228,6 +229,12 @@ export async function loadReplyMailboxes(): Promise<ReplyMailbox[]> {
     const encPass = r.enc_smtp_pass as string | null;
     if (!host || !fromEmail || !encPass) continue;
     try {
+      // Sealed to the org owner's key: a locked owner's inbox is skipped.
+      const ownerId = await orgOwnerId(r.organization_id as string);
+      if (!canOpen(ownerId)) {
+        await noteLockedWork(ownerId, "Reply scanning for your outreach mailbox");
+        continue;
+      }
       out.push({
         configId: r.id as string,
         organizationId: r.organization_id as string,
@@ -237,8 +244,10 @@ export async function loadReplyMailboxes(): Promise<ReplyMailbox[]> {
         // The IMAP username is usually the SMTP one; fall back to the address.
         user:
           (r.imap_user as string | null) ??
-          (r.enc_smtp_user ? decryptSecret(r.enc_smtp_user as string) : fromEmail),
-        pass: decryptSecret(encPass),
+          (r.enc_smtp_user
+            ? await decryptSecret(r.enc_smtp_user as string, { ownerId, field: "enc_smtp_user" })
+            : fromEmail),
+        pass: await decryptSecret(encPass, { ownerId, field: "enc_smtp_pass" }),
         fromEmail,
         lastScanAt: r.last_reply_scan_at ? new Date(r.last_reply_scan_at as string) : null,
       });

@@ -9,6 +9,8 @@
 // now converge: both derive the same idempotency key for the same slot, one
 // insert wins, and only the worker that wins the claim publishes.
 
+import { canOpen } from "@/lib/sp/vault";
+import { noteLockedWork } from "@/lib/sealed/lockedWork";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
@@ -143,6 +145,13 @@ export async function processDuePromoteLists(
   );
 
   for (const list of claimed.filter((l): l is PromoList => l !== null)) {
+    // Sealed keys: a locked owner's campaign waits a cadence (no credit spent,
+    // no pitch generated) and resumes once they unlock.
+    if (!canOpen(list.user_id)) {
+      await supabase.from("promo_list").update({ pause_reason: "keys_locked" }).eq("id", list.id);
+      await noteLockedWork(list.user_id, `Your promote campaign "${list.name}"`);
+      continue;
+    }
     try {
       const r = await processOneList(supabase, list, clients);
       result.listsProcessed++;

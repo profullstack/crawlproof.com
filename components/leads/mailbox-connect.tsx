@@ -315,8 +315,8 @@ export function MailboxConnect({
               className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-sm"
             />
             <span className="mt-1 block text-xs text-[var(--color-muted)]">
-              Encrypted with AES-256-GCM before it is stored, and only ever decrypted to send on
-              your behalf. We log in once now to check it works — nothing is saved if that fails.
+              Sealed under the org owner&apos;s key passphrase before it is stored, and only opened
+              to send on your behalf while they are unlocked. We log in once now to check it works — nothing is saved if that fails.
             </span>
           </label>
 

@@ -1,5 +1,6 @@
 import { serviceClient } from "@/lib/supabase/service";
-import { decryptSecret, encryptSecret } from "@/lib/sp/vault";
+import { decryptSecret, encryptSecret, canOpen } from "@/lib/sp/vault";
+import { noteOperatorLocked } from "@/lib/sealed/operator";
 
 const VU1NZ_PROVIDER = "vu1nz";
 const VU1NZ_NAME = "website-scanner";
@@ -7,6 +8,7 @@ const VU1NZ_ENDPOINT = "https://vu1nz.com/api/v1/scan";
 
 type IntegrationRow = {
   id: string;
+  user_id: string | null;
   status: "enabled" | "disabled" | "error";
   config: Record<string, unknown> | null;
   encrypted_credentials: Record<string, unknown> | null;
@@ -16,7 +18,7 @@ type IntegrationRow = {
 async function getVu1nzRow(): Promise<IntegrationRow | null> {
   const { data, error } = await serviceClient()
     .from("integrations")
-    .select("id, status, config, encrypted_credentials, updated_at")
+    .select("id, user_id, status, config, encrypted_credentials, updated_at")
     .is("org_id", null)
     .eq("provider", VU1NZ_PROVIDER)
     .eq("name", VU1NZ_NAME)
@@ -46,7 +48,13 @@ export async function getVu1nzApiToken(): Promise<string | null> {
   if (row?.status !== "enabled") return null;
   const encryptedToken = row.encrypted_credentials?.api_token;
   if (typeof encryptedToken !== "string" || !encryptedToken) return null;
-  return decryptSecret(encryptedToken);
+  // Operator secret: sealed to the admin who saved it. While that admin is
+  // locked the vu1nz engine is skipped (never crashes) and we raise the alert.
+  if (!row.user_id || !canOpen(row.user_id)) {
+    noteOperatorLocked("vu1nz scanner token");
+    return null;
+  }
+  return decryptSecret(encryptedToken, { ownerId: row.user_id, field: "integrations.vu1nz.api_token" });
 }
 
 export async function saveVu1nzApiToken(input: {
@@ -56,7 +64,7 @@ export async function saveVu1nzApiToken(input: {
   const token = input.apiToken.trim();
   if (!token) throw new Error("Vu1nz API token is required.");
 
-  const encrypted = encryptSecret(token);
+  const encrypted = await encryptSecret(token, { ownerId: input.userId, field: "integrations.vu1nz.api_token" });
   const row = await getVu1nzRow();
   const payload = {
     user_id: input.userId,

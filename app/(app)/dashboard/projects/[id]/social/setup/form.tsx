@@ -131,8 +131,8 @@ export function ConnectDiscordForm() {
         />
         <p className="mt-1 text-xs text-[var(--color-muted)]">
           In your Discord channel: Edit Channel → Integrations → Webhooks →
-          New Webhook → Copy URL. The URL is the secret; we encrypt it at
-          rest.
+          New Webhook → Copy URL. The URL is the secret; it is sealed under
+          your key passphrase (Keys page).
         </p>
       </div>
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
@@ -190,7 +190,7 @@ export function ConnectTelegramForm() {
           onChange={(e) => setBotToken(e.target.value)}
         />
         <p className="mt-1 text-xs text-[var(--color-muted)]">
-          Get one from @BotFather on Telegram. We encrypt it at rest.
+          Get one from @BotFather on Telegram. It is sealed under your key passphrase (Keys page).
         </p>
       </div>
       <div>

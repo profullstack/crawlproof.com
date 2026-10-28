@@ -299,7 +299,7 @@ export default async function SocialSetupPage({
           One webhook per channel. In Discord: <em>Edit Channel →
           Integrations → Webhooks → New Webhook → Copy URL</em>, then paste
           below. No bot to manage, no OAuth — the webhook URL itself
-          authorises posting and is encrypted at rest.
+          authorises posting and is sealed under your own key passphrase.
         </p>
         <ConnectDiscordForm />
       </section>

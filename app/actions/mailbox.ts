@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { serviceClient } from "@/lib/supabase/service";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
-import { encryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, orgOwnerId } from "@/lib/sp/vault";
 import {
   discoverMailbox,
   passwordNoteFor,
@@ -172,6 +172,7 @@ export async function connectMailboxAction(input: {
   }
 
   const svc = serviceClient();
+  const ownerId = await orgOwnerId(access.organizationId);
   const patch = {
     organization_id: access.organizationId,
     created_by: access.userId,
@@ -188,8 +189,8 @@ export async function connectMailboxAction(input: {
     // Never persist a mailbox credential in plaintext, even transiently.
     smtp_user: null,
     smtp_pass: null,
-    enc_smtp_user: encryptSecret(smtpUser),
-    enc_smtp_pass: encryptSecret(input.password),
+    enc_smtp_user: await encryptSecret(smtpUser, { ownerId, field: "enc_smtp_user" }),
+    enc_smtp_pass: await encryptSecret(input.password, { ownerId, field: "enc_smtp_pass" }),
     imap_host: input.imapHost?.trim() || null,
     imap_port: input.imapPort ?? null,
     imap_secure: input.imapSecure ?? null,

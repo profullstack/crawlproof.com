@@ -7,12 +7,13 @@
 // URL (the callback needs to know which instance to talk to), and 302
 // the user to the instance's /oauth/authorize.
 
+import { hasSealFor } from "@/lib/sp/vault";
 import { NextResponse, type NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { env } from "@/lib/env";
-import { encryptSecret } from "@/lib/sp/vault";
+import { appSecretEncrypt } from "@/lib/sealed/legacy";
 import {
   registerMastodonApp,
   getMastodonAuthorizeUrl,
@@ -35,6 +36,12 @@ export async function POST(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL("/login", env.siteUrl));
+  }
+
+  // Sealed keys: tokens are sealed to the user's own key, so a passphrase
+  // must exist before we can store them.
+  if (!(await hasSealFor(user.id))) {
+    return NextResponse.redirect(new URL("/dashboard/keys?next=connect", env.siteUrl));
   }
 
   const form = await req.formData();
@@ -71,7 +78,7 @@ export async function POST(req: NextRequest) {
           .from("sp_mastodon_app")
           .update({
             client_id: app.clientId,
-            enc_client_secret: encryptSecret(app.clientSecret),
+            enc_client_secret: appSecretEncrypt(app.clientSecret),
             redirect_uri: app.redirectUri,
           })
           .eq("instance_url", instanceUrl);
@@ -90,7 +97,7 @@ export async function POST(req: NextRequest) {
         .insert({
           instance_url: instanceUrl,
           client_id: app.clientId,
-          enc_client_secret: encryptSecret(app.clientSecret),
+          enc_client_secret: appSecretEncrypt(app.clientSecret),
           redirect_uri: app.redirectUri,
         });
       if (insErr) {

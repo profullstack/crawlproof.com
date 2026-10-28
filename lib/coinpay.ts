@@ -1,3 +1,4 @@
+import { getOperatorSecret } from "@/lib/sealed/operator";
 import { verifyCoinPayWebhook } from "@profullstack/stack/coinpay";
 import { env } from "./env";
 
@@ -270,7 +271,13 @@ export type CreatePayoutResult =
 export async function createCryptoPayout(
   input: CreatePayoutInput,
 ): Promise<CreatePayoutResult> {
-  if (!env.coinpayApiKey || !env.coinpayApiUrl) {
+  // Payout scope = an operator key: sealed, opens only while the operator is
+  // unlocked. Locked -> retryable, so the payout stays queued (never lost).
+  const payoutKey = await getOperatorSecret("COINPAY_API_KEY");
+  if (!payoutKey) {
+    return { ok: false, error: "locked: operator keys locked, unlock to resume payouts", retryable: true };
+  }
+  if (!env.coinpayApiUrl) {
     return { ok: false, error: "CoinPay is not configured.", retryable: true };
   }
   const base = env.coinpayApiUrl.replace(/\/$/, "");
@@ -282,7 +289,7 @@ export async function createCryptoPayout(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${env.coinpayApiKey}`,
+        authorization: `Bearer ${payoutKey}`,
       },
       body: JSON.stringify({
         recipient_email: input.recipientEmail,

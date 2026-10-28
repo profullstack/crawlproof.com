@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recipientHash, sendOutreachSms } from "@/lib/outreach";
-import { env } from "@/lib/env";
 import { encryptSecret } from "@/lib/sp/vault";
+import { createSeal, openPrivateKey } from "@/lib/sealed/crypto";
+import { setSealLoaderForTests } from "@/lib/sealed/vault";
+import { clearAllUnlocks, unlockOwner } from "@/lib/sealed/unlockStore";
 
 describe("outreach utilities", () => {
   afterEach(() => {
@@ -17,7 +19,11 @@ describe("outreach utilities", () => {
   });
 
   it("decrypts encrypted Twilio auth tokens from org sender configs", async () => {
-    env.socialVaultKey = Buffer.alloc(32, 7).toString("base64");
+    const owner = "00000000-0000-4000-8000-000000000001";
+    const created = await createSeal("correct horse battery", owner, 600_000);
+    setSealLoaderForTests(async (id) => (id === owner ? created.seal : null));
+    clearAllUnlocks();
+    unlockOwner(owner, await openPrivateKey(created.dek, created.seal, owner), 3600);
     const calls: Array<{ url: string; init: RequestInit }> = [];
     vi.stubGlobal(
       "fetch",
@@ -32,8 +38,9 @@ describe("outreach utilities", () => {
       body: "hello",
       config: {
         provider: "twilio",
+        owner_id: owner,
         account_sid: "AC123",
-        enc_auth_token: encryptSecret("secret-token"),
+        enc_auth_token: await encryptSecret("secret-token", { ownerId: owner, field: "enc_auth_token" }),
         from_phone: "+15557654321",
       },
     });

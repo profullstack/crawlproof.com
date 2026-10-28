@@ -219,7 +219,7 @@ export default function LeadGenerationPage() {
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
           <Card
             title="Auto-discovered"
-            body="Server, ports and encryption are resolved from your domain. The password is encrypted at rest with a key that is never in the database."
+            body="Server, ports and encryption are resolved from your domain. The password is sealed under a passphrase only you hold; we keep no key that opens it."
           />
           <Card
             title="Verified before it is trusted"

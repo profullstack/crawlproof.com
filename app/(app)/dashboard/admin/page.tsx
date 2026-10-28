@@ -154,7 +154,7 @@ export default async function AdminPage() {
         <h2 className="text-lg font-semibold">Vu1nz scanner</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Platform API token for the Vu1nz website scanner engine. The token is
-          encrypted at rest and used by background scans.
+          sealed under your key passphrase; background scans use it only while you are unlocked.
         </p>
         <Vu1nzIntegrationForm {...vu1nzIntegration} />
       </section>

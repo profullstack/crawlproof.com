@@ -11,7 +11,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type OpenAI from "openai";
-import { decryptSecret } from "@/lib/sp/vault";
+import { decryptSecret, canOpen, LOCKED_MESSAGE } from "@/lib/sp/vault";
+import { noteLockedWork } from "@/lib/sealed/lockedWork";
 import {
   BrowserPostError,
   LOGIN_WALL_PREFIX,
@@ -45,6 +46,17 @@ export async function processBrowserPost(args: {
 }): Promise<void> {
   const { postId, supabase, openai } = args;
 
+  // Sealed keys: a locked owner's post stays queued_browser (visible as
+  // "locked" in last_error) and is retried after they unlock.
+  const { data: pre } = await supabase.from("sp_post").select("user_id").eq("id", postId).maybeSingle();
+  const ownerId = (pre as { user_id?: string } | null)?.user_id;
+  if (!ownerId) return;
+  if (!canOpen(ownerId)) {
+    await supabase.from("sp_post").update({ last_error: LOCKED_MESSAGE }).eq("id", postId).eq("status", "queued_browser");
+    await noteLockedWork(ownerId, "a queued social post");
+    return;
+  }
+
   // Claim the row atomically.
   const { data: claimed } = await supabase
     .from("sp_post")
@@ -70,7 +82,7 @@ export async function processBrowserPost(args: {
 
   let cookies;
   try {
-    const raw = decryptSecret(account.enc_access_token);
+    const raw = await decryptSecret(account.enc_access_token, { ownerId, field: "enc_access_token" });
     cookies = parseCookies(raw);
   } catch (err) {
     await fail(supabase, postId, account.id, `Cookie decrypt failed: ${err instanceof Error ? err.message : err}`);

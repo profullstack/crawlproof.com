@@ -1,3 +1,5 @@
+import { canOpen, LOCKED_MESSAGE } from "@/lib/sp/vault";
+import { noteLockedWork } from "@/lib/sealed/lockedWork";
 import * as cheerio from "cheerio";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -179,6 +181,16 @@ async function processSocialFeedConfig(
 ): Promise<FeedProcessResult> {
   const progress = opts.onProgress ?? (() => {});
   const nowIso = opts.now.toISOString();
+  // Sealed keys: a locked owner's feed waits (visible as status=error with a
+  // "locked:" last_error) and is picked up again on the next poll after unlock.
+  if (!canOpen(config.user_id)) {
+    await supabase
+      .from("sp_feed_config")
+      .update({ status: "error", last_checked_at: nowIso, last_error: LOCKED_MESSAGE })
+      .eq("id", config.id);
+    await noteLockedWork(config.user_id, "Your social feed autopost");
+    return { ok: true, configId: config.id, checked: 0, newItems: 0, posted: 0 };
+  }
   const { data: claimed } = await supabase
     .from("sp_feed_config")
     .update({ status: "checking", last_checked_at: nowIso, last_error: null })

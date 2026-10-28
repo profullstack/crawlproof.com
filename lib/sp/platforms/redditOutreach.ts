@@ -68,7 +68,8 @@ export async function redditConnection(userId: string): Promise<RedditConnection
     throw new Error("The connected Reddit account has no stored token — reconnect it.");
   }
 
-  let accessToken = decryptSecret(account.enc_access_token);
+  const ctx = (field: string) => ({ ownerId: userId, field });
+  let accessToken = await decryptSecret(account.enc_access_token, ctx("enc_access_token"));
   const nearExpiry =
     !!account.token_expires_at &&
     !!account.enc_refresh_token &&
@@ -77,14 +78,14 @@ export async function redditConnection(userId: string): Promise<RedditConnection
   if (nearExpiry && account.enc_refresh_token) {
     try {
       const fresh = await refreshRedditToken({
-        refreshToken: decryptSecret(account.enc_refresh_token),
+        refreshToken: await decryptSecret(account.enc_refresh_token, ctx("enc_refresh_token")),
       });
       accessToken = fresh.accessToken;
       await sb
         .from("sp_account")
         .update({
-          enc_access_token: encryptSecret(fresh.accessToken),
-          enc_refresh_token: fresh.refreshToken ? encryptSecret(fresh.refreshToken) : null,
+          enc_access_token: await encryptSecret(fresh.accessToken, ctx("enc_access_token")),
+          enc_refresh_token: fresh.refreshToken ? await encryptSecret(fresh.refreshToken, ctx("enc_refresh_token")) : null,
           token_expires_at: fresh.expiresAt.toISOString(),
         })
         .eq("id", account.id);

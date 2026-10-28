@@ -48,6 +48,7 @@ import { crawlFeeds } from "../lib/lx/feedCrawl";
 import { reapStalePublishingJobs } from "../lib/promote/jobs";
 import { ingestDueFeeds } from "../lib/promote/ingest";
 import { refreshCookieSessions } from "../lib/sp/sessionRefresh";
+import { lockLocal, unlockWithDataKey, UnlockError } from "../lib/sealed/session";
 import { runAutobidSweep } from "../lib/ads/bids";
 import { runAdLinkHealthSweep } from "../lib/ads/linkHealth";
 import { startVideoRenderWorker } from "./video";
@@ -1074,6 +1075,45 @@ const server = http.createServer(async (req, res) => {
       processLxKeywords(payload.siteId).catch((e) =>
         console.error("[worker] lx keywords unhandled", e),
       );
+    });
+    return;
+  }
+  // Sealed keys: the Next server forwards an owner's unlock/lock here so the
+  // worker holds the same private key in ITS memory. The body carries a data
+  // key: never log it. Unlock is verified against the owner's seal.
+  if (req.method === "POST" && (req.url === "/sealed/unlock" || req.url === "/sealed/lock")) {
+    if (!sharedSecret || (req.headers["x-worker-secret"] ?? "") !== sharedSecret) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    const url = req.url;
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", async () => {
+      let payload: { owner_id?: string; dek?: string; ttl_seconds?: number };
+      try { payload = JSON.parse(body || "{}"); } catch {
+        res.writeHead(400); res.end("bad json"); return;
+      }
+      body = "";
+      if (!payload.owner_id) { res.writeHead(400); res.end("owner_id required"); return; }
+      if (url === "/sealed/lock") {
+        lockLocal(payload.owner_id);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      try {
+        const r = await unlockWithDataKey(payload.owner_id, payload.dek ?? "", payload.ttl_seconds);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, expires_at: r.expiresAt }));
+        console.log(`[worker] sealed keys unlocked for ${payload.owner_id} until ${r.expiresAt}`);
+      } catch (err) {
+        const status = err instanceof UnlockError ? err.status : 400;
+        res.writeHead(status); res.end("unlock refused");
+      } finally {
+        payload.dek = undefined;
+      }
     });
     return;
   }

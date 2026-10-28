@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
-import { encryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, orgOwnerId } from "@/lib/sp/vault";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
 type Err = { ok: false; error: string };
@@ -224,7 +224,7 @@ export async function saveOrganizationOutreachConfig(input: {
   if (!validOutreachProvider(input.channel, input.provider)) {
     return { ok: false, error: "Provider is not valid for this channel." };
   }
-  const encryptedSecrets = encryptOutreachSecrets(input);
+  const encryptedSecrets = await encryptOutreachSecrets(input, await orgOwnerId(input.organizationId));
   if (!encryptedSecrets.ok) return encryptedSecrets;
 
   const patch = {
@@ -415,12 +415,14 @@ function validOutreachProvider(
   return provider === "manual";
 }
 
-function encryptOutreachSecrets(input: {
+// Org secrets are sealed to the org OWNER's key (organizations.owner_id), so
+// the owner's unlock is what lets the worker send.
+async function encryptOutreachSecrets(input: {
   smtpUser?: string;
   smtpPass?: string;
   apiKey?: string;
   authToken?: string;
-}):
+}, ownerId: string): Promise<
   | {
       ok: true;
       encSmtpUser: string | null;
@@ -428,14 +430,14 @@ function encryptOutreachSecrets(input: {
       encApiKey: string | null;
       encAuthToken: string | null;
     }
-  | Err {
+  | Err> {
   try {
     return {
       ok: true,
-      encSmtpUser: encryptClean(input.smtpUser),
-      encSmtpPass: encryptClean(input.smtpPass),
-      encApiKey: encryptClean(input.apiKey),
-      encAuthToken: encryptClean(input.authToken),
+      encSmtpUser: await encryptClean(input.smtpUser, ownerId, "enc_smtp_user"),
+      encSmtpPass: await encryptClean(input.smtpPass, ownerId, "enc_smtp_pass"),
+      encApiKey: await encryptClean(input.apiKey, ownerId, "enc_api_key"),
+      encAuthToken: await encryptClean(input.authToken, ownerId, "enc_auth_token"),
     };
   } catch (error) {
     return {
@@ -448,7 +450,7 @@ function encryptOutreachSecrets(input: {
   }
 }
 
-function encryptClean(value: string | undefined) {
+async function encryptClean(value: string | undefined, ownerId: string, field: string) {
   const cleanValue = clean(value);
-  return cleanValue ? encryptSecret(cleanValue) : null;
+  return cleanValue ? await encryptSecret(cleanValue, { ownerId, field }) : null;
 }

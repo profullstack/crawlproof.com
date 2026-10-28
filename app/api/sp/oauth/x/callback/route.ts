@@ -3,7 +3,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
-import { encryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, hasSealFor } from "@/lib/sp/vault";
 import { exchangeXCode, getXMe } from "@/lib/sp/platforms/x";
 
 const STATE_COOKIE = "sp_x_state";
@@ -23,6 +23,12 @@ export async function GET(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL("/login", env.siteUrl));
+  }
+
+  // Sealed keys: tokens are sealed to the user's own key, so a passphrase
+  // must exist before we can store them.
+  if (!(await hasSealFor(user.id))) {
+    return NextResponse.redirect(new URL("/dashboard/keys?next=connect", env.siteUrl));
   }
 
   const params = req.nextUrl.searchParams;
@@ -79,9 +85,9 @@ export async function GET(req: NextRequest) {
         auth_mode: "oauth",
         handle: `@${me.username}`,
         external_id: me.id,
-        enc_access_token: encryptSecret(tokens.accessToken),
+        enc_access_token: await encryptSecret(tokens.accessToken, { ownerId: user.id, field: "enc_access_token" }),
         enc_refresh_token: tokens.refreshToken
-          ? encryptSecret(tokens.refreshToken)
+          ? await encryptSecret(tokens.refreshToken, { ownerId: user.id, field: "enc_refresh_token" })
           : null,
         token_expires_at: tokens.expiresAt.toISOString(),
         status: "active",

@@ -9,7 +9,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
-import { encryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, hasSealFor } from "@/lib/sp/vault";
 import {
   exchangeFacebookCode,
   listFacebookPages,
@@ -31,6 +31,12 @@ export async function GET(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(new URL("/login", env.siteUrl));
+
+  // Sealed keys: tokens are sealed to the user's own key, so a passphrase
+  // must exist before we can store them.
+  if (!(await hasSealFor(user.id))) {
+    return NextResponse.redirect(new URL("/dashboard/keys?next=connect", env.siteUrl));
+  }
 
   const params = req.nextUrl.searchParams;
   const code = params.get("code");
@@ -72,15 +78,15 @@ export async function GET(req: NextRequest) {
 
   // One sp_account per Page. Idempotent on (user_id, platform=facebook_page,
   // external_id=page_id).
-  const rows = pages.map((p) => ({
+  const rows = await Promise.all(pages.map(async (p) => ({
     user_id: user.id,
     platform: "facebook_page",
     auth_mode: "oauth",
     handle: p.name,
     external_id: p.id,
-    enc_access_token: encryptSecret(p.accessToken),
+    enc_access_token: await encryptSecret(p.accessToken, { ownerId: user.id, field: "enc_access_token" }),
     status: "active" as const,
-  }));
+  })));
   const { error: upsertErr } = await supabase
     .from("sp_account")
     .upsert(rows, { onConflict: "user_id,platform,external_id" });

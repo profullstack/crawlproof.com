@@ -173,8 +173,8 @@ export function SeedLogins({
             />
           </label>
           <p className="text-xs text-[var(--color-muted)] sm:col-span-2">
-            Encrypted with AES-256-GCM before storing; the key lives in the application
-            environment, not the database. Sign-in is attempted on the next campaign tick and the
+            Sealed to the org owner&apos;s key (Keys page) before storing; it opens only while
+            they are unlocked. Sign-in is attempted on the next campaign tick and the
             result is shown here — a site that asks for a verification code can&apos;t be signed
             into from a server, and will say so.
           </p>
