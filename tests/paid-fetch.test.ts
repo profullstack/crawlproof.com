@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { assertPublicTarget, isPrivateAddress, PrivateTargetError } from "@/lib/net-guard";
-import { paidFetch, x402 } from "@/lib/paid-fetch";
+import { paidFetch, x402Client } from "@/lib/paid-fetch";
+import { setOperatorRowLoaderForTests } from "@/lib/sealed/operator";
 
 describe("net-guard", () => {
   it("knows private address space", () => {
@@ -26,8 +27,9 @@ describe("net-guard", () => {
 });
 
 describe("paidFetch", () => {
-  it("is the plain fetch when no key is configured", () => {
-    expect(x402).toBeNull();
+  it("is the plain fetch when no key is configured", async () => {
+    setOperatorRowLoaderForTests(async () => null);
+    expect(await x402Client()).toBeNull();
   });
 
   it("never connects to a private target", async () => {

@@ -127,9 +127,9 @@ export const env = {
   alertsFrom: process.env.ALERTS_FROM ?? "CrawlProof Alerts <alerts@alerts.crawlproof.com>",
   // Social Posting — static AES-GCM key for at-rest token encryption.
   // 32 bytes base64-encoded. Generate via `openssl rand -base64 32`.
-  // Phase 1 only; envelope encryption (Vault KEK + per-user DEKs)
-  // replaces this when cookie + puppeteer modes ship.
-  socialVaultKey: process.env.SOCIAL_VAULT_KEY ?? "",
+  // SOCIAL_VAULT_KEY is no longer read here: user secrets are sealed to each
+  // owner's own key (lib/sealed). The legacy key is read only by the one-shot
+  // migration in lib/sealed/legacy.ts until LEGACY_KEY_MIGRATION=off.
   // Reddit OAuth — one app per Crawlproof env (web app type).
   // Register at https://www.reddit.com/prefs/apps with redirect
   // {siteUrl}/api/sp/oauth/reddit/callback.

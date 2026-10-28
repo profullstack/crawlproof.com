@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, decryptSecret, isLockedError, hasSealFor, SEAL_REQUIRED_MESSAGE } from "@/lib/sp/vault";
 import { parseAccountHandle } from "@/lib/sp/parseHandle";
 import { createBlueskySession } from "@/lib/sp/platforms/bluesky";
 import {
@@ -59,6 +59,7 @@ export async function connectBluesky(input: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await hasSealFor(user.id))) return { ok: false, error: SEAL_REQUIRED_MESSAGE };
 
   // Accepts a bare handle or a pasted bsky.app/profile/… URL.
   const handle = parseAccountHandle(input.handle ?? "", "bluesky").handle;
@@ -91,11 +92,11 @@ export async function connectBluesky(input: {
         auth_mode: "oauth",
         handle: session.handle,
         external_id: session.did,
-        enc_access_token: encryptSecret(session.accessJwt),
-        enc_refresh_token: encryptSecret(session.refreshJwt),
+        enc_access_token: await encryptSecret(session.accessJwt, { ownerId: user.id, field: "enc_access_token" }),
+        enc_refresh_token: await encryptSecret(session.refreshJwt, { ownerId: user.id, field: "enc_refresh_token" }),
         // Stored so the worker can silently re-auth when the Bluesky tokens
         // expire (Bluesky has no refresh-token rotation path here).
-        enc_app_password: encryptSecret(appPassword),
+        enc_app_password: await encryptSecret(appPassword, { ownerId: user.id, field: "enc_app_password" }),
         status: "active",
       },
       { onConflict: "user_id,platform,external_id" },
@@ -126,6 +127,7 @@ export async function connectDiscord(input: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await hasSealFor(user.id))) return { ok: false, error: SEAL_REQUIRED_MESSAGE };
 
   const webhookUrl = (input.webhookUrl ?? "").trim();
   if (!webhookUrl) return { ok: false, error: "Paste a webhook URL." };
@@ -149,7 +151,7 @@ export async function connectDiscord(input: {
         auth_mode: "oauth", // webhook tokens behave like a bearer; reuse the column
         handle: info.displayHandle,
         external_id: info.id,
-        enc_access_token: encryptSecret(webhookUrl),
+        enc_access_token: await encryptSecret(webhookUrl, { ownerId: user.id, field: "enc_access_token" }),
         status: "active",
       },
       { onConflict: "user_id,platform,external_id" },
@@ -190,6 +192,7 @@ export async function connectTelegram(input: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await hasSealFor(user.id))) return { ok: false, error: SEAL_REQUIRED_MESSAGE };
 
   let token: string;
   try {
@@ -237,7 +240,7 @@ export async function connectTelegram(input: {
         auth_mode: "oauth",
         handle,
         external_id: String(chat.id),
-        enc_access_token: encryptSecret(token),
+        enc_access_token: await encryptSecret(token, { ownerId: user.id, field: "enc_access_token" }),
         status: "active",
       },
       { onConflict: "user_id,platform,external_id" },
@@ -271,6 +274,7 @@ export async function connectViaCookies(input: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await hasSealFor(user.id))) return { ok: false, error: SEAL_REQUIRED_MESSAGE };
 
   const { platform, cookiesJson, externalId, imageStyle } = input;
   if (!cookiesJson.trim()) return { ok: false, error: "Paste your cookie JSON." };
@@ -315,7 +319,7 @@ export async function connectViaCookies(input: {
         auth_mode: "cookie",
         handle,
         external_id: (externalId ?? handle).trim(),
-        enc_access_token: encryptSecret(cookiesJson),
+        enc_access_token: await encryptSecret(cookiesJson, { ownerId: user.id, field: "enc_access_token" }),
         image_style: imageStyle ?? "editorial",
         ...(instanceUrl ? { instance_url: instanceUrl.trim() } : {}),
         status: "active",
@@ -806,8 +810,9 @@ export async function getBlueskyAppPassword(input: {
     return { ok: false, error: "No app password stored — reconnect to save it." };
   }
   try {
-    return { ok: true, appPassword: decryptSecret(enc) };
-  } catch {
+    return { ok: true, appPassword: await decryptSecret(enc, { ownerId: user.id, field: "enc_app_password" }) };
+  } catch (err) {
+    if (isLockedError(err)) return { ok: false, error: err.message };
     return { ok: false, error: "Could not decrypt the stored app password." };
   }
 }

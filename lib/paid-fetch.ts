@@ -9,10 +9,11 @@
  * nothing else.
  *
  * Paying: a site behind an x402 gateway answers a crawler with 402 and an
- * offer. With `X402_PRIVATE_KEY` set, the client signs the offer with the
- * shared crawler wallet, buys the pass, files it by origin and presents it on
- * every later request to that site, so an audit of a gated site reads the
- * site rather than the sales page. Without the key it is the global fetch.
+ * offer. The crawler wallet key is an OPERATOR key (lib/sealed/operator.ts):
+ * sealed, opened only while the operator is unlocked. Then the client signs
+ * the offer, buys the pass, files it by origin and presents it on every later
+ * request to that site. While locked it is the global fetch (the audit reads
+ * the sales page instead of paying) and the operator alert fires once.
  *
  * Only the page fetch goes through here. Link-status probes and uptime pings
  * touch many third-party domains per run, and paying a dollar to learn a
@@ -23,15 +24,29 @@
  */
 
 import { createClient } from "@profullstack/x402-client";
+import { getOperatorSecret } from "./sealed/operator";
 
 import { assertPublicTarget, PrivateTargetError } from "./net-guard";
 
-const key = process.env[["X402", "PRIVATE_KEY"].join("_")];
 const allowPrivate = process.env[["CRAWLPROOF", "ALLOW_PRIVATE_TARGETS"].join("_")] === "1";
 
-export const x402 = key ? createClient({ key, maxUsd: 5 }) : null;
+// One client per unlock (it keeps the passes it bought); dropped on lock.
+let cached: { key: string; client: ReturnType<typeof createClient> } | null = null;
 
-const underlying: typeof fetch = x402 ? (input, init) => x402.fetch(input, init) : (input, init) => fetch(input, init);
+export async function x402Client(): Promise<ReturnType<typeof createClient> | null> {
+  const key = await getOperatorSecret("X402_PRIVATE_KEY");
+  if (!key) {
+    cached = null;
+    return null;
+  }
+  if (!cached || cached.key !== key) cached = { key, client: createClient({ key, maxUsd: 5 }) };
+  return cached.client;
+}
+
+const underlying: typeof fetch = async (input, init) => {
+  const client = await x402Client();
+  return client ? client.fetch(input, init) : fetch(input, init);
+};
 
 function urlOf(input: string | URL | Request): string {
   if (typeof input === "string") return input;

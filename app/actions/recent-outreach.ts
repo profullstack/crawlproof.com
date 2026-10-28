@@ -321,7 +321,10 @@ async function loadOutreachConfig(
     if (missingOrgSchema(error)) return null;
     throw error;
   }
-  return (data as OutreachConfig | null) ?? null;
+  if (!data) return null;
+  // Sealed keys: the enc_* fields are sealed to the org owner's key.
+  const { data: org } = await svc.from("organizations").select("owner_id").eq("id", organizationId).maybeSingle();
+  return { ...(data as OutreachConfig), owner_id: (org as { owner_id?: string } | null)?.owner_id ?? null };
 }
 
 // Outreach is open to any org owner; access is gated by credits, not plan.

@@ -6,7 +6,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
-import { encryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, hasSealFor } from "@/lib/sp/vault";
 import {
   exchangeThreadsCode,
   exchangeForLongLivedThreadsToken,
@@ -29,6 +29,12 @@ export async function GET(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(new URL("/login", env.siteUrl));
+
+  // Sealed keys: tokens are sealed to the user's own key, so a passphrase
+  // must exist before we can store them.
+  if (!(await hasSealFor(user.id))) {
+    return NextResponse.redirect(new URL("/dashboard/keys?next=connect", env.siteUrl));
+  }
 
   const params = req.nextUrl.searchParams;
   const code = params.get("code");
@@ -84,7 +90,7 @@ export async function GET(req: NextRequest) {
         auth_mode: "oauth",
         handle: `@${me.username}`,
         external_id: shortLived.userId,
-        enc_access_token: encryptSecret(longLived.accessToken),
+        enc_access_token: await encryptSecret(longLived.accessToken, { ownerId: user.id, field: "enc_access_token" }),
         token_expires_at: longLived.expiresAt.toISOString(),
         status: "active",
       },

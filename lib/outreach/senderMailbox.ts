@@ -10,7 +10,8 @@
 // working shared sender over a hard failure mid-campaign.
 
 import { serviceClient } from "@/lib/supabase/service";
-import { decryptSecret } from "@/lib/sp/vault";
+import { decryptSecret, orgOwnerId, canOpen } from "@/lib/sp/vault";
+import { noteLockedWork } from "@/lib/sealed/lockedWork";
 
 export type SenderMailbox = {
   host: string;
@@ -54,12 +55,18 @@ export async function loadProjectMailbox(projectId: string): Promise<SenderMailb
   if (!host || !fromEmail || !encPass) return null;
 
   try {
+    // Sealed to the org owner's key; null (no mailbox) while they are locked.
+    const ownerId = await orgOwnerId(orgId);
+    if (!canOpen(ownerId)) {
+      await noteLockedWork(ownerId, "Outreach email from your mailbox");
+      return null;
+    }
     return {
       host,
       port: (row.smtp_port as number | null) ?? 465,
       secure: (row.smtp_secure as boolean | null) ?? true,
-      user: encUser ? decryptSecret(encUser) : fromEmail,
-      pass: decryptSecret(encPass),
+      user: encUser ? await decryptSecret(encUser, { ownerId, field: "enc_smtp_user" }) : fromEmail,
+      pass: await decryptSecret(encPass, { ownerId, field: "enc_smtp_pass" }),
       fromEmail,
       replyTo: (row.reply_to as string | null) ?? null,
     };

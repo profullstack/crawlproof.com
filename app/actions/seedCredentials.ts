@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { serviceClient } from "@/lib/supabase/service";
 import { requireProjectAccess } from "@/lib/lx/currentSite";
-import { encryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, orgOwnerId } from "@/lib/sp/vault";
 import { normalizeHost } from "@/lib/outreach/cold";
 import { seedHost } from "@/lib/outreach/seedCredentials";
 
@@ -66,7 +66,10 @@ export async function saveSeedCredentialAction(input: {
         created_by: access.userId,
         host,
         username: input.username.trim(),
-        enc_password: encryptSecret(input.password),
+        enc_password: await encryptSecret(input.password, {
+          ownerId: await orgOwnerId(access.organizationId),
+          field: "enc_password",
+        }),
         login_url: input.loginUrl?.trim() || null,
         // A new password invalidates whatever the last attempt concluded.
         verified_at: null,

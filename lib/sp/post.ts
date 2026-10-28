@@ -8,7 +8,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { graphemeLength } from "./blueskyFacets";
-import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, decryptSecret, canOpen, hasSealFor, LOCKED_MESSAGE } from "@/lib/sp/vault";
 import { enqueueBrowserPost } from "@/lib/lx/workerClient";
 import { resolveSubreddit } from "@/lib/sp/redditSubreddit";
 import { shouldDisableAccount } from "@/lib/sp/accountHealth";
@@ -79,7 +79,10 @@ export type PostOk = {
   // reconciled later from the worker. Absent/false = published synchronously.
   pending?: boolean;
 };
-export type PostErr = { ok: false; error: string };
+// locked=true: the owner's sealed keys are locked (or not set up yet). Nothing
+// was attempted and no sp_post row was written; schedulers must leave the
+// work due and retry after the owner unlocks, never count it as a failure.
+export type PostErr = { ok: false; error: string; locked?: boolean };
 export type PostResult = PostOk | PostErr;
 
 // supabase: any user-scoped client (Server-Component client OR
@@ -113,6 +116,17 @@ export async function postViaAccount(args: {
   if (!account.enc_access_token) {
     return { ok: false, error: "Account has no stored token." };
   }
+  // Sealed keys: the token opens only while the owner is unlocked. Check
+  // before writing any sp_post row so a locked owner's work stays due.
+  if (account.auth_mode !== "cookie" && !canOpen(userId)) {
+    const sealed = await hasSealFor(userId);
+    return {
+      ok: false,
+      locked: true,
+      error: sealed ? LOCKED_MESSAGE : "locked: set up your key passphrase at /dashboard/keys to resume",
+    };
+  }
+  const ctx = (field: string) => ({ ownerId: userId, field });
 
   // Cookie-auth accounts post via Playwright in the worker.
   if (account.auth_mode === "cookie") {
@@ -252,7 +266,7 @@ export async function postViaAccount(args: {
 
   let accessToken: string;
   try {
-    accessToken = decryptSecret(account.enc_access_token);
+    accessToken = await decryptSecret(account.enc_access_token, ctx("enc_access_token"));
   } catch (err) {
     await supabase
       .from("sp_post")
@@ -273,7 +287,7 @@ export async function postViaAccount(args: {
     new Date(account.token_expires_at).getTime() - Date.now() < 60_000;
   if (tokenNearExpiry && (account.platform === "reddit" || account.platform === "x")) {
     try {
-      const refreshToken = decryptSecret(account.enc_refresh_token);
+      const refreshToken = await decryptSecret(account.enc_refresh_token, ctx("enc_refresh_token"));
       const fresh =
         account.platform === "reddit"
           ? await refreshRedditToken({ refreshToken })
@@ -282,9 +296,9 @@ export async function postViaAccount(args: {
       await supabase
         .from("sp_account")
         .update({
-          enc_access_token: encryptSecret(fresh.accessToken),
+          enc_access_token: await encryptSecret(fresh.accessToken, ctx("enc_access_token")),
           enc_refresh_token: fresh.refreshToken
-            ? encryptSecret(fresh.refreshToken)
+            ? await encryptSecret(fresh.refreshToken, ctx("enc_refresh_token"))
             : null,
           token_expires_at: fresh.expiresAt.toISOString(),
         })
@@ -323,7 +337,7 @@ export async function postViaAccount(args: {
         // Bluesky access JWTs expire and there's no refresh path; if we
         // stored the app password, re-auth and retry once.
         if (!account.enc_app_password) throw err;
-        const appPassword = decryptSecret(account.enc_app_password);
+        const appPassword = await decryptSecret(account.enc_app_password, ctx("enc_app_password"));
         const session = await createBlueskySession({
           handle: account.handle,
           appPassword,
@@ -331,8 +345,8 @@ export async function postViaAccount(args: {
         await supabase
           .from("sp_account")
           .update({
-            enc_access_token: encryptSecret(session.accessJwt),
-            enc_refresh_token: encryptSecret(session.refreshJwt),
+            enc_access_token: await encryptSecret(session.accessJwt, ctx("enc_access_token")),
+            enc_refresh_token: await encryptSecret(session.refreshJwt, ctx("enc_refresh_token")),
             status: "active",
           })
           .eq("id", account.id);

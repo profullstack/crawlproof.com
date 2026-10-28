@@ -17,7 +17,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { env } from "@/lib/env";
-import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, hasSealFor } from "@/lib/sp/vault";
+import { appSecretDecrypt } from "@/lib/sealed/legacy";
 import {
   exchangeMastodonCode,
   getMastodonMe,
@@ -40,6 +41,12 @@ export async function GET(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL("/login", env.siteUrl));
+  }
+
+  // Sealed keys: tokens are sealed to the user's own key, so a passphrase
+  // must exist before we can store them.
+  if (!(await hasSealFor(user.id))) {
+    return NextResponse.redirect(new URL("/dashboard/keys?next=connect", env.siteUrl));
   }
 
   const params = req.nextUrl.searchParams;
@@ -83,7 +90,7 @@ export async function GET(req: NextRequest) {
 
   let clientSecret: string;
   try {
-    clientSecret = decryptSecret(appRow.enc_client_secret as string);
+    clientSecret = appSecretDecrypt(appRow.enc_client_secret as string);
   } catch (err) {
     return backWithError(
       "Cached Mastodon client_secret could not be decrypted: " +
@@ -132,7 +139,7 @@ export async function GET(req: NextRequest) {
         handle: displayHandle,
         external_id: me.id,
         instance_url: instanceUrl,
-        enc_access_token: encryptSecret(tokens.accessToken),
+        enc_access_token: await encryptSecret(tokens.accessToken, { ownerId: user.id, field: "enc_access_token" }),
         status: "active",
       },
       { onConflict: "user_id,platform,external_id" },

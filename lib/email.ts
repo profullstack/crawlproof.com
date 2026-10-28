@@ -372,6 +372,26 @@ export async function sendAuditReportPdfEmail(input: {
   return { sent: true };
 }
 
+// Sealed keys: one nudge per lock episode when an owner's scheduled work is
+// waiting because their keys are locked (restart, TTL ran out, Lock pressed)
+// or were never set up. Plain, no secrets, links to the unlock page.
+export async function sendKeysLockedEmail(input: { to: string; what: string; needsSetup: boolean }) {
+  const c = client();
+  if (!c) return { sent: false as const, error: "email not configured" };
+  const url = `${env.siteUrl}/dashboard/keys`;
+  const action = input.needsSetup ? "set up your key passphrase" : "unlock your keys";
+  await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: input.needsSetup ? "CrawlProof: set a key passphrase to keep posting" : "CrawlProof: your keys are locked, posting is paused",
+    html:
+      `<p>${escapeHtml(input.what)} is waiting because your connected-account keys are locked.</p>` +
+      `<p>CrawlProof no longer keeps one server key for everyone's tokens: they are sealed under your own passphrase and ` +
+      `only open while you are unlocked. Please <a href="${url}">${action}</a> to resume. Nothing was lost; the work is still queued.</p>`,
+  });
+  return { sent: true as const };
+}
+
 export async function sendDigestEmail(input: {
   to: string;
   rows: Array<{ target: string; score: number; url: string }>;

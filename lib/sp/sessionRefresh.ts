@@ -9,7 +9,7 @@
 // scheduled Promote post fails. It cannot revive an already-dead session.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { encryptSecret, decryptSecret } from "@/lib/sp/vault";
+import { encryptSecret, decryptSecret, canOpen } from "@/lib/sp/vault";
 import { parseCookies, refreshCookieSession } from "@/lib/sp/platforms/browser";
 
 // The URL to load to keep each platform's cookie session warm.
@@ -41,6 +41,7 @@ type Row = {
   platform: string;
   instance_url: string | null;
   enc_access_token: string | null;
+  user_id: string;
 };
 
 export type SessionRefreshResult = {
@@ -62,7 +63,7 @@ export async function refreshCookieSessions(
   // worker restarts from re-warming a session we just warmed).
   const { data } = await supabase
     .from("sp_account")
-    .select("id, platform, instance_url, enc_access_token")
+    .select("id, platform, instance_url, enc_access_token, user_id")
     .eq("auth_mode", "cookie")
     .eq("status", "active")
     .or(`session_refreshed_at.is.null,session_refreshed_at.lt.${cutoff}`);
@@ -70,13 +71,15 @@ export async function refreshCookieSessions(
 
   for (const acct of rows) {
     const url = homeUrl(acct.platform, acct.instance_url);
-    if (!url || !acct.enc_access_token) {
+    // Locked owner: their cookies cannot be opened; try again after unlock.
+    if (!url || !acct.enc_access_token || !canOpen(acct.user_id)) {
       out.skipped++;
       continue;
     }
+    const ctx = { ownerId: acct.user_id, field: "enc_access_token" };
     out.checked++;
     try {
-      const cookies = parseCookies(decryptSecret(acct.enc_access_token));
+      const cookies = parseCookies(await decryptSecret(acct.enc_access_token, ctx));
       const res = await refreshCookieSession({ platform: acct.platform, homeUrl: url, cookies });
       if (!res.loggedIn) {
         // Session is dead — flag it so the UI prompts a reconnect (and posting
@@ -88,7 +91,7 @@ export async function refreshCookieSessions(
       await supabase
         .from("sp_account")
         .update({
-          enc_access_token: encryptSecret(JSON.stringify(res.cookies)),
+          enc_access_token: await encryptSecret(JSON.stringify(res.cookies), ctx),
           session_refreshed_at: new Date().toISOString(),
         })
         .eq("id", acct.id);

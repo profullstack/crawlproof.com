@@ -1017,6 +1017,8 @@ ENV
   ANTHROPIC_API_KEY      Required for --engine=claude.
   CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', 'track', 'ads' and 'slots'.
   CRAWLPROOF_PROJECT     Default project UUID for 'track'.
+  keys status|unlock|lock   Your sealed-key state; unlock (--ttl 8h, max 7d) so
+                         scheduled posts run. Passphrase: prompt or CRAWLPROOF_KEY_PASSPHRASE.
   CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'affiliate', 'stats',
                          'redeem', 'invites', 'webhooks' and 'dashboard'; --token overrides. Falls back to the
                          'token' field of ~/.crawlproof.json.
@@ -1082,6 +1084,13 @@ async function main() {
           write: (line: string) => process.stdout.write(`${line}\n`),
           error: (line: string) => console.error(line),
         });
+      case "keys": {
+        const { runKeys } = await import("../lib/sealed/cli");
+        return await runKeys(args.positional, args.flags as Record<string, string | boolean>, (method, path, body) => apiCall(args, method, path, body), {
+          write: (line: string) => process.stdout.write(`${line}\n`),
+          error: (line: string) => console.error(line),
+        });
+      }
       case "webhooks":
       case "webhook": {
         const { runWebhooks } = await import("../lib/webhooks/cli");

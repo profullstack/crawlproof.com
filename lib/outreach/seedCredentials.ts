@@ -10,7 +10,8 @@
 // hold.
 
 import { serviceClient } from "@/lib/supabase/service";
-import { decryptSecret } from "@/lib/sp/vault";
+import { decryptSecret, orgOwnerId, canOpen } from "@/lib/sp/vault";
+import { noteLockedWork } from "@/lib/sealed/lockedWork";
 import { normalizeHost } from "./cold";
 import type { SeedCredentials } from "./seedLogin";
 import type { CodeWaiter } from "@/lib/sp/verificationChallenge";
@@ -58,10 +59,15 @@ export async function loadSeedCredential(
   const enc = row.enc_password;
   if (!enc || !row.username || !row.id) return null;
   try {
+    const ownerId = await orgOwnerId(organizationId);
+    if (!canOpen(ownerId)) {
+      await noteLockedWork(ownerId, "A seed login for outreach");
+      return null;
+    }
     return {
       id: row.id,
       username: row.username,
-      password: decryptSecret(enc),
+      password: await decryptSecret(enc, { ownerId, field: "enc_password" }),
       loginUrl: row.login_url ?? undefined,
     };
   } catch {

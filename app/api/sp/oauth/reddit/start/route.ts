@@ -3,6 +3,7 @@
 // then 302s the user to reddit.com/api/v1/authorize. The callback route
 // verifies the cookie matches Reddit's echoed `state`.
 
+import { hasSealFor } from "@/lib/sp/vault";
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
@@ -23,6 +24,12 @@ export async function GET() {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL("/login", env.siteUrl));
+  }
+
+  // Sealed keys: tokens are sealed to the user's own key, so a passphrase
+  // must exist before we can store them.
+  if (!(await hasSealFor(user.id))) {
+    return NextResponse.redirect(new URL("/dashboard/keys?next=connect", env.siteUrl));
   }
 
   const state = crypto.randomBytes(24).toString("base64url");

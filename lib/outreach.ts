@@ -13,6 +13,8 @@ export type DeliveryResult = {
 
 export type OutreachConfig = {
   provider: string;
+  /** organizations.owner_id: whose key seals the enc_* fields. */
+  owner_id?: string | null;
   from_email?: string | null;
   from_phone?: string | null;
   reply_to?: string | null;
@@ -50,11 +52,12 @@ export async function sendOutreachEmail(input: {
   let smtpPass: string | null;
   let resendApiKey: string;
   try {
-    smtpUser = secretValue(input.config?.enc_smtp_user, input.config?.smtp_user);
-    smtpPass = secretValue(input.config?.enc_smtp_pass, input.config?.smtp_pass);
+    const owner = input.config?.owner_id ?? null;
+    smtpUser = await secretValue(input.config?.enc_smtp_user, input.config?.smtp_user, owner, "enc_smtp_user");
+    smtpPass = await secretValue(input.config?.enc_smtp_pass, input.config?.smtp_pass, owner, "enc_smtp_pass");
     resendApiKey =
       input.config?.provider === "resend"
-        ? (secretValue(input.config.enc_api_key, input.config.api_key) ?? "")
+        ? ((await secretValue(input.config.enc_api_key, input.config.api_key, owner, "enc_api_key")) ?? "")
         : "";
   } catch (error) {
     return {
@@ -142,9 +145,12 @@ export async function sendOutreachSms(input: {
   config?: OutreachConfig | null;
 }): Promise<DeliveryResult> {
   try {
-    if (input.config?.enc_api_key) input.config.api_key = decryptSecret(input.config.enc_api_key);
+    const owner = input.config?.owner_id ?? null;
+    if (input.config?.enc_api_key) {
+      input.config.api_key = await secretValue(input.config.enc_api_key, null, owner, "enc_api_key");
+    }
     if (input.config?.enc_auth_token) {
-      input.config.auth_token = decryptSecret(input.config.enc_auth_token);
+      input.config.auth_token = await secretValue(input.config.enc_auth_token, null, owner, "enc_auth_token");
     }
   } catch (error) {
     return {
@@ -173,11 +179,16 @@ export async function sendOutreachSms(input: {
   };
 }
 
-function secretValue(
+async function secretValue(
   encrypted: string | null | undefined,
   plaintext: string | null | undefined,
-) {
-  if (encrypted) return decryptSecret(encrypted);
+  ownerId: string | null,
+  field: string,
+): Promise<string | null> {
+  if (encrypted) {
+    if (!ownerId) throw new Error("sender config has no owner; cannot open sealed secret");
+    return decryptSecret(encrypted, { ownerId, field });
+  }
   return plaintext ?? null;
 }
 
