@@ -55,7 +55,12 @@ export default function AutoblogWebhookDocsPage() {
             Content type{" "}
             <code className="font-mono">application/cloudevents+json</code>.
           </li>
-          <li>10-second timeout. Reply <code>2xx</code> to acknowledge.</li>
+          <li>
+            10-second timeout. Reply <code>2xx</code> to acknowledge. Retried at
+            +10s and +60s on a network error, <code>408</code>, <code>429</code> or{" "}
+            <code>5xx</code>; any other <code>4xx</code> is final. Redirects are
+            not followed: save the final URL.
+          </li>
         </ul>
 
         <h3 className="mt-6 text-lg font-bold">Headers</h3>
@@ -63,8 +68,9 @@ export default function AutoblogWebhookDocsPage() {
 webhook-id:         <event uuid>                        # stable across retries
 webhook-timestamp:  <unix seconds>                       # delivery time
 webhook-signature:  v1,<base64 HMAC-SHA256>              # signs id.timestamp.body
+webhook-event:      com.crawlproof.post.published.v1
 Content-Type:       application/cloudevents+json
-User-Agent:         @profullstack/autoblog/0.3`}</pre>
+User-Agent:         @profullstack/autoblog/0.1 (+@profullstack/webhooks)`}</pre>
         <p className="text-sm text-[var(--color-muted)]">
           The bearer is a secret you generate on your receiver site (e.g.
           a per-source token from your blog's admin page) and paste into{" "}
@@ -311,6 +317,28 @@ export async function POST(req: Request) {
   await savePost(evt.data.post); // your storage
   return NextResponse.json({ ok: true });
 }`}</pre>
+      </section>
+
+      <section className="mt-10 space-y-2">
+        <h2 className="text-2xl font-bold">More endpoints, API, CLI, MCP</h2>
+        <p className="text-sm leading-relaxed">
+          Delivery runs on{" "}
+          <a className="underline" href="https://www.npmjs.com/package/@profullstack/webhooks">@profullstack/webhooks</a>.
+          A site can have up to 10 endpoints (Autoblog → Webhooks), each with
+          its own <code>whsec_</code> secret, a delivery log, test pings and
+          retries. The same thing over HTTP with a <code>crp_</code> token:{" "}
+          <code className="font-mono">/api/v1/webhooks?site=&lt;domain&gt;</code>{" "}
+          (<code>GET</code>/<code>POST /</code>, <code>GET|PATCH|DELETE /:id</code>,{" "}
+          <code>POST /:id/test</code>, <code>POST /:id/rotate</code>,{" "}
+          <code>GET /:id/secret</code>, <code>GET /deliveries</code>,{" "}
+          <code>POST /deliveries/:id/retry</code>), the CLI{" "}
+          <code>crawlproof webhooks</code>, and the MCP tools{" "}
+          <code>list_webhooks</code>, <code>create_webhook</code>,{" "}
+          <code>test_webhook</code> and friends. A <code>whsec_</code> secret
+          is the spec form: verify it with{" "}
+          <code>verifyAndParse</code> from <code>@profullstack/webhooks</code>{" "}
+          (which also accepts the plain secrets from setup).
+        </p>
       </section>
 
       <section className="mt-10 space-y-2">

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
+import { checkUrl } from "@profullstack/webhooks";
+import { syncSiteEndpoint } from "@/lib/webhooks/hub";
 import { isAllowedTargetUrl } from "@/lib/rateLimit";
 import { detectSitemapUrl } from "@/lib/lx/sitemap";
 import type { DfsKeywordRow } from "@/lib/lx/dataforseo";
@@ -326,6 +328,36 @@ export type SiteInput = {
 };
 
 export async function createOrUpdateSite(
+  input: SiteInput,
+): Promise<Ok<{ siteId: string }> | Err> {
+  // The webhook URL must pass the hub's guard (https, public address) before
+  // anything is saved, or the site would save with an endpoint the hub refuses.
+  const url = clean(input.webhookUrl, MAX.url);
+  if (url) {
+    const checked = await checkUrl(url);
+    if (!checked.ok) return { ok: false, error: `Webhook URL: ${checked.reason}` };
+  }
+  const saved = await saveSiteRow(input);
+  if (!saved.ok) return saved;
+  // Deliveries go through the webhooks hub: keep this site's endpoint there in
+  // step with the URL + secret on the form (lib/webhooks/hub.ts).
+  const svc = serviceClient();
+  const { data: site } = await svc
+    .from("lx_site")
+    .select("id, domain, webhook_url, webhook_secret, webhook_endpoint_id")
+    .eq("id", saved.siteId)
+    .maybeSingle();
+  if (site) {
+    const synced = await syncSiteEndpoint(svc, site as { id: string; domain: string; webhook_endpoint_id: string | null }, {
+      url: (site as { webhook_url: string | null }).webhook_url,
+      secret: (site as { webhook_secret: string | null }).webhook_secret,
+    });
+    if (synced.error) return { ok: false, error: synced.error };
+  }
+  return saved;
+}
+
+async function saveSiteRow(
   input: SiteInput,
 ): Promise<Ok<{ siteId: string }> | Err> {
   const supabase = await createClient();

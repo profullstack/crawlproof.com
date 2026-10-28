@@ -2,12 +2,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProjectById } from "@/lib/lx/currentSite";
+import { siteEndpointConfig } from "@/lib/webhooks/hub";
 import { SetupForm } from "./form";
 
 export const metadata = { title: "Autoblog · Setup" };
 
 const SITE_COLUMNS =
-  "id, domain, blog_root_url, sitemap_url, niche, target_audiences, description, seed_keywords, master_keywords, modifiers, preserve_keywords, ads_enabled, keywords, seo_title, seo_description, tone, competitors, webhook_url, webhook_secret, daily_article_count, publish_days, publish_hour, internal_links_per_article, backlinks_enabled, external_links_per_article, banner_style, status";
+  "id, domain, blog_root_url, sitemap_url, niche, target_audiences, description, seed_keywords, master_keywords, modifiers, preserve_keywords, ads_enabled, keywords, seo_title, seo_description, tone, competitors, webhook_url, webhook_secret, webhook_endpoint_id, daily_article_count, publish_days, publish_hour, internal_links_per_article, backlinks_enabled, external_links_per_article, banner_style, status";
 
 export default async function AutoblogSetupPage({
   params,
@@ -64,6 +65,19 @@ export default async function AutoblogSetupPage({
       ])
     : [{ count: 0 }, { count: 0 }, { data: null }];
 
+  // The webhook fields show the hub endpoint (the source of truth since the
+  // move to @profullstack/webhooks), so a secret rotated on the Webhooks page
+  // or through the API is what the form shows and re-saves.
+  const hubEndpoint = site
+    ? await siteEndpointConfig((site as { webhook_endpoint_id?: string | null }).webhook_endpoint_id).catch(() => null)
+    : null;
+  const initial = site
+    ? {
+        ...(site as Record<string, unknown>),
+        ...(hubEndpoint ? { webhook_url: hubEndpoint.url, webhook_secret: hubEndpoint.secret } : {}),
+      }
+    : null;
+
   return (
     <div className="max-w-3xl">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -80,6 +94,9 @@ export default async function AutoblogSetupPage({
           <Link href={`/dashboard/projects/${projectId}/autoblog/backlinks`} className="btn">
             Backlinks
           </Link>
+          <Link href={`/dashboard/projects/${projectId}/autoblog/webhooks`} className="btn">
+            Webhooks
+          </Link>
         </div>
       </div>
       <p className="mt-2 text-sm text-[var(--color-muted)]">
@@ -89,7 +106,7 @@ export default async function AutoblogSetupPage({
       </p>
       <SetupForm
         projectId={projectId}
-        initial={(site as any) ?? null}
+        initial={(initial as any) ?? null}
         initialQueuedCount={queuedKeywords ?? 0}
         initialFailedCount={failedKeywords ?? 0}
         initialKeywordFailure={

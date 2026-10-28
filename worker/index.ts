@@ -33,6 +33,7 @@ import { researchKeywords } from "../lib/lx/keywordsResearch";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateArticle } from "../lib/lx/articleGen";
 import { deliverArticle } from "../lib/lx/webhookDeliver";
+import { getHub } from "../lib/webhooks/hub";
 import { repairStuckLxJobs } from "../lib/lx/repair";
 import { repairMissingArticleImages } from "../lib/lx/repairImages";
 import { processDueSocialFeeds } from "../lib/sp/feedAutopost";
@@ -1381,6 +1382,12 @@ async function socialFeedSweep() {
     }
   }
 }
+
+// Customer webhooks (@profullstack/webhooks): this long-running process is the
+// one drainer. It sends queued deliveries every 5s and retries failures from
+// the hub tables, so a restart mid-delivery loses nothing. Started once, here.
+getHub().hooks.start();
+console.log("[worker] webhooks drainer started");
 
 setInterval(() => sweep().catch(() => {}), 60_000);
 setInterval(() => browserPostSweep().catch((e) => console.error("[worker] browser post sweep", e)), 60_000);
