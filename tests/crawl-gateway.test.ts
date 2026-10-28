@@ -121,9 +121,13 @@ describe("crawler access through x402-gateway", () => {
 });
 
 describe("headless browsers", () => {
-  it("charges a self-declared headless browser like any paid crawler", async () => {
+  it("lets a self-declared headless browser read a page, then charges a crawl (gateway 0.16)", async () => {
     const { gate } = await import("@/lib/crawl-gateway");
-    expect((await gate(request("/blog", "Lightpanda/1.0")))?.status).toBe(402);
-    expect((await gate(request("/blog", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36")))?.status).toBe(402);
+    const headless = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36";
+    const from = (path: string, ua: string) => request(path, ua, undefined, undefined, "203.0.113.61");
+    expect(await gate(from("/", headless))).toBeUndefined();
+    let last: Response | undefined;
+    for (let i = 0; i < 20; i++) last = await gate(from(`/blog/${i}`, "Lightpanda/1.0"));
+    expect(last?.status).toBe(402);
   });
 });
