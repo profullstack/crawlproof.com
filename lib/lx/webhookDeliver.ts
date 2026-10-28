@@ -1,19 +1,23 @@
 // Webhook delivery for autoblog articles (PRD §7).
 //
-// Reads one lx_article (status='ready') + its owning lx_site, maps it
-// to the normalized `Post` shape, and hands the actual HTTP work off
-// to @profullstack/autoblog. The SDK emits CloudEvents 1.0 envelopes
-// signed with Standard Webhooks headers and handles retry policy
-// (0s / 10s / 60s, retry on 5xx/408/429/network, give up on 4xx).
+// Reads one lx_article (status='ready') + its hosting lx_site, maps it to the
+// normalized `Post` shape, and emits it on the webhooks hub
+// (@profullstack/webhooks, lib/webhooks/hub.ts) to every endpoint of that
+// site subscribed to com.crawlproof.post.published.v1. The hub keeps the
+// delivery in the database and retries it (now, +10s, +60s; a 4xx other than
+// 408/429 is final), so a restart mid-delivery no longer loses the post.
 //
-// This function still owns the DB orchestration around delivery: the
-// atomic ready→publishing claim, the published/failed terminal write,
-// and the keyword status bump. The wire shape and transport live in
-// the SDK so all four Profullstack consumers share one definition.
+// The first attempt is made inline (drain right after emit), so the dashboard's
+// Retry/Publish buttons still answer with the result. The article row's
+// webhook_* columns and its published/failed status are written by the hub's
+// onDelivery hook (articleDeliveryRecorder), whichever process sends.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildEvent, sendWebhook, type Post } from "@profullstack/autoblog";
+import { randomUUID } from "node:crypto";
+import type { Post } from "@profullstack/autoblog";
+import { matchesEvent } from "@profullstack/webhooks";
 import { env } from "../env";
+import { getHub, POST_PUBLISHED, type Hub } from "../webhooks/hub";
 import { findExchangeCandidates } from "./exchangeMatcher";
 import { buildNetworkBlock, placeAdInArticle, type NetworkBlock } from "./networkBlock";
 
@@ -112,7 +116,8 @@ export function buildArticleJsonLd(input: {
 
 export type DeliveryResult = {
   ok: boolean;
-  status: "published" | "failed";
+  /** "publishing": queued, the receiver has not answered yet (retries pending). */
+  status: "published" | "failed" | "publishing";
   responseCode: number | null;
   attempts: number;
   error?: string;
@@ -179,7 +184,7 @@ function articleToPost(
 
 export async function deliverArticle(
   articleId: string,
-  deps: { supabase: SupabaseClient<any> },
+  deps: { supabase: SupabaseClient<any>; hub?: Hub },
 ): Promise<DeliveryResult> {
   const { supabase } = deps;
 
@@ -210,11 +215,17 @@ export async function deliverArticle(
   const { data: site } = await supabase
     .from("lx_site")
     .select(
-      "id, domain, blog_root_url, webhook_url, webhook_secret, author_name, author_url, project_id, user_id, niche, ads_enabled",
+      "id, domain, blog_root_url, webhook_url, webhook_secret, webhook_endpoint_id, author_name, author_url, project_id, user_id, niche, ads_enabled",
     )
     .eq("id", deliveryTargetId)
     .maybeSingle<SiteRow>();
-  if (!site?.webhook_url || !site?.webhook_secret) {
+  const hub = deps.hub ?? getHub();
+  const subscribed = site
+    ? (await hub.hooks.listEndpoints(site.id)).filter(
+        (e) => e.enabled && matchesEvent(e.events, POST_PUBLISHED),
+      )
+    : [];
+  if (!site || subscribed.length === 0) {
     await supabase
       .from("lx_article")
       .update({
@@ -267,78 +278,56 @@ export async function deliverArticle(
   });
 
   const post = articleToPost(claimed, site, network);
-  // Reuse the saved delivery id on retries so receivers idempotently
-  // dedupe. SDK uses event.id as the webhook-id header.
-  const event = buildEvent(post, {
-    source: env.siteUrl,
-    eventId: claimed.webhook_delivery_id ?? undefined,
-  });
 
-  let responseBody = "";
-  const result = await sendWebhook(site.webhook_url, event, {
-    secret: site.webhook_secret,
-    fetchImpl: async (url, init) => {
-      const res = await fetch(url, init);
-      if (!res.ok) {
-        responseBody = await res
-          .clone()
-          .text()
-          .then((s) => s.slice(0, 1000))
-          .catch(() => "");
-      }
-      return res;
-    },
-  });
-
-  if (result.ok) {
-    await supabase
-      .from("lx_article")
-      .update({
-        status: "published",
-        // Same value we put in the payload and the JSON-LD, so the row and
-        // the receiver never disagree about when this post was published.
-        published_at: post.published_at,
-        webhook_delivery_id: event.id,
-        webhook_response_code: result.status,
-        webhook_attempts: result.attempts,
-        webhook_last_error: null,
-      })
-      .eq("id", articleId);
-    await supabase
-      .from("lx_keyword")
-      .update({ status: "published" })
-      .eq("article_id", articleId);
-    return {
-      ok: true,
-      status: "published",
-      responseCode: result.status,
-      attempts: result.attempts,
-    };
-  }
-
+  // Reuse the saved delivery id on retries so receivers idempotently dedupe:
+  // it is the CloudEvent id and the webhook-id header. Written to the row
+  // BEFORE emit, because the onDelivery hook finds the article by it.
+  const eventId = claimed.webhook_delivery_id ?? randomUUID();
   await supabase
     .from("lx_article")
     .update({
-      status: "failed",
-      webhook_delivery_id: event.id,
-      webhook_response_code: result.status,
-      webhook_attempts: result.attempts,
-      webhook_last_error:
-        responseBody ||
-        result.error ||
-        (result.status !== null ? `HTTP ${result.status}` : "unknown error"),
+      webhook_delivery_id: eventId,
+      webhook_attempts: 0,
+      webhook_response_code: null,
     })
     .eq("id", articleId);
-  await supabase
-    .from("lx_keyword")
-    .update({ status: "failed" })
-    .eq("article_id", articleId);
 
+  const { queued } = await hub.hooks.emit(
+    site.id,
+    POST_PUBLISHED,
+    { post },
+    { subject: `post:${post.id}`, id: eventId },
+  );
+  if (queued === 0) {
+    const error = "no enabled webhook endpoint for this site (check /autoblog/setup or /api/v1/webhooks)";
+    await supabase
+      .from("lx_article")
+      .update({ status: "failed", webhook_last_error: error })
+      .eq("id", articleId);
+    await supabase.from("lx_keyword").update({ status: "failed" }).eq("article_id", articleId);
+    return { ok: false, status: "failed", responseCode: null, attempts: 0, error };
+  }
+
+  // First attempt now. Another process may hold the lease on it; then this
+  // returns before it lands and the caller sees "publishing".
+  await hub.hooks.drain().catch((err: unknown) => console.warn("[lx] webhook drain failed:", err));
+
+  const { data: after } = await supabase
+    .from("lx_article")
+    .select("status, webhook_response_code, webhook_attempts, webhook_last_error")
+    .eq("id", articleId)
+    .maybeSingle<{
+      status: string;
+      webhook_response_code: number | null;
+      webhook_attempts: number | null;
+      webhook_last_error: string | null;
+    }>();
+  const status = after?.status === "published" || after?.status === "failed" ? after.status : "publishing";
   return {
-    ok: false,
-    status: "failed",
-    responseCode: result.status,
-    attempts: result.attempts,
-    error: result.error ?? `HTTP ${result.status}`,
+    ok: status !== "failed",
+    status,
+    responseCode: after?.webhook_response_code ?? null,
+    attempts: after?.webhook_attempts ?? 0,
+    ...(status === "published" ? {} : { error: after?.webhook_last_error ?? undefined }),
   };
 }

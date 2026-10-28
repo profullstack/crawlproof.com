@@ -1005,6 +1005,11 @@ ${ACTORS_USAGE}
       Your scarce invites (3 per account). When a new account joins on one and
       confirms its email, you each get bonus scan credits. Needs an API token.
 
+  webhooks [list|create <url>|get|update|delete|test|secret|rotate <id>|deliveries [<id>]|retry <delivery-id>]
+           [--site <domain|id>] [--events a,b] [--description D] [--json]
+      Webhook endpoints for an autoblog site (/api/v1/webhooks): every published
+      post goes to each as a signed CloudEvent. Needs an API token.
+
   help
       Print this message.
 
@@ -1013,7 +1018,7 @@ ENV
   CRAWLPROOF_SITE_URL    Override the API base URL for 'report', 'sweep', 'track', 'ads' and 'slots'.
   CRAWLPROOF_PROJECT     Default project UUID for 'track'.
   CRAWLPROOF_TOKEN       API token (crp_…) for 'ads', 'slots', 'affiliate', 'stats',
-                         'redeem', 'invites' and 'dashboard'; --token overrides. Falls back to the
+                         'redeem', 'invites', 'webhooks' and 'dashboard'; --token overrides. Falls back to the
                          'token' field of ~/.crawlproof.json.
   COINPAY_SESSION_TOKEN  CoinPay merchant JWT for the money half of
                          'dashboard'. Defaults to jwtToken in ~/.coinpay.json,
@@ -1077,6 +1082,14 @@ async function main() {
           write: (line: string) => process.stdout.write(`${line}\n`),
           error: (line: string) => console.error(line),
         });
+      case "webhooks":
+      case "webhook": {
+        const { runWebhooks } = await import("../lib/webhooks/cli");
+        return await runWebhooks(args.positional, args.flags as Record<string, string | boolean>, (method, path, body) => apiCall(args, method, path, body), {
+          write: (line: string) => process.stdout.write(`${line}\n`),
+          error: (line: string) => console.error(line),
+        });
+      }
       case "dashboard":
       case "roi":
       case "tui":
