@@ -19,7 +19,7 @@
         "@profullstack/referrals": "^0.1.0",
         "@profullstack/stack": "^0.5.0",
         "@profullstack/x402-client": "^0.3.0",
-        "@profullstack/x402-gateway": "^0.13.1",
+        "@profullstack/x402-gateway": "^0.15.1",
         "@supabase/ssr": "^0.12.7",
         "@supabase/supabase-js": "^2.118.0",
         "@types/nodemailer": "^8.0.2",
@@ -334,7 +334,7 @@
 
     "@profullstack/x402-client": ["@profullstack/x402-client@0.3.0", "", { "dependencies": { "@noble/curves": "^2.4.0", "@noble/hashes": "^2.4.0" }, "bin": { "x402": "bin/x402.js" } }, "sha512-ytKhBrnjXFef2X2vgORw6d25tZfmo1qinxk/1mXlpeVticHP5UxidElFtjdjSt1LcHVlAEQR6m/+p4obmxDzJQ=="],
 
-    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.13.1", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-V7liSO0tShZRlp8dancuDuUSF/rqrr5YF3bzLoZy9wn6ixf1RIRPYTepe72s36JOdSVzi3wfuhaZFm9y0RpV4w=="],
+    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.15.1", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-yw4q8XAtop9p6jHV3z5tRnCF7af8O7pn7ZlbuWeeN87XXtynFNZnoJFd1xZTTHEj994Bvnxg9yIjwkv7coI4rQ=="],
 
     "@redis/bloom": ["@redis/bloom@1.2.0", "", { "peerDependencies": { "@redis/client": "^1.0.0" } }, "sha512-HG2DFjYKbpNmVXsa0keLHp/3leGJz1mjh09f2RLGGLQZzSHpkmZWuwJbAvo3QcRY8p80m5+ZdXZdYOSBLlp7Cg=="],
 
