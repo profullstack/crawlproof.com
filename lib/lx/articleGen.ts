@@ -476,6 +476,62 @@ async function claimKeyword(
   return !!data;
 }
 
+/**
+ * The article a site already has on this topic, or null.
+ *
+ * uniqueSlug() used to be the only check, and it answers a different question:
+ * it finds a free URL. When a keyword came back to the queue (regenerated
+ * keyword lists delete the old row, so nothing remembered it was done), the
+ * topic was written again and published as `<slug>-2` … `<slug>-6`, then
+ * `<slug>-hl4w`: threatcrush.com carried fifteen CI/CD threat detection posts
+ * whose titles differed only after the colon. A topic counts as taken when an
+ * existing slug is the candidate itself or the candidate plus a collision
+ * suffix, or when the title's head (before the colon) names the same thing.
+ */
+export function findPublishedTopic(
+  existing: ReadonlyArray<{ slug: string; title: string | null }>,
+  candidate: { slugs: string[]; heads: string[] },
+): string | null {
+  const head = (t: string) => slugify(t.split(/[:\u2013\u2014|]/)[0] ?? "");
+  const bases = candidate.slugs.map((one) => one.replace(COLLISION_SUFFIX, "")).filter(Boolean);
+  const heads = new Set(candidate.heads.map(head).filter(Boolean));
+  for (const row of existing) {
+    const base = row.slug.replace(COLLISION_SUFFIX, "");
+    if (bases.includes(row.slug) || bases.includes(base)) return row.slug;
+    if (row.title && heads.has(head(row.title))) return row.slug;
+  }
+  return null;
+}
+
+/** What uniqueSlug() appends: -2 … -7, or four base-36 characters. */
+const COLLISION_SUFFIX = /-(?:\d{1,2}|[a-z0-9]{4})$/;
+
+async function publishedTopic(
+  supabase: SupabaseClient<any>,
+  siteId: string,
+  candidate: { slugs: string[]; heads: string[] },
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("lx_article")
+    .select("slug, title")
+    .eq("site_id", siteId);
+  // Unknown is not "taken": a failed read must not stop publishing.
+  if (error) return null;
+  return findPublishedTopic((data as Array<{ slug: string; title: string | null }> | null) ?? [], candidate);
+}
+
+/** A keyword whose topic is already published: skipped with the reason, never failed. */
+async function skipDuplicateKeyword(
+  supabase: SupabaseClient<any>,
+  keywordId: string,
+  existingSlug: string,
+): Promise<void> {
+  await supabase
+    .from("lx_keyword")
+    .update({ status: "skipped", status_reason: `topic already published as /${existingSlug}` })
+    .eq("id", keywordId);
+}
+
 export async function uniqueSlug(
   supabase: SupabaseClient<any>,
   siteId: string,
@@ -1088,7 +1144,7 @@ export type GenerateArticleResult = {
   articleId?: string;
   slug?: string;
   error?: string;
-  skipped?: "no-queued-keyword" | "claim-race";
+  skipped?: "no-queued-keyword" | "claim-race" | "duplicate-topic";
 };
 
 export async function generateArticle(
@@ -1118,6 +1174,17 @@ export async function generateArticle(
 
   const claimed = await claimKeyword(supabase, keyword.id);
   if (!claimed) return { ok: true, skipped: "claim-race" };
+
+  // Before spending anything: is this topic already on the site? Skip it and
+  // move on to the next due keyword, so the slot still publishes.
+  const already = await publishedTopic(supabase, siteId, {
+    slugs: [slugify(keyword.keyword)],
+    heads: [keyword.keyword],
+  });
+  if (already) {
+    await skipDuplicateKeyword(supabase, keyword.id, already);
+    return generateArticle(siteId, deps, opts);
+  }
 
   // Gate generation behind Autopilot quota first, then existing credits.
   // Atomic at the SQL layer so two parallel generations can't both succeed
@@ -1416,8 +1483,18 @@ export async function generateArticle(
 
   const exchangeUrlsUsed = article.used_exchange_link_urls ?? [];
 
-  // Slugify + dedupe slug.
+  // Slugify + dedupe slug. A model can name a taken topic under a keyword
+  // that looked new; that is a duplicate post, not a reason for `-2`.
   const baseSlug = article.slug || slugify(article.title);
+  const duplicate = await publishedTopic(supabase, typedSite.id, {
+    slugs: [baseSlug],
+    heads: [article.title],
+  });
+  if (duplicate) {
+    await skipDuplicateKeyword(supabase, keyword.id, duplicate);
+    await refundArticleGenerationCharge(supabase, charge);
+    return { ok: true, skipped: "duplicate-topic" };
+  }
   const finalSlug = await uniqueSlug(supabase, typedSite.id, baseSlug);
 
   // Featured image + inline section images, generated in parallel so the
