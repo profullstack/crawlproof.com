@@ -2,10 +2,13 @@ import { HEADLESS_AGENTS, TRAINING_AGENTS, isTrainingAgent } from "@profullstack
 import { parseDevice } from "@/lib/tracker/device";
 
 export const COMMERCIAL_CRAWLERS = ["SemrushBot", "SiteAuditBot", "AhrefsBot", "AhrefsSiteAudit", "MJ12bot", "DotBot", "BLEXBot", "DataForSeoBot"];
-// Headless browsers that say so (Lightpanda, HeadlessChrome, PhantomJS): nobody
-// reads a page through one; the gateway's default list charges them since 0.8.
-export const PAID_CRAWLERS = [...TRAINING_AGENTS, ...COMMERCIAL_CRAWLERS, ...HEADLESS_AGENTS];
-const FAMILIES = [...PAID_CRAWLERS, "Amazonbot", "Googlebot", "Bingbot", "Applebot", "OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User"];
+// Headless browsers that say so (Lightpanda, HeadlessChrome, PhantomJS) are not
+// on this list since gateway 0.16: the gateway's own `headless` list gives them
+// 20 pages an hour per address and charges after, so an agent fetching one page
+// reads it (2026-10-28: a one-shot headless fetch of / got 402) and a headless
+// crawl still pays.
+export const PAID_CRAWLERS = [...TRAINING_AGENTS, ...COMMERCIAL_CRAWLERS];
+const FAMILIES = [...PAID_CRAWLERS, ...HEADLESS_AGENTS, "Amazonbot", "Googlebot", "Bingbot", "Applebot", "OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User"];
 
 /** Labels bound counter cardinality. A user agent identifies policy, not ownership. */
 export function crawlerFamily(ua: string | null): string | null {
