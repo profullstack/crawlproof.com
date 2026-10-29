@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CoinpaySignInButton } from "@/components/coinpay-signin-button";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithPassword, startGoogleOAuth } from "@/app/actions/auth";
@@ -42,6 +43,7 @@ export function LoginForm({ redirectTo, defaultEmail }: { redirectTo?: string; d
 
   return (
     <div className="mt-6 space-y-4">
+      <CoinpaySignInButton next={redirectTo} label="Sign in with CoinPay" />
       {googleEnabled && (
         <>
           <button type="button" className="btn w-full" onClick={onGoogle} disabled={pending}>

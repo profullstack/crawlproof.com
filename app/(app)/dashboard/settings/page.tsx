@@ -2,11 +2,17 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { SettingsForm } from "./form";
 import { ProfileCard } from "./profile-card";
+import { CoinpayCard } from "./coinpay-card";
 import { listTimezones } from "@/lib/timezones";
 
 export const metadata = { title: "Settings" };
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ coinpay?: string; error?: string }>;
+}) {
+  const sp = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -73,6 +79,7 @@ export default async function SettingsPage() {
           </li>
         </ul>
       </div>
+      <CoinpayCard status={sp.coinpay} error={sp.error} />
       <ProfileCard />
       <SettingsForm
         displayName={profile?.display_name ?? ""}

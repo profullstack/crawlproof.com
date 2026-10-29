@@ -6,7 +6,8 @@
 // public.uptime_partners, sha256 stored, minted by scripts/mint-uptime-partner.ts)
 // plus `X-Fleet-User-Email`, which the partner asserts is its signed-in user's
 // VERIFIED email. That maps to the crawlproof user with the same confirmed
-// email; everything is scoped to that user's one "Fleet" project
+// email. `X-Fleet-User-CoinPay-Sub`, when sent, wins: it maps to the user
+// linked to that CoinPay account (public.coinpay_identities, bound by sub); everything is scoped to that user's one "Fleet" project
 // (projects.kind = 'fleet', made on first use), so the partners and the
 // crawlproof dashboard all see the same monitors.
 //
@@ -72,6 +73,8 @@ export interface IncidentRow {
 export interface UptimeStore {
   partnerByHash(hash: string): Promise<PartnerRow | null>;
   userIdByEmail(email: string): Promise<string | null>;
+  /** The crawlproof user bound to this CoinPay sub (public.coinpay_identities). */
+  userIdByCoinpaySub(sub: string): Promise<string | null>;
   fleetProjectId(userId: string): Promise<string>;
   getSettings(userId: string): Promise<SettingsRow | null>;
   putSettings(userId: string, s: SettingsRow): Promise<void>;
@@ -97,6 +100,9 @@ export function supabaseUptimeStore(sb: SupabaseClient): UptimeStore {
     },
     async userIdByEmail(email) {
       return (must(await sb.rpc("uptime_user_id_by_email", { p_email: email })) as string | null) ?? null;
+    },
+    async userIdByCoinpaySub(sub) {
+      return (must(await sb.rpc("uptime_user_id_by_coinpay_sub", { p_sub: sub })) as string | null) ?? null;
     },
     async fleetProjectId(userId) {
       const find = async () =>
@@ -162,7 +168,10 @@ export function apiError(status: number, error: string, message: string, extra: 
 const ok = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "cache-control": "no-store" } });
 
+/** email: the partner-verified email when one was sent ("" when only a CoinPay sub was). */
 export type PartnerCtx = { partner: PartnerRow; userId: string; email: string };
+
+export const COINPAY_SUB_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export async function authenticatePartner(req: Request, store: UptimeStore): Promise<PartnerCtx | Response> {
   const header = req.headers.get("authorization") ?? "";
@@ -173,6 +182,19 @@ export async function authenticatePartner(req: Request, store: UptimeStore): Pro
   if (!partner) return apiError(401, "unauthorized", "Unknown partner token.");
   if (partner.revoked_at) return apiError(401, "token_revoked", "This partner token was revoked.");
   const email = (req.headers.get("x-fleet-user-email") ?? "").trim().toLowerCase();
+  // X-Fleet-User-CoinPay-Sub wins over the email: the partner bound its user to
+  // that CoinPay account by sub, and crawlproof maps it through its own
+  // CoinPay identities (public.coinpay_identities). Never through an email.
+  const subHeader = req.headers.get("x-fleet-user-coinpay-sub");
+  if (subHeader !== null) {
+    const sub = subHeader.trim();
+    if (!COINPAY_SUB_RE.test(sub)) return apiError(400, "invalid_coinpay_sub", "X-Fleet-User-CoinPay-Sub is not a CoinPay account id.");
+    const userId = await store.userIdByCoinpaySub(sub);
+    if (!userId) {
+      return apiError(404, "no_crawlproof_account", "No crawlproof account is connected to this CoinPay account.", { signup_url: SIGNUP_URL });
+    }
+    return { partner, userId, email: EMAIL_RE.test(email) ? email : "" };
+  }
   if (!EMAIL_RE.test(email)) return apiError(400, "missing_user_email", "X-Fleet-User-Email must be the user's verified email.");
   const userId = await store.userIdByEmail(email);
   if (!userId) {
@@ -397,7 +419,7 @@ async function createMonitor(req: Request, ctx: PartnerCtx, deps: UptimeDeps): P
     project_id: projectId,
     ...fields,
     enabled: body.enabled ?? true,
-    alert_email: alertEmail === undefined ? (settings?.alert_email ?? ctx.email) : alertEmail,
+    alert_email: alertEmail === undefined ? (settings?.alert_email ?? (ctx.email || null)) : alertEmail,
     alert_phone: alertPhone === undefined ? (settings?.alert_phone ?? null) : alertPhone,
     due_at: new Date().toISOString(),
   });

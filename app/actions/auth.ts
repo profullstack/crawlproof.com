@@ -6,6 +6,7 @@ import { validateProfile, saveSignupProfile, type ProfileField } from "@profulls
 import { profileStore } from "@/lib/profile";
 import { cookies } from "next/headers";
 import { INVITE_COOKIE, onSignedIn } from "@/lib/creditCodes";
+import { isPlaceholderEmail } from "@/lib/coinpay-signin";
 
 type Ok<T = Record<string, unknown>> = { ok: true } & T;
 type Err = { ok: false; error: string; fieldErrors?: Partial<Record<ProfileField, string>> };
@@ -49,6 +50,9 @@ export async function signUpWithPassword(input: {
   /** An invite code (INV-…) from /i/<code>; accepted once the account exists. */
   invite?: string;
 }): Promise<(Ok<{ needsConfirmation: boolean }>) | Err> {
+  // Addresses under the CoinPay placeholder domain belong to accounts a CoinPay
+  // login created; nobody may register one with a password.
+  if (isPlaceholderEmail(input.email.trim())) return { ok: false, error: "Use a real email address." };
   const fields = { ...(input.profile ?? {}), email: input.email };
   const check = validateProfile(fields);
   if (!check.ok) {

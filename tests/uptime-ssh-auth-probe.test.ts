@@ -5,9 +5,18 @@ import { fingerprint, parsePublicKey, probeSshAuth } from "../lib/ssh-auth-probe
 
 // A real sshd stand-in: accepts `allowed` for user "deploy" and records whether
 // a client ever sent a signature or reached an authenticated session.
-const hostKey = utils.generateKeyPairSync("ed25519");
-const allowed = utils.generateKeyPairSync("ed25519", { comment: "allowed@test" });
-const other = utils.generateKeyPairSync("ed25519", { comment: "other@test" });
+// ssh2's generateKeyPairSync("ed25519") emits a private key its own parser
+// rejects ("Malformed OpenSSH private key") about 1 time in 300; retry those.
+function genKey(opts?: { comment?: string }) {
+  for (let i = 0; i < 50; i++) {
+    const k = opts ? utils.generateKeyPairSync("ed25519", opts) : utils.generateKeyPairSync("ed25519");
+    if (!(utils.parseKey(k.private) instanceof Error)) return k;
+  }
+  throw new Error("could not generate a parseable ed25519 key");
+}
+const hostKey = genKey();
+const allowed = genKey({ comment: "allowed@test" });
+const other = genKey({ comment: "other@test" });
 const allowedPub = utils.parseKey(allowed.public) as import("ssh2").ParsedKey;
 
 let server: Server;

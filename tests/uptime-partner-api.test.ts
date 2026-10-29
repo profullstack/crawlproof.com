@@ -30,6 +30,8 @@ function memoryStore() {
     ["alice@example.com", "user-a"],
     ["bob@example.com", "user-b"],
   ]);
+  // CoinPay identities: bob's crawlproof account is linked to CoinPay sub-bob.
+  const subs = new Map<string, string>([["sub-bob", "user-b"]]);
   const projects = new Map<string, string>();
   const settings = new Map<string, SettingsRow>();
   const monitors: (FleetMonitorRow & Record<string, unknown>)[] = [];
@@ -40,6 +42,9 @@ function memoryStore() {
     },
     async userIdByEmail(e) {
       return users.get(e.toLowerCase()) ?? null;
+    },
+    async userIdByCoinpaySub(sub) {
+      return subs.get(sub) ?? null;
     },
     async fleetProjectId(u) {
       if (!projects.has(u)) projects.set(u, `fleet-${u}`);
@@ -106,12 +111,13 @@ const fakeFetch = (async (url: string) => {
 let db: ReturnType<typeof memoryStore>;
 let token: string;
 
-function call(method: string, path: string, opts: { body?: unknown; email?: string | null; tok?: string | null } = {}) {
+function call(method: string, path: string, opts: { body?: unknown; email?: string | null; tok?: string | null; sub?: string } = {}) {
   const headers: Record<string, string> = { "content-type": "application/json" };
   const t = opts.tok === undefined ? token : opts.tok;
   if (t) headers.authorization = `Bearer ${t}`;
   const email = opts.email === undefined ? "Alice@Example.com" : opts.email;
   if (email) headers["x-fleet-user-email"] = email;
+  if (opts.sub !== undefined) headers["x-fleet-user-coinpay-sub"] = opts.sub;
   const req = new Request(BASE + path, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
   return handleUptimeApi(req, path.split("/").filter(Boolean), { store: db.store, fetchImpl: fakeFetch });
 }
@@ -155,6 +161,35 @@ describe("partner auth", () => {
       message: expect.any(String),
       signup_url: "https://crawlproof.com/signup",
     });
+  });
+});
+
+describe("X-Fleet-User-CoinPay-Sub", () => {
+  it("wins over the email: alice's email + bob's sub is bob's fleet", async () => {
+    await call("POST", "monitors", { body: { name: "alice-site", type: "http", target: "https://a.io" } });
+    const r = await call("GET", "monitors", { sub: "sub-bob" });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).monitors).toEqual([]);
+    const c = await call("POST", "monitors", { sub: "sub-bob", email: null, body: { name: "bob-site", type: "http", target: "https://b.io" } });
+    expect(c.status).toBe(201);
+    expect(db.monitors.find((m) => m.name === "bob-site")!.project_id).toBe("fleet-user-b");
+  });
+
+  it("works without any email; no default alert email is invented", async () => {
+    const c = await call("POST", "monitors", { sub: "sub-bob", email: null, body: { name: "b", type: "http", target: "https://b.io" } });
+    expect(c.status).toBe(201);
+    expect(((await c.json()) as any).monitor.alert_email).toBeNull();
+  });
+
+  it("an unlinked sub is no_crawlproof_account even when the email has an account", async () => {
+    const r = await call("GET", "monitors", { sub: "sub-nobody" });
+    expect(r.status).toBe(404);
+    expect(await r.json()).toMatchObject({ error: "no_crawlproof_account", signup_url: "https://crawlproof.com/signup" });
+  });
+
+  it("refuses a malformed sub", async () => {
+    expect((await call("GET", "monitors", { sub: "a b" })).status).toBe(400);
+    expect((await call("GET", "monitors", { sub: "" })).status).toBe(400);
   });
 });
 
