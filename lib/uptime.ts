@@ -8,6 +8,7 @@ import tls from "node:tls";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Resend } from "resend";
 import { probeSshAuth } from "./ssh-auth-probe";
+import { resolveSshKey } from "./uptime-keyring";
 
 export interface MonitorRow {
   id: string;
@@ -152,14 +153,21 @@ function checkSsl(m: MonitorRow): Promise<CheckResult> {
 // Up when the server would accept config.public_key for config.username. The
 // probe stops at the server's PK_OK, so it never logs in and needs no private
 // key (see lib/ssh-auth-probe.ts).
-async function checkSsh(m: MonitorRow): Promise<CheckResult> {
+export async function checkSsh(m: MonitorRow): Promise<CheckResult> {
   const { host, port } = parseHostPort(m.target, Number(m.config.port ?? 0) || 22);
   const username = String(m.config.username ?? "");
+  // Fleet monitors name a key in the user's logicsrc keyring by fingerprint:
+  // use the keyring's current key, DOWN once it is removed, the snapshot if the
+  // keyring cannot be fetched (lib/uptime-keyring.ts).
+  const key = await resolveSshKey(m.config);
+  if ("removed" in key) {
+    return { ok: false, responseMs: null, statusCode: null, error: `key ${key.removed} removed from keyring` };
+  }
   const r = await probeSshAuth({
     host,
     port,
     username,
-    publicKey: String(m.config.public_key ?? ""),
+    publicKey: key.publicKey,
     timeoutMs: m.timeout_s * 1000,
   });
   if (!r.reachable) return { ok: false, responseMs: null, statusCode: null, error: r.error };
