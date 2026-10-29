@@ -37,7 +37,7 @@ export default async function AdminLeadsPage() {
 
   const svc = serviceClient();
 
-  const [{ data: auditRows }, { data: sendRows }, { data: watchRows }] = await Promise.all([
+  const [{ data: auditRows }, { data: sendRows }, { data: watchRows }, { data: exportRows }] = await Promise.all([
     svc
       .from("audits")
       .select("pdf_email, phone, target_url, share_token, status, score, engine, summary, completed_at")
@@ -55,7 +55,14 @@ export default async function AdminLeadsPage() {
       .select("email, target_url, engine, cadence, last_score, verified_at, unsubscribed_at, last_notified_at, next_run_at")
       .order("created_at", { ascending: false })
       .limit(200),
+    svc
+      .from("lead_exports")
+      .select("email, exported_at")
+      .eq("destination", "outreachgraph")
+      .order("exported_at", { ascending: false })
+      .limit(5000),
   ]);
+  const exports = exportRows ?? [];
 
   const sends = sendRows ?? [];
   const sentSet = new Set(sends.map((s) => String(s.email ?? "").toLowerCase()));
@@ -130,10 +137,15 @@ export default async function AdminLeadsPage() {
         </Link>
       </div>
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-4">
+      <div className="mt-6 grid gap-3 sm:grid-cols-5">
         <Stat label="Captured leads" value={leads.length} hint="distinct emails from PDF requests" />
         <Stat label="Campaign sent" value={sends.length} hint={CAMPAIGN_ID} />
         <Stat label="Confirmed watches" value={confirmedWatches.length} hint={`${watches.length} total`} />
+        <Stat
+          label="In OutreachGraph"
+          value={exports.length}
+          hint={exports[0] ? `last ${fmt(exports[0].exported_at as string)}; companies flow on to nichedb` : "every 15 min once OUTREACHGRAPH_API_KEY is set"}
+        />
         <Stat
           label="Unsubscribed"
           value={leads.filter((l) => l.unsubscribedAt).length}
