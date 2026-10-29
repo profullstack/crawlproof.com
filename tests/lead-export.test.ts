@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { hostOf, pushToOutreachGraph, readAll, selectExports, type ScanLead } from "@/lib/leadExport";
+import {
+  hostOf,
+  pushToOutreachGraph,
+  readAll,
+  selectExports,
+  selectSuppressions,
+  suppressInOutreachGraph,
+  type ScanLead,
+} from "@/lib/leadExport";
 
 const lead = (over: Partial<ScanLead> = {}): ScanLead => ({
   email: "Ann@Acme.com",
@@ -117,5 +125,40 @@ describe("readAll", () => {
 
   it("throws on a query error rather than returning a short list", async () => {
     await expect(readAll(async () => ({ data: null, error: { message: "boom" } }))).rejects.toThrow("boom");
+  });
+});
+
+describe("suppressions", () => {
+  it("passes on each unsubscribe once, exported or not", () => {
+    const out = selectSuppressions(
+      [
+        lead({ email: "Gone@X.io", unsubscribedAt: "2026-10-01" }),
+        lead({ email: "gone@x.io", unsubscribedAt: "2026-10-02" }),
+        lead({ email: "told@x.io", unsubscribedAt: "2026-10-01" }),
+        lead({ email: "stays@x.io" }),
+      ],
+      new Set(["told@x.io"]),
+    );
+    expect(out).toEqual(["gone@x.io"]);
+  });
+
+  it("posts one workspace suppression with email match keys", async () => {
+    let sent: any;
+    const fakeFetch = (async (url: string, init: RequestInit) => {
+      sent = { url, body: JSON.parse(String(init.body)) };
+      return new Response(JSON.stringify({ suppressionId: "sup_1" }), { status: 201 });
+    }) as unknown as typeof fetch;
+    const id = await suppressInOutreachGraph(["a@x.io", "b@y.io"], {
+      apiUrl: "https://og.test/api/v1",
+      apiKey: "k",
+      fetch: fakeFetch,
+    });
+    expect(id).toBe("sup_1");
+    expect(sent.url).toBe("https://og.test/api/v1/suppressions");
+    expect(sent.body).toEqual({
+      matchKeys: ["email:a@x.io", "email:b@y.io"],
+      reason: "consumer_opt_out",
+      scope: "workspace",
+    });
   });
 });

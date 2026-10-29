@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
 import {
   LEAD_EXPORT_DESTINATION,
+  LEAD_SUPPRESSION_DESTINATION,
   pushToOutreachGraph,
   readAll,
   selectExports,
+  selectSuppressions,
+  suppressInOutreachGraph,
   type ScanLead,
 } from "@/lib/leadExport";
 import { env } from "@/lib/env";
@@ -17,9 +20,9 @@ export async function GET(req: Request) {
 }
 
 /**
- * Sends scan leads OutreachGraph has not had yet. Idempotent: lead_exports
- * records every address sent, so a tick with nothing new does nothing and a
- * failed push is retried on the next one.
+ * Sends scan leads OutreachGraph has not had yet, and every unsubscribe as an
+ * OutreachGraph suppression. Idempotent: lead_exports records both, so a tick
+ * with nothing new does nothing and a failed push is retried on the next one.
  */
 export async function POST(req: Request) {
   const incoming =
@@ -35,7 +38,7 @@ export async function POST(req: Request) {
   const svc = serviceClient();
   let audits: Array<{ pdf_email: string | null; target_url: string | null }>;
   let contacts: Array<{ email: string; unsubscribed_at: string | null; consented_at: string | null }>;
-  let exported: Array<{ email: string }>;
+  let exported: Array<{ email: string; destination: string }>;
   try {
     // Whole tables, paged: both outgrow PostgREST's 1,000-row answer.
     [audits, contacts, exported] = await Promise.all([
@@ -55,20 +58,19 @@ export async function POST(req: Request) {
           .order("email", { ascending: true })
           .range(from, to),
       ),
-      readAll<{ email: string }>((from, to) =>
+      readAll<{ email: string; destination: string }>((from, to) =>
         svc
           .from("lead_exports")
-          .select("email")
-          .eq("destination", LEAD_EXPORT_DESTINATION)
+          .select("email, destination")
+          .in("destination", [LEAD_EXPORT_DESTINATION, LEAD_SUPPRESSION_DESTINATION])
           .order("email", { ascending: true })
+          .order("destination", { ascending: true })
           .range(from, to),
       ),
     ]);
   } catch (err) {
     return NextResponse.json({ ok: false, error: String((err as Error).message ?? err) }, { status: 500 });
   }
-  if (audits.length === 0) return NextResponse.json({ ok: true, exported: 0 });
-
   const cMap = new Map(contacts.map((c) => [String(c.email).toLowerCase(), c]));
   const leads: ScanLead[] = audits.map((a) => {
     const email = String(a.pdf_email ?? "").trim().toLowerCase();
@@ -80,14 +82,42 @@ export async function POST(req: Request) {
       consentedAt: c?.consented_at ?? null,
     };
   });
-  const done = new Set(exported.map((r) => String(r.email).toLowerCase()));
-  const rows = selectExports(leads, done);
-  if (rows.length === 0) return NextResponse.json({ ok: true, exported: 0 });
+  const sent = (dest: string) =>
+    new Set(exported.filter((r) => r.destination === dest).map((r) => String(r.email).toLowerCase()));
+  const rows = selectExports(leads, sent(LEAD_EXPORT_DESTINATION));
+  // Every opt-out, not only scan leads': an unsubscribe from us holds there too.
+  const unsubscribed = selectSuppressions(
+    contacts.map((c) => ({
+      email: c.email,
+      targetUrl: null,
+      unsubscribedAt: c.unsubscribed_at,
+      consentedAt: c.consented_at,
+    })),
+    sent(LEAD_SUPPRESSION_DESTINATION),
+  );
+  const og = { apiUrl: env.outreachgraphApiUrl, apiKey: env.outreachgraphApiKey };
 
   try {
+    // Suppress first: an address that both opted out and is new must never
+    // reach OutreachGraph unsuppressed, even if the import below fails.
+    let suppressed = 0;
+    if (unsubscribed.length > 0) {
+      const suppressionId = await suppressInOutreachGraph(unsubscribed, og);
+      const { error: supErr } = await svc.from("lead_exports").upsert(
+        unsubscribed.map((email) => ({
+          email,
+          destination: LEAD_SUPPRESSION_DESTINATION,
+          import_id: suppressionId,
+        })),
+        { onConflict: "email,destination" },
+      );
+      if (supErr) throw new Error(`recording suppressions failed: ${supErr.message}`);
+      suppressed = unsubscribed.length;
+    }
+    if (rows.length === 0) return NextResponse.json({ ok: true, exported: 0, suppressed });
+
     const imports = await pushToOutreachGraph(rows, {
-      apiUrl: env.outreachgraphApiUrl,
-      apiKey: env.outreachgraphApiKey,
+      ...og,
     });
     const byEmail = new Map(rows.map((r) => [r.email, r]));
     const records = imports.flatMap((imp) =>
@@ -100,7 +130,12 @@ export async function POST(req: Request) {
     );
     const { error: recErr } = await svc.from("lead_exports").upsert(records, { onConflict: "email,destination" });
     if (recErr) throw new Error(`recording exports failed: ${recErr.message}`);
-    return NextResponse.json({ ok: true, exported: records.length, imports: imports.map((i) => i.importId) });
+    return NextResponse.json({
+      ok: true,
+      exported: records.length,
+      suppressed,
+      imports: imports.map((i) => i.importId),
+    });
   } catch (err) {
     console.error("[cron/lead-export]", err);
     return NextResponse.json({ ok: false, error: String((err as Error).message ?? err) }, { status: 502 });
