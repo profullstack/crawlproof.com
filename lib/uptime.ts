@@ -1,5 +1,5 @@
 // Uptime monitoring engine (uptime-monitoring-prd.md §3–§7). Runs due checks
-// (HTTP / keyword / SSL / TCP), advances the up/down state machine with
+// (HTTP / SSH login / keyword / SSL / TCP), advances the up/down state machine with
 // multi-failure confirmation, opens/closes incidents, and sends down/recovery
 // email alerts (plus a phone call via smshub when alert_phone is set). Called
 // from worker/index.ts on a short interval.
@@ -7,12 +7,13 @@ import net from "node:net";
 import tls from "node:tls";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Resend } from "resend";
+import { probeSshAuth } from "./ssh-auth-probe";
 
 export interface MonitorRow {
   id: string;
   project_id: string;
   name: string;
-  type: "http" | "keyword" | "ssl" | "tcp";
+  type: "http" | "ssh" | "keyword" | "ssl" | "tcp";
   target: string;
   config: Record<string, unknown>;
   interval_s: number;
@@ -148,6 +149,28 @@ function checkSsl(m: MonitorRow): Promise<CheckResult> {
   });
 }
 
+// Up when the server would accept config.public_key for config.username. The
+// probe stops at the server's PK_OK, so it never logs in and needs no private
+// key (see lib/ssh-auth-probe.ts).
+async function checkSsh(m: MonitorRow): Promise<CheckResult> {
+  const { host, port } = parseHostPort(m.target, Number(m.config.port ?? 0) || 22);
+  const username = String(m.config.username ?? "");
+  const r = await probeSshAuth({
+    host,
+    port,
+    username,
+    publicKey: String(m.config.public_key ?? ""),
+    timeoutMs: m.timeout_s * 1000,
+  });
+  if (!r.reachable) return { ok: false, responseMs: null, statusCode: null, error: r.error };
+  return {
+    ok: r.accepted,
+    responseMs: r.responseMs,
+    statusCode: null,
+    error: r.accepted ? null : `key rejected for ${username}@${host}`,
+  };
+}
+
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
@@ -162,6 +185,8 @@ function runCheck(m: MonitorRow): Promise<CheckResult> {
     case "http":
     case "keyword":
       return checkHttp(m);
+    case "ssh":
+      return checkSsh(m);
     case "tcp":
       return checkTcp(m);
     case "ssl":

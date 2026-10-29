@@ -4,10 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createMonitor, type CreateMonitorInput } from "@/app/actions/monitors";
 
-type MonitorType = "http" | "keyword" | "ssl" | "tcp";
+type MonitorType = "http" | "ssh" | "keyword" | "ssl" | "tcp";
 
 const TYPE_HINT: Record<MonitorType, string> = {
   http: "URL to request — up when it returns 2xx/3xx.",
+  ssh: "host or host:port — up while the server would accept the public key below. We never log in.",
   keyword: "URL + a keyword that must appear (or not) in the response body.",
   ssl: "Host — alerts when the TLS cert nears expiry.",
   tcp: "host:port — up when the port accepts a connection.",
@@ -41,6 +42,8 @@ export function AddMonitorForm({
       alertEmail: String(formData.get("alertEmail") ?? ""),
       keyword: String(formData.get("keyword") ?? ""),
       match: (String(formData.get("match") ?? "present") as "present" | "absent"),
+      username: String(formData.get("username") ?? ""),
+      publicKey: String(formData.get("publicKey") ?? ""),
     };
     start(async () => {
       const res = await createMonitor(input);
@@ -78,6 +81,7 @@ export function AddMonitorForm({
             className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm"
           >
             <option value="http">HTTP(S)</option>
+            <option value="ssh">SSH login</option>
             <option value="keyword">Keyword</option>
             <option value="ssl">SSL expiry</option>
             <option value="tcp">TCP port</option>
@@ -101,11 +105,52 @@ export function AddMonitorForm({
           name="target"
           required
           defaultValue={defaultTarget}
-          placeholder={type === "tcp" ? "db.example.com:5432" : type === "ssl" ? "example.com" : "https://example.com"}
+          placeholder={
+            type === "tcp"
+              ? "db.example.com:5432"
+              : type === "ssh"
+                ? "server.example.com:22"
+                : type === "ssl"
+                  ? "example.com"
+                  : "https://example.com"
+          }
           className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm font-mono"
         />
         <span className="text-[var(--color-muted)]">{TYPE_HINT[type]}</span>
       </label>
+
+      {type === "ssh" && (
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-[var(--color-muted)]">Username</span>
+            <input
+              name="username"
+              required
+              placeholder="root"
+              autoComplete="off"
+              className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm font-mono"
+            />
+            <span className="text-[var(--color-muted)]">
+              Must exist on the host. An unknown user shows up as &quot;Invalid user&quot; in its auth log.
+            </span>
+          </label>
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-[var(--color-muted)]">Public key</span>
+            <textarea
+              name="publicKey"
+              required
+              rows={3}
+              spellCheck={false}
+              placeholder="ssh-ed25519 AAAAC3Nza… you@laptop"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 font-mono text-xs"
+            />
+            <span className="text-[var(--color-muted)]">
+              Paste the .pub file. We ask the server whether it would accept this key and hang up
+              before signing, so no private key is needed and no session is opened.
+            </span>
+          </label>
+        </div>
+      )}
 
       {type === "keyword" && (
         <div className="flex flex-wrap gap-3">
