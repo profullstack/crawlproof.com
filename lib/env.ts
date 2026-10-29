@@ -222,5 +222,11 @@ export const env = {
   redditOutreachSubredditCap: Number(
     process.env.REDDIT_OUTREACH_SUBREDDIT_CAP ?? "3",
   ),
+  // ---- Lead export ----
+  // Scan leads (PDF requests) go to OutreachGraph as contacts, scanned sites
+  // as their companies; nichedb reads companies from OutreachGraph's public
+  // directory. An og_live_ workspace key; unset means the export is off.
+  outreachgraphApiUrl: process.env.OUTREACHGRAPH_API_URL ?? "https://outreachgraph.com/api/v1",
+  outreachgraphApiKey: process.env.OUTREACHGRAPH_API_KEY ?? "",
   required,
 };
