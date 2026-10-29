@@ -72,6 +72,44 @@ export function selectExports(leads: ScanLead[], alreadyExported: Set<string>): 
   return out;
 }
 
+/** lead_exports destination for an unsubscribe already passed on as a suppression. */
+export const LEAD_SUPPRESSION_DESTINATION = "outreachgraph:suppressed";
+
+/**
+ * Addresses that unsubscribed here and OutreachGraph has not been told
+ * about. Includes ones never exported: OutreachGraph may know them from
+ * elsewhere, and an opt-out from us should hold there too.
+ */
+export function selectSuppressions(leads: ScanLead[], alreadySuppressed: Set<string>): string[] {
+  const out = new Set<string>();
+  for (const lead of leads) {
+    const email = lead.email.trim().toLowerCase();
+    if (lead.unsubscribedAt && EMAIL.test(email) && !alreadySuppressed.has(email)) out.add(email);
+  }
+  return [...out];
+}
+
+/** One workspace suppression carrying every address as an `email:` match key. */
+export async function suppressInOutreachGraph(
+  emails: string[],
+  opts: { apiUrl: string; apiKey: string; fetch?: typeof fetch },
+): Promise<string | null> {
+  if (emails.length === 0) return null;
+  const res = await (opts.fetch ?? fetch)(`${opts.apiUrl.replace(/\/$/, "")}/suppressions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${opts.apiKey}` },
+    body: JSON.stringify({
+      matchKeys: emails.map((e) => `email:${e}`),
+      reason: "consumer_opt_out",
+      scope: "workspace",
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`OutreachGraph /suppressions answered ${res.status}: ${text.slice(0, 200)}`);
+  return String((JSON.parse(text) as { suppressionId?: string }).suppressionId ?? "");
+}
+
 type Page<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
 
 /**
