@@ -604,6 +604,7 @@ async function fetchOrgTeam(
     isOwner: result.isOwner,
     members: result.members,
     invitations: result.invitations,
+    projects: result.projects,
   };
 }
 

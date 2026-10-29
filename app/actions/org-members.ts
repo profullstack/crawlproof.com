@@ -161,39 +161,231 @@ export async function removeOrgMember(
   const ctx = await requireOrgOwner(orgId);
   if (!ctx.ok) return { ok: false, error: ctx.error };
 
-  // Never remove an owner row via this path — owners leave by deleting or
-  // transferring the org, not by being kicked from the member list.
-  const { count } = await ctx.svc
+  const { data: target } = await ctx.svc
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!target || target.role === "owner") {
+    return { ok: false, error: "This member can't be removed here." };
+  }
+
+  if (target.role === "project_member") {
+    const { data: projects, error: projectsError } = await ctx.svc
+      .from("projects")
+      .select("id")
+      .eq("organization_id", orgId);
+    if (projectsError) return { ok: false, error: projectsError.message };
+
+    const projectIds = (projects ?? []).map((project) => project.id);
+    if (projectIds.length > 0) {
+      const { error: grantsError } = await ctx.svc
+        .from("project_members")
+        .delete()
+        .eq("user_id", userId)
+        .in("project_id", projectIds);
+      if (grantsError) return { ok: false, error: grantsError.message };
+    }
+
+    const { error } = await ctx.svc
+      .from("organization_members")
+      .delete()
+      .eq("organization_id", orgId)
+      .eq("user_id", userId)
+      .eq("role", "project_member");
+    if (error) return { ok: false, error: error.message };
+
+    await ctx.svc
+      .from("profiles")
+      .update({ default_org_id: null })
+      .eq("id", userId)
+      .eq("default_org_id", orgId);
+  } else {
+    const { count, error: countError } = await ctx.svc
+      .from("project_members")
+      .select("id, projects!inner(organization_id)", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("projects.organization_id", orgId);
+    if (countError) return { ok: false, error: countError.message };
+
+    const { error } = count && count > 0
+      ? await ctx.svc
+          .from("organization_members")
+          .update({ role: "project_member" })
+          .eq("organization_id", orgId)
+          .eq("user_id", userId)
+          .in("role", ["member", "viewer"])
+      : await ctx.svc
+          .from("organization_members")
+          .delete()
+          .eq("organization_id", orgId)
+          .eq("user_id", userId)
+          .in("role", ["member", "viewer"]);
+    if (error) return { ok: false, error: error.message };
+
+    if (!count) {
+      await ctx.svc
+        .from("profiles")
+        .update({ default_org_id: null })
+        .eq("id", userId)
+        .eq("default_org_id", orgId);
+    }
+  }
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function setOrgProjectMemberRole(
+  orgId: string,
+  projectId: string,
+  userId: string,
+  role: OrgInviteRole,
+): Promise<{ ok: boolean; error?: string }> {
+  if (role !== "member" && role !== "viewer") {
+    return { ok: false, error: "Invalid role." };
+  }
+  const ctx = await requireOrgOwner(orgId);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const { data: project } = await ctx.svc
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found in this org." };
+
+  const { data: membership } = await ctx.svc
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (membership?.role !== "project_member") {
+    return { ok: false, error: "This person doesn't have project-only access." };
+  }
+
+  const { data: updated, error } = await ctx.svc
+    .from("project_members")
+    .update({ role })
+    .eq("project_id", projectId)
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!updated) return { ok: false, error: "Project access not found." };
+
+  revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/projects/${projectId}/members`);
+  return { ok: true };
+}
+
+export async function grantOrgProjectMember(
+  orgId: string,
+  projectId: string,
+  userId: string,
+  role: OrgInviteRole,
+): Promise<{ ok: boolean; error?: string }> {
+  if (role !== "member" && role !== "viewer") {
+    return { ok: false, error: "Invalid role." };
+  }
+  const ctx = await requireOrgOwner(orgId);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const { data: project } = await ctx.svc
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found in this org." };
+
+  const { data: membership } = await ctx.svc
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (membership?.role !== "project_member") {
+    return { ok: false, error: "This person doesn't have project-only access." };
+  }
+
+  const { error } = await ctx.svc.from("project_members").upsert(
+    {
+      project_id: projectId,
+      user_id: userId,
+      invited_by: ctx.user.id,
+      role,
+    },
+    { onConflict: "project_id,user_id" },
+  );
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/projects/${projectId}/members`);
+  return { ok: true };
+}
+
+export async function removeOrgProjectMember(
+  orgId: string,
+  projectId: string,
+  userId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const ctx = await requireOrgOwner(orgId);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const { data: project } = await ctx.svc
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (!project) return { ok: false, error: "Project not found in this org." };
+
+  const { data: membership } = await ctx.svc
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (membership?.role !== "project_member") {
+    return { ok: false, error: "This person doesn't have project-only access." };
+  }
+
+  const { error } = await ctx.svc
+    .from("project_members")
+    .delete()
+    .eq("project_id", projectId)
+    .eq("user_id", userId);
+  if (error) return { ok: false, error: error.message };
+
+  const { count, error: countError } = await ctx.svc
     .from("project_members")
     .select("id, projects!inner(organization_id)", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("projects.organization_id", orgId);
+  if (countError) return { ok: false, error: countError.message };
 
-  const { error } = count && count > 0
-    ? await ctx.svc
-        .from("organization_members")
-        .update({ role: "project_member" })
-        .eq("organization_id", orgId)
-        .eq("user_id", userId)
-        .in("role", ["member", "viewer"])
-    : await ctx.svc
-        .from("organization_members")
-        .delete()
-        .eq("organization_id", orgId)
-        .eq("user_id", userId)
-        .in("role", ["member", "viewer"]);
+  if (!count) {
+    const { error: memberError } = await ctx.svc
+      .from("organization_members")
+      .delete()
+      .eq("organization_id", orgId)
+      .eq("user_id", userId)
+      .eq("role", "project_member");
+    if (memberError) return { ok: false, error: memberError.message };
 
-  if (error) return { ok: false, error: error.message };
-
-  // Drop their default_org_id if it pointed at this org so they fall back
-  // to a workspace they still belong to on next dashboard load.
-  await ctx.svc
-    .from("profiles")
-    .update({ default_org_id: null })
-    .eq("id", userId)
-    .eq("default_org_id", orgId);
+    await ctx.svc
+      .from("profiles")
+      .update({ default_org_id: null })
+      .eq("id", userId)
+      .eq("default_org_id", orgId);
+  }
 
   revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/projects/${projectId}/members`);
   return { ok: true };
 }
 
@@ -228,6 +420,7 @@ export type OrgTeamMember = {
   role: OrgRole;
   created_at: string;
   profile: { id: string; email: string; display_name: string } | null;
+  project_access: OrgProjectAccess[];
 };
 
 export type OrgPendingInvitation = {
@@ -238,6 +431,17 @@ export type OrgPendingInvitation = {
   created_at: string;
 };
 
+export type OrgProjectAccess = {
+  project_id: string;
+  project_name: string;
+  role: OrgInviteRole;
+};
+
+export type OrgAvailableProject = {
+  id: string;
+  name: string;
+};
+
 export async function listOrgTeam(orgId: string): Promise<
   | { ok: false; error: string }
   | {
@@ -245,6 +449,7 @@ export async function listOrgTeam(orgId: string): Promise<
       isOwner: boolean;
       members: OrgTeamMember[];
       invitations: OrgPendingInvitation[];
+      projects: OrgAvailableProject[];
     }
 > {
   const supabase = await createClient();
@@ -278,6 +483,35 @@ export async function listOrgTeam(orgId: string): Promise<
           .in("id", userIds)
       : { data: [] as Array<{ id: string; email: string; display_name: string }> };
 
+  const { data: projectAccessRaw } = await svc
+    .from("project_members")
+    .select("user_id, project_id, role, projects!inner(name, organization_id)")
+    .eq("projects.organization_id", orgId)
+    .order("created_at", { ascending: true });
+  type ProjectAccessRow = {
+    user_id: string;
+    project_id: string;
+    role: string;
+    projects:
+      | { name: string; organization_id: string }
+      | { name: string; organization_id: string }[]
+      | null;
+  };
+  const projectAccessByUser = new Map<string, OrgProjectAccess[]>();
+  for (const row of (projectAccessRaw ?? []) as unknown as ProjectAccessRow[]) {
+    const project = Array.isArray(row.projects)
+      ? row.projects[0] ?? null
+      : row.projects;
+    if (!project) continue;
+    const access = projectAccessByUser.get(row.user_id) ?? [];
+    access.push({
+      project_id: row.project_id,
+      project_name: project.name,
+      role: row.role === "viewer" ? "viewer" : "member",
+    });
+    projectAccessByUser.set(row.user_id, access);
+  }
+
   const members: OrgTeamMember[] = (membersRaw ?? []).map(
     (m: { id: string; user_id: string; role: OrgRole; created_at: string }) => ({
       id: m.id,
@@ -288,10 +522,19 @@ export async function listOrgTeam(orgId: string): Promise<
         (profilesRaw ?? []).find(
           (p: { id: string }) => p.id === m.user_id,
         ) ?? null,
+      project_access: projectAccessByUser.get(m.user_id) ?? [],
     }),
   );
 
   const isOwner = callerMembership.role === "owner";
+
+  const { data: projectsRaw } = isOwner
+    ? await svc
+        .from("projects")
+        .select("id, name")
+        .eq("organization_id", orgId)
+        .order("name", { ascending: true })
+    : { data: [] as OrgAvailableProject[] };
 
   const { data: invitationsRaw } = isOwner
     ? await svc
@@ -307,5 +550,6 @@ export async function listOrgTeam(orgId: string): Promise<
     isOwner,
     members,
     invitations: invitationsRaw ?? [],
+    projects: projectsRaw ?? [],
   };
 }

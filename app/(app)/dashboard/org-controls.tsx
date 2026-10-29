@@ -13,12 +13,17 @@ import {
   setDefaultOrganization,
 } from "@/app/actions/orgs";
 import {
+  grantOrgProjectMember,
   inviteOrgMember,
   removeOrgMember,
+  removeOrgProjectMember,
   revokeOrgInvitation,
+  setOrgProjectMemberRole,
   setOrgMemberRole,
   type OrgInviteRole,
+  type OrgAvailableProject,
   type OrgPendingInvitation,
+  type OrgProjectAccess,
   type OrgTeamMember,
 } from "@/app/actions/org-members";
 
@@ -32,6 +37,7 @@ export type DashboardOrgTeam = {
   isOwner: boolean;
   members: OrgTeamMember[];
   invitations: OrgPendingInvitation[];
+  projects: OrgAvailableProject[];
 };
 
 export type DashboardSenderConfig = {
@@ -170,6 +176,7 @@ export function OrgDashboardControls({
           isOwner={orgTeam.isOwner}
           members={orgTeam.members}
           invitations={orgTeam.invitations}
+          projects={orgTeam.projects}
         />
       )}
 
@@ -259,11 +266,13 @@ function OrgMembersPanel({
   isOwner,
   members,
   invitations,
+  projects,
 }: {
   orgId: string;
   isOwner: boolean;
   members: OrgTeamMember[];
   invitations: OrgPendingInvitation[];
+  projects: OrgAvailableProject[];
 }) {
   return (
     <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
@@ -276,7 +285,13 @@ function OrgMembersPanel({
 
         <ul className="divide-y divide-[var(--color-border)] rounded-md border border-[var(--color-border)]">
           {members.map((m) => (
-            <OrgMemberRow key={m.id} orgId={orgId} member={m} isOwner={isOwner} />
+            <OrgMemberRow
+              key={m.id}
+              orgId={orgId}
+              member={m}
+              isOwner={isOwner}
+              projects={projects}
+            />
           ))}
         </ul>
 
@@ -361,33 +376,56 @@ function OrgMemberRow({
   orgId,
   member,
   isOwner,
+  projects,
 }: {
   orgId: string;
   member: OrgTeamMember;
   isOwner: boolean;
+  projects: OrgAvailableProject[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
   const label =
     member.profile?.display_name || member.profile?.email || "Unknown user";
   const sub = member.profile?.display_name
     ? member.profile.email
     : new Date(member.created_at).toLocaleDateString();
   const isViewer = member.role === "viewer";
-  // Owners can manage full members and read-only viewers (not other owners
-  // or project-access markers).
-  const manageable = member.role === "member" || member.role === "viewer";
+  const isProjectMember = member.role === "project_member";
+  const manageable =
+    member.role === "member" || member.role === "viewer" || isProjectMember;
 
   function remove() {
+    if (
+      isProjectMember &&
+      !window.confirm(`Revoke this person's access to ${member.project_access.length} project(s)?`)
+    ) {
+      return;
+    }
+    setMessage(null);
     startTransition(async () => {
-      await removeOrgMember(orgId, member.user_id);
+      const result = await removeOrgMember(orgId, member.user_id);
+      if (!result.ok) {
+        setMessage(result.error ?? "Could not remove this member.");
+        return;
+      }
       router.refresh();
     });
   }
 
   function toggleRole() {
+    setMessage(null);
     startTransition(async () => {
-      await setOrgMemberRole(orgId, member.user_id, isViewer ? "member" : "viewer");
+      const result = await setOrgMemberRole(
+        orgId,
+        member.user_id,
+        isViewer ? "member" : "viewer",
+      );
+      if (!result.ok) {
+        setMessage(result.error ?? "Could not update this member.");
+        return;
+      }
       router.refresh();
     });
   }
@@ -411,25 +449,195 @@ function OrgMemberRow({
       </div>
       {isOwner && manageable && (
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={toggleRole}
-            disabled={pending}
-            className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)] disabled:opacity-50"
-          >
-            {pending ? "Saving…" : isViewer ? "Make editor" : "Make read-only"}
-          </button>
+          {!isProjectMember && (
+            <button
+              type="button"
+              onClick={toggleRole}
+              disabled={pending}
+              className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)] disabled:opacity-50"
+            >
+              {pending ? "Saving…" : isViewer ? "Make editor" : "Make read-only"}
+            </button>
+          )}
           <button
             type="button"
             onClick={remove}
             disabled={pending}
             className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
-            {pending ? "Removing…" : "Remove"}
+            {pending ? "Removing…" : isProjectMember ? "Revoke all access" : "Remove org access"}
           </button>
         </div>
       )}
+      {isOwner && isProjectMember && (
+        <div className="basis-full">
+          <OrgProjectAccessManager
+            orgId={orgId}
+            userId={member.user_id}
+            projectAccess={member.project_access}
+            availableProjects={projects}
+          />
+        </div>
+      )}
+      {message && <p className="basis-full text-sm text-red-600">{message}</p>}
     </li>
+  );
+}
+
+function OrgProjectAccessManager({
+  orgId,
+  userId,
+  projectAccess,
+  availableProjects,
+}: {
+  orgId: string;
+  userId: string;
+  projectAccess: OrgProjectAccess[];
+  availableProjects: OrgAvailableProject[];
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState("");
+  const [role, setRole] = useState<OrgInviteRole>("member");
+  const unassignedProjects = availableProjects.filter(
+    (project) => !projectAccess.some((access) => access.project_id === project.id),
+  );
+
+  function grantProjectAccess(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    startTransition(async () => {
+      const result = await grantOrgProjectMember(orgId, projectId, userId, role);
+      if (!result.ok) {
+        setMessage(result.error ?? "Could not grant project access.");
+        return;
+      }
+      setProjectId("");
+      router.refresh();
+    });
+  }
+
+  function toggleRole(access: OrgProjectAccess) {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await setOrgProjectMemberRole(
+        orgId,
+        access.project_id,
+        userId,
+        access.role === "viewer" ? "member" : "viewer",
+      );
+      if (!result.ok) {
+        setMessage(result.error ?? "Could not update project access.");
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function removeProjectAccess(access: OrgProjectAccess) {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await removeOrgProjectMember(
+        orgId,
+        access.project_id,
+        userId,
+      );
+      if (!result.ok) {
+        setMessage(result.error ?? "Could not remove project access.");
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <details className="rounded-md border border-[var(--color-border)] px-3 py-2">
+      <summary className="cursor-pointer text-xs font-medium">
+        Manage project access ({projectAccess.length})
+      </summary>
+      {projectAccess.length > 0 ? (
+        <ul className="mt-2 divide-y divide-[var(--color-border)]">
+          {projectAccess.map((access) => (
+            <li
+              key={access.project_id}
+              className="flex flex-wrap items-center justify-between gap-2 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm">{access.project_name}</p>
+                <p className="text-xs text-[var(--color-muted)]">
+                  {access.role === "viewer" ? "Read-only" : "Can edit"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => toggleRole(access)}
+                  disabled={pending}
+                  className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)] disabled:opacity-50"
+                >
+                  {pending
+                    ? "Saving…"
+                    : access.role === "viewer"
+                      ? "Make editor"
+                      : "Make read-only"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeProjectAccess(access)}
+                  disabled={pending}
+                  className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {pending ? "Removing…" : "Revoke"}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          No project grants found.
+        </p>
+      )}
+      {unassignedProjects.length > 0 && (
+        <form
+          onSubmit={grantProjectAccess}
+          className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-3"
+        >
+          <select
+            value={projectId}
+            onChange={(event) => setProjectId(event.target.value)}
+            aria-label="Project to grant access to"
+            required
+            className="min-w-48 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-2 text-sm"
+          >
+            <option value="">Choose project…</option>
+            {unassignedProjects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={role}
+            onChange={(event) => setRole(event.target.value as OrgInviteRole)}
+            aria-label="Project access level"
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-2 text-sm"
+          >
+            <option value="member">Can edit</option>
+            <option value="viewer">Read-only</option>
+          </select>
+          <button
+            type="submit"
+            disabled={pending || !projectId}
+            className="btn btn-secondary text-sm"
+          >
+            {pending ? "Saving…" : "Grant access"}
+          </button>
+        </form>
+      )}
+      {message && <p className="mt-2 text-sm text-red-600">{message}</p>}
+    </details>
   );
 }
 
