@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hostOf, pushToOutreachGraph, selectExports, type ScanLead } from "@/lib/leadExport";
+import { hostOf, pushToOutreachGraph, readAll, selectExports, type ScanLead } from "@/lib/leadExport";
 
 const lead = (over: Partial<ScanLead> = {}): ScanLead => ({
   email: "Ann@Acme.com",
@@ -100,5 +100,22 @@ describe("pushToOutreachGraph", () => {
         fetch: fakeFetch,
       }),
     ).rejects.toThrow(/401/);
+  });
+});
+
+describe("readAll", () => {
+  it("pages past PostgREST's 1,000-row answer", async () => {
+    const table = Array.from({ length: 2345 }, (_, i) => i);
+    const ranges: Array<[number, number]> = [];
+    const rows = await readAll<number>(async (from, to) => {
+      ranges.push([from, to]);
+      return { data: table.slice(from, Math.min(to + 1, from + 1000)), error: null };
+    });
+    expect(rows).toHaveLength(2345);
+    expect(ranges).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
+  });
+
+  it("throws on a query error rather than returning a short list", async () => {
+    await expect(readAll(async () => ({ data: null, error: { message: "boom" } }))).rejects.toThrow("boom");
   });
 });

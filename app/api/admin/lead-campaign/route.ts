@@ -13,6 +13,7 @@ import {
   type Segment,
 } from "@/lib/leadCampaign";
 import { env } from "@/lib/env";
+import { readAll } from "@/lib/leadExport";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -55,15 +56,17 @@ async function loadAudience(): Promise<LeadRow[]> {
 
   // Every completed scan that captured an email, newest first — the first row
   // per address therefore carries their most recent report.
-  const { data: audits } = await svc
-    .from("audits")
-    .select("pdf_email, target_url, share_token, status, score, engine, summary, id, completed_at")
-    .not("pdf_email", "is", null)
-    .eq("status", "complete")
-    .order("completed_at", { ascending: false })
-    .limit(2000);
-
-  const rows = (audits ?? []) as Array<Record<string, unknown>>;
+  // Paged: PostgREST answers at most 1,000 rows.
+  const rows = await readAll<Record<string, unknown>>((from, to) =>
+    svc
+      .from("audits")
+      .select("pdf_email, target_url, share_token, status, score, engine, summary, id, completed_at")
+      .not("pdf_email", "is", null)
+      .eq("status", "complete")
+      .order("completed_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   const emails = Array.from(
     new Set(rows.map((r) => String(r.pdf_email ?? "").trim().toLowerCase()).filter(Boolean)),
   );

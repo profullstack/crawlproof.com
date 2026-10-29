@@ -9,6 +9,7 @@ import {
   type LeadRow,
   type Segment,
 } from "@/lib/leadCampaign";
+import { LEAD_EXPORT_DESTINATION, readAll } from "@/lib/leadExport";
 
 export const metadata = { title: "Leads", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -37,14 +38,19 @@ export default async function AdminLeadsPage() {
 
   const svc = serviceClient();
 
-  const [{ data: auditRows }, { data: sendRows }, { data: watchRows }, { data: exportRows }] = await Promise.all([
-    svc
-      .from("audits")
-      .select("pdf_email, phone, target_url, share_token, status, score, engine, summary, completed_at")
-      .not("pdf_email", "is", null)
-      .eq("status", "complete")
-      .order("completed_at", { ascending: false })
-      .limit(2000),
+  const [auditRows, { data: sendRows }, { data: watchRows }, { data: exportRows, count: exportCount }] = await Promise.all([
+    // Paged: PostgREST answers at most 1,000 rows, and the oldest leads were
+    // falling off the end of a single read.
+    readAll<Record<string, unknown>>((from, to) =>
+      svc
+        .from("audits")
+        .select("pdf_email, phone, target_url, share_token, status, score, engine, summary, completed_at")
+        .not("pdf_email", "is", null)
+        .eq("status", "complete")
+        .order("completed_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     svc
       .from("campaign_sends")
       .select("email, subject, sent_at, campaign")
@@ -57,19 +63,19 @@ export default async function AdminLeadsPage() {
       .limit(200),
     svc
       .from("lead_exports")
-      .select("email, exported_at")
-      .eq("destination", "outreachgraph")
+      .select("exported_at", { count: "exact" })
+      .eq("destination", LEAD_EXPORT_DESTINATION)
       .order("exported_at", { ascending: false })
-      .limit(5000),
+      .limit(1),
   ]);
-  const exports = exportRows ?? [];
+  const lastExport = (exportRows?.[0]?.exported_at as string | undefined) ?? null;
 
   const sends = sendRows ?? [];
   const sentSet = new Set(sends.map((s) => String(s.email ?? "").toLowerCase()));
 
   const emails = Array.from(
     new Set(
-      (auditRows ?? [])
+      auditRows
         .map((r) => String(r.pdf_email ?? "").trim().toLowerCase())
         .filter(Boolean),
     ),
@@ -90,7 +96,7 @@ export default async function AdminLeadsPage() {
 
   const seen = new Set<string>();
   const leads: Array<LeadRow & { phone: string | null; scannedAt: string | null }> = [];
-  for (const r of (auditRows ?? []) as Array<Record<string, unknown>>) {
+  for (const r of auditRows) {
     const email = String(r.pdf_email ?? "").trim().toLowerCase();
     if (!email || seen.has(email)) continue;
     seen.add(email);
@@ -143,8 +149,8 @@ export default async function AdminLeadsPage() {
         <Stat label="Confirmed watches" value={confirmedWatches.length} hint={`${watches.length} total`} />
         <Stat
           label="In OutreachGraph"
-          value={exports.length}
-          hint={exports[0] ? `last ${fmt(exports[0].exported_at as string)}; companies flow on to nichedb` : "every 15 min once OUTREACHGRAPH_API_KEY is set"}
+          value={exportCount ?? 0}
+          hint={lastExport ? `last ${fmt(lastExport)}; companies flow on to nichedb` : "every 15 min once OUTREACHGRAPH_API_KEY is set"}
         />
         <Stat
           label="Unsubscribed"

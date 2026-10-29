@@ -72,6 +72,25 @@ export function selectExports(leads: ScanLead[], alreadyExported: Set<string>): 
   return out;
 }
 
+type Page<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+
+/**
+ * Every row of a query, a page at a time. PostgREST answers at most 1,000
+ * rows however large the `.limit()`, so a single read of a growing table
+ * quietly drops the oldest rows (it dropped 87 of 147 leads here).
+ */
+export async function readAll<T>(page: (from: number, to: number) => Page<T>, max = 20_000): Promise<T[]> {
+  const size = 1000;
+  const rows: T[] = [];
+  for (let from = 0; from < max; from += size) {
+    const { data, error } = await page(from, from + size - 1);
+    if (error) throw new Error(error.message);
+    rows.push(...(data ?? []));
+    if (!data || data.length < size) break;
+  }
+  return rows;
+}
+
 type Fetch = typeof fetch;
 
 /**

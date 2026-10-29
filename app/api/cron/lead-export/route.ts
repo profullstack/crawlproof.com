@@ -3,6 +3,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import {
   LEAD_EXPORT_DESTINATION,
   pushToOutreachGraph,
+  readAll,
   selectExports,
   type ScanLead,
 } from "@/lib/leadExport";
@@ -32,37 +33,54 @@ export async function POST(req: Request) {
   }
 
   const svc = serviceClient();
-  const { data: audits, error } = await svc
-    .from("audits")
-    .select("pdf_email, target_url, created_at")
-    .not("pdf_email", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(5000);
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  let audits: Array<{ pdf_email: string | null; target_url: string | null }>;
+  let contacts: Array<{ email: string; unsubscribed_at: string | null; consented_at: string | null }>;
+  let exported: Array<{ email: string }>;
+  try {
+    // Whole tables, paged: both outgrow PostgREST's 1,000-row answer.
+    [audits, contacts, exported] = await Promise.all([
+      readAll<{ pdf_email: string | null; target_url: string | null }>((from, to) =>
+        svc
+          .from("audits")
+          .select("pdf_email, target_url")
+          .not("pdf_email", "is", null)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      readAll<{ email: string; unsubscribed_at: string | null; consented_at: string | null }>((from, to) =>
+        svc
+          .from("marketing_contacts")
+          .select("email, unsubscribed_at, consented_at")
+          .order("email", { ascending: true })
+          .range(from, to),
+      ),
+      readAll<{ email: string }>((from, to) =>
+        svc
+          .from("lead_exports")
+          .select("email")
+          .eq("destination", LEAD_EXPORT_DESTINATION)
+          .order("email", { ascending: true })
+          .range(from, to),
+      ),
+    ]);
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: String((err as Error).message ?? err) }, { status: 500 });
+  }
+  if (audits.length === 0) return NextResponse.json({ ok: true, exported: 0 });
 
-  const emails = Array.from(
-    new Set((audits ?? []).map((a) => String(a.pdf_email ?? "").trim().toLowerCase()).filter(Boolean)),
-  );
-  if (emails.length === 0) return NextResponse.json({ ok: true, exported: 0 });
-
-  const [{ data: contacts }, { data: exported }] = await Promise.all([
-    svc.from("marketing_contacts").select("email, unsubscribed_at, consented_at").in("email", emails),
-    svc.from("lead_exports").select("email").eq("destination", LEAD_EXPORT_DESTINATION),
-  ]);
-  const cMap = new Map(
-    (contacts ?? []).map((c) => [String(c.email).toLowerCase(), c as Record<string, unknown>]),
-  );
-  const leads: ScanLead[] = (audits ?? []).map((a) => {
+  const cMap = new Map(contacts.map((c) => [String(c.email).toLowerCase(), c]));
+  const leads: ScanLead[] = audits.map((a) => {
     const email = String(a.pdf_email ?? "").trim().toLowerCase();
     const c = cMap.get(email);
     return {
       email,
-      targetUrl: (a.target_url as string | null) ?? null,
-      unsubscribedAt: (c?.unsubscribed_at as string | null) ?? null,
-      consentedAt: (c?.consented_at as string | null) ?? null,
+      targetUrl: a.target_url ?? null,
+      unsubscribedAt: c?.unsubscribed_at ?? null,
+      consentedAt: c?.consented_at ?? null,
     };
   });
-  const done = new Set((exported ?? []).map((r) => String(r.email).toLowerCase()));
+  const done = new Set(exported.map((r) => String(r.email).toLowerCase()));
   const rows = selectExports(leads, done);
   if (rows.length === 0) return NextResponse.json({ ok: true, exported: 0 });
 
