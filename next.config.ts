@@ -79,6 +79,9 @@ const nextConfig: NextConfig = {
           permanent: false,
         },
       ]),
+      // /fleet (the Fleet project's URL, and what w3bs/threatcrush link to) is
+      // the signed-in fleet panel; signed-out visitors land on /login from there.
+      { source: "/fleet", destination: "/dashboard/fleet", permanent: false },
       // /ads is the exception at both ends. The bare path is now the public
       // marketing page (it redirects signed-in visitors on its own), and
       // /ads/house/* is artwork in public/ — redirects run before the

@@ -31,6 +31,7 @@
     "@profullstack/affiliates": "^0.3.0",
     "@profullstack/autoblog": "github:profullstack/autoblog#75e54af",
     "@profullstack/coinpay": "^0.25.0",
+    "@profullstack/fleetbar": "0.2.0",
     "@profullstack/footer": "latest",
     "@profullstack/hqtui": "^0.11.0",
     "@profullstack/profile": "0.1.6",
