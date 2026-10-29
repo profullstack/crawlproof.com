@@ -12,6 +12,7 @@
         "@profullstack/affiliates": "^0.3.0",
         "@profullstack/autoblog": "github:profullstack/autoblog#75e54af",
         "@profullstack/coinpay": "^0.25.0",
+        "@profullstack/fleetbar": "0.2.0",
         "@profullstack/footer": "latest",
         "@profullstack/hqtui": "^0.11.0",
         "@profullstack/profile": "0.1.6",
@@ -318,6 +319,8 @@
     "@profullstack/coinpay": ["@profullstack/coinpay@0.25.0", "", { "dependencies": { "@inquirer/prompts": "^8.3.0", "@noble/curves": "^1.6.0", "@noble/hashes": "^1.5.0", "@profullstack/hqtui": "^0.6.3", "@scure/bip32": "^1.5.0", "@scure/bip39": "^1.4.0" }, "bin": { "coinpay": "bin/coinpay.js" } }, "sha512-ZoK8COqBCdJXvr0fO5UWw9HPh88CdMBLycc/dU6kXwAyeIrwZ4WkBApisuDgs4leXNN+SMjwex2etgrEvlICTQ=="],
 
     "@profullstack/emailer": ["@profullstack/emailer@1.0.3", "", {}, "sha512-VyAtCcfnSI6LOwJvWogCr3ZNmEsaZw+iuWrqnosLsdcKsbRyCrCmXigMNZJZEjlgYlR+lK//PwNPG+xtCFvWAw=="],
+
+    "@profullstack/fleetbar": ["@profullstack/fleetbar@0.2.0", "", {}, "sha512-ImALhrAVZUnc0aqFW518WVZX895ffnLmChC/KXR6mPqONFinoLI2wwWASSN9n5wJrjsJShU6nTebrUXEX4GdCQ=="],
 
     "@profullstack/footer": ["@profullstack/footer@0.4.0", "", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"], "bin": { "profullstack-footer": "bin/profullstack-footer.js" } }, "sha512-EJZnMUQmWDi9Gzx6BAjogloeaPFFSSCHtHJuC9dsXiOz8M87hfn6Z+Zx9AMYWk8s6xemPrPlkXKGB3PZugkcEA=="],
 
