@@ -1,5 +1,7 @@
 "use client";
 
+import { CoinpaySignInButton } from "@/components/coinpay-signin-button";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ProfileFields } from "@profullstack/profile/react";
@@ -74,6 +76,7 @@ export function SignupForm({
 
   return (
     <div className="mt-6 space-y-4">
+      <CoinpaySignInButton next={redirectTo} label="Sign up with CoinPay" />
       {googleEnabled && (
         <>
           <button type="button" className="btn w-full" onClick={onGoogle} disabled={pending}>
