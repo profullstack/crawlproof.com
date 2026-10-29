@@ -2,11 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { fingerprint, parsePublicKey } from "@/lib/ssh-auth-probe";
 
 export interface CreateMonitorInput {
   projectId: string;
   name: string;
-  type: "http" | "keyword" | "ssl" | "tcp";
+  type: "http" | "ssh" | "keyword" | "ssl" | "tcp";
   target: string;
   intervalS?: number;
   alertEmail?: string;
@@ -15,6 +16,10 @@ export interface CreateMonitorInput {
   expectedStatus?: number;
   port?: number;
   warnDays?: number;
+  /** ssh: the account to check, which must exist on the host. */
+  username?: string;
+  /** ssh: an OpenSSH public key line. Private keys are refused. */
+  publicKey?: string;
 }
 
 export async function createMonitor(
@@ -35,6 +40,18 @@ export async function createMonitor(
     if (!input.keyword?.trim()) return { ok: false, error: "Keyword is required." };
     config.keyword = input.keyword.trim();
     config.match = input.match ?? "present";
+  }
+  if (input.type === "ssh") {
+    const username = input.username?.trim() ?? "";
+    if (!/^[A-Za-z0-9._][A-Za-z0-9._-]{0,31}$/.test(username)) {
+      return { ok: false, error: "A valid SSH username is required." };
+    }
+    const parsed = parsePublicKey(input.publicKey ?? "");
+    if ("error" in parsed) return { ok: false, error: parsed.error };
+    config.username = username;
+    config.public_key = parsed.key.type + " " + parsed.key.getPublicSSH().toString("base64");
+    config.fingerprint = fingerprint(parsed.key);
+    if (parsed.key.comment) config.key_comment = parsed.key.comment;
   }
   if (input.type === "http" && input.expectedStatus) config.expected_status = input.expectedStatus;
   if (input.type === "tcp" && input.port) config.port = input.port;

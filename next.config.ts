@@ -27,7 +27,8 @@ const nextConfig: NextConfig = {
   // runtime. Keep it external and let Node require it from node_modules.
   // imapflow opens raw TLS sockets and resolves its own compiled deps at
   // runtime; bundling it breaks both. nodemailer is here for the same reason.
-  serverExternalPackages: ["playwright", "playwright-core", "imapflow", "nodemailer"],
+  // ssh2 optionally requires native .node bindings it probes for at load time.
+  serverExternalPackages: ["playwright", "playwright-core", "imapflow", "nodemailer", "ssh2"],
   // sharp 0.35 loads libvips-cpp.so through a path the tracer does not follow, so
   // the standalone output would ship without it and image routes would 500
   // (ERR_DLOPEN_FAILED). Name it explicitly.

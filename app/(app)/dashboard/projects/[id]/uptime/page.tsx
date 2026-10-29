@@ -12,6 +12,7 @@ interface MonitorRow {
   name: string;
   type: string;
   target: string;
+  config: Record<string, unknown> | null;
   enabled: boolean;
   current_state: "up" | "down" | "unknown";
   last_checked_at: string | null;
@@ -78,7 +79,7 @@ export default async function ProjectUptimePage({
   const { data: monitorsData } = await supabase
     .from("monitors")
     .select(
-      "id, name, type, target, enabled, current_state, last_checked_at, last_error, last_response_ms",
+      "id, name, type, target, config, enabled, current_state, last_checked_at, last_error, last_response_ms",
     )
     .eq("project_id", id)
     .order("created_at", { ascending: true });
@@ -100,7 +101,8 @@ export default async function ProjectUptimePage({
           <h2 className="text-lg font-semibold">Uptime Monitors</h2>
           <p className="max-w-2xl text-sm text-[var(--color-muted)]">
             We check each target on its interval and email you the moment it goes
-            down — and again when it recovers. HTTP, keyword, SSL-expiry, and TCP.
+            down — and again when it recovers. HTTP, SSH login (public key only,
+            never logs in), keyword, SSL-expiry, and TCP.
           </p>
         </div>
         <AddMonitorForm
@@ -145,8 +147,16 @@ export default async function ProjectUptimePage({
                   <td className="px-4 py-2">
                     <div className="font-medium">{m.name}</div>
                     <div className="font-mono text-xs text-[var(--color-muted)]">
-                      {m.type} · {m.target}
+                      {m.type === "ssh"
+                        ? `ssh · ${String(m.config?.username ?? "")}@${m.target}`
+                        : `${m.type} · ${m.target}`}
                     </div>
+                    {m.type === "ssh" && typeof m.config?.fingerprint === "string" && (
+                      <div className="font-mono text-xs text-[var(--color-muted)]">
+                        key {m.config.fingerprint}
+                        {typeof m.config.key_comment === "string" ? ` (${m.config.key_comment})` : ""}
+                      </div>
+                    )}
                     {m.current_state === "down" && m.last_error && (
                       <div className="text-xs text-[var(--color-fail)]">{m.last_error}</div>
                     )}
