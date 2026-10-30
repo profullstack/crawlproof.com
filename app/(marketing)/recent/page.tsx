@@ -3,6 +3,7 @@ import Link from "next/link";
 import { serviceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+import { createSeoAeoMetadata } from "@/lib/seo/seo-aeo-meta";
 import { listUserOrgs } from "@/lib/orgs";
 import { RecentOutreachForm, type OutreachHistoryItem } from "./outreach-form";
 import { deriveOutreachStatus, type OutreachSocialPost } from "@/lib/sp/outreachStatus";
@@ -89,25 +90,15 @@ export async function generateMetadata({
   const sp = await searchParams;
   const page = Math.max(1, Math.min(MAX_PAGES, Number(sp.page) || 1));
   const url = `${env.siteUrl.replace(/\/$/, "")}/recent${page > 1 ? `?page=${page}` : ""}`;
-  return {
-    title:
-      page === 1
-        ? "Recent AEO audits"
-        : `Recent AEO audits — page ${page}`,
-    description:
-      "Browse opted-in free AEO audits run on CrawlProof. See what AI crawlers (GPTBot, ClaudeBot, PerplexityBot, Google-Extended) can find on real sites — score, findings, and a priority to-do list.",
-    alternates: { canonical: url },
-    openGraph: {
-      type: "website",
-      url,
-      title: "Recent AEO audits — CrawlProof",
-      description:
-        "The latest opted-in AEO audits run on CrawlProof. Shareable scans of real sites.",
-      siteName: "CrawlProof",
-    },
-    twitter: { card: "summary_large_image", title: "Recent AEO audits — CrawlProof" },
+  const title = page === 1 ? "Recent AEO audits" : `Recent AEO audits — page ${page}`;
+  const description = "Browse opted-in free AEO audits run on CrawlProof. See what AI crawlers (GPTBot, ClaudeBot, PerplexityBot, Google-Extended) can find on real sites — score, findings, and a priority to-do list.";
+  return createSeoAeoMetadata({
+    title,
+    description,
+    url,
     robots: { index: true, follow: true },
-  };
+    socialCard: "summary_large_image",
+  });
 }
 
 export default async function RecentPage({
