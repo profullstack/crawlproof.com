@@ -4,7 +4,7 @@ import type { AdFormatId } from "./creative";
 // A page size, never a cap on the auction. The old LIMIT 100 excluded newer
 // campaigns entirely once a format had more than 100 ready creatives.
 const PAGE_SIZE = 500;
-const COLUMNS = "id, campaign_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family, ad_campaigns!inner(id, owner_id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits)";
+const COLUMNS = "id, campaign_id, experiment_id, variant_id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family, ad_campaigns!inner(id, owner_id, status, ref_slug, destination_url, daily_budget_cents, spend_today_cents, spend_date, bid_credits, active_experiment_id, default_variant_id)";
 
 export async function loadServingCreatives(sb: SupabaseClient, format: AdFormatId) {
   const rows = [];

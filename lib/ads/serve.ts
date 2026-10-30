@@ -98,6 +98,8 @@ export function isAdFormat(v: string | null | undefined): v is AdFormatId {
 type CreativeRow = {
   id: string;
   campaign_id: string;
+  experiment_id?: string | null;
+  variant_id?: string | null;
   format: AdFormatId;
   headline: string;
   body: string;
@@ -286,6 +288,8 @@ export async function serveAd(
     spend_today_cents: number;
     spend_date: string | null;
     bid_credits: number;
+    active_experiment_id: string | null;
+    default_variant_id: string | null;
   };
   type Row = CreativeRow & { ad_campaigns: CampaignJoin | CampaignJoin[] };
   const oneCampaign = (c: CampaignJoin | CampaignJoin[]): CampaignJoin =>
@@ -303,9 +307,46 @@ export async function serveAd(
   // So self-owned campaigns are demoted rather than discarded, below. Between a
   // real advertiser's creative and the house ad — neither of which can earn on
   // this request — the real creative is strictly the better fill.
-  const candidates = (creatives as unknown as Row[]).filter(
+  const loadedRows = (creatives as unknown as Row[]).filter(
     (row) => !!oneCampaign(row.ad_campaigns),
   );
+  // Keep a visitor in the same arm and give each campaign one auction entry.
+  // Without collapsing the variants here, an N-arm test would multiply that
+  // campaign's auction weight by N. Video placements currently have no static
+  // creative variant, so they continue using the campaign's default creative.
+  const groupedRows = new Map<string, Row[]>();
+  for (const row of loadedRows) {
+    const campaign = oneCampaign(row.ad_campaigns);
+    const group = groupedRows.get(campaign.id) ?? [];
+    group.push(row);
+    groupedRows.set(campaign.id, group);
+  }
+  const candidates: Row[] = [];
+  for (const rows of groupedRows.values()) {
+    const campaign = oneCampaign(rows[0].ad_campaigns);
+    let eligible: Row[] = [];
+    if (campaign.active_experiment_id) {
+      eligible = rows.filter((row) => row.experiment_id === campaign.active_experiment_id);
+      if (eligible.length > 0) {
+        const variantIds = [...new Set(eligible.map((row) => row.variant_id).filter(Boolean) as string[])].sort();
+        if (variantIds.length > 0) {
+          const seed = ctx.visitorId?.slice(0, 256) || ctx.ip?.slice(0, 128) || crypto.randomUUID();
+          const digest = crypto
+            .createHash("sha256")
+            .update(`${campaign.id}:${campaign.active_experiment_id}:${seed}`)
+            .digest();
+          const assigned = variantIds[digest.readUInt32BE(0) % variantIds.length];
+          eligible = eligible.filter((row) => row.variant_id === assigned);
+        }
+      }
+    }
+    if (eligible.length === 0) {
+      eligible = campaign.default_variant_id
+        ? rows.filter((row) => row.variant_id === campaign.default_variant_id)
+        : rows.filter((row) => !row.experiment_id);
+    }
+    if (eligible.length > 0) candidates.push(eligible[0]);
+  }
   if (candidates.length === 0) return houseFill(format, theme);
 
   // A campaign is PAID-eligible only if its owner can actually cover a click at

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
-import { isAllowedTargetUrl } from "@/lib/rateLimit";
+import { consumeCredit, isAllowedTargetUrl } from "@/lib/rateLimit";
 import { getOrCreateDefaultOrg } from "@/lib/orgs";
 import {
   downloadableAsset,
@@ -24,7 +24,8 @@ import {
   type AdSummary,
 } from "@/lib/ads/creative";
 import type { SiteBrand } from "@/lib/ads/brand";
-import { DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
+import { AD_TEST_VARIANT_CREDITS, DEFAULT_BID_CREDITS } from "@/lib/ads/pricing";
+import { CREDIT_RACK_CENTS } from "@/lib/credits";
 import { cleanTopics } from "@/lib/ads/trending";
 import { grantTrendingPromo } from "@/lib/ads/promos";
 import { recordManualBid } from "@/lib/ads/bids";
@@ -474,17 +475,21 @@ async function requeueCampaignVideo(
 ): Promise<void> {
   const { data: campaign } = await supabase
     .from("ad_campaigns")
-    .select("destination_domain, destination_url")
+    .select("destination_domain, destination_url, default_variant_id")
     .eq("id", args.campaignId)
     .eq("owner_id", args.ownerId)
     .maybeSingle();
   if (!campaign) return;
 
-  const { data: rows } = await supabase
+  let creativeQuery = supabase
     .from("ad_creatives")
     .select("format, headline, body, cta_text, bg_color, fg_color, accent_color, font_family, logo_url, image_url")
     .eq("campaign_id", args.campaignId)
     .eq("owner_id", args.ownerId);
+  creativeQuery = campaign.default_variant_id
+    ? creativeQuery.eq("variant_id", campaign.default_variant_id)
+    : creativeQuery.is("experiment_id", null);
+  const { data: rows } = await creativeQuery;
   if (!rows?.length) return;
 
   await queueCampaignVideo(supabase, {
@@ -563,7 +568,7 @@ export async function regenerateCampaign(input: {
 
   const { data: campaign } = await supabase
     .from("ad_campaigns")
-    .select("id, destination_url")
+    .select("id, destination_url, default_variant_id")
     .eq("id", input.id)
     .eq("owner_id", user.id)
     .maybeSingle();
@@ -599,13 +604,26 @@ export async function regenerateCampaign(input: {
     }
   }
 
-  const { data: existing } = await supabase
+  let existingQuery = supabase
     .from("ad_creatives")
     .select("id, format")
     .eq("campaign_id", input.id);
+  existingQuery = campaign.default_variant_id
+    ? existingQuery.eq("variant_id", campaign.default_variant_id)
+    : existingQuery.is("experiment_id", null);
+  const { data: existing } = await existingQuery;
   const idByFormat = new Map<string, string>(
     (existing ?? []).map((r) => [r.format as string, r.id as string]),
   );
+  let defaultVariantExperimentId: string | null = null;
+  if (campaign.default_variant_id) {
+    const { data: selectedVariant } = await supabase
+      .from("ad_experiment_variants")
+      .select("experiment_id")
+      .eq("id", campaign.default_variant_id)
+      .maybeSingle();
+    defaultVariantExperimentId = selectedVariant?.experiment_id ?? null;
+  }
 
   for (const c of generated.creatives) {
     const fields = {
@@ -635,6 +653,12 @@ export async function regenerateCampaign(input: {
         campaign_id: input.id,
         owner_id: user.id,
         format: c.format,
+        ...(campaign.default_variant_id
+          ? {
+              variant_id: campaign.default_variant_id,
+              experiment_id: defaultVariantExperimentId,
+            }
+          : {}),
         ...fields,
       });
       if (error) return { ok: false, error: error.message };
@@ -646,6 +670,443 @@ export async function regenerateCampaign(input: {
   revalidatePath(`/dashboard/ads/${input.id}`);
   return { ok: true };
 }
+
+const MIN_AD_TEST_VARIANTS = 2;
+const MAX_AD_TEST_VARIANTS = 5;
+const VARIANT_LABELS = ["A", "B", "C", "D", "E"];
+
+type ExperimentCreativeRow = {
+  format: AdFormatId;
+  headline: string;
+  body: string;
+  cta_text: string;
+  image_url: string | null;
+  logo_url: string | null;
+  bg_color: string;
+  fg_color: string;
+  accent_color: string;
+  light_bg_color: string | null;
+  light_fg_color: string | null;
+  light_accent_color: string | null;
+  font_family: string;
+};
+
+function experimentCreativeFields(row: ExperimentCreativeRow) {
+  return {
+    format: row.format,
+    headline: row.headline,
+    body: row.body,
+    cta_text: row.cta_text,
+    image_url: row.image_url,
+    logo_url: row.logo_url,
+    bg_color: row.bg_color,
+    fg_color: row.fg_color,
+    accent_color: row.accent_color,
+    light_bg_color: row.light_bg_color,
+    light_fg_color: row.light_fg_color,
+    light_accent_color: row.light_accent_color,
+    font_family: row.font_family,
+    status: "ready",
+  };
+}
+
+function experimentError(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+async function refundExperimentCredits(ownerId: string, credits: number): Promise<boolean> {
+  if (!credits) return true;
+  const { error } = await serviceClient().rpc("refund_credit", {
+    p_owner: ownerId,
+    p_count: credits,
+  });
+  return !error;
+}
+
+/**
+ * Generate and launch a paid creative test. The existing campaign creative is
+ * copied as control; each additional arm is generated once and charged at the
+ * standard AI-action price. The test is isolated from the campaign's normal
+ * creative set so stopping it restores the current default automatically.
+ */
+export async function createAdExperiment(input: {
+  campaignId: string;
+  variantCount: number;
+  instruction?: string;
+}): Promise<
+  | { ok: true; id: string; creditsCharged: number }
+  | { ok: false; error: string; refundFailed?: boolean }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const variantCount = Math.round(Number(input.variantCount));
+  if (
+    !Number.isFinite(variantCount) ||
+    variantCount < MIN_AD_TEST_VARIANTS ||
+    variantCount > MAX_AD_TEST_VARIANTS
+  ) {
+    return { ok: false, error: "Choose between 2 and 5 test variants." };
+  }
+
+  const instruction = String(input.instruction ?? "").trim().slice(0, 500);
+  const { data: campaign } = await supabase
+    .from("ad_campaigns")
+    .select("id, destination_url, active_experiment_id, default_variant_id")
+    .eq("id", input.campaignId)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+  if (campaign.active_experiment_id) {
+    return { ok: false, error: "Pause or finish the current test before starting another." };
+  }
+  const { data: unfinishedExperiment, error: unfinishedError } = await supabase
+    .from("ad_experiments")
+    .select("id")
+    .eq("campaign_id", input.campaignId)
+    .eq("owner_id", user.id)
+    .in("status", ["running", "paused"])
+    .limit(1)
+    .maybeSingle();
+  if (unfinishedError) return { ok: false, error: unfinishedError.message };
+  if (unfinishedExperiment) {
+    return { ok: false, error: "Finish the paused test before starting another." };
+  }
+
+  let sourceQuery = supabase
+    .from("ad_creatives")
+    .select(
+      "format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family",
+    )
+    .eq("campaign_id", input.campaignId)
+    .eq("status", "ready")
+    .in("format", DESIGN_FORMAT_IDS);
+  sourceQuery = campaign.default_variant_id
+    ? sourceQuery.eq("variant_id", campaign.default_variant_id)
+    : sourceQuery.is("experiment_id", null);
+  const { data: sourceRows, error: sourceError } = await sourceQuery;
+  const control = (sourceRows as ExperimentCreativeRow[] | null) ?? [];
+  if (sourceError || control.length === 0) {
+    return { ok: false, error: "A ready display creative is required to run a test." };
+  }
+
+  const creditsCharged = (variantCount - 1) * AD_TEST_VARIANT_CREDITS;
+  const credit = await consumeCredit(user.id, creditsCharged);
+  if (!credit.ok) {
+    return {
+      ok: false,
+      error: `This test costs ${creditsCharged} credits ($${((creditsCharged * CREDIT_RACK_CENTS) / 100).toFixed(2)} at rack). Add credits to continue.`,
+    };
+  }
+
+  let experimentId: string | null = null;
+  let campaignLinked = false;
+  try {
+    const controlCreative = control[0];
+    const generatedSets = [];
+    for (let i = 1; i < variantCount; i += 1) {
+      const generated = await generateAdCreatives(campaign.destination_url, {
+        variation: {
+          instruction,
+          control: {
+            headline: controlCreative.headline,
+            body: controlCreative.body,
+            ctaText: controlCreative.cta_text,
+          },
+          variantNumber: i,
+          variantCount,
+        },
+      });
+      generatedSets.push(generated.creatives);
+    }
+
+    const { data: experiment, error: experimentError } = await supabase
+      .from("ad_experiments")
+      .insert({
+        campaign_id: input.campaignId,
+        owner_id: user.id,
+        name: "Creative test",
+        status: "draft",
+        instruction: instruction || null,
+        variant_count: variantCount,
+        credits_charged: creditsCharged,
+      })
+      .select("id")
+      .single();
+    if (experimentError || !experiment) throw new Error(experimentError?.message || "Could not save the test.");
+    experimentId = experiment.id;
+
+    const variantRows = Array.from({ length: variantCount }, (_, i) => ({
+      experiment_id: experiment.id,
+      campaign_id: input.campaignId,
+      owner_id: user.id,
+      variant_key: String.fromCharCode(65 + i),
+      label: VARIANT_LABELS[i],
+      is_control: i === 0,
+      instruction: i === 0 ? null : instruction || null,
+    }));
+    const { data: variants, error: variantsError } = await supabase
+      .from("ad_experiment_variants")
+      .insert(variantRows)
+      .select("id, label");
+    if (variantsError || !variants || variants.length !== variantCount) {
+      throw new Error(variantsError?.message || "Could not save test variants.");
+    }
+
+    const variantIdByLabel = new Map(variants.map((v) => [v.label as string, v.id as string]));
+    const creativeRows: Record<string, unknown>[] = [];
+    for (let i = 0; i < variantCount; i += 1) {
+      const label = VARIANT_LABELS[i];
+      const variantId = variantIdByLabel.get(label);
+      if (!variantId) throw new Error(`Could not resolve ${label}.`);
+      const generatedByFormat = new Map(
+        (generatedSets[i - 1] ?? []).map((creative) => [creative.format, creative]),
+      );
+      for (const base of control) {
+        const generated = i === 0 ? null : generatedByFormat.get(base.format);
+        if (i > 0 && !generated) throw new Error(`${label} is missing the ${base.format} creative.`);
+        creativeRows.push({
+          campaign_id: input.campaignId,
+          owner_id: user.id,
+          experiment_id: experiment.id,
+          variant_id: variantId,
+          ...experimentCreativeFields(
+            generated
+              ? {
+                  ...base,
+                  headline: generated.headline,
+                  body: generated.body,
+                  cta_text: generated.ctaText,
+                }
+              : base,
+          ),
+        });
+      }
+    }
+    const { error: creativesError } = await supabase.from("ad_creatives").insert(creativeRows);
+    if (creativesError) throw new Error(creativesError.message || "Could not save test creatives.");
+
+    const { error: launchError } = await supabase
+      .from("ad_experiments")
+      .update({ status: "running", started_at: new Date().toISOString() })
+      .eq("id", experiment.id)
+      .eq("owner_id", user.id);
+    if (launchError) throw new Error(launchError.message || "Could not launch the test.");
+
+    const { data: linkedCampaign, error: campaignError } = await supabase
+      .from("ad_campaigns")
+      .update({ active_experiment_id: experiment.id })
+      .eq("id", input.campaignId)
+      .eq("owner_id", user.id)
+      .is("active_experiment_id", null)
+      .select("id")
+      .maybeSingle();
+    if (campaignError) throw new Error(campaignError.message || "Could not attach the test to this campaign.");
+    if (!linkedCampaign) throw new Error("Another test was launched on this campaign. Refresh and try again.");
+    campaignLinked = true;
+
+    revalidatePath("/dashboard/ads");
+    revalidatePath(`/dashboard/ads/${input.campaignId}`);
+    return { ok: true, id: experiment.id, creditsCharged };
+  } catch (err) {
+    if (campaignLinked) {
+      await supabase
+        .from("ad_campaigns")
+        .update({ active_experiment_id: null })
+        .eq("id", input.campaignId)
+        .eq("owner_id", user.id)
+        .eq("active_experiment_id", experimentId);
+    }
+    if (experimentId) {
+      await supabase
+        .from("ad_experiments")
+        .delete()
+        .eq("id", experimentId)
+        .eq("owner_id", user.id);
+    }
+    const refundSucceeded = await refundExperimentCredits(user.id, creditsCharged);
+    return {
+      ok: false,
+      error: experimentError(err, "Could not generate the ad test."),
+      refundFailed: !refundSucceeded,
+    };
+  }
+}
+
+type OwnedExperiment = {
+  id: string;
+  campaign_id: string;
+  status: string;
+};
+
+async function ownedExperiment(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  experimentId: string,
+  ownerId: string,
+): Promise<OwnedExperiment | null> {
+  const { data } = await supabase
+    .from("ad_experiments")
+    .select("id, campaign_id, status")
+    .eq("id", experimentId)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+  return (data as OwnedExperiment | null) ?? null;
+}
+
+export async function pauseAdExperiment(input: { experimentId: string }): Promise<
+  { ok: true } | { ok: false; error: string }
+> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  const experiment = await ownedExperiment(supabase, input.experimentId, user.id);
+  if (!experiment || experiment.status !== "running") {
+    return { ok: false, error: "This test is not running." };
+  }
+  const { error: campaignError } = await supabase
+    .from("ad_campaigns")
+    .update({ active_experiment_id: null })
+    .eq("id", experiment.campaign_id)
+    .eq("owner_id", user.id)
+    .eq("active_experiment_id", experiment.id);
+  if (campaignError) return { ok: false, error: campaignError.message };
+  const { error } = await supabase
+    .from("ad_experiments")
+    .update({ status: "paused" })
+    .eq("id", experiment.id)
+    .eq("owner_id", user.id);
+  if (error) {
+    await supabase
+      .from("ad_campaigns")
+      .update({ active_experiment_id: experiment.id })
+      .eq("id", experiment.campaign_id)
+      .eq("owner_id", user.id)
+      .is("active_experiment_id", null);
+    return { ok: false, error: error.message };
+  }
+  revalidatePath(`/dashboard/ads/${experiment.campaign_id}`);
+  return { ok: true };
+}
+
+export async function resumeAdExperiment(input: { experimentId: string }): Promise<
+  { ok: true } | { ok: false; error: string }
+> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  const experiment = await ownedExperiment(supabase, input.experimentId, user.id);
+  if (!experiment || experiment.status !== "paused") {
+    return { ok: false, error: "This test is not paused." };
+  }
+  const { data: campaign } = await supabase
+    .from("ad_campaigns")
+    .select("active_experiment_id")
+    .eq("id", experiment.campaign_id)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+  if (campaign.active_experiment_id && campaign.active_experiment_id !== experiment.id) {
+    return { ok: false, error: "Another test is already running." };
+  }
+  if (!campaign.active_experiment_id) {
+    const { data: claimedCampaign, error: campaignError } = await supabase
+      .from("ad_campaigns")
+      .update({ active_experiment_id: experiment.id })
+      .eq("id", experiment.campaign_id)
+      .eq("owner_id", user.id)
+      .is("active_experiment_id", null)
+      .select("id")
+      .maybeSingle();
+    if (campaignError) return { ok: false, error: campaignError.message };
+    if (!claimedCampaign) return { ok: false, error: "Another test is already running." };
+  }
+  const { error } = await supabase
+    .from("ad_experiments")
+    .update({ status: "running" })
+    .eq("id", experiment.id)
+    .eq("owner_id", user.id);
+  if (error) {
+    await supabase
+      .from("ad_campaigns")
+      .update({ active_experiment_id: null })
+      .eq("id", experiment.campaign_id)
+      .eq("active_experiment_id", experiment.id);
+    return { ok: false, error: error.message };
+  }
+  revalidatePath(`/dashboard/ads/${experiment.campaign_id}`);
+  return { ok: true };
+}
+
+export async function finishAdExperiment(input: {
+  experimentId: string;
+  winnerVariantId?: string | null;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  const experiment = await ownedExperiment(supabase, input.experimentId, user.id);
+  if (!experiment || !["running", "paused"].includes(experiment.status)) {
+    return { ok: false, error: "This test has already ended." };
+  }
+
+  const winnerId = input.winnerVariantId || null;
+  if (winnerId) {
+    const { data: winner } = await supabase
+      .from("ad_experiment_variants")
+      .select("id")
+      .eq("id", winnerId)
+      .eq("experiment_id", experiment.id)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (!winner) return { ok: false, error: "That variant does not belong to this test." };
+  }
+
+  const { data: campaign } = await supabase
+    .from("ad_campaigns")
+    .select("active_experiment_id, default_variant_id")
+    .eq("id", experiment.campaign_id)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!campaign) return { ok: false, error: "Campaign not found." };
+
+  const campaignPatch = {
+    ...(campaign.active_experiment_id === experiment.id ? { active_experiment_id: null } : {}),
+    ...(winnerId ? { default_variant_id: winnerId } : {}),
+  };
+  if (Object.keys(campaignPatch).length > 0) {
+    const { error: campaignError } = await supabase
+      .from("ad_campaigns")
+      .update(campaignPatch)
+      .eq("id", experiment.campaign_id)
+      .eq("owner_id", user.id);
+    if (campaignError) return { ok: false, error: campaignError.message };
+  }
+  const { error } = await supabase
+    .from("ad_experiments")
+    .update({ status: "completed", winner_variant_id: winnerId, completed_at: new Date().toISOString() })
+    .eq("id", experiment.id)
+    .eq("owner_id", user.id);
+  if (error) {
+    const rollback: Record<string, string | null> = {};
+    if (campaign.active_experiment_id === experiment.id) rollback.active_experiment_id = experiment.id;
+    if (winnerId) rollback.default_variant_id = campaign.default_variant_id;
+    if (Object.keys(rollback).length > 0) {
+      await supabase
+        .from("ad_campaigns")
+        .update(rollback)
+        .eq("id", experiment.campaign_id)
+        .eq("owner_id", user.id);
+    }
+    return { ok: false, error: error.message };
+  }
+  revalidatePath("/dashboard/ads");
+  revalidatePath(`/dashboard/ads/${experiment.campaign_id}`);
+  return { ok: true };
+}
+
 
 // --- Campaign activation (advertiser) ---
 

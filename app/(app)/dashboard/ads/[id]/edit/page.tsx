@@ -37,17 +37,21 @@ export default async function EditCampaignPage({
 
   const { data: campaign } = await supabase
     .from("ad_campaigns")
-    .select("id, name, destination_url, daily_budget_cents, bid_credits, autobid, status, ref_slug")
+    .select("id, name, destination_url, daily_budget_cents, bid_credits, autobid, status, ref_slug, default_variant_id")
     .eq("id", id)
     .eq("owner_id", user.id)
     .maybeSingle();
   if (!campaign) notFound();
 
-  const { data: creativeRows } = await supabase
+  let creativeQuery = supabase
     .from("ad_creatives")
     .select("id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family")
     .eq("campaign_id", id)
     .order("format");
+  creativeQuery = campaign.default_variant_id
+    ? creativeQuery.eq("variant_id", campaign.default_variant_id)
+    : creativeQuery.is("experiment_id", null);
+  const { data: creativeRows } = await creativeQuery;
 
   const creatives: (AdCreative & { id: string })[] = ((creativeRows as CreativeRow[]) ?? []).map(
     (r) => ({

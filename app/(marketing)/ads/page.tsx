@@ -19,6 +19,8 @@ import {
   FEED_ITEM_LABEL,
   formatSpec,
 } from "@/lib/ads/formats";
+import { AD_TEST_VARIANT_CREDITS } from "@/lib/ads/pricing";
+import { CREDIT_RACK_CENTS } from "@/lib/credits";
 
 export const metadata = {
   title: "Ads — advertise on the network, or get paid to run it",
@@ -119,6 +121,10 @@ export default async function AdsMarketingPage() {
           <Card
             title="Clicks, counted conservatively"
             body="Bot traffic is not billed, and the same visitor clicking your campaign again inside six hours is not billed twice. When a click looks doubtful the visitor still gets through to your site; you just are not charged for it."
+          />
+          <Card
+            title="Paid A/B/C/N message tests"
+            body={`Keep your current display creative as control, generate up to four AI alternatives, and compare variant-level click-through rates on stable visitor assignments. Give the AI an optional direction such as a new benefit or CTA. Each generated variant costs ${AD_TEST_VARIANT_CREDITS} credits ($${((AD_TEST_VARIANT_CREDITS * CREDIT_RACK_CENTS) / 100).toFixed(2)} at rack); campaign clicks are billed as usual.`}
           />
         </div>
       </section>
