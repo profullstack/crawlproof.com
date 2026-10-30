@@ -5,6 +5,7 @@ import { stripDeadLinks } from "@/lib/dead-links";
 import { stripTrailingAd } from "@/lib/blog/split-html";
 import { AdUnit } from "@/components/ads/ad-unit";
 import { env } from "@/lib/env";
+import { createSeoAeoMetadata, serializeJsonLd } from "@/lib/seo/seo-aeo-meta";
 
 // The article body's typography.
 const PROSE =
@@ -25,21 +26,23 @@ export async function generateMetadata({
 }) {
   const { slug } = await params;
   const post = await findAnyPost(slug);
+  const url = `${env.siteUrl.replace(/\/$/, "")}/blog/${slug}`;
   if (!post) {
-    return { title: "Post not found", alternates: { canonical: `/blog/${slug}` } };
+    return createSeoAeoMetadata({
+      title: "Post not found",
+      description: "This CrawlProof post is no longer available.",
+      url,
+      robots: { index: false, follow: false },
+    });
   }
-  return {
+  return createSeoAeoMetadata({
     title: post.title,
-    description: post.excerpt ?? undefined,
-    alternates: { canonical: `/blog/${slug}` },
-    openGraph: {
-      type: "article",
-      url: `/blog/${slug}`,
-      title: post.title,
-      description: post.excerpt ?? undefined,
-      images: post.image_url ? [{ url: post.image_url }] : undefined,
-    },
-  };
+    description: post.excerpt || post.title,
+    url,
+    type: "article",
+    socialCard: post.image_url ? "summary_large_image" : "summary",
+    ...(post.image_url ? { image: post.image_url, imageAlt: `${post.title} featured image` } : {}),
+  });
 }
 
 export default async function BlogPost({
@@ -69,7 +72,7 @@ export default async function BlogPost({
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
+          __html: serializeJsonLd({
             "@context": "https://schema.org",
             "@type": "BlogPosting",
             headline: post.title,

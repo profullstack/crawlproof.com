@@ -8,6 +8,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { env } from "@/lib/env";
+import { createSeoAeoMetadata, serializeJsonLd } from "@/lib/seo/seo-aeo-meta";
 import { jobPostingJsonLd, workplaceSummary } from "@/lib/careers/jobs";
 import { displayHost, loadBoard } from "@/lib/careers/board";
 
@@ -28,14 +29,12 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { project: projectId, slug } = await params;
   const found = await load(projectId, slug);
-  if (!found) return { title: "Role not found" };
-  return {
+  if (!found) return createSeoAeoMetadata({ title: "Role not found", description: "This job posting is no longer available." });
+  return createSeoAeoMetadata({
     title: `${found.job.title} — ${found.project.name}`,
-    description:
-      found.job.overview?.slice(0, 200) ??
-      `${found.job.title} at ${found.project.name}.`,
-    alternates: { canonical: `${env.siteUrl}/c/${projectId}/${slug}` },
-  };
+    description: found.job.overview ?? `${found.job.title} at ${found.project.name}.`,
+    url: `${env.siteUrl.replace(/\/$/, "")}/c/${projectId}/${slug}`,
+  });
 }
 
 export default async function HostedJobPage({
@@ -74,7 +73,7 @@ export default async function HostedJobPage({
     <main className="mx-auto max-w-3xl px-4 py-10 space-y-6">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
 
       <nav className="text-sm">

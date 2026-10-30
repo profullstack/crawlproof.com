@@ -9,6 +9,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { env } from "@/lib/env";
+import { createSeoAeoMetadata, serializeJsonLd } from "@/lib/seo/seo-aeo-meta";
 import { jobPostingJsonLd, workplaceSummary } from "@/lib/careers/jobs";
 import { displayHost, loadBoard } from "@/lib/careers/board";
 
@@ -21,12 +22,12 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { project: projectId } = await params;
   const board = await loadBoard(projectId);
-  if (!board) return { title: "Careers" };
-  return {
+  if (!board) return createSeoAeoMetadata({ title: "Careers", description: "Open roles on CrawlProof-hosted career pages." });
+  return createSeoAeoMetadata({
     title: `Careers at ${board.project.name}`,
     description: `${board.jobs.length} open role${board.jobs.length === 1 ? "" : "s"} at ${board.project.name}.`,
-    alternates: { canonical: `${env.siteUrl}/c/${projectId}` },
-  };
+    url: `${env.siteUrl.replace(/\/$/, "")}/c/${projectId}`,
+  });
 }
 
 export default async function HostedBoardPage({
@@ -55,7 +56,7 @@ export default async function HostedBoardPage({
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({ "@context": "https://schema.org", "@graph": graph }),
+            __html: serializeJsonLd({ "@context": "https://schema.org", "@graph": graph }),
           }}
         />
       )}

@@ -1,11 +1,14 @@
 import { notFound } from "next/navigation";
+import { createSeoAeoMetadata } from "@/lib/seo/seo-aeo-meta";
 import { serviceClient } from "@/lib/supabase/service";
 import { SurveyResponseForm } from "./form";
 
-export const metadata = {
-  title: "Survey response · CrawlProof",
+export const metadata = createSeoAeoMetadata({
+  title: "Your survey response · CrawlProof",
+  description: "Answer the survey question you were invited to complete.",
   robots: { index: false, follow: false },
-};
+  socialCard: "summary",
+});
 
 export default async function SurveyResponsePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;

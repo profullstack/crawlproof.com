@@ -22,6 +22,7 @@ import type { Finding } from "@/lib/audit/types";
 import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
 import { buildShareCard } from "@/lib/audit/share-card";
 import { env } from "@/lib/env";
+import { createSeoAeoMetadata, serializeJsonLd } from "@/lib/seo/seo-aeo-meta";
 
 export const dynamic = "force-dynamic";
 
@@ -104,29 +105,16 @@ export async function generateMetadata({
     : `AEO audit for ${host} from CrawlProof. See what AI crawlers can find on the site.`;
 
   return {
-    title,
-    description,
-    alternates: { canonical: url },
-    robots,
-    openGraph: {
-      type: "article",
-      url,
+    ...createSeoAeoMetadata({
       title,
       description,
-      siteName: "CrawlProof",
+      url,
+      type: "article",
+      robots,
+      socialCard: "summary_large_image",
       publishedTime: audit.created_at,
       modifiedTime: audit.completed_at ?? audit.created_at,
-      // No `images` here on purpose. Declaring one would override the
-      // generated per-report card in ./opengraph-image.tsx and put every
-      // report back on the identical static banner. The file convention
-      // supplies og:image, its dimensions, and the alt text.
-    },
-    twitter: {
-      card: "summary_large_image",
-      title,
-      description,
-      // Same reason — the card file feeds twitter:image too.
-    },
+    }),
     other: {
       "article:section": "AEO Audit",
       "article:tag": "AEO, LLM, GPTBot, ClaudeBot, PerplexityBot",
@@ -173,7 +161,7 @@ function ReportJsonLd({
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(data) }}
     />
   );
 }
