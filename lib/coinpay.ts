@@ -1,6 +1,6 @@
-import { getOperatorSecret } from "@/lib/sealed/operator";
 import { verifyCoinPayWebhook } from "@profullstack/stack/coinpay";
 import { env } from "./env";
+import { getCoinPayPortalConnection } from "@/lib/platform-integrations";
 
 // CoinPay HTTP client.
 //
@@ -31,15 +31,21 @@ export function isSessionId(id: string | null | undefined): boolean {
   return typeof id === "string" && /^cs_[A-Za-z0-9]{8,64}$/.test(id);
 }
 
-function coinpayBase(): string {
-  // COINPAY_API_URL has been set both with and without a trailing /api.
-  return env.coinpayApiUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+export function coinPayApiBase(value: string): string {
+  return value.replace(/\/+$/, "").replace(/\/api$/, "");
 }
 
-function requireConfig(): void {
-  if (!env.coinpayApiKey || !env.coinpayApiUrl) {
+function coinpayBase(value = env.coinpayApiUrl): string {
+  // COINPAY_API_URL has been set both with and without a trailing /api.
+  return coinPayApiBase(value);
+}
+
+async function requireConfig() {
+  const connection = await getCoinPayPortalConnection();
+  if (!connection.apiKey || !connection.apiUrl) {
     throw new Error("CoinPay is not configured (COINPAY_API_URL/KEY).");
   }
+  return connection;
 }
 
 export type CreateSessionInput = {
@@ -78,15 +84,15 @@ export function checkoutSessionBody(input: CreateSessionInput): Record<string, u
 }
 
 export async function createCheckoutSession(input: CreateSessionInput): Promise<CreateSessionResult> {
-  requireConfig();
+  const connection = await requireConfig();
   if (!input.customerEmail) throw new Error("An email address is required to check out.");
-  const base = coinpayBase();
+  const base = coinpayBase(connection.apiUrl);
   const apiUrl = `${base}/api/checkout/sessions`;
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${env.coinpayApiKey}`,
+      authorization: `Bearer ${connection.apiKey}`,
     },
     body: JSON.stringify(checkoutSessionBody(input)),
   });
@@ -126,7 +132,9 @@ export async function createCheckoutSession(input: CreateSessionInput): Promise<
 export async function selectSessionMethod(sessionId: string, method: string): Promise<string | null> {
   if (!isSessionId(sessionId)) return null;
   try {
-    const res = await fetch(`${coinpayBase()}/api/checkout/sessions/${sessionId}/select`, {
+    const connection = await getCoinPayPortalConnection();
+    if (!connection.apiUrl) return null;
+    const res = await fetch(`${coinpayBase(connection.apiUrl)}/api/checkout/sessions/${sessionId}/select`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ method: method.toUpperCase() }),
@@ -148,9 +156,11 @@ export type SessionStatusResult = {
 
 /** Owner view of a session (with our key): status and the payment behind it. */
 export async function getCheckoutSession(sessionId: string): Promise<SessionStatusResult | null> {
-  if (!isSessionId(sessionId) || !env.coinpayApiUrl) return null;
-  const res = await fetch(`${coinpayBase()}/api/checkout/sessions/${sessionId}`, {
-    headers: env.coinpayApiKey ? { authorization: `Bearer ${env.coinpayApiKey}` } : {},
+  if (!isSessionId(sessionId)) return null;
+  const connection = await getCoinPayPortalConnection();
+  if (!connection.apiUrl) return null;
+  const res = await fetch(`${coinpayBase(connection.apiUrl)}/api/checkout/sessions/${sessionId}`, {
+    headers: connection.apiKey ? { authorization: `Bearer ${connection.apiKey}` } : {},
     cache: "no-store",
   });
   if (!res.ok) return null;
@@ -227,8 +237,9 @@ type CoinPayPayment = {
 export async function getPaymentStatus(
   paymentId: string,
 ): Promise<PaymentStatusResult | null> {
-  if (!env.coinpayApiUrl) return null;
-  const res = await fetch(`${coinpayBase()}/api/payments/${encodeURIComponent(paymentId)}`, { cache: "no-store" });
+  const connection = await getCoinPayPortalConnection();
+  if (!connection.apiUrl) return null;
+  const res = await fetch(`${coinpayBase(connection.apiUrl)}/api/payments/${encodeURIComponent(paymentId)}`, { cache: "no-store" });
   if (!res.ok) return null;
   const json = (await res.json()) as { payment?: CoinPayPayment };
   const p = json.payment;
@@ -273,14 +284,14 @@ export async function createCryptoPayout(
 ): Promise<CreatePayoutResult> {
   // Payout scope = an operator key: sealed, opens only while the operator is
   // unlocked. Locked -> retryable, so the payout stays queued (never lost).
-  const payoutKey = await getOperatorSecret("COINPAY_API_KEY");
-  if (!payoutKey) {
+  const connection = await getCoinPayPortalConnection();
+  if (!connection.apiKey) {
     return { ok: false, error: "locked: operator keys locked, unlock to resume payouts", retryable: true };
   }
-  if (!env.coinpayApiUrl) {
+  if (!connection.apiUrl) {
     return { ok: false, error: "CoinPay is not configured.", retryable: true };
   }
-  const base = env.coinpayApiUrl.replace(/\/$/, "");
+  const base = coinpayBase(connection.apiUrl);
   const apiUrl = `${base}/api/payouts/create`;
 
   let res: Response;
@@ -289,7 +300,7 @@ export async function createCryptoPayout(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${payoutKey}`,
+        authorization: `Bearer ${connection.apiKey}`,
       },
       body: JSON.stringify({
         recipient_email: input.recipientEmail,
@@ -351,6 +362,22 @@ export function verifyWebhookSignature(
     signature: signatureHeader,
     rawBody,
     secret: env.coinpayWebhookSecret,
+    now: options.now,
+    toleranceSeconds: options.tolerance,
+  });
+}
+
+export async function verifyConnectedWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  options: { now?: number; tolerance?: number } = {},
+): Promise<boolean> {
+  const connection = await getCoinPayPortalConnection();
+  if (!connection.webhookSecret) return false;
+  return verifyCoinPayWebhook({
+    signature: signatureHeader,
+    rawBody,
+    secret: connection.webhookSecret,
     now: options.now,
     toleranceSeconds: options.tolerance,
   });

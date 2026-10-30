@@ -30,7 +30,7 @@ export const env = {
   // CoinPay — crypto credit purchases.
   coinpayMerchantId: process.env.COINPAY_MERCHANT_ID ?? "",
   coinpayApiKey: process.env.COINPAY_API_KEY ?? "",
-  coinpayApiUrl: process.env.COINPAY_API_URL ?? "https://coinpayportal.com/api",
+  coinpayApiUrl: process.env.COINPAY_API_URL ?? "https://coinpayportal.com",
   coinpayWebhookSecret: process.env.COINPAY_WEBHOOK_SECRET ?? "",
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   resendFrom: process.env.RESEND_FROM ?? "CrawlProof <reports@crawlproof.com>",
@@ -52,6 +52,12 @@ export const env = {
     process.env.TELYNX_API_KEY ??
     "",
   telnyxFrom: process.env.TELNYX_FROM ?? process.env.TELYNX_FROM ?? "",
+  // SMSHub — optional platform default for outbound messages. Organization
+  // sender configs can override both values and keep their key encrypted.
+  smsHubApiKey:
+    process.env.SMSHUB_ALERT_API_KEY ?? process.env.SMSHUB_API_KEY ?? "",
+  smsHubFrom:
+    process.env.SMSHUB_FROM_PHONE ?? process.env.SMSHUB_FROM ?? "",
   // Tor SOCKS5 proxy for reaching .onion targets, e.g. socks5h://127.0.0.1:9050.
   // Empty = .onion audits/ads are unreachable (fail with a clear message).
   torSocksUrl: process.env.TOR_SOCKS_URL ?? "",

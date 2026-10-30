@@ -1,4 +1,5 @@
-import { env } from "./env";
+import { coinPayApiBase } from "@/lib/coinpay";
+import { getCoinPayPortalConnection } from "@/lib/platform-integrations";
 
 // CoinPay returns wallets the merchant has configured for the business.
 // Upstream endpoint: GET {COINPAY_API_URL}/api/supported-coins
@@ -48,16 +49,16 @@ export async function fetchSupportedTokens(opts?: {
   if (!opts?.force && cache && Date.now() - cache.ts < TTL_MS) {
     return cache.tokens;
   }
-  if (!env.coinpayApiKey || !env.coinpayApiUrl) {
+  const coinpay = await getCoinPayPortalConnection();
+  if (!coinpay.apiKey || !coinpay.apiUrl) {
     return [];
   }
-  const base = env.coinpayApiUrl.replace(/\/$/, "");
-  // env.coinpayApiUrl is the bare host (e.g. https://coinpayportal.com);
-  // the existing createCheckout() appends `/api/...` and we match that.
+  const base = coinPayApiBase(coinpay.apiUrl);
+  // The account setting is normalized to the bare host before appending `/api/...`.
   const url = `${base}/api/supported-coins?active_only=true`;
   try {
     const res = await fetch(url, {
-      headers: { authorization: `Bearer ${env.coinpayApiKey}` },
+      headers: { authorization: `Bearer ${coinpay.apiKey}` },
       cache: "no-store",
     });
     if (!res.ok) {

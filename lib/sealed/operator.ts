@@ -1,6 +1,7 @@
 /**
- * Operator keys (ours, not a user's): COINPAY_API_KEY for payouts,
- * X402_PRIVATE_KEY for the crawler wallet. Same rule as users: the operator is
+ * Operator keys (ours, not a user's): COINPAY_API_KEY for billing and payouts,
+ * SMSHUB_API_KEY for outbound outreach, and X402_PRIVATE_KEY for the crawler
+ * wallet. Same rule as users: the operator is
  * just an admin account with a key passphrase. Each value lives sealed in
  * operator_sealed_secret, sealed to that admin's key, and opens only while the
  * admin is unlocked (default 7d for operator unlocks, Lock any time).
@@ -22,7 +23,11 @@ async function serviceClient() {
 }
 import { canOpen, decryptSecret, encryptSecret } from "./vault";
 
-export const OPERATOR_SECRET_NAMES = ["COINPAY_API_KEY", "X402_PRIVATE_KEY"] as const;
+export const OPERATOR_SECRET_NAMES = [
+  "COINPAY_API_KEY",
+  "SMSHUB_API_KEY",
+  "X402_PRIVATE_KEY",
+] as const;
 export type OperatorSecretName = (typeof OPERATOR_SECRET_NAMES)[number];
 
 const FIELD = (name: string) => `operator.${name}`;
@@ -62,7 +67,7 @@ export function noteOperatorLocked(what: string, fetchImpl: typeof fetch = fetch
   }).catch(() => {});
 }
 
-type Row = { name: string; owner_id: string; enc_value: string };
+type Row = { name: string; owner_id: string; enc_value: string; updated_at?: string };
 
 export type OperatorRowLoader = (name: string) => Promise<Row | null>;
 // Ciphertext rows cached for a minute so a paid crawl does not hit the DB per
@@ -71,7 +76,7 @@ const rowCache = new Map<string, { row: Row | null; at: number }>();
 let rowLoader: OperatorRowLoader = async (name) => {
   const hit = rowCache.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.row;
-  const { data, error } = await (await serviceClient()).from("operator_sealed_secret").select("name, owner_id, enc_value").eq("name", name).maybeSingle();
+  const { data, error } = await (await serviceClient()).from("operator_sealed_secret").select("name, owner_id, enc_value, updated_at").eq("name", name).maybeSingle();
   if (error) throw new Error(error.message);
   const row = (data as Row | null) ?? null;
   rowCache.set(name, { row, at: Date.now() });
@@ -82,7 +87,9 @@ export function setOperatorRowLoaderForTests(fn: OperatorRowLoader | null): void
 }
 
 function envValue(name: string): string | null {
-  const v = process.env[name];
+  const v =
+    process.env[name] ??
+    (name === "SMSHUB_API_KEY" ? process.env.SMSHUB_ALERT_API_KEY : undefined);
   return v && v.trim() ? v : null;
 }
 
@@ -129,11 +136,38 @@ export async function importOperatorSecretsFromEnv(adminId: string, names: reado
   return { imported, missing };
 }
 
+/** Seal a newly supplied operator key without routing it through an env file. */
+export async function saveOperatorSecret(
+  name: OperatorSecretName,
+  value: string,
+  ownerId: string,
+): Promise<void> {
+  const plaintext = value.trim();
+  if (!plaintext) throw new Error(`${name} is required.`);
+  const enc_value = await encryptSecret(plaintext, { ownerId, field: FIELD(name) });
+  const { error } = await (await serviceClient())
+    .from("operator_sealed_secret")
+    .upsert({ name, owner_id: ownerId, enc_value, updated_at: new Date().toISOString() }, { onConflict: "name" });
+  if (error) throw new Error(`could not store ${name}: ${error.message}`);
+  rowCache.delete(name);
+}
+
+/** Remove a sealed operator key; provider connection tombstones suppress env fallback. */
+export async function clearOperatorSecret(name: OperatorSecretName): Promise<void> {
+  const { error } = await (await serviceClient())
+    .from("operator_sealed_secret")
+    .delete()
+    .eq("name", name);
+  if (error) throw new Error(`could not clear ${name}: ${error.message}`);
+  rowCache.delete(name);
+}
+
 export async function operatorStatus() {
-  const { data } = await (await serviceClient()).from("operator_sealed_secret").select("name, owner_id, updated_at");
-  const rows = (data as { name: string; owner_id: string; updated_at: string }[] | null) ?? [];
-  return OPERATOR_SECRET_NAMES.map((name) => {
-    const r = rows.find((x) => x.name === name);
+  const rows = await Promise.all(
+    OPERATOR_SECRET_NAMES.map((name) => rowLoader(name).catch(() => null)),
+  );
+  return OPERATOR_SECRET_NAMES.map((name, index) => {
+    const r = rows[index];
     return {
       name,
       sealed: !!r,

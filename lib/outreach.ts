@@ -3,6 +3,7 @@ import nodemailer from "nodemailer";
 import { Resend } from "resend";
 import { env } from "@/lib/env";
 import { decryptSecret } from "@/lib/sp/vault";
+import { getSmsHubConnection } from "@/lib/platform-integrations";
 
 export type DeliveryResult = {
   sent: boolean;
@@ -166,6 +167,17 @@ export async function sendOutreachSms(input: {
   if (input.config?.provider === "telnyx") {
     return sendTelnyxSms(input, input.config);
   }
+  if (input.config?.provider === "smshub") {
+    return sendSmsHubSms(input, input.config);
+  }
+  const smsHub = await getSmsHubConnection();
+  if (smsHub.apiKey && smsHub.fromPhone) {
+    return sendSmsHubSms(input, {
+      provider: "smshub",
+      api_key: smsHub.apiKey,
+      from_phone: smsHub.fromPhone,
+    });
+  }
   if (env.twilioAccountSid && env.twilioAuthToken && env.twilioFrom) {
     return sendTwilioSms(input);
   }
@@ -175,8 +187,48 @@ export async function sendOutreachSms(input: {
   return {
     sent: false,
     provider: "sms",
-    error: "TWILIO_* or TELNYX_* SMS env vars are required.",
+    error: "Connect SMSHub, or set the TWILIO_* or TELNYX_* SMS env vars.",
   };
+}
+
+async function sendSmsHubSms(
+  input: { to: string; body: string },
+  config?: OutreachConfig | null,
+): Promise<DeliveryResult> {
+  let apiKey = config?.api_key;
+  let from = config?.from_phone;
+  if (!apiKey || !from) {
+    const platform = await getSmsHubConnection();
+    apiKey ||= platform.apiKey ?? undefined;
+    from ||= platform.fromPhone;
+  }
+  if (!apiKey || !from) {
+    return { sent: false, provider: "smshub", error: "SMSHub API key and sender phone are required." };
+  }
+  try {
+    const response = await fetch("https://smshub.dev/api/v1/messages/send", {
+      method: "POST",
+      headers: { "X-API-Key": apiKey, "content-type": "application/json" },
+      body: JSON.stringify({ to: input.to, from, message: input.body }),
+    });
+    const json = (await response.json().catch(() => null)) as
+      | { error?: string; message?: { id?: string } }
+      | null;
+    if (!response.ok) {
+      return {
+        sent: false,
+        provider: "smshub",
+        error: json?.error ?? `SMSHub returned HTTP ${response.status}.`,
+      };
+    }
+    return { sent: true, provider: "smshub", providerMessageId: json?.message?.id };
+  } catch (error) {
+    return {
+      sent: false,
+      provider: "smshub",
+      error: error instanceof Error ? error.message : "SMSHub send failed.",
+    };
+  }
 }
 
 async function secretValue(

@@ -4,8 +4,15 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import {
+  clearCoinPayPortalConnection as disableCoinPayPortalConnection,
+  clearSmsHubConnection as disableSmsHubConnection,
   clearVu1nzApiToken,
+  getCoinPayPortalConnection,
+  getSmsHubConnection,
+  listSmsHubSenderNumbers,
   getVu1nzApiToken,
+  saveCoinPayPortalConnection as persistCoinPayPortalConnection,
+  saveSmsHubConnection as persistSmsHubConnection,
   saveVu1nzApiToken,
 } from "@/lib/platform-integrations";
 
@@ -166,6 +173,114 @@ export async function revealVu1nzIntegrationToken(): Promise<
         error instanceof Error
           ? error.message
           : "Could not reveal Vu1nz API token.",
+    };
+  }
+}
+
+export async function saveSmsHubPlatformIntegration(input: {
+  apiKey?: string;
+  fromPhone?: string;
+  clear?: boolean;
+}): Promise<Ok | Err> {
+  const adminCheck = await assertAdmin();
+  if (!adminCheck.ok) return adminCheck;
+  try {
+    if (input.clear) {
+      await disableSmsHubConnection(adminCheck.userId);
+    } else {
+      await persistSmsHubConnection({ ...input, userId: adminCheck.userId });
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not save SMSHub integration.",
+    };
+  }
+  revalidatePath("/dashboard/admin");
+  return { ok: true };
+}
+
+export async function revealSmsHubPlatformApiKey(): Promise<
+  Ok<{ apiKey: string }> | Err
+> {
+  const adminCheck = await assertAdmin();
+  if (!adminCheck.ok) return adminCheck;
+  try {
+    const connection = await getSmsHubConnection();
+    if (!connection.apiKey) {
+      return {
+        ok: false,
+        error: connection.status === "locked" ? "Unlock operator keys to reveal the SMSHub API key." : "SMSHub API key is not configured.",
+      };
+    }
+    return { ok: true, apiKey: connection.apiKey };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not reveal SMSHub API key.",
+    };
+  }
+}
+
+export async function listSmsHubPlatformSenders(input?: { apiKey?: string }): Promise<
+  Ok<{ senders: Array<{ number: string; label: string }> }> | Err
+> {
+  const adminCheck = await assertAdmin();
+  if (!adminCheck.ok) return adminCheck;
+  try {
+    const senders = await listSmsHubSenderNumbers(input);
+    return { ok: true, senders };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not load SMSHub sender numbers.",
+    };
+  }
+}
+
+export async function saveCoinPayPortalPlatformIntegration(input: {
+  apiKey?: string;
+  merchantId?: string;
+  clear?: boolean;
+}): Promise<Ok | Err> {
+  const adminCheck = await assertAdmin();
+  if (!adminCheck.ok) return adminCheck;
+  try {
+    if (input.clear) {
+      await disableCoinPayPortalConnection(adminCheck.userId);
+    } else {
+      await persistCoinPayPortalConnection({ ...input, userId: adminCheck.userId });
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error ? error.message : "Could not save CoinPay Portal integration.",
+    };
+  }
+  revalidatePath("/dashboard/admin");
+  return { ok: true };
+}
+
+export async function revealCoinPayPortalPlatformApiKey(): Promise<
+  Ok<{ apiKey: string }> | Err
+> {
+  const adminCheck = await assertAdmin();
+  if (!adminCheck.ok) return adminCheck;
+  try {
+    const connection = await getCoinPayPortalConnection();
+    if (!connection.apiKey) {
+      return {
+        ok: false,
+        error: connection.status === "locked" ? "Unlock operator keys to reveal the CoinPay Portal API key." : "CoinPay Portal API key is not configured.",
+      };
+    }
+    return { ok: true, apiKey: connection.apiKey };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error ? error.message : "Could not reveal CoinPay Portal API key.",
     };
   }
 }

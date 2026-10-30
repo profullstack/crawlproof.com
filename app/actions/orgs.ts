@@ -190,7 +190,7 @@ export async function saveOrganizationOutreachConfig(input: {
   organizationId: string;
   label: string;
   channel: "email" | "sms" | "social";
-  provider: "smtp" | "resend" | "twilio" | "telnyx" | "manual";
+  provider: "smtp" | "resend" | "twilio" | "telnyx" | "smshub" | "manual";
   fromEmail?: string;
   fromPhone?: string;
   replyTo?: string;
@@ -408,10 +408,12 @@ function clean(value: string | undefined) {
 
 function validOutreachProvider(
   channel: "email" | "sms" | "social",
-  provider: "smtp" | "resend" | "twilio" | "telnyx" | "manual",
+  provider: "smtp" | "resend" | "twilio" | "telnyx" | "smshub" | "manual",
 ) {
   if (channel === "email") return provider === "smtp" || provider === "resend";
-  if (channel === "sms") return provider === "twilio" || provider === "telnyx";
+  if (channel === "sms") {
+    return provider === "twilio" || provider === "telnyx" || provider === "smshub";
+  }
   return provider === "manual";
 }
 
