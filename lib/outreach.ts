@@ -172,7 +172,11 @@ export async function sendOutreachSms(input: {
   }
   const smsHub = await getSmsHubConnection();
   if (smsHub.apiKey && smsHub.fromPhone) {
-    return sendSmsHubSms(input, { api_key: smsHub.apiKey, from_phone: smsHub.fromPhone });
+    return sendSmsHubSms(input, {
+      provider: "smshub",
+      api_key: smsHub.apiKey,
+      from_phone: smsHub.fromPhone,
+    });
   }
   if (env.twilioAccountSid && env.twilioAuthToken && env.twilioFrom) {
     return sendTwilioSms(input);
