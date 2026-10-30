@@ -25,12 +25,12 @@ import { CREDIT_RACK_CENTS } from "@/lib/credits";
 export const metadata = {
   title: "Ads — advertise on the network, or get paid to run it",
   description:
-    "Paste a landing-page URL and the creative is designed for you. Or drop one tag on your site and earn crypto for the clicks. Flat cost-per-click, a daily budget you set, and no minimum spend.",
+    "Paste a landing-page URL, get on-brand ad creative, and run built-in A/B tests. Or drop one tag on your site and earn crypto for clicks. Flat cost-per-click and no minimum spend.",
   alternates: { canonical: "/ads" },
   openGraph: {
     title: "CrawlProof Ads",
     description:
-      "Advertise on the CrawlProof network, or monetize your own site and get paid in crypto for the clicks.",
+      "Advertise on the CrawlProof network with on-brand creative and built-in A/B testing, or monetize your site and earn crypto per click.",
     url: "/ads",
   },
 };
@@ -85,7 +85,8 @@ export default async function AdsMarketingPage() {
         </div>
         <p className="mt-4 text-sm text-[var(--color-muted)]">
           No minimum spend, no monthly fee, no sales call. Your first deposit is matched in
-          bonus ad credits, up to {centsToDollars(MAX_DEPOSIT_MATCH_CENTS)}.
+          bonus ad credits, up to {centsToDollars(MAX_DEPOSIT_MATCH_CENTS)}. Built-in A/B testing
+          lets you compare creative variants and keep the one that gets more clicks.
         </p>
       </section>
 
@@ -123,8 +124,8 @@ export default async function AdsMarketingPage() {
             body="Bot traffic is not billed, and the same visitor clicking your campaign again inside six hours is not billed twice. When a click looks doubtful the visitor still gets through to your site; you just are not charged for it."
           />
           <Card
-            title="Paid A/B/C/N message tests"
-            body={`Keep your current display creative as control, generate up to four AI alternatives, and compare variant-level click-through rates on stable visitor assignments. Give the AI an optional direction such as a new benefit or CTA. Each generated variant costs ${AD_TEST_VARIANT_CREDITS} credits ($${((AD_TEST_VARIANT_CREDITS * CREDIT_RACK_CENTS) / 100).toFixed(2)} at rack); campaign clicks are billed as usual.`}
+            title="A/B testing included"
+            body={`Compare your current creative with up to four AI-generated alternatives using stable visitor assignments and variant-level click-through rates. Pick the winner in your campaign dashboard. Testing and reporting have no separate fee; each generated variant costs ${AD_TEST_VARIANT_CREDITS} credits ($${((AD_TEST_VARIANT_CREDITS * CREDIT_RACK_CENTS) / 100).toFixed(2)} at rack), and campaign clicks are billed as usual.`}
           />
         </div>
       </section>

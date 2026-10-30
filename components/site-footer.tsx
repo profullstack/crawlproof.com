@@ -7,6 +7,7 @@ const LINKS: Array<[string, string]> = [
   ["About", "/about"],
   ["Press", "/press"],
   ["Bot info", "/bot"],
+  ["Merge N Launch", "https://luma.com/mergenlaunch"],
   ["Privacy", "/privacy"],
   ["Terms", "/terms"],
 ];
