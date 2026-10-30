@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanProperty, cleanReturnUrl, createAdDeposit, parseDepositRequest } from "@/lib/ads/deposits";
+import { setPlatformConnectionRowLoaderForTests } from "@/lib/platform-integrations";
+
+setPlatformConnectionRowLoaderForTests(async () => null);
 
 // Partner ad-budget deposits as a hosted CoinPay checkout session (ad.network).
 

@@ -5,6 +5,9 @@ const SECRET = "stub_webhook_secret";
 process.env.COINPAY_WEBHOOK_SECRET = SECRET;
 
 import { createCheckoutSession, readCoinpayWebhook, verifyWebhookSignature } from "@/lib/coinpay";
+import { setPlatformConnectionRowLoaderForTests } from "@/lib/platform-integrations";
+
+setPlatformConnectionRowLoaderForTests(async () => null);
 
 function sign(body: string, ts: number, secret = SECRET): string {
   const sig = crypto
