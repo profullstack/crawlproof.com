@@ -19,6 +19,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import { campaignDisplayStatus, spendTodayCents, utcToday } from "@/lib/ads/status";
 import { promoStateForCampaign } from "@/lib/ads/promos";
 import { CREDIT_CENTS, DEFAULT_BID_CREDITS, TRENDING_CPC_CENTS } from "@/lib/ads/pricing";
+import { AdExperimentPanel, type AdExperimentSummary } from "@/components/ads/ad-experiment-panel";
 
 export const metadata = { title: "Campaign" };
 
@@ -63,7 +64,7 @@ export default async function CampaignDetailPage({
   const { data: campaign } = await supabase
     .from("ad_campaigns")
     .select(
-      "id, name, destination_url, destination_domain, daily_budget_cents, bid_credits, status, ref_slug, created_at, spend_today_cents, spend_date, total_spent_cents, paused_reason, link_http_status",
+      "id, name, destination_url, destination_domain, daily_budget_cents, bid_credits, status, ref_slug, created_at, spend_today_cents, spend_date, total_spent_cents, paused_reason, link_http_status, active_experiment_id, default_variant_id",
     )
     .eq("id", id)
     .eq("owner_id", user.id)
@@ -75,24 +76,37 @@ export default async function CampaignDetailPage({
   // already known instead of flashing an empty state on every page load.
   const videoJobId = await latestJobForCampaign(supabase, { campaignId: id, ownerId: user.id });
 
-  const [{ data: stats }, { data: creativeRows }, series, { data: profile }] = await Promise.all([
+  let creativeQuery = supabase
+    .from("ad_creatives")
+    .select(
+      "id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family",
+    )
+    .eq("campaign_id", id)
+    .order("format");
+  creativeQuery = campaign.default_variant_id
+    ? creativeQuery.eq("variant_id", campaign.default_variant_id)
+    : creativeQuery.is("experiment_id", null);
+
+  const [{ data: stats }, { data: creativeRows }, series, { data: profile }, { data: latestExperiment }] = await Promise.all([
     supabase
       .from("ad_campaign_stats")
       .select("impressions, free_impressions, clicks, free_clicks")
       .eq("campaign_id", id)
       .maybeSingle(),
-    supabase
-      .from("ad_creatives")
-      .select(
-        "id, format, headline, body, cta_text, image_url, logo_url, bg_color, fg_color, accent_color, light_bg_color, light_fg_color, light_accent_color, font_family",
-      )
-      .eq("campaign_id", id)
-      .order("format"),
+    creativeQuery,
     getCampaignDailySeries(supabase, [id], 30),
     supabase
       .from("profiles")
       .select("credits_balance, ad_bonus_credits")
       .eq("id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("ad_experiments")
+      .select("id, name, status, instruction, variant_count, credits_charged, winner_variant_id")
+      .eq("campaign_id", id)
+      .eq("owner_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle(),
   ]);
 
@@ -100,6 +114,60 @@ export default async function CampaignDetailPage({
   // exist at all (nobody has enabled trending targeting, or the migration has
   // not been applied here yet). Both read as "no promo".
   const promo = await promoStateForCampaign(supabase, id);
+
+  let experimentSummary: AdExperimentSummary | null = null;
+  if (latestExperiment) {
+    const [{ data: variants }, { data: variantStats }, { data: testCreatives }] = await Promise.all([
+      supabase
+        .from("ad_experiment_variants")
+        .select("id, label, is_control")
+        .eq("experiment_id", latestExperiment.id)
+        .order("created_at"),
+      supabase.rpc("ad_experiment_variant_stats", { p_experiment: latestExperiment.id }),
+      supabase
+        .from("ad_creatives")
+        .select("variant_id, format, headline, body, cta_text")
+        .eq("experiment_id", latestExperiment.id)
+        .order("format"),
+    ]);
+    type VariantMetric = { variant_id: string; impressions: number; clicks: number };
+    const statsByVariant = new Map<string, VariantMetric>(
+      ((variantStats ?? []) as VariantMetric[]).map((row) => [row.variant_id, row]),
+    );
+    const copyByVariant = new Map<string, { headline: string; body: string; ctaText: string }>();
+    for (const creative of testCreatives ?? []) {
+      if (creative.variant_id && !copyByVariant.has(creative.variant_id)) {
+        copyByVariant.set(creative.variant_id, {
+          headline: creative.headline,
+          body: creative.body,
+          ctaText: creative.cta_text,
+        });
+      }
+    }
+    experimentSummary = {
+      id: latestExperiment.id,
+      name: latestExperiment.name,
+      status: latestExperiment.status,
+      instruction: latestExperiment.instruction,
+      variantCount: latestExperiment.variant_count,
+      creditsCharged: latestExperiment.credits_charged,
+      winnerVariantId: latestExperiment.winner_variant_id,
+      variants: (variants ?? []).map((variant) => {
+        const measure = statsByVariant.get(variant.id);
+        const copy = copyByVariant.get(variant.id);
+        return {
+          id: variant.id,
+          label: variant.label,
+          isControl: variant.is_control,
+          headline: copy?.headline ?? "",
+          body: copy?.body ?? "",
+          ctaText: copy?.ctaText ?? "",
+          impressions: Number(measure?.impressions ?? 0),
+          clicks: Number(measure?.clicks ?? 0),
+        };
+      }),
+    };
+  }
 
   // Playback, through the service client: the funnel reads ad_video_decisions
   // and ad_video_events, which carry RLS with no public policy (they are
@@ -237,6 +305,13 @@ export default async function CampaignDetailPage({
           )}
         </p>
       )}
+
+      <AdExperimentPanel
+        campaignId={id}
+        campaignStatus={campaign.status}
+        creditsBalance={profile?.credits_balance ?? 0}
+        experiment={experimentSummary}
+      />
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Impressions" value={impressions.toLocaleString()} />

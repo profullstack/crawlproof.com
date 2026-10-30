@@ -185,8 +185,15 @@ const SYSTEM_PROMPT = [
   ...SUMMARY_RULES,
 ].join(" ");
 
-function buildUserPrompt(brand: SiteBrand): string {
-  return [
+type AdVariationRequest = {
+  instruction?: string;
+  control: Pick<AdCreative, "headline" | "body" | "ctaText">;
+  variantNumber: number;
+  variantCount: number;
+};
+
+function buildUserPrompt(brand: SiteBrand, variation?: AdVariationRequest): string {
+  const prompt = [
     `Company site: ${brand.url}`,
     `Title: ${brand.title || "(none)"}`,
     brand.description ? `Description: ${brand.description}` : "",
@@ -195,9 +202,23 @@ function buildUserPrompt(brand: SiteBrand): string {
     "",
     "Page content:",
     brand.text || "(no readable text found — infer from the domain and title)",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+
+  if (variation) {
+    prompt.push(
+      "",
+      "Paid A/B test variation:",
+      `Control headline: ${variation.control.headline}`,
+      `Control benefit line: ${variation.control.body}`,
+      `Control CTA: ${variation.control.ctaText}`,
+      `This is alternative ${variation.variantNumber} of ${variation.variantCount - 1}. Make a meaningfully different copy angle while preserving the facts and brand shown above.`,
+      variation.instruction
+        ? `Advertiser direction: ${variation.instruction}`
+        : "Advertiser direction: none. Choose a distinct, evidence-based benefit or CTA angle.",
+    );
+  }
+
+  return prompt.filter(Boolean).join("\n");
 }
 
 /**
@@ -467,7 +488,7 @@ function describesTheFetch(text: string): boolean {
 
 export async function generateAdCreatives(
   rawUrl: string,
-  opts: { supabase?: SupabaseClient } = {},
+  opts: { supabase?: SupabaseClient; variation?: AdVariationRequest } = {},
 ): Promise<{
   brand: SiteBrand;
   creatives: AdCreative[];
@@ -482,8 +503,13 @@ export async function generateAdCreatives(
   const { provider, output } = await generateStructuredOutput<AdCopy>({
     name: "ad_copy",
     schema: CopySchema,
-    system: SYSTEM_PROMPT,
-    user: buildUserPrompt(brand),
+    system: opts.variation
+      ? [
+          SYSTEM_PROMPT,
+          "This is a paid ad-test alternative to the supplied control. Make the copy concept meaningfully different, but do not contradict the control's factual claims or invent details absent from the site. Follow the advertiser direction when it is compatible with the source facts. Keep the same brand and product; vary only the message angle and CTA. The arm number exists to keep repeated generations distinct.",
+        ].join(" ")
+      : SYSTEM_PROMPT,
+    user: buildUserPrompt(brand, opts.variation),
     // Reasoning models (gpt-5-mini) spend output budget on reasoning before the
     // structured copy, so keep generous headroom even though the copy is tiny.
     maxTokens: 3000,

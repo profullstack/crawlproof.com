@@ -26,6 +26,10 @@ export const CPC_CREDITS = 4;
 export const DEFAULT_BID_CREDITS = CPC_CREDITS;
 export const CPC_CENTS = CPC_CREDITS * CREDIT_CENTS;
 
+// A generated arm is text-only and reuses the campaign's current visual design.
+// Keep its one-time setup price separate from the much heavier scan price.
+export const AD_TEST_VARIANT_CREDITS = 5;
+
 // Trending-topic premium: the rate a trending-targeted click is quoted at,
 // in CENTS, and the rate the 90-day promo is free of. Two cents, stated here
 // rather than in a marketing page so the dashboard, the CLI and the promo row
