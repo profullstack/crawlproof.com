@@ -8,6 +8,7 @@ import type { SiteBrand } from "@/lib/ads/brand";
 import { AdPreview } from "@/components/ads/ad-preview";
 import { ColorField } from "@/components/ads/color-field";
 import type { AdTheme } from "@/lib/ads/theme";
+import { originalHeroPngDownloadUrl } from "@/lib/ads/heroImageUrl";
 
 function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -37,6 +38,7 @@ export function NewAdForm() {
   const [theme, setTheme] = useState<AdTheme>("dark");
 
   const current = creatives.find((c) => c.format === active) ?? creatives[0];
+  const originalHeroDownload = originalHeroPngDownloadUrl(current?.imageUrl);
   const palette = current
     ? paletteFor(current, theme)
     : { bgColor: "#0b0d10", fgColor: "#e7e9ee", accentColor: "#6ee7b7" };
@@ -357,6 +359,11 @@ export function NewAdForm() {
               <span className="text-xs text-[var(--color-muted)]">
                 Image fills the Medium Rectangle background
               </span>
+              {originalHeroDownload && (
+                <a href={originalHeroDownload} className="text-xs underline">
+                  Download original PNG
+                </a>
+              )}
             </div>
           </div>
 

@@ -7,6 +7,7 @@ import { DESIGN_FORMATS, paletteFor, type AdCreative, type AdFormatId } from "@/
 import { AdPreview } from "@/components/ads/ad-preview";
 import { ColorField } from "@/components/ads/color-field";
 import type { AdTheme } from "@/lib/ads/theme";
+import { originalHeroPngDownloadUrl } from "@/lib/ads/heroImageUrl";
 
 type Campaign = {
   id: string;
@@ -44,6 +45,7 @@ export function EditCampaignForm({
   const [uploading, setUploading] = useState(false);
 
   const current = creatives.find((c) => c.format === active) ?? creatives[0];
+  const originalHeroDownload = originalHeroPngDownloadUrl(current?.imageUrl);
   // What the pickers show: the stored trio for this theme, or the derived one
   // when the creative predates theme variants and has no light trio yet.
   const palette = current
@@ -260,6 +262,11 @@ export function EditCampaignForm({
               <button type="button" className="text-xs text-[var(--color-muted)] underline" onClick={() => patchAll({ imageUrl: null })}>
                 Remove image
               </button>
+            )}
+            {originalHeroDownload && (
+              <a href={originalHeroDownload} className="text-xs underline">
+                Download original PNG
+              </a>
             )}
           </div>
         </div>

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type OpenAI from "openai";
+import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { smartFetch } from "@/lib/onion";
 import { serviceClient } from "@/lib/supabase/service";
@@ -19,6 +20,8 @@ const ASSET_BUCKET = "ad-assets";
 const IMAGE_MODEL = "gpt-image-2.5-sunburst";
 const VALIDATE_TIMEOUT_MS = 4000;
 const MIN_IMAGE_BYTES = 2000; // <2KB is almost certainly a tracking pixel/placeholder
+const HERO_RENDITION_WIDTH = 600;
+const HERO_RENDITION_HEIGHT = 400;
 
 export type AdHeroCopy = {
   headline: string;
@@ -157,16 +160,47 @@ export function looksLikeIcon(url: string): boolean {
 // which bypasses RLS.
 async function uploadHero(bytes: Buffer): Promise<string | null> {
   const svc = serviceClient();
-  const path = `heroes/${crypto.randomUUID()}.png`;
-  const { error } = await svc.storage.from(ASSET_BUCKET).upload(path, bytes, {
+  const id = crypto.randomUUID();
+  const originalPath = `heroes/${id}.png`;
+  const renditionPath = `heroes/${id}.webp`;
+  let rendition: Buffer;
+  try {
+    rendition = await sharp(bytes)
+      .rotate()
+      .resize({
+        width: HERO_RENDITION_WIDTH,
+        height: HERO_RENDITION_HEIGHT,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 82, effort: 5 })
+      .toBuffer();
+  } catch (error) {
+    console.warn("[ads] hero rendition failed", error instanceof Error ? error.message : error);
+    return null;
+  }
+
+  const storage = svc.storage.from(ASSET_BUCKET);
+  const { error: originalError } = await storage.upload(originalPath, bytes, {
     contentType: "image/png",
     upsert: false,
   });
-  if (error) {
-    console.warn("[ads] hero upload failed", error.message);
+  if (originalError) {
+    console.warn("[ads] hero original upload failed", originalError.message);
     return null;
   }
-  return svc.storage.from(ASSET_BUCKET).getPublicUrl(path).data.publicUrl;
+
+  const { error: renditionError } = await storage.upload(renditionPath, rendition, {
+    contentType: "image/webp",
+    upsert: false,
+  });
+  if (renditionError) {
+    console.warn("[ads] hero rendition upload failed", renditionError.message);
+    await storage.remove([originalPath]).catch(() => {});
+    return null;
+  }
+
+  return storage.getPublicUrl(renditionPath).data.publicUrl;
 }
 
 // Resolve the hero image URL for a set of ad creatives. A gpt-image-2.5 hero
