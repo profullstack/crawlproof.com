@@ -24,4 +24,6 @@ process.env.SOCIAL_VAULT_KEY ??= Buffer.alloc(32, 7).toString("base64");
 // applies unless a test installs its own loader).
 const { setOperatorRowLoaderForTests } = await import("../lib/sealed/operator");
 setOperatorRowLoaderForTests(async () => null);
+const { setPlatformConnectionRowLoaderForTests } = await import("../lib/platform-integrations");
+setPlatformConnectionRowLoaderForTests(async () => null);
 export {};

@@ -163,10 +163,11 @@ export async function clearOperatorSecret(name: OperatorSecretName): Promise<voi
 }
 
 export async function operatorStatus() {
-  const { data } = await (await serviceClient()).from("operator_sealed_secret").select("name, owner_id, updated_at");
-  const rows = (data as { name: string; owner_id: string; updated_at: string }[] | null) ?? [];
-  return OPERATOR_SECRET_NAMES.map((name) => {
-    const r = rows.find((x) => x.name === name);
+  const rows = await Promise.all(
+    OPERATOR_SECRET_NAMES.map((name) => rowLoader(name).catch(() => null)),
+  );
+  return OPERATOR_SECRET_NAMES.map((name, index) => {
+    const r = rows[index];
     return {
       name,
       sealed: !!r,

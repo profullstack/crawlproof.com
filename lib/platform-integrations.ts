@@ -22,6 +22,11 @@ type IntegrationRow = {
   updated_at: string;
 };
 
+export type PlatformConnectionRowLoader = (
+  provider: string,
+  name: string,
+) => Promise<IntegrationRow | null>;
+
 async function getVu1nzRow(): Promise<IntegrationRow | null> {
   const { data, error } = await serviceClient()
     .from("integrations")
@@ -142,7 +147,7 @@ const COINPAY_PROVIDER = "coinpayportal";
 const COINPAY_NAME = "crawlproof-billing";
 const COINPAY_ENDPOINT = "https://coinpayportal.com";
 
-async function getPlatformConnectionRow(provider: string, name: string): Promise<IntegrationRow | null> {
+let platformConnectionRowLoader: PlatformConnectionRowLoader = async (provider, name) => {
   const { data, error } = await serviceClient()
     .from("integrations")
     .select("id, user_id, status, config, encrypted_credentials, updated_at")
@@ -153,6 +158,16 @@ async function getPlatformConnectionRow(provider: string, name: string): Promise
     .limit(1);
   if (error) throw error;
   return ((data ?? [])[0] as IntegrationRow | undefined) ?? null;
+};
+
+export function setPlatformConnectionRowLoaderForTests(
+  loader: PlatformConnectionRowLoader | null,
+): void {
+  if (loader) platformConnectionRowLoader = loader;
+}
+
+async function getPlatformConnectionRow(provider: string, name: string): Promise<IntegrationRow | null> {
+  return platformConnectionRowLoader(provider, name);
 }
 
 function rowConfig(row: IntegrationRow | null, key: string): string {
