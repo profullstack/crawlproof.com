@@ -44,7 +44,7 @@ export type DashboardSenderConfig = {
   id: string;
   label: string;
   channel: "email" | "sms" | "social";
-  provider: "smtp" | "resend" | "twilio" | "telnyx" | "manual";
+  provider: "smtp" | "resend" | "twilio" | "telnyx" | "smshub" | "manual";
   enabled: boolean;
   is_default: boolean;
   from_email: string | null;
@@ -687,7 +687,7 @@ function OrgInvitationRow({
 }
 
 type SenderChannel = "email" | "sms" | "social";
-type SenderProvider = "smtp" | "resend" | "twilio" | "telnyx" | "manual";
+type SenderProvider = "smtp" | "resend" | "twilio" | "telnyx" | "smshub" | "manual";
 
 function SenderConfigPanel({
   organizationId,
@@ -873,6 +873,7 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
               <>
                 <option value="twilio">Twilio</option>
                 <option value="telnyx">Telnyx</option>
+                <option value="smshub">SMSHub</option>
               </>
             ) : (
               <option value="manual">Manual</option>
@@ -913,6 +914,8 @@ function SenderConfigForm({ organizationId }: { organizationId: string }) {
                 <Field name="accountSid" label="Twilio account SID" />
                 <Field name="authToken" label="Twilio auth token" type="password" />
               </>
+            ) : provider === "smshub" ? (
+              <Field name="apiKey" label="SMSHub API key" type="password" />
             ) : (
               <Field name="apiKey" label="Telnyx API key" type="password" />
             )}

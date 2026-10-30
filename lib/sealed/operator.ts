@@ -1,6 +1,7 @@
 /**
- * Operator keys (ours, not a user's): COINPAY_API_KEY for payouts,
- * X402_PRIVATE_KEY for the crawler wallet. Same rule as users: the operator is
+ * Operator keys (ours, not a user's): COINPAY_API_KEY for billing and payouts,
+ * SMSHUB_API_KEY for outbound outreach, and X402_PRIVATE_KEY for the crawler
+ * wallet. Same rule as users: the operator is
  * just an admin account with a key passphrase. Each value lives sealed in
  * operator_sealed_secret, sealed to that admin's key, and opens only while the
  * admin is unlocked (default 7d for operator unlocks, Lock any time).
@@ -22,7 +23,11 @@ async function serviceClient() {
 }
 import { canOpen, decryptSecret, encryptSecret } from "./vault";
 
-export const OPERATOR_SECRET_NAMES = ["COINPAY_API_KEY", "X402_PRIVATE_KEY"] as const;
+export const OPERATOR_SECRET_NAMES = [
+  "COINPAY_API_KEY",
+  "SMSHUB_API_KEY",
+  "X402_PRIVATE_KEY",
+] as const;
 export type OperatorSecretName = (typeof OPERATOR_SECRET_NAMES)[number];
 
 const FIELD = (name: string) => `operator.${name}`;
@@ -82,7 +87,9 @@ export function setOperatorRowLoaderForTests(fn: OperatorRowLoader | null): void
 }
 
 function envValue(name: string): string | null {
-  const v = process.env[name];
+  const v =
+    process.env[name] ??
+    (name === "SMSHUB_API_KEY" ? process.env.SMSHUB_ALERT_API_KEY : undefined);
   return v && v.trim() ? v : null;
 }
 
@@ -127,6 +134,32 @@ export async function importOperatorSecretsFromEnv(adminId: string, names: reado
     imported.push(name);
   }
   return { imported, missing };
+}
+
+/** Seal a newly supplied operator key without routing it through an env file. */
+export async function saveOperatorSecret(
+  name: OperatorSecretName,
+  value: string,
+  ownerId: string,
+): Promise<void> {
+  const plaintext = value.trim();
+  if (!plaintext) throw new Error(`${name} is required.`);
+  const enc_value = await encryptSecret(plaintext, { ownerId, field: FIELD(name) });
+  const { error } = await (await serviceClient())
+    .from("operator_sealed_secret")
+    .upsert({ name, owner_id: ownerId, enc_value, updated_at: new Date().toISOString() }, { onConflict: "name" });
+  if (error) throw new Error(`could not store ${name}: ${error.message}`);
+  rowCache.delete(name);
+}
+
+/** Remove a sealed operator key; provider connection tombstones suppress env fallback. */
+export async function clearOperatorSecret(name: OperatorSecretName): Promise<void> {
+  const { error } = await (await serviceClient())
+    .from("operator_sealed_secret")
+    .delete()
+    .eq("name", name);
+  if (error) throw new Error(`could not clear ${name}: ${error.message}`);
+  rowCache.delete(name);
 }
 
 export async function operatorStatus() {

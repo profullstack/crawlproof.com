@@ -3,10 +3,18 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import Link from "next/link";
 import { GrantCreditsForm, Vu1nzIntegrationForm } from "./form";
+import {
+  CoinPayPortalConnectionForm,
+  SmsHubConnectionForm,
+} from "./account-integrations-form";
 import { IntegrationsManager } from "./integrations-form";
 import { CreditCodesForm } from "./credit-codes-form";
 import { env } from "@/lib/env";
-import { getVu1nzIntegrationStatus } from "@/lib/platform-integrations";
+import {
+  getCoinPayPortalConnectionStatus,
+  getSmsHubConnectionStatus,
+  getVu1nzIntegrationStatus,
+} from "@/lib/platform-integrations";
 import { ProviderCostsPanel } from "./provider-costs-panel";
 
 export const metadata = {
@@ -42,7 +50,13 @@ export default async function AdminPage() {
   // Recent grants — admins see everything; loaded via service client
   // so we get the granted_by email join cheaply.
   const svc = serviceClient();
-  const [{ data: recentRaw }, { data: integrationsRaw }, vu1nzIntegration] = await Promise.all([
+  const [
+    { data: recentRaw },
+    { data: integrationsRaw },
+    vu1nzIntegration,
+    smsHubIntegration,
+    coinPayPortalIntegration,
+  ] = await Promise.all([
     svc
       .from("admin_credit_grants")
       .select(
@@ -57,6 +71,8 @@ export default async function AdminPage() {
       )
       .order("created_at", { ascending: false }),
     getVu1nzIntegrationStatus(),
+    getSmsHubConnectionStatus(),
+    getCoinPayPortalConnectionStatus(),
   ]);
   const recent: GrantRow[] = (recentRaw ?? []).map((r: any) => ({
     id: r.id,
@@ -157,6 +173,24 @@ export default async function AdminPage() {
           sealed under your key passphrase; background scans use it only while you are unlocked.
         </p>
         <Vu1nzIntegrationForm {...vu1nzIntegration} />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">SMSHub</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Connect SMSHub for CrawlProof outreach. The API key is sealed to your
+          operator key; set a sender number owned by the connected SMSHub account.
+        </p>
+        <SmsHubConnectionForm {...smsHubIntegration} />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="text-lg font-semibold">CoinPay Portal</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Connect the business account used for CrawlProof credit purchases
+          and payouts. The API key is sealed to your operator key.
+        </p>
+        <CoinPayPortalConnectionForm {...coinPayPortalIntegration} />
       </section>
 
       <section className="card p-5">
