@@ -5,9 +5,8 @@
 // is a compliance problem, not a stylistic one. Headline, then the call to
 // action with the destination, which is the whole of what five seconds can say.
 //
-// Synthesis is deliberately best-effort. A pre-roll with no audio is a working
-// ad; a render that fails because a speech API was rate-limited is not. Every
-// failure path here returns null and the caller ships the silent cut.
+// Narrated snapshots require real audio. Fail with a classified error so the
+// worker can retry temporary provider failures without publishing a silent ad.
 
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -44,7 +43,15 @@ const API = "https://api.elevenlabs.io/v1/text-to-speech";
  * Overridable per deployment, because the right voice is a brand decision and
  * not something this module should hold an opinion about.
  */
-const DEFAULT_VOICE = process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM";
+// Sarah is an available premade voice. The former Rachel default is now a
+// library voice and returns payment_required for this deployment's free tier.
+export const DEFAULT_VOICE = "EXAVITQu4vr4xnSDxMaL";
+export class NarrationError extends Error {
+  constructor(readonly code: string, readonly retryable: boolean) {
+    super(code);
+    this.name = "NarrationError";
+  }
+}
 
 /**
  * The line to speak.
@@ -108,14 +115,7 @@ export type NarrationResult = {
   byteSize: number;
 };
 
-/**
- * Synthesise the narration, or return null.
- *
- * Null covers every failure: no API key configured, a non-200 response, an
- * empty body, a network error. The caller renders silent. This is the same rule
- * the rest of the pipeline follows — a render is an extra output of saving a
- * campaign, and the audio is an extra output of the render.
- */
+/** Silent snapshots skip synthesis; narrated snapshots fail explicitly when audio is unavailable. */
 export async function synthesiseNarration(input: {
   snapshot: VideoDesignSnapshot;
   workDir: string;
@@ -123,23 +123,22 @@ export async function synthesiseNarration(input: {
   voiceId?: string;
   fetchImpl?: typeof fetch;
 }): Promise<NarrationResult | null> {
-  // `undefined` means "use the configured key"; an explicit null means "there
-  // is no key", which is what a caller says when it wants the silent cut. `??`
-  // collapsed those two into one and made an explicit null fall through to the
-  // environment — so asking for silence quietly performed a paid API call.
+  if (input.snapshot.audioMode === "silent") return null;
+  // Undefined uses deployment configuration; explicit null suppresses key lookup.
   const apiKey =
     input.apiKey === undefined ? (process.env.ELEVENLABS_API_KEY ?? null) : input.apiKey;
-  if (!apiKey) return null;
+  if (!apiKey) throw new NarrationError("narration_not_configured", false);
 
-  const script = narrationScript(input.snapshot);
-  if (!script.trim()) return null;
+  const script = input.snapshot.narration?.trim() || narrationScript(input.snapshot);
+  if (!script.trim()) throw new NarrationError("narration_script_missing", false);
 
   const doFetch = input.fetchImpl ?? fetch;
-  const voice = input.voiceId ?? DEFAULT_VOICE;
+  const voice = input.voiceId ?? process.env.ELEVENLABS_VOICE_ID ?? DEFAULT_VOICE;
 
   try {
     const res = await doFetch(`${API}/${voice}`, {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: {
         "xi-api-key": apiKey,
         "content-type": "application/json",
@@ -151,17 +150,26 @@ export async function synthesiseNarration(input: {
         voice_settings: { stability: 0.5, similarity_boost: 0.75 },
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // Never return/log provider bodies, which may contain sensitive details.
+      const code = res.status === 402 ? "narration_payment_required"
+        : res.status === 401 || res.status === 403 ? "narration_access_denied"
+        : res.status === 404 ? "narration_voice_unavailable"
+        : res.status === 429 ? "narration_rate_limited"
+        : "narration_provider_failed";
+      throw new NarrationError(code, res.status === 429 || res.status >= 500 || res.status === 408);
+    }
 
     const buf = Buffer.from(await res.arrayBuffer());
     // A 200 with no body is a failure wearing a success code, and muxing zero
     // bytes produces a file ffmpeg will reject much later with a worse message.
-    if (buf.byteLength === 0) return null;
+    if (buf.byteLength === 0) throw new NarrationError("narration_empty_audio", true);
 
     const filePath = path.join(input.workDir, "narration.mp3");
     await writeFile(filePath, buf);
     return { filePath, script, byteSize: buf.byteLength };
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof NarrationError) throw error;
+    throw new NarrationError("narration_unavailable", true);
   }
 }
