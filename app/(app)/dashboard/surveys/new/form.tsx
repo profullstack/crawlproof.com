@@ -2,15 +2,18 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { createSurvey } from "@/app/actions/surveys";
+import { createSurvey, generateSurveyDraft } from "@/app/actions/surveys";
 
 export type SurveyProjectOption = { id: string; name: string; url: string; organization_id: string };
 
 export function NewSurveyForm({ projects }: { projects: SurveyProjectOption[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [draftPending, startDraftTransition] = useTransition();
   const [error, setError] = useState("");
+  const [draftError, setDraftError] = useState("");
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [goal, setGoal] = useState("");
   const [title, setTitle] = useState("");
   const [question, setQuestion] = useState("");
   const [answerType, setAnswerType] = useState<"rating" | "text">("rating");
@@ -18,6 +21,21 @@ export function NewSurveyForm({ projects }: { projects: SurveyProjectOption[] })
   const [aMessage, setAMessage] = useState("Would you share quick feedback about your experience?");
   const [bSubject, setBSubject] = useState("Help us improve");
   const [bMessage, setBMessage] = useState("Could you spare a minute to answer one question?");
+
+  function draftWithAI() {
+    setDraftError("");
+    startDraftTransition(async () => {
+      const result = await generateSurveyDraft({ projectId, goal });
+      if (!result.ok) { setDraftError(result.error); return; }
+      setTitle(result.draft.title);
+      setQuestion(result.draft.question);
+      setAnswerType(result.draft.answerType);
+      setASubject(result.draft.variantA.subject);
+      setAMessage(result.draft.variantA.message);
+      setBSubject(result.draft.variantB.subject);
+      setBMessage(result.draft.variantB.message);
+    });
+  }
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -51,6 +69,25 @@ export function NewSurveyForm({ projects }: { projects: SurveyProjectOption[] })
             {projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.url}</option>)}
           </select>
         </label>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-4">
+          <label className="block text-sm font-medium">Let AI draft it for you
+            <textarea
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              maxLength={1000}
+              rows={2}
+              className="input mt-1 block w-full"
+              placeholder="e.g. Find out what made onboarding confusing for new customers"
+            />
+          </label>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" disabled={!projectId || goal.trim().length < 5 || draftPending || pending} onClick={draftWithAI} className="btn btn-secondary">
+              {draftPending ? "Drafting…" : "Fill survey with AI"}
+            </button>
+            <p className="text-xs text-[var(--color-muted)]">Uses this site and its latest CrawlProof audit when available. You can edit every field.</p>
+          </div>
+          {draftError && <p role="alert" className="mt-2 text-sm text-red-600">{draftError}</p>}
+        </div>
         <label className="block text-sm font-medium">Title
           <input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={100} className="input mt-1 block w-full" placeholder="Post-purchase feedback" />
         </label>
@@ -76,7 +113,7 @@ export function NewSurveyForm({ projects }: { projects: SurveyProjectOption[] })
         </div>
       </section>
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-      <button disabled={pending} className="btn btn-primary">{pending ? "Creating…" : "Create survey"}</button>
+      <button disabled={pending || draftPending} className="btn btn-primary">{pending ? "Creating…" : "Create survey"}</button>
     </form>
   );
 }
