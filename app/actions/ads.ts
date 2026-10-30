@@ -1,5 +1,6 @@
 "use server";
 
+import { globalWalletProfile } from "@/lib/coinpay-wallets";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
@@ -1210,6 +1211,7 @@ export async function saveSlotPayout(input: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not authenticated." };
+  if ((await globalWalletProfile(serviceClient(), user.id)).configured) return { ok: false, error: "Your sites inherit global CoinPay wallets; change the global destination instead." };
   const addr = input.payoutAddress.trim().slice(0, 200);
   const { error } = await supabase
     .from("ad_slots")

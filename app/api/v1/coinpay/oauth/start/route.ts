@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(login, 302);
     }
   }
-  const pending = newPendingAuth(mode, sp.get("next") ?? "");
+  const pending = newPendingAuth(mode, sp.get("next") ?? "", sp.get("wallets") === "1");
   const res = NextResponse.redirect(authorizeUrl(cfg, pending), 302);
   res.cookies.set(OAUTH_COOKIE, encodePending(pending), {
     httpOnly: true,

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { depositCredits, isAdsPartner, parseDepositRequest, partnerUserIds } from "@/lib/ads/deposits";
+import { createCryptoPayout } from "@/lib/coinpay";
 import { cleanPayoutTarget, requestSlotPayout, slotAvailableCents } from "@/lib/ads/payouts";
 
 vi.mock("@/lib/coinpay", () => ({
@@ -79,6 +80,17 @@ describe("slot payouts", () => {
 
   it("available = accrued minus every withdrawal that did not fail", async () => {
     expect(await slotAvailableCents(fakeDb(base()).sb, "s1")).toBe(600);
+  });
+
+  it("uses the global destination for the actual transfer and ledger snapshot", async () => {
+    const rows: Record<string, Record<string, unknown>[]> = base();
+    rows.coinpay_identities = [{ user_id: "pub", coinpay_sub: "verified-sub" }];
+    rows.coinpay_wallet_profiles = [{ user_id: "pub", coinpay_sub: "verified-sub", wallets: [{ id: "global", address: "global-sol-address", currency: "sol", label: null }], preferred_wallet_id: "global" }];
+    const db = fakeDb(rows);
+    const result = await requestSlotPayout({ sb: db.sb, userId: "pub", email: null, slotId: "s1" });
+    expect(result.ok).toBe(true);
+    expect(createCryptoPayout).toHaveBeenLastCalledWith(expect.objectContaining({ recipientWallet: "global-sol-address", currency: "sol" }));
+    expect(db.writes.find(w => w.table === "ad_payouts")?.row).toMatchObject({ address: "global-sol-address", currency: "sol" });
   });
 
   it("pays the slot's wallet and writes the ledger", async () => {

@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MIN_PAYOUT_CENTS } from "@/lib/ads/pricing";
+import { slotPayoutTarget } from "@/lib/coinpay-wallets";
 import { createCryptoPayout } from "@/lib/coinpay";
 
 export type PayoutResult =
@@ -48,7 +49,8 @@ export async function requestSlotPayout(input: {
     .eq("owner_id", userId)
     .maybeSingle();
   if (!slot) return { ok: false, error: "Slot not found." };
-  if (!slot.payout_address) return { ok: false, error: "Add a payout wallet address first." };
+  const target = await slotPayoutTarget(sb, userId, slot);
+  if (!target.ok) return target;
 
   const available = await slotAvailableCents(sb, slotId);
   if (available < MIN_PAYOUT_CENTS) {
@@ -70,10 +72,10 @@ export async function requestSlotPayout(input: {
     return { ok: false, error: "Withdrawals are briefly paused for reconciliation. Please try again later." };
   }
 
-  const currency = slot.payout_currency || "usdc_pol";
+  const currency = target.currency;
   const { data: payout, error } = await sb
     .from("ad_payouts")
-    .insert({ owner_id: userId, slot_id: slotId, amount_cents: available, currency, address: slot.payout_address, status: "requested" })
+    .insert({ owner_id: userId, slot_id: slotId, amount_cents: available, currency, address: target.address, status: "requested" })
     .select("id")
     .single();
   if (error || !payout) return { ok: false, error: error?.message ?? "Failed to record payout." };
@@ -84,7 +86,7 @@ export async function requestSlotPayout(input: {
   // later without double-paying.
   const result = await createCryptoPayout({
     recipientEmail: input.email ?? `${userId}@users.crawlproof.com`,
-    recipientWallet: slot.payout_address,
+    recipientWallet: target.address,
     amountUsd: available / 100,
     currency,
   });

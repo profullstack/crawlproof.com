@@ -1,8 +1,9 @@
 "use client";
 
+import type { WalletProfile } from "@/lib/coinpay-wallets";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createSlot, setSlotStatus, saveSlotPayout, requestPayout } from "@/app/actions/ads";
+import { createSlot, setSlotStatus, requestPayout } from "@/app/actions/ads";
 import {
   FEED_FORMAT_ID,
   FEED_ITEM_LABEL,
@@ -51,19 +52,6 @@ type Payout = {
   created_at: string;
 };
 
-// Minimal shape the CoinPay wallet extension is expected to inject on
-// tronbrowser.dev. The provider is not shipped yet (extension Phase 3), so we
-// feature-detect and no-op gracefully when it's absent.
-type CoinPayProvider = {
-  connect?: () => Promise<{ address?: string } | string>;
-  getAddress?: () => Promise<string>;
-};
-declare global {
-  interface Window {
-    coinpay?: CoinPayProvider;
-  }
-}
-
 function payoutStatusClass(status: string): string {
   if (status === "confirmed") return "text-[var(--color-accent)]";
   if (status === "failed") return "text-red-400";
@@ -86,7 +74,7 @@ export function SlotManager({
   slot,
   origin,
   availableCents = 0,
-  coins,
+  globalWallet,
   payouts = [],
   stats = null,
   hidden = false,
@@ -95,7 +83,7 @@ export function SlotManager({
   slot: Slot | null;
   origin: string;
   availableCents?: number;
-  coins: { code: string; label: string }[];
+  globalWallet?: WalletProfile;
   payouts?: Payout[];
   stats?: { impressions: number; clicks: number; earnedCents: number } | null;
   /**
@@ -107,8 +95,7 @@ export function SlotManager({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [addr, setAddr] = useState(slot?.payout_address ?? "");
-  const [currency, setCurrency] = useState(slot?.payout_currency ?? "usdc_pol");
+
   const [copied, setCopied] = useState(false);
   // Which size's embed is currently revealed, and whether the code block is open.
   const [fmt, setFmt] = useState<AdFormatId>(PUBLISHER_FORMAT_IDS[0]);
@@ -154,14 +141,6 @@ export function SlotManager({
       router.refresh();
     });
   }
-  function savePayout() {
-    if (!slot) return;
-    start(async () => {
-      const res = await saveSlotPayout({ id: slot.id, payoutAddress: addr, payoutCurrency: currency });
-      if (!res.ok) return alert(res.error);
-      router.refresh();
-    });
-  }
   function withdraw() {
     if (!slot) return;
     start(async () => {
@@ -177,30 +156,6 @@ export function SlotManager({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
-  }
-
-  // One-click connect via the CoinPay wallet extension (tronbrowser.dev). The
-  // provider isn't shipped yet, so this feature-detects and guides the user
-  // otherwise — and lights up automatically once window.coinpay exists.
-  async function connectWallet() {
-    const provider = typeof window !== "undefined" ? window.coinpay : undefined;
-    if (!provider) {
-      alert("Open this page in tronbrowser.dev with the CoinPay wallet extension to connect in one click. Meanwhile, paste your address below.");
-      return;
-    }
-    try {
-      let address: string | undefined;
-      if (provider.connect) {
-        const r = await provider.connect();
-        address = typeof r === "string" ? r : r?.address;
-      } else if (provider.getAddress) {
-        address = await provider.getAddress();
-      }
-      if (address) setAddr(address);
-      else alert("Wallet did not return an address.");
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not connect wallet.");
-    }
   }
 
   async function callInstall(body: Record<string, unknown>) {
@@ -475,46 +430,10 @@ export function SlotManager({
             )}
           </div>
 
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="block flex-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-                  Payout wallet address
-                </span>
-                <button type="button" className="text-xs text-[var(--color-accent)]" onClick={connectWallet}>
-                  Connect wallet
-                </button>
-              </div>
-              <input
-                className="input mt-1 font-mono text-sm"
-                placeholder="0x… / T… / bc1…"
-                value={addr}
-                onChange={(e) => setAddr(e.target.value)}
-              />
-            </label>
-            <label className="block w-52">
-              <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-                Payout coin
-              </span>
-              <select
-                className="input mt-1 text-sm"
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-              >
-                {/* keep an existing/legacy value selectable even if not in the list */}
-                {currency && !coins.some((c) => c.code === currency) && (
-                  <option value={currency}>{currency}</option>
-                )}
-                {coins.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="btn text-sm" onClick={savePayout} disabled={pending}>
-              Save wallet
-            </button>
+          <div className="rounded border border-[var(--color-border)] p-3 text-sm">
+            <p className="font-medium">{globalWallet?.configured ? "Uses your global CoinPay wallet" : slot.payout_address ? "Existing payout wallet" : "Uses your global CoinPay wallet once connected"}</p>
+            {globalWallet?.selected ? <p className="mt-1 break-all font-mono text-xs">{globalWallet.selected.currency.toUpperCase()} · {globalWallet.selected.address}</p> : !globalWallet?.configured && slot.payout_address ? <p className="mt-1 break-all font-mono text-xs">{slot.payout_currency?.toUpperCase()} · {slot.payout_address}</p> : null}
+            <p className="mt-1 text-xs text-[var(--color-muted)]">Manage the global destination once at the top of this page; it applies to all connected sites.</p>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
             <div className="text-sm">
@@ -563,8 +482,7 @@ export function SlotManager({
           )}
 
           <p className="text-xs text-[var(--color-muted)]">
-            Earnings settle to this address via CoinPay. Open in tronbrowser.dev with the
-            CoinPay wallet extension to connect your wallet in one click.
+            Earnings settle via CoinPay to the payout destination shown above.
           </p>
         </>
       )}

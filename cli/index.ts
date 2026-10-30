@@ -576,6 +576,16 @@ async function cmdStats(args: Args): Promise<number> {
 
 async function cmdSlots(args: Args): Promise<number> {
   const sub = args.positional[0];
+  if (sub === "wallets") {
+    const sync = args.positional[1] === "sync";
+    const coinpay = sync ? coinpayAuth(args) : null;
+    if (sync && !coinpay) { console.error("Run coinpay auth login first; no wallet addresses are needed."); return 2; }
+    const { status, json } = await apiCall(args, sync ? "POST" : "GET", "/api/ads/v1/wallets", sync ? { coinpay_token: coinpay!.token } : undefined);
+    if (status >= 400) { console.error(String(json.error ?? "Wallet sync failed.")); return 1; }
+    if (args.flags.json) console.log(JSON.stringify(json, null, 2));
+    else console.log(sync ? "CoinPay global wallets synced for all sites." : JSON.stringify(json, null, 2));
+    return 0;
+  }
   if (sub === "create") {
     if (!args.positional[1]) {
       console.error("usage: crawlproof slots create <site> [--placement=inline] [--format=text_link] [--formats=a,b] [--inactive] [--no-tracking] [--json]");
@@ -611,7 +621,7 @@ async function cmdSlots(args: Args): Promise<number> {
     }
     return 0;
   }
-  console.error(`unknown: crawlproof slots ${sub} (expected: create | list)`);
+  console.error(`unknown: crawlproof slots ${sub} (expected: create | list | wallets)`);
   return 2;
 }
 
@@ -640,7 +650,8 @@ function coinpayAuth(args: Args): { token: string; baseUrl: string } | null {
   try {
     const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
     const file = process.env.COINPAY_CONFIG ?? `${home}/.coinpay.json`;
-    const token = (JSON.parse(readFileSync(file, "utf8")) as { jwtToken?: string }).jwtToken;
+    const config = JSON.parse(readFileSync(file, "utf8")) as { jwtToken?: string; oauth?: { accessToken?: string } };
+    const token = config.oauth?.accessToken ?? config.jwtToken;
     return token ? { token: token.trim(), baseUrl } : null;
   } catch {
     return null;
@@ -967,6 +978,8 @@ ${EMAIL_TRACKING_USAGE}
       site's project is found or created with the stats tracker on, and
       the output is the two tags to paste before </body>.
 
+  slots wallets [sync] [--json]
+      Read or sync global wallets using your existing CoinPay CLI session.
   slots list [--json]
       Your slots.
 

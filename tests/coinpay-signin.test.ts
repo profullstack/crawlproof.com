@@ -235,3 +235,17 @@ describe("placeholder emails", () => {
     expect(isPlaceholderEmail("ann@example.com")).toBe(false);
   });
 });
+
+it("imports wallet metadata only after validating the OAuth subject and never returns bearer tokens", async () => {
+  const good = { iss: CFG.issuer, aud: CFG.clientId, sub: "s1", nonce: "n1", exp: Math.floor(Date.now()/1000)+600 };
+  const fake = (async (url: string, init: RequestInit) => {
+    if (url.endsWith("/token")) return Response.json({ access_token: "fixture-access", id_token: jwt(good) });
+    if (url.endsWith("/userinfo")) return Response.json({ sub: "s1" });
+    expect(url).toBe("https://coinpayportal.com/api/wallets?source=all");
+    expect((init.headers as Record<string,string>).authorization).toBe("Bearer fixture-access");
+    return Response.json({ wallets: [{ id: "global", source: "account", is_active: true, cryptocurrency: "USDC_POL", wallet_address: "0xGlobal" }] });
+  }) as typeof fetch;
+  const result = await fetchCoinpayClaims(CFG,{code:"c",verifier:"v",nonce:"n1",wallets:true},fake);
+  expect(result).toMatchObject({ok:true,wallets:[{currency:"usdc_pol",address:"0xGlobal"}]});
+  expect(JSON.stringify(result)).not.toContain("fixture-access");
+});

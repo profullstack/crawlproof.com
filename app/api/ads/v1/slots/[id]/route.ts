@@ -8,6 +8,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
 import { authenticateBearer } from "@/lib/sp/apiAuth";
+import { slotPayoutTarget, globalWalletProfile } from "@/lib/coinpay-wallets";
 import { cleanPayoutTarget, slotAvailableCents } from "@/lib/ads/payouts";
 import { MIN_PAYOUT_CENTS } from "@/lib/ads/pricing";
 
@@ -31,12 +32,15 @@ async function load(userId: string, id: string) {
   if (!slot) return null;
   const { data: accruals } = await sb.from("ad_ledger").select("amount_cents").eq("slot_id", id).eq("kind", "publisher_accrual");
   const earned = (accruals ?? []).reduce((s, r) => s + (r.amount_cents ?? 0), 0);
+  const target = await slotPayoutTarget(sb, userId, slot);
   return {
     id: slot.id,
     placement: slot.placement,
     status: slot.status,
-    payout_address: slot.payout_address,
-    payout_currency: slot.payout_currency,
+    payout_address: target.ok ? target.address : null,
+    payout_currency: target.ok ? target.currency : null,
+    payout_source: target.ok ? target.source : "coinpay",
+    wallet_error: target.ok ? null : target.error,
     earned_cents: earned,
     available_cents: await slotAvailableCents(sb, id),
     min_payout_cents: MIN_PAYOUT_CENTS,
@@ -64,6 +68,8 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   }
   const patch: Record<string, unknown> = {};
   if ("payout_address" in body || "payout_currency" in body) {
+    const global = await globalWalletProfile(serviceClient(), auth.userId);
+    if (global.configured) return NextResponse.json({ error: "This account uses global CoinPay wallets. Sync or select its global wallet instead of entering a per-site address." }, { status: 409 });
     const t = cleanPayoutTarget(body.payout_address, body.payout_currency);
     if ("payout_address" in body) patch.payout_address = t.address;
     if ("payout_currency" in body) patch.payout_currency = t.currency;
