@@ -67,7 +67,7 @@ export function noteOperatorLocked(what: string, fetchImpl: typeof fetch = fetch
   }).catch(() => {});
 }
 
-type Row = { name: string; owner_id: string; enc_value: string };
+type Row = { name: string; owner_id: string; enc_value: string; updated_at?: string };
 
 export type OperatorRowLoader = (name: string) => Promise<Row | null>;
 // Ciphertext rows cached for a minute so a paid crawl does not hit the DB per
@@ -76,7 +76,7 @@ const rowCache = new Map<string, { row: Row | null; at: number }>();
 let rowLoader: OperatorRowLoader = async (name) => {
   const hit = rowCache.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.row;
-  const { data, error } = await (await serviceClient()).from("operator_sealed_secret").select("name, owner_id, enc_value").eq("name", name).maybeSingle();
+  const { data, error } = await (await serviceClient()).from("operator_sealed_secret").select("name, owner_id, enc_value, updated_at").eq("name", name).maybeSingle();
   if (error) throw new Error(error.message);
   const row = (data as Row | null) ?? null;
   rowCache.set(name, { row, at: Date.now() });
