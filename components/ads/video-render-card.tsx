@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { renderFailureMessage } from "@/lib/ads/video/errors";
 import { videoRenderStatus } from "@/app/actions/ads";
 
 type Status = Awaited<ReturnType<typeof videoRenderStatus>>;
@@ -95,8 +96,7 @@ export function VideoRenderCard({
 
       {status?.state === "failed" && (
         <p className="mt-3 text-sm text-[var(--color-danger,#f87171)]">
-          Rendering failed{status.errorCode ? ` (${status.errorCode})` : ""}. Editing the campaign
-          queues a fresh attempt.
+          {renderFailureMessage(status.errorCode)}
         </p>
       )}
 

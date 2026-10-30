@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MAX_NARRATION_CHARS,
+  DEFAULT_VOICE,
   narrationScript,
   narrationVariants,
   synthesiseNarration,
@@ -103,52 +104,52 @@ describe("the script is the approved copy, spoken", () => {
   });
 });
 
-describe("synthesis never fails a render", () => {
-  it("returns null with no API key", async () => {
+describe("synthesis enforces the narrated audio contract", () => {
+  it("reports missing configuration for narrated designs", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      expect(await synthesiseNarration({ snapshot: snapshot(), workDir: dir, apiKey: null })).toBeNull();
+      await expect(synthesiseNarration({ snapshot: snapshot(), workDir: dir, apiKey: null })).rejects.toMatchObject({ code: "narration_not_configured", retryable: false });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it("returns null on a non-200, rather than throwing", async () => {
+  it("classifies a rate limit as retryable", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      const res = await synthesiseNarration({
+      const result = synthesiseNarration({
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
         fetchImpl: (async () => new Response("rate limited", { status: 429 })) as typeof fetch,
       });
-      expect(res).toBeNull();
+      await expect(result).rejects.toMatchObject({ code: "narration_rate_limited", retryable: true });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it("returns null on a 200 with an empty body", async () => {
+  it("retries an empty successful response", async () => {
     // A success code with no bytes is a failure wearing a success code, and
     // muxing zero bytes fails much later with a worse message.
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      const res = await synthesiseNarration({
+      const result = synthesiseNarration({
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
         fetchImpl: (async () => new Response(new ArrayBuffer(0), { status: 200 })) as typeof fetch,
       });
-      expect(res).toBeNull();
+      await expect(result).rejects.toMatchObject({ code: "narration_empty_audio", retryable: true });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it("returns null when the network throws", async () => {
+  it("retries a network failure", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      const res = await synthesiseNarration({
+      const result = synthesiseNarration({
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
@@ -156,10 +157,20 @@ describe("synthesis never fails a render", () => {
           throw new Error("ECONNRESET");
         }) as typeof fetch,
       });
-      expect(res).toBeNull();
+      await expect(result).rejects.toMatchObject({ code: "narration_unavailable", retryable: true });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("skips silent designs without calling the provider", async () => {
+    let called = false;
+    expect(await synthesiseNarration({ snapshot: snapshot({ audioMode: "silent" }), workDir: "/unused", apiKey: "fixture", fetchImpl: (async () => { called = true; throw Error(); }) as typeof fetch })).toBeNull();
+    expect(called).toBe(false);
+  });
+
+  it("reports payment failures without leaking the provider body", async () => {
+    await expect(synthesiseNarration({ snapshot: snapshot(), workDir: "/unused", apiKey: "fixture", fetchImpl: (async () => new Response("sensitive provider body", { status: 402 })) as typeof fetch })).rejects.toMatchObject({ code: "narration_payment_required", message: "narration_payment_required", retryable: false });
   });
 
   it("writes the audio and reports the script it spoke", async () => {
@@ -170,7 +181,7 @@ describe("synthesis never fails a render", () => {
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
-        fetchImpl: (async () => new Response(bytes, { status: 200 })) as typeof fetch,
+        fetchImpl: (async (url: string) => { expect(url).toContain(DEFAULT_VOICE); return new Response(bytes, { status: 200 }); }) as typeof fetch,
       });
       expect(res).not.toBeNull();
       expect(res!.script).toBe("All fixtures, one feed. View feeds at niche d b dot dev.");
@@ -179,4 +190,15 @@ describe("synthesis never fails a render", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+});
+
+it("speaks the immutable approved narration instead of regenerating the script", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "narr-approved-"));
+  try {
+    await synthesiseNarration({ snapshot: snapshot({ narration: "Approved voiceover." }), workDir: dir, apiKey: "fixture", fetchImpl: (async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body)).text).toBe("Approved voiceover.");
+      expect(init.signal).toBeDefined();
+      return new Response(new Uint8Array([1,2,3]));
+    }) as typeof fetch });
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

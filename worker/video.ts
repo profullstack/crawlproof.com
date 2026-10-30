@@ -1,7 +1,7 @@
 // The render worker: consumes ad-video-render jobs, produces validated media,
 // publishes a revision atomically.
 
-import { Worker, type Job } from "bullmq";
+import { Worker, UnrecoverableError, type Job } from "bullmq";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,7 +10,7 @@ import { redisConnectionOptions } from "../lib/redis-connection";
 import { VIDEO_RENDER_QUEUE, type VideoRenderJobData } from "../lib/ads/video/queue";
 import { renderPreroll, RenderError } from "../lib/ads/video/render";
 import { probeMedia } from "../lib/ads/video/validate";
-import { synthesiseNarration } from "../lib/ads/video/narration";
+import { synthesiseNarration, NarrationError } from "../lib/ads/video/narration";
 import { uploadRenderedAssets } from "../lib/ads/video/storage";
 import { captureFrames } from "./frames";
 
@@ -76,14 +76,13 @@ export async function processRenderJob(
       attempts: job.attemptsMade + 1,
     });
 
-    // Narration, best effort. A silent pre-roll is a working ad; a render that
-    // fails because a speech API was rate-limited is not — so this returns null
-    // on every failure and the silent cut ships.
+    // A narrated design must keep its audio contract. Provider failures are
+    // classified below, before expensive frame capture begins.
     const narration = await synthesiseNarration({ snapshot: d.snapshot, workDir });
     if (narration) {
       console.log(`[render] narration: ${narration.byteSize} bytes — "${narration.script}"`);
     } else {
-      console.log("[render] narration: none (no key or synthesis failed), rendering silent");
+      console.log("[render] narration: skipped for a silent design");
     }
 
     const { assets, problems } = await renderPreroll({
@@ -191,8 +190,10 @@ export async function processRenderJob(
 
     return { published, assets: uploaded.length };
   } catch (err) {
-    const code = err instanceof RenderError ? err.code : "render_failed";
-    await setJobState(supabase, d.jobRowId, { state: "failed", error_code: code });
+    const code = err instanceof RenderError || err instanceof NarrationError ? err.code : "render_failed";
+    const retrying = err instanceof NarrationError && err.retryable && job.attemptsMade + 1 < (job.opts.attempts ?? 1);
+    await setJobState(supabase, d.jobRowId, { state: retrying ? "queued" : "failed", error_code: code });
+    if (err instanceof NarrationError && !err.retryable) throw new UnrecoverableError(code);
     throw err;
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
