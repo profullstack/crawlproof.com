@@ -241,7 +241,6 @@ export async function listSmsHubPlatformSenders(input?: { apiKey?: string }): Pr
 export async function saveCoinPayPortalPlatformIntegration(input: {
   apiKey?: string;
   merchantId?: string;
-  apiUrl?: string;
   clear?: boolean;
 }): Promise<Ok | Err> {
   const adminCheck = await assertAdmin();

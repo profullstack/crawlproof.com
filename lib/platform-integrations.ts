@@ -342,7 +342,7 @@ export async function getCoinPayPortalConnection() {
   ]);
   const apiKey = explicitlyDisabled ? null : savedKey;
   const merchantId = explicitlyDisabled ? "" : rowConfig(row, "merchant_id") || env.coinpayMerchantId;
-  const apiUrl = explicitlyDisabled ? COINPAY_ENDPOINT : rowConfig(row, "api_url") || env.coinpayApiUrl || COINPAY_ENDPOINT;
+  const apiUrl = env.coinpayApiUrl || COINPAY_ENDPOINT;
   const webhookSecret = env.coinpayWebhookSecret;
   const hasApiKey = !explicitlyDisabled && Boolean(state?.sealed || state?.envFallback);
   const locked = Boolean(state?.sealed && !state.unlocked);
@@ -375,7 +375,6 @@ export async function getCoinPayPortalConnectionStatus() {
 export async function saveCoinPayPortalConnection(input: {
   apiKey?: string;
   merchantId?: string;
-  apiUrl?: string;
   userId: string;
 }) {
   const row = await getPlatformConnectionRow(COINPAY_PROVIDER, COINPAY_NAME);
@@ -383,16 +382,10 @@ export async function saveCoinPayPortalConnection(input: {
   const state = await operatorKeyState("COINPAY_API_KEY");
   const apiKey = explicitKey || (await getOperatorSecret("COINPAY_API_KEY")) || "";
   const merchantId = input.merchantId?.trim() || rowConfig(row, "merchant_id") || env.coinpayMerchantId;
-  const apiUrl = input.apiUrl?.trim() || rowConfig(row, "api_url") || env.coinpayApiUrl || COINPAY_ENDPOINT;
   if (!state?.sealed && !state?.envFallback && !apiKey) throw new Error("CoinPay Portal API key is required.");
   if (!merchantId) throw new Error("CoinPay Portal business ID is required.");
-  const base = normalizeCoinPayApiBase(apiUrl);
-  const parsedBase = new URL(base);
-  if (parsedBase.protocol !== "https:" || parsedBase.hostname !== "coinpayportal.com") {
-    throw new Error("CoinPay Portal API URL must use https://coinpayportal.com.");
-  }
   if (apiKey) {
-    const probe = await fetch(`${base}/api/supported-coins?active_only=true`, {
+    const probe = await fetch(`${COINPAY_ENDPOINT}/api/supported-coins?active_only=true`, {
       headers: { authorization: `Bearer ${apiKey}` },
       cache: "no-store",
     });
@@ -407,15 +400,11 @@ export async function saveCoinPayPortalConnection(input: {
     name: COINPAY_NAME,
     direction: "bidirectional",
     userId: input.userId,
-    config: { api_url: base, merchant_id: merchantId },
+    config: { merchant_id: merchantId },
   });
 }
 
 export async function clearCoinPayPortalConnection(userId: string) {
   await disablePlatformConnectionRow({ provider: COINPAY_PROVIDER, name: COINPAY_NAME, direction: "bidirectional", userId });
   await clearOperatorSecret("COINPAY_API_KEY");
-}
-
-function normalizeCoinPayApiBase(value: string) {
-  return value.replace(/\/+$/, "").replace(/\/api$/i, "");
 }

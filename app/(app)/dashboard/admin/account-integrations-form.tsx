@@ -188,12 +188,10 @@ export function CoinPayPortalConnectionForm({
   updatedAt,
   hasWebhookSecret,
   merchantId,
-  apiUrl,
-}: ConnectionStatus & { hasWebhookSecret: boolean; merchantId: string; apiUrl: string }) {
+}: ConnectionStatus & { hasWebhookSecret: boolean; merchantId: string }) {
   const router = useRouter();
   const [apiKey, setApiKey] = useState("");
   const [businessId, setBusinessId] = useState(merchantId);
-  const [endpoint, setEndpoint] = useState(apiUrl);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -205,7 +203,6 @@ export function CoinPayPortalConnectionForm({
       const result = await saveCoinPayPortalPlatformIntegration({
         apiKey,
         merchantId: businessId,
-        apiUrl: endpoint,
       });
       if (!result.ok) {
         setMessage(result.error);
@@ -261,20 +258,12 @@ export function CoinPayPortalConnectionForm({
   return (
     <form onSubmit={save} className="mt-4 space-y-3">
       <ConnectionBadge configured={configured} status={status} updatedAt={updatedAt} />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <TextField
-          label="Business ID"
-          value={businessId}
-          onChange={setBusinessId}
-          placeholder="CoinPay Portal business ID"
-        />
-        <TextField
-          label="API endpoint"
-          value={endpoint}
-          onChange={setEndpoint}
-          placeholder="https://coinpayportal.com"
-        />
-      </div>
+      <TextField
+        label="Business ID"
+        value={businessId}
+        onChange={setBusinessId}
+        placeholder="CoinPay Portal business ID"
+      />
       <TextField
         label="CoinPay Portal API key"
         value={apiKey}
@@ -293,7 +282,7 @@ export function CoinPayPortalConnectionForm({
         />
       )}
       <p className="text-xs text-[var(--color-muted)]">
-        Powers CrawlProof credit purchases and payouts. The API key is sealed to your operator key.
+        Connects to https://coinpayportal.com for CrawlProof credit purchases and payouts. The API key is sealed to your operator key.
       </p>
       {configured && !hasWebhookSecret && (
         <p className="text-sm text-[var(--color-warn)]">
