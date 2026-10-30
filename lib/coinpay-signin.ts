@@ -15,6 +15,7 @@
 //
 // The decision logic is written against small interfaces so tests run in
 // memory; supabaseCoinpayStore() is the real one.
+import { fetchGlobalCoinpayWallets, type GlobalCoinpayWallet } from "./coinpay-wallet-data";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -54,22 +55,23 @@ const b64url = (b: Buffer) => b.toString("base64url");
 export type OAuthMode = "login" | "connect";
 
 /** What the start route keeps in the short-lived httpOnly cookie. */
-export type PendingAuth = { state: string; verifier: string; nonce: string; mode: OAuthMode; next: string };
+export type PendingAuth = { state: string; verifier: string; nonce: string; mode: OAuthMode; next: string; wallets?: boolean };
 
-export function newPendingAuth(mode: OAuthMode, next: string): PendingAuth & { challenge: string } {
+export function newPendingAuth(mode: OAuthMode, next: string, wallets = false): PendingAuth & { challenge: string } {
   const verifier = b64url(randomBytes(32));
   return {
     state: b64url(randomBytes(24)),
     verifier,
     nonce: b64url(randomBytes(24)),
     mode,
+    ...(wallets ? { wallets: true } : {}),
     next: safeNext(next, mode),
     challenge: b64url(createHash("sha256").update(verifier).digest()),
   };
 }
 
 export function encodePending(p: PendingAuth): string {
-  return Buffer.from(JSON.stringify({ s: p.state, v: p.verifier, n: p.nonce, m: p.mode, r: p.next })).toString("base64url");
+  return Buffer.from(JSON.stringify({ s: p.state, v: p.verifier, n: p.nonce, m: p.mode, r: p.next, ...(p.wallets ? { w: true } : {}) })).toString("base64url");
 }
 
 export function decodePending(raw: string | null | undefined): PendingAuth | null {
@@ -78,7 +80,7 @@ export function decodePending(raw: string | null | undefined): PendingAuth | nul
     const o = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
     if (!o || typeof o.s !== "string" || typeof o.v !== "string" || typeof o.n !== "string") return null;
     if (o.m !== "login" && o.m !== "connect") return null;
-    return { state: o.s, verifier: o.v, nonce: o.n, mode: o.m, next: safeNext(String(o.r ?? ""), o.m) };
+    return { state: o.s, verifier: o.v, nonce: o.n, mode: o.m, ...(o.w === true ? { wallets: true } : {}), next: safeNext(String(o.r ?? ""), o.m) };
   } catch {
     return null;
   }
@@ -99,7 +101,7 @@ export function authorizeUrl(cfg: CoinpayConfig, p: PendingAuth & { challenge: s
     response_type: "code",
     client_id: cfg.clientId,
     redirect_uri: redirectUri(cfg),
-    scope: COINPAY_SCOPES,
+    scope: COINPAY_SCOPES + (p.wallets ? " wallet:read" : ""),
     state: p.state,
     nonce: p.nonce,
     code_challenge: p.challenge,
@@ -150,9 +152,9 @@ export function checkIdToken(
 /** Code -> tokens -> userinfo, with the ID token checked. */
 export async function fetchCoinpayClaims(
   cfg: CoinpayConfig,
-  input: { code: string; verifier: string; nonce: string },
+  input: { code: string; verifier: string; nonce: string; wallets?: boolean },
   doFetch: typeof fetch = fetch,
-): Promise<{ ok: true; claims: CoinpayClaims } | { ok: false; error: string }> {
+): Promise<{ ok: true; claims: CoinpayClaims; wallets?: GlobalCoinpayWallet[] } | { ok: false; error: string }> {
   const tokenRes = await doFetch(cfg.issuer + "/api/oauth/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
@@ -176,7 +178,9 @@ export async function fetchCoinpayClaims(
   if (!infoRes.ok || typeof info.sub !== "string" || !info.sub) return { ok: false, error: "CoinPay userinfo failed" };
   const idc = checkIdToken(tok.id_token, { issuer: cfg.issuer, clientId: cfg.clientId, nonce: input.nonce, sub: info.sub });
   if (!idc.ok) return idc;
+  const wallets = input.wallets ? await fetchGlobalCoinpayWallets(cfg.issuer, tok.access_token, doFetch) : undefined;
   return {
+    ...(wallets ? { wallets } : {}),
     ok: true,
     claims: {
       sub: info.sub,

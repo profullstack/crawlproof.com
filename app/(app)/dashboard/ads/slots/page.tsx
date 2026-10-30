@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
-import { fetchSupportedTokens } from "@/lib/coinpay-tokens";
+import { serviceClient } from "@/lib/supabase/service";
+import { globalWalletProfile } from "@/lib/coinpay-wallets";
+import { GlobalWalletCard } from "@/components/ads/global-wallet-card";
 import { SlotRow } from "@/components/ads/slot-row";
 import { StatsUnavailable } from "@/components/stats-unavailable";
 import {
@@ -17,17 +19,6 @@ import {
   getSlotTotalsSince,
   type SlotTotals,
 } from "@/lib/ads/series";
-
-// Fallback coins when CoinPay's supported-coins endpoint is unavailable, so the
-// payout dropdown is never empty. Codes match what /payments+/payouts expect.
-const FALLBACK_COINS = [
-  { code: "usdc_pol", symbol: "USDC", name: "USD Coin (Polygon)", chain: "Polygon" },
-  { code: "usdc_eth", symbol: "USDC", name: "USD Coin (Ethereum)", chain: "Ethereum" },
-  { code: "usdt_pol", symbol: "USDT", name: "Tether (Polygon)", chain: "Polygon" },
-  { code: "btc", symbol: "BTC", name: "Bitcoin", chain: "Bitcoin" },
-  { code: "eth", symbol: "ETH", name: "Ethereum", chain: "Ethereum" },
-  { code: "sol", symbol: "SOL", name: "Solana", chain: "Solana" },
-];
 
 export const metadata = { title: "Monetize your site" };
 
@@ -52,9 +43,10 @@ type Payout = {
 export default async function SlotsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; page?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; page?: string; error?: string; coinpay?: string }>;
 }) {
-  const listQuery = parseListQuery(await searchParams);
+  const params = await searchParams;
+  const listQuery = parseListQuery(params);
   const supabase = await createClient();
   const {
     data: { user },
@@ -107,11 +99,11 @@ export default async function SlotsPage({
     }
   }
 
-  const tokens = await fetchSupportedTokens().catch(() => []);
-  const coins = (tokens.length > 0 ? tokens : FALLBACK_COINS).map((t) => ({
-    code: t.code,
-    label: `${t.symbol}${t.chain ? ` · ${t.chain}` : ""}`,
-  }));
+  const globalWallet = user ? await globalWalletProfile(serviceClient(), user.id) : { configured: false, connected: false, wallets: [], selected: null, syncedAt: null };
+  const returnQuery = new URLSearchParams();
+  for (const key of ["q", "status", "page"] as const) if (params[key]) returnQuery.set(key, params[key]!);
+  const returnPath = "/dashboard/ads/slots" + (returnQuery.size ? `?${returnQuery}` : "");
+  const connectUrl = `/api/v1/coinpay/oauth/start?mode=connect&wallets=1&next=${encodeURIComponent(returnPath)}`;
 
   const slotByProject = new Map(slots.map((s) => [s.project_id, s]));
 
@@ -149,9 +141,13 @@ export default async function SlotsPage({
       </div>
       <p className="mt-2 text-[var(--color-muted)]">
         Each site you monetize is a CrawlProof <strong>project</strong>. Add a site to
-        create one, drop one tag on the page, and add a payout wallet — you earn crypto
+        create one, drop one tag on the page, and connect CoinPay once — you earn crypto
         for the clicks.
       </p>
+
+      {params.error && <p role="alert" className="mt-4 text-sm text-red-400">{params.error.slice(0, 300)}</p>}
+      {params.coinpay === "connected" && <p role="status" className="mt-4 text-sm">CoinPay connected. Your global wallets apply to every site.</p>}
+      <GlobalWalletCard profile={globalWallet} connectUrl={connectUrl} />
 
       {statsFailed && <StatsUnavailable what="your delivery and earnings figures" />}
 
@@ -186,7 +182,7 @@ export default async function SlotsPage({
                 slot={slot}
                 origin={env.siteUrl}
                 availableCents={earned - withdrawn}
-                coins={coins}
+                globalWallet={globalWallet}
                 payouts={slot ? payoutsBySlot.get(slot.id) ?? [] : []}
                 stats={
                   stat

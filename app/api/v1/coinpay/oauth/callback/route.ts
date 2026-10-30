@@ -1,3 +1,5 @@
+import { saveGlobalWalletProfile } from "@/lib/coinpay-wallets";
+import type { GlobalCoinpayWallet } from "@/lib/coinpay-wallet-data";
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
@@ -34,7 +36,7 @@ export async function GET(req: NextRequest) {
     res.headers.set("cache-control", "no-store");
     return res;
   };
-  const failPath = pending?.mode === "connect" ? "/dashboard/settings" : "/login";
+  const failPath = pending?.mode === "connect" ? (pending.wallets ? pending.next : "/dashboard/settings") : "/login";
 
   if (!pending) return back("/login", "CoinPay sign-in expired. Try again.");
   if (!stateMatches(pending.state, sp.get("state"))) {
@@ -45,10 +47,12 @@ export async function GET(req: NextRequest) {
   if (!code) return back(failPath, "CoinPay sign-in failed: no code.");
 
   let claims;
+  let wallets: GlobalCoinpayWallet[] | undefined;
   try {
-    const r = await fetchCoinpayClaims(cfg, { code, verifier: pending.verifier, nonce: pending.nonce });
+    const r = await fetchCoinpayClaims(cfg, { code, verifier: pending.verifier, nonce: pending.nonce, wallets: pending.wallets });
     if (!r.ok) return back(failPath, `CoinPay sign-in failed: ${r.error}.`);
     claims = r.claims;
+    wallets = r.wallets;
   } catch (e) {
     console.error("[coinpay-signin] token/userinfo", e instanceof Error ? e.message : e);
     return back(failPath, "CoinPay did not answer. Try again.");
@@ -68,6 +72,10 @@ export async function GET(req: NextRequest) {
     return back(failPath, "CoinPay sign-in failed. Try again.");
   }
   if (!resolved.ok) return back(failPath, resolved.error);
+  if (wallets) {
+    try { await saveGlobalWalletProfile(sb, resolved.userId, claims.sub, wallets); }
+    catch { return back(pending.next, "Could not save CoinPay wallets. Reconnect to try again."); }
+  }
   if (pending.mode === "connect") return back(`${pending.next}${pending.next.includes("?") ? "&" : "?"}coinpay=connected`);
 
   // Already signed in as that very user: nothing to mint.
