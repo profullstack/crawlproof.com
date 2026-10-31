@@ -16,6 +16,7 @@
 // The decision logic is written against small interfaces so tests run in
 // memory; supabaseCoinpayStore() is the real one.
 import { fetchGlobalCoinpayWallets, type GlobalCoinpayWallet } from "./coinpay-wallet-data";
+import { resolveCoinPayAccountLink } from "@profullstack/coinpay-onboard/identity";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -197,7 +198,7 @@ export type IdentityRow = { user_id: string; coinpay_sub: string; coinpay_email:
 export interface CoinpayStore {
   identityBySub(sub: string): Promise<IdentityRow | null>;
   identityByUser(userId: string): Promise<IdentityRow | null>;
-  /** Insert; "conflict" when the sub or the user is already bound. */
+  /** Insert; "conflict" when the user is already bound (or signup raced). */
   link(row: IdentityRow & { coinpay_name: string | null }): Promise<"ok" | "conflict">;
   unlink(userId: string): Promise<void>;
   touch(sub: string): Promise<void>;
@@ -232,12 +233,17 @@ export async function resolveCoinpayUser(
 
   if (input.mode === "connect") {
     if (!input.currentUserId) return { ok: false, code: "not_signed_in", error: "Sign in to crawlproof first, then connect CoinPay from Settings." };
-    if (bound) {
-      if (bound.user_id === input.currentUserId) return { ok: true, userId: bound.user_id, action: "linked" };
-      return { ok: false, code: "linked_elsewhere", error: "That CoinPay account is already connected to another crawlproof account." };
-    }
     const mine = await store.identityByUser(input.currentUserId);
-    if (mine) return { ok: false, code: "already_connected", error: "This crawlproof account is already connected to a different CoinPay account. Disconnect it first." };
+    const decision = resolveCoinPayAccountLink({
+      bindings: [
+        ...(bound ? [{ sub: bound.coinpay_sub, userId: bound.user_id }] : []),
+        ...(mine ? [{ sub: mine.coinpay_sub, userId: input.currentUserId }] : []),
+      ],
+      sub: claims.sub,
+      userId: input.currentUserId,
+    });
+    if (decision.kind === "already_linked") return { ok: true, userId: input.currentUserId, action: "linked" };
+    if (decision.kind === "account_has_other_identity") return { ok: false, code: "already_connected", error: "This crawlproof account is already connected to a different CoinPay account. Disconnect it first." };
     const r = await store.link({
       user_id: input.currentUserId,
       coinpay_sub: claims.sub,
@@ -245,7 +251,11 @@ export async function resolveCoinpayUser(
       coinpay_name: claims.name,
       created_via: "connect",
     });
-    if (r === "conflict") return { ok: false, code: "linked_elsewhere", error: "That CoinPay account was just connected elsewhere." };
+    if (r === "conflict") {
+      const current = await store.identityByUser(input.currentUserId);
+      if (current?.coinpay_sub === claims.sub) return { ok: true, userId: input.currentUserId, action: "linked" };
+      return { ok: false, code: "already_connected", error: "This crawlproof account was just connected to a different CoinPay account." };
+    }
     return { ok: true, userId: input.currentUserId, action: "linked" };
   }
 
@@ -284,7 +294,7 @@ export function supabaseCoinpayStore(sb: SupabaseClient): CoinpayStore {
   const cols = "user_id, coinpay_sub, coinpay_email, created_via";
   return {
     async identityBySub(sub) {
-      const r = await sb.from("coinpay_identities").select(cols).eq("coinpay_sub", sub).maybeSingle();
+      const r = await sb.from("coinpay_identities").select(cols).eq("coinpay_sub", sub).order("created_at", { ascending: true }).order("user_id", { ascending: true }).limit(1).maybeSingle();
       if (r.error) throw new Error(r.error.message);
       return (r.data as IdentityRow | null) ?? null;
     },

@@ -30,7 +30,7 @@ stable
 security definer
 set search_path = ''
 as $$
-  select i.user_id from public.coinpay_identities i where i.coinpay_sub = p_sub limit 1
+  select i.user_id from public.coinpay_identities i where i.coinpay_sub = p_sub order by i.created_at, i.user_id limit 1
 $$;
 revoke all on function public.uptime_user_id_by_coinpay_sub(text) from public, anon, authenticated;
 grant execute on function public.uptime_user_id_by_coinpay_sub(text) to service_role;

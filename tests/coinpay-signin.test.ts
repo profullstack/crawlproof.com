@@ -33,7 +33,7 @@ function memory() {
       return ids.find((i) => i.user_id === u) ?? null;
     },
     async link(row) {
-      if (ids.some((i) => i.coinpay_sub === row.coinpay_sub || i.user_id === row.user_id)) return "conflict";
+      if (ids.some((i) => i.user_id === row.user_id || (row.created_via === "signup" && i.coinpay_sub === row.coinpay_sub && i.created_via === "signup"))) return "conflict";
       ids.push(row);
       return "ok";
     },
@@ -99,10 +99,17 @@ describe("STANDING rule: bind by CoinPay sub, never by email", () => {
     expect(db.ids).toHaveLength(0);
   });
 
-  it("a sub already linked elsewhere cannot be connected to another account", async () => {
+  it("one CoinPay identity can be connected to multiple crawlproof accounts", async () => {
     await resolveCoinpayUser({ mode: "login", currentUserId: null, claims: { sub: "s", email: null, name: null } }, db.store);
     const r = await resolveCoinpayUser({ mode: "connect", currentUserId: "victim", claims: { sub: "s", email: null, name: null } }, db.store);
-    expect(r).toMatchObject({ ok: false, code: "linked_elsewhere" });
+    db.users.set("second", { email: "second@example.com" });
+    const second = await resolveCoinpayUser({ mode: "connect", currentUserId: "second", claims: { sub: "s", email: null, name: null } }, db.store);
+    expect(r).toEqual({ ok: true, userId: "victim", action: "linked" });
+    expect(second).toEqual({ ok: true, userId: "second", action: "linked" });
+    expect(db.ids.filter((identity) => identity.coinpay_sub === "s")).toHaveLength(3);
+    // Sign-in maps to the oldest local binding deterministically.
+    const login = await resolveCoinpayUser({ mode: "login", currentUserId: null, claims: { sub: "s", email: null, name: null } }, db.store);
+    expect(login).toEqual({ ok: true, userId: "new-1", action: "login" });
   });
 
   it("an account already connected to one CoinPay account refuses a second", async () => {
