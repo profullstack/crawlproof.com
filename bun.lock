@@ -12,6 +12,7 @@
         "@profullstack/affiliates": "^0.3.0",
         "@profullstack/autoblog": "github:profullstack/autoblog#75e54af",
         "@profullstack/coinpay": "^0.25.0",
+        "@profullstack/coinpay-onboard": "0.4.0",
         "@profullstack/fleetbar": "0.2.0",
         "@profullstack/footer": "latest",
         "@profullstack/hqtui": "^0.11.0",
@@ -318,6 +319,8 @@
     "@profullstack/autoblog": ["@profullstack/autoblog@github:profullstack/autoblog#75e54af", {}, "profullstack-autoblog-75e54af", "sha512-f/YwwiVTzKz659+6RHgeGueSdUrWAnon5OHT1YfOI5TdLZPDrLFGE88051fzQXAlsBrkDK1jrm216OIrKygnRA=="],
 
     "@profullstack/coinpay": ["@profullstack/coinpay@0.25.0", "", { "dependencies": { "@inquirer/prompts": "^8.3.0", "@noble/curves": "^1.6.0", "@noble/hashes": "^1.5.0", "@profullstack/hqtui": "^0.6.3", "@scure/bip32": "^1.5.0", "@scure/bip39": "^1.4.0" }, "bin": { "coinpay": "bin/coinpay.js" } }, "sha512-ZoK8COqBCdJXvr0fO5UWw9HPh88CdMBLycc/dU6kXwAyeIrwZ4WkBApisuDgs4leXNN+SMjwex2etgrEvlICTQ=="],
+
+    "@profullstack/coinpay-onboard": ["@profullstack/coinpay-onboard@0.4.0", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.32.2", "zod": "^4.6.7" }, "bin": { "coinpay-onboard": "bin/coinpay-onboard" } }, "sha512-L2P0fxNswZnXt1tvo6t19L/RrJN204vrWnIEY65QI+zriZN7JJPY4Ap6Nv8MLkyA5wDvY88s0+Dgjf9Myw/tUA=="],
 
     "@profullstack/emailer": ["@profullstack/emailer@1.0.3", "", {}, "sha512-VyAtCcfnSI6LOwJvWogCr3ZNmEsaZw+iuWrqnosLsdcKsbRyCrCmXigMNZJZEjlgYlR+lK//PwNPG+xtCFvWAw=="],
 
