@@ -59,6 +59,7 @@ export function ProfileCard() {
         onChange={setValues}
         errors={errors}
         disabled={!loaded}
+              importOpenProfile
       />
       {error && <p className="text-sm text-[var(--color-fail)]">{error}</p>}
       <div className="flex items-center gap-3">
