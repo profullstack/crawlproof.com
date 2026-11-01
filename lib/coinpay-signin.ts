@@ -119,7 +119,7 @@ export function stateMatches(expected: string | null | undefined, got: string | 
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export type CoinpayClaims = { sub: string; email: string | null; name: string | null };
+export type CoinpayClaims = { sub: string; email: string | null; name: string | null; openprofile_url?: string };
 
 /**
  * Check the ID token that came straight back from the token endpoint over TLS
@@ -187,6 +187,7 @@ export async function fetchCoinpayClaims(
       sub: info.sub,
       email: typeof info.email === "string" && info.email.includes("@") ? info.email.slice(0, 320) : null,
       name: typeof info.name === "string" && info.name.trim() ? info.name.trim().slice(0, 200) : null,
+      ...(typeof info.openprofile_url === "string" ? { openprofile_url: info.openprofile_url } : {}),
     },
   };
 }

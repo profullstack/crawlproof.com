@@ -1,4 +1,6 @@
 import { saveGlobalWalletProfile } from "@/lib/coinpay-wallets";
+import { saveOpenProfileContact } from "@profullstack/profile";
+import { profileStore } from "@/lib/profile";
 import type { GlobalCoinpayWallet } from "@/lib/coinpay-wallet-data";
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -72,6 +74,10 @@ export async function GET(req: NextRequest) {
     return back(failPath, "CoinPay sign-in failed. Try again.");
   }
   if (!resolved.ok) return back(failPath, resolved.error);
+  if (pending.mode === "connect" && claims.openprofile_url) {
+    try { await saveOpenProfileContact(profileStore(), resolved.userId, claims.openprofile_url); }
+    catch { console.warn("[coinpay-signin] OpenProfile import skipped"); }
+  }
   if (wallets) {
     try { await saveGlobalWalletProfile(sb, resolved.userId, claims.sub, wallets); }
     catch { return back(pending.next, "Could not save CoinPay wallets. Reconnect to try again."); }
