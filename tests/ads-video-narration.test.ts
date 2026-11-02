@@ -108,7 +108,7 @@ describe("synthesis enforces the narrated audio contract", () => {
   it("reports missing configuration for narrated designs", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      await expect(synthesiseNarration({ snapshot: snapshot(), workDir: dir, apiKey: null })).rejects.toMatchObject({ code: "narration_not_configured", retryable: false });
+      await expect(synthesiseNarration({ route: "elevenlabs", snapshot: snapshot(), workDir: dir, apiKey: null })).rejects.toMatchObject({ code: "narration_not_configured", retryable: false });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -117,7 +117,7 @@ describe("synthesis enforces the narrated audio contract", () => {
   it("classifies a rate limit as retryable", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      const result = synthesiseNarration({
+      const result = synthesiseNarration({ route: "elevenlabs",
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
@@ -134,7 +134,7 @@ describe("synthesis enforces the narrated audio contract", () => {
     // muxing zero bytes fails much later with a worse message.
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      const result = synthesiseNarration({
+      const result = synthesiseNarration({ route: "elevenlabs",
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
@@ -149,7 +149,7 @@ describe("synthesis enforces the narrated audio contract", () => {
   it("retries a network failure", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
-      const result = synthesiseNarration({
+      const result = synthesiseNarration({ route: "elevenlabs",
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
@@ -165,19 +165,19 @@ describe("synthesis enforces the narrated audio contract", () => {
 
   it("skips silent designs without calling the provider", async () => {
     let called = false;
-    expect(await synthesiseNarration({ snapshot: snapshot({ audioMode: "silent" }), workDir: "/unused", apiKey: "fixture", fetchImpl: (async () => { called = true; throw Error(); }) as typeof fetch })).toBeNull();
+    expect(await synthesiseNarration({ route: "elevenlabs", snapshot: snapshot({ audioMode: "silent" }), workDir: "/unused", apiKey: "fixture", fetchImpl: (async () => { called = true; throw Error(); }) as typeof fetch })).toBeNull();
     expect(called).toBe(false);
   });
 
   it("reports payment failures without leaking the provider body", async () => {
-    await expect(synthesiseNarration({ snapshot: snapshot(), workDir: "/unused", apiKey: "fixture", fetchImpl: (async () => new Response("sensitive provider body", { status: 402 })) as typeof fetch })).rejects.toMatchObject({ code: "narration_payment_required", message: "narration_payment_required", retryable: false });
+    await expect(synthesiseNarration({ route: "elevenlabs", snapshot: snapshot(), workDir: "/unused", apiKey: "fixture", fetchImpl: (async () => new Response("sensitive provider body", { status: 402 })) as typeof fetch })).rejects.toMatchObject({ code: "narration_payment_required", message: "narration_payment_required", retryable: false });
   });
 
   it("writes the audio and reports the script it spoke", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "narr-"));
     try {
       const bytes = new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4, 5]);
-      const res = await synthesiseNarration({
+      const res = await synthesiseNarration({ route: "elevenlabs",
         snapshot: snapshot(),
         workDir: dir,
         apiKey: "k",
@@ -195,7 +195,7 @@ describe("synthesis enforces the narrated audio contract", () => {
 it("speaks the immutable approved narration instead of regenerating the script", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "narr-approved-"));
   try {
-    await synthesiseNarration({ snapshot: snapshot({ narration: "Approved voiceover." }), workDir: dir, apiKey: "fixture", fetchImpl: (async (_url: string, init: RequestInit) => {
+    await synthesiseNarration({ route: "elevenlabs", snapshot: snapshot({ narration: "Approved voiceover." }), workDir: dir, apiKey: "fixture", fetchImpl: (async (_url: string, init: RequestInit) => {
       expect(JSON.parse(String(init.body)).text).toBe("Approved voiceover.");
       expect(init.signal).toBeDefined();
       return new Response(new Uint8Array([1,2,3]));

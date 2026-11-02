@@ -16,6 +16,13 @@ import {
   NARRATION_CHARS_PER_SEC,
 } from "./profiles";
 import type { VideoDesignSnapshot } from "./snapshot";
+import {
+  c0mputeSpeechTarget,
+  c0mputeTtsVoice,
+  narrationRoute,
+  type C0mputeSpeechTarget,
+  type NarrationRoute,
+} from "../agent";
 import { spokenDomain, spokenText } from "./spoken";
 
 /**
@@ -119,11 +126,16 @@ export type NarrationResult = {
 export async function synthesiseNarration(input: {
   snapshot: VideoDesignSnapshot;
   workDir: string;
+  /** Default: c0mpute while the ad-generator-agent is on (../agent). */
+  route?: NarrationRoute;
+  /** c0mpute speech endpoint; default from C0MPUTE_SPEECH_URL/_TOKEN. */
+  speech?: C0mputeSpeechTarget;
   apiKey?: string | null;
   voiceId?: string;
   fetchImpl?: typeof fetch;
 }): Promise<NarrationResult | null> {
   if (input.snapshot.audioMode === "silent") return null;
+  if ((input.route ?? narrationRoute()) === "c0mpute") return synthesiseOnC0mpute(input);
   // Undefined uses deployment configuration; explicit null suppresses key lookup.
   const apiKey =
     input.apiKey === undefined ? (process.env.ELEVENLABS_API_KEY ?? null) : input.apiKey;
@@ -166,6 +178,75 @@ export async function synthesiseNarration(input: {
     if (buf.byteLength === 0) throw new NarrationError("narration_empty_audio", true);
 
     const filePath = path.join(input.workDir, "narration.mp3");
+    await writeFile(filePath, buf);
+    return { filePath, script, byteSize: buf.byteLength };
+  } catch (error) {
+    if (error instanceof NarrationError) throw error;
+    throw new NarrationError("narration_unavailable", true);
+  }
+}
+
+// ── c0mpute (ad-generator-agent) ─────────────────────────────────────────────
+
+/** CPU synthesis of a one-line read is seconds; a cold worker or a queue is not. */
+const C0MPUTE_TTS_TIMEOUT_MS = 180_000;
+
+/** A WAV container: what tts.synthesize returns (the gateway validates it too). */
+function isWav(buf: Buffer): boolean {
+  return (
+    buf.byteLength > 44 &&
+    buf.toString("ascii", 0, 4) === "RIFF" &&
+    buf.toString("ascii", 8, 12) === "WAVE"
+  );
+}
+
+/**
+ * Narration on c0mpute: one `tts.synthesize` job through a speech gateway.
+ *
+ * Never falls back to a paid voice. A gateway with no worker answering (503),
+ * a rate limit or a network failure is retryable, so the render job retries
+ * rather than publishing a silent ad; a rejected request or bad credentials
+ * is not, because the same request will be rejected again.
+ */
+async function synthesiseOnC0mpute(input: {
+  snapshot: VideoDesignSnapshot;
+  workDir: string;
+  speech?: C0mputeSpeechTarget;
+  fetchImpl?: typeof fetch;
+}): Promise<NarrationResult> {
+  const script = input.snapshot.narration?.trim() || narrationScript(input.snapshot);
+  if (!script.trim()) throw new NarrationError("narration_script_missing", false);
+
+  const target = input.speech ?? c0mputeSpeechTarget();
+  const { engine, voice } = c0mputeTtsVoice();
+  const doFetch = input.fetchImpl ?? fetch;
+
+  try {
+    const res = await doFetch(target.url, {
+      method: "POST",
+      signal: AbortSignal.timeout(C0MPUTE_TTS_TIMEOUT_MS),
+      headers: {
+        "content-type": "application/json",
+        accept: "audio/wav",
+        ...(target.token ? { authorization: `Bearer ${target.token}` } : {}),
+      },
+      body: JSON.stringify({ text: script, engine, voice, locale: "en-US", speed: 1 }),
+    });
+    if (!res.ok) {
+      const code =
+        res.status === 401 || res.status === 403 ? "narration_access_denied"
+        : res.status === 400 || res.status === 413 ? "narration_rejected"
+        : res.status === 429 ? "narration_rate_limited"
+        : res.status === 503 ? "narration_no_c0mpute_worker"
+        : "narration_provider_failed";
+      throw new NarrationError(code, res.status === 429 || res.status >= 500 || res.status === 408);
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength === 0) throw new NarrationError("narration_empty_audio", true);
+    if (!isWav(buf)) throw new NarrationError("narration_bad_audio", true);
+
+    const filePath = path.join(input.workDir, "narration.wav");
     await writeFile(filePath, buf);
     return { filePath, script, byteSize: buf.byteLength };
   } catch (error) {

@@ -7,6 +7,7 @@ import { env } from "@/lib/env";
 import { generateStructuredOutput } from "@/lib/lx/backendAi";
 import { extractSiteBrand, type SiteBrand } from "./brand";
 import { resolveAdHeroImage } from "./heroImage";
+import { agentProviderLabel, paidHeroImagesAllowed } from "./agent";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import { renderFeedHtml } from "./feeditem";
 import { NO_MEDIA, type AdMediaKind, type MediaAssets } from "./media";
@@ -523,12 +524,17 @@ export async function generateAdCreatives(
   // Hero image: the advertiser's og:image when it exists, else a gpt-image-2.5
   // fallback (only when we have a Supabase client to host the upload). Best-
   // effort — a failure just leaves the accent-tint background.
+  //
+  // The ad-generator-agent (./agent, on by default) keeps this off paid image
+  // generation: c0mpute has no live diffusion workers yet, so without an
+  // og:image the ad ships on its accent tint unless the operator opted into
+  // gpt-image with AD_GENERATOR_PAID_IMAGES=1.
   let heroUrl: string | null = null;
   if (opts.supabase) {
     const hero = await resolveAdHeroImage({
       brand,
       copy: { headline: output.headline, body: output.body, bgColor: output.bgColor, accentColor: output.accentColor },
-      openai,
+      openai: paidHeroImagesAllowed() ? openai : null,
       supabase: opts.supabase,
     }).catch(() => null);
     heroUrl = hero?.url ?? null;
@@ -543,7 +549,12 @@ export async function generateAdCreatives(
     domain: summaryDomain(brand.url || rawUrl),
   };
 
-  return { brand, creatives: copyToCreatives(brand, output, heroUrl), provider, summary };
+  return {
+    brand,
+    creatives: copyToCreatives(brand, output, heroUrl),
+    provider: agentProviderLabel(provider),
+    summary,
+  };
 }
 
 // Append the campaign ref for click attribution, preserving any existing query.
