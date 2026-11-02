@@ -1238,13 +1238,12 @@ export async function generateArticle(
     });
     queryEmbedding = emb.data[0].embedding as number[];
   } catch (err) {
-    await failKeyword(
-      supabase,
-      keyword.id,
-      `embedding failed: ${err instanceof Error ? err.message : String(err)}`,
+    // Embeddings are OpenAI-only (c0mpute serves none). Without credit there
+    // the article still gets written, just without the vector-matched
+    // internal links; the other candidate sources below still apply.
+    console.warn(
+      `[lx] embedding failed, writing without vector links: ${err instanceof Error ? err.message : String(err)}`,
     );
-    await refundArticleGenerationCharge(supabase, charge);
-    return { ok: false, error: "embedding failed" };
   }
 
   // Build the link-exchange candidate pool from three sources, ordered
@@ -1261,7 +1260,7 @@ export async function generateArticle(
   );
   const sitePageSlots = Math.min(desiredInternalLinks, MAX_LINK_CANDIDATES);
   let candidates: LabeledCandidate[] = [];
-  if (sitePageSlots > 0) {
+  if (sitePageSlots > 0 && queryEmbedding.length > 0) {
     const [{ data: pillarRows, error: pillarErr }, { data: blogRows, error: blogErr }] =
       await Promise.all([
         supabase.rpc("lx_find_internal_links", {

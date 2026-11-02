@@ -34,6 +34,9 @@ const RATES: Record<string, Rate> = {
   "gpt-5.6-sol": { input: 4_000_000, output: 20_000_000 },
   "gpt-5.6-terra": { input: 2_500_000, output: 15_000_000 },
   "gpt-5.6-luna": { input: 1_000_000, output: 6_000_000 },
+  // c0mpute: the peer network reports no token counts or price, so tokens are
+  // chars/4 and the rate is bot.seo's placeholder until the market sets one.
+  "c0mpute/": { input: 150_000, output: 600_000 },
 };
 
 /**

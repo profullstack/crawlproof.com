@@ -20,6 +20,7 @@ import {
   validateFeedUrl,
 } from "@/lib/promote/sources";
 import { fanOutToSubscribers, ingestFeedNow } from "@/lib/promote/ingest";
+import { c0mputeEnabled } from "@/lib/lx/backendAi";
 
 type Account = { id: string; platform: string; handle: string; status: string };
 
@@ -100,7 +101,7 @@ export function registerPromoteTools(server: McpServer): void {
     },
     async (args, _extra) => {
       const { anthropic, openai } = aiClients();
-      if (!anthropic && !openai)
+      if (!anthropic && !openai && !c0mputeEnabled())
         return errorResult("No AI provider configured on the server.");
       const title = await fetchLinkTitle(args.url).catch(() => null);
       const pitch = await generatePitch({
@@ -172,7 +173,7 @@ export function registerPromoteTools(server: McpServer): void {
           "No matching active accounts. Connect some at https://crawlproof.com/dashboard/promote/accounts",
         );
       const { anthropic, openai } = aiClients();
-      if (!anthropic && !openai) return errorResult("No AI provider configured on the server.");
+      if (!anthropic && !openai && !c0mputeEnabled()) return errorResult("No AI provider configured on the server.");
       const title = await fetchLinkTitle(args.url).catch(() => null);
       const sb = serviceClient();
       const lines: string[] = [];

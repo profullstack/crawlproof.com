@@ -15,7 +15,7 @@ import OpenAI from "openai";
 import { z } from "zod/v4";
 import { env } from "@/lib/env";
 import { serviceClient } from "@/lib/supabase/service";
-import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { generateStructuredOutput, c0mputeEnabled } from "@/lib/lx/backendAi";
 import { isAllowedTargetUrl, checkPerTargetLimit } from "@/lib/rateLimit";
 import { DEFAULT_PROJECT_ENGINES } from "@/lib/credits";
 import { newShareToken } from "@/lib/shareToken";
@@ -697,7 +697,7 @@ export async function draftEmail(input: {
     return { ok: false, problems: ["no findings and no score on file — nothing truthful to say"] };
   }
   const { anthropic, openai } = aiClients();
-  if (!anthropic && !openai) {
+  if (!anthropic && !openai && !c0mputeEnabled()) {
     return { ok: false, problems: ["no AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY)"] };
   }
 
@@ -796,7 +796,7 @@ async function draftCustomEmail(input: {
   }
 
   const { anthropic, openai } = aiClients();
-  if (!anthropic && !openai) {
+  if (!anthropic && !openai && !c0mputeEnabled()) {
     return { ok: false, problems: ["no AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY)"] };
   }
 

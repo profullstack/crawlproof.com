@@ -9,7 +9,7 @@ import { env } from "@/lib/env";
 import { missingOrgSchema } from "@/lib/orgs";
 import { z } from "zod/v4";
 import { aiClients } from "@/lib/outreach/pipeline";
-import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { generateStructuredOutput, c0mputeEnabled } from "@/lib/lx/backendAi";
 import {
   sendOutreachEmail,
   sendOutreachSms,
@@ -104,7 +104,7 @@ export async function generateSurveyDraft(input: {
     : { data: [] };
 
   const { anthropic, openai } = aiClients();
-  if (!anthropic && !openai) return { ok: false, error: "AI drafting is temporarily unavailable." };
+  if (!anthropic && !openai && !c0mputeEnabled()) return { ok: false, error: "AI drafting is temporarily unavailable." };
 
   try {
     const { output } = await generateStructuredOutput({

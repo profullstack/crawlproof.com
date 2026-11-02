@@ -22,7 +22,7 @@
 
 import { z } from "zod/v4";
 import { env } from "@/lib/env";
-import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { generateStructuredOutput, c0mputeEnabled } from "@/lib/lx/backendAi";
 import { aiClients } from "./pipeline";
 
 const RelevanceSchema = z.object({
@@ -73,7 +73,7 @@ export async function judgeRelevance(input: {
   if (!sells || !text) return null;
 
   const { anthropic, openai } = aiClients();
-  if (!anthropic && !openai) return null;
+  if (!anthropic && !openai && !c0mputeEnabled()) return null;
 
   try {
     const res = await generateStructuredOutput({

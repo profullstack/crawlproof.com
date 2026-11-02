@@ -14,7 +14,7 @@
 
 import { env } from "@/lib/env";
 import { serviceClient } from "@/lib/supabase/service";
-import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { generateStructuredOutput, c0mputeEnabled } from "@/lib/lx/backendAi";
 import { z } from "zod/v4";
 import {
   buildSearchQueries,
@@ -233,7 +233,7 @@ export async function draftRedditReply(input: {
   }
 
   const { anthropic, openai } = aiClients();
-  if (!anthropic && !openai) {
+  if (!anthropic && !openai && !c0mputeEnabled()) {
     return { ok: false, error: "No AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY)." };
   }
 
