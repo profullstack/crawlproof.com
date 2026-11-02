@@ -29,6 +29,7 @@
     "@libsql/client": "^0.18.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@profullstack/affiliates": "^0.3.0",
+    "@profullstack/ai-providers": "0.1.0",
     "@profullstack/autoblog": "github:profullstack/autoblog#75e54af",
     "@profullstack/coinpay": "^0.25.0",
     "@profullstack/coinpay-onboard": "0.4.0",
