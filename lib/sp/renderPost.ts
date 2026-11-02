@@ -8,7 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 // SDK zod helpers require v4 (z.toJSONSchema). See lib/lx/detectBlog.ts.
 import { z } from "zod/v4";
-import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { generateStructuredOutput, c0mputeEnabled } from "@/lib/lx/backendAi";
 import { env } from "@/lib/env";
 
 const RENDER_MODEL = "claude-haiku-4-5-20251001";
@@ -146,7 +146,7 @@ export async function renderPostForPlatform(args: {
     // "ships in a later phase" error gracefully.
     console.warn(`[sp] no platform profile for "${platform}", using generic fallback`);
   }
-  if (!anthropic && !openai) {
+  if (!anthropic && !openai && !c0mputeEnabled()) {
     throw new Error(
       "No AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY).",
     );

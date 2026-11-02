@@ -5,7 +5,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { z } from "zod/v4";
-import { generateStructuredOutput } from "@/lib/lx/backendAi";
+import { generateStructuredOutput, c0mputeEnabled } from "@/lib/lx/backendAi";
 import { env } from "@/lib/env";
 
 const RENDER_MODEL = "claude-haiku-4-5-20251001";
@@ -167,7 +167,7 @@ export async function generatePitch(
     openai,
   } = args;
 
-  if (!anthropic && !openai) {
+  if (!anthropic && !openai && !c0mputeEnabled()) {
     throw new Error(
       "No AI provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY).",
     );

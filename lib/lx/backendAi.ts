@@ -1,11 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import OpenAI from "openai";
+import {
+  AiRouter,
+  C0mputeProvider,
+  generateObjectOn,
+} from "@profullstack/ai-providers";
 import { z } from "zod/v4";
 import { recordAiSpend } from "@/lib/ai/spend";
 import { env } from "../env";
 
-export type BackendAiProvider = "anthropic" | "openai";
+export type BackendAiProvider = "c0mpute" | "anthropic" | "openai";
 type BackendAiPreference = BackendAiProvider | "auto";
 
 type StructuredOutputArgs<T> = {
@@ -51,16 +56,61 @@ export function orderedBackendAiProviders(input: {
   ];
 }
 
+/**
+ * c0mpute is the default for every text call: the peer network through
+ * Infernet, no paid key needed. OpenAI and Anthropic are fallbacks only,
+ * alternating call by call so neither bill takes all the overflow, and a key
+ * that answers "no credits" is parked for an hour instead of retried.
+ * C0MPUTE_DISABLED=1 turns c0mpute off.
+ */
+export function c0mputeEnabled(): boolean {
+  return !/^(1|true|yes|on)$/i.test(process.env.C0MPUTE_DISABLED ?? "");
+}
+
+let router: AiRouter | null = null;
+function backendRouter(): AiRouter {
+  if (router) return router;
+  const models = (process.env.C0MPUTE_MODELS ?? process.env.C0MPUTE_MODEL ?? "")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const num = (v?: string) => (v && Number.isFinite(Number(v)) ? Number(v) : undefined);
+  // The paid tier is crawlproof's own SDK code (structured outputs, prompt
+  // caching, spend rows); the router only needs their names to order them.
+  const named = (name: string) =>
+    ({ name, generate: () => Promise.reject(new Error("not used")) }) as never;
+  router = new AiRouter({
+    primary: c0mputeEnabled()
+      ? [
+          new C0mputeProvider({
+            apiKey: process.env.C0MPUTE_API_KEY,
+            baseUrl: process.env.C0MPUTE_URL,
+            ...(models.length ? { models } : {}),
+            concurrency: num(process.env.C0MPUTE_CONCURRENCY),
+            stallMs: num(process.env.C0MPUTE_STALL_MS),
+            // Articles run to thousands of tokens on CPU nodes.
+            timeoutMs: num(process.env.C0MPUTE_TIMEOUT_MS) ?? 900_000,
+          }),
+        ]
+      : [],
+    fallback: [named("openai"), named("anthropic")],
+  });
+  return router;
+}
+
+export function backendAiStatus() {
+  return backendRouter().status();
+}
+
 export function hasBackendAiTextProvider(input: {
   anthropicApiKey?: string;
   openaiApiKey?: string;
 }): boolean {
-  return !!input.anthropicApiKey || !!input.openaiApiKey;
+  return c0mputeEnabled() || !!input.anthropicApiKey || !!input.openaiApiKey;
 }
 
 export function backendAiTextProviderLabel(): string {
-  const pref = normalizeBackendAiPreference();
-  return pref === "auto" ? "Anthropic or OpenAI" : pref === "openai" ? "OpenAI" : "Anthropic";
+  return c0mputeEnabled() ? "c0mpute" : "Anthropic or OpenAI";
 }
 
 /**
@@ -85,32 +135,61 @@ export function anthropicThinkingFor(
 export async function generateStructuredOutput<T>(
   args: StructuredOutputArgs<T>,
 ): Promise<{ provider: BackendAiProvider; output: T }> {
-  const providers = orderedBackendAiProviders({
-    preference: args.preference,
-    hasAnthropic: !!args.anthropic,
-    hasOpenAI: !!args.openai,
-  });
-  if (providers.length === 0) {
+  const only: string[] = [];
+  if (c0mputeEnabled()) only.push("c0mpute");
+  if (args.openai) only.push("openai");
+  if (args.anthropic) only.push("anthropic");
+  if (only.length === 0) {
     throw new Error(
-      "No backend AI provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.",
+      "No backend AI provider configured. c0mpute is disabled (C0MPUTE_DISABLED) and neither OPENAI_API_KEY nor ANTHROPIC_API_KEY is set.",
     );
   }
 
-  const errors: string[] = [];
-  for (const provider of providers) {
-    try {
-      if (provider === "anthropic") {
-        return { provider, output: await generateWithAnthropic(args) };
-      }
-      return { provider, output: await generateWithOpenAI(args) };
-    } catch (err) {
-      errors.push(
-        `${provider}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  try {
+    const { provider, value } = await backendRouter().run(
+      (p: { name: string }) => {
+        if (p.name === "anthropic") return generateWithAnthropic(args);
+        if (p.name === "openai") return generateWithOpenAI(args);
+        return generateWithC0mpute(args, p as C0mputeProvider);
+      },
+      { feature: args.name, only },
+    );
+    return { provider: provider as BackendAiProvider, output: value };
+  } catch (err) {
+    // Same prefix as before, so log searches and alerts keep matching.
+    throw new Error(
+      `Backend AI generation failed (${
+        err instanceof Error ? err.message.replace(/^AI generation failed \(|\)$/g, "") : String(err)
+      })`,
+    );
   }
+}
 
-  throw new Error(`Backend AI generation failed (${errors.join("; ")})`);
+async function generateWithC0mpute<T>(
+  args: StructuredOutputArgs<T>,
+  provider: C0mputeProvider,
+): Promise<T> {
+  const jsonSchema =
+    args.openaiJsonSchema ??
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (z.toJSONSchema(args.schema as any) as Record<string, unknown>);
+  const out = await generateObjectOn<T>(provider, {
+    name: args.name,
+    schema: args.schema,
+    jsonSchema,
+    system: args.system,
+    user: args.user,
+    maxTokens: args.maxTokens,
+    temperature: 0.4,
+  });
+  void recordAiSpend({
+    provider: "c0mpute",
+    model: `c0mpute/${out.model}`,
+    feature: args.name,
+    inputTokens: out.usage.inputTokens,
+    outputTokens: out.usage.outputTokens,
+  });
+  return out.object;
 }
 
 async function generateWithAnthropic<T>(
