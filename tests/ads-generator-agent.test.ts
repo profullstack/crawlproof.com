@@ -57,6 +57,9 @@ vi.mock("@/lib/ads/brand", async (original) => ({
   })),
 }));
 
+// lib/env reads OPENAI_API_KEY once at import, so the paid client exists for
+// the whole file: the tests prove the agent withholds it, not that it is absent.
+process.env.OPENAI_API_KEY = "sk-test-not-used";
 const agent = await import("@/lib/ads/agent");
 const { generateAdCreatives } = await import("@/lib/ads/creative");
 const { synthesiseNarration, NarrationError } = await import("@/lib/ads/video/narration");
@@ -64,7 +67,6 @@ const { synthesiseNarration, NarrationError } = await import("@/lib/ads/video/na
 const ENV_KEYS = [
   "AD_GENERATOR_AGENT",
   "AD_GENERATOR_PAID_IMAGES",
-  "OPENAI_API_KEY",
   "ELEVENLABS_API_KEY",
   "C0MPUTE_SPEECH_URL",
   "C0MPUTE_SPEECH_TOKEN",
@@ -72,6 +74,8 @@ const ENV_KEYS = [
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
   for (const k of ENV_KEYS) saved[k] = process.env[k];
+  delete process.env.AD_GENERATOR_AGENT;
+  delete process.env.AD_GENERATOR_PAID_IMAGES;
   calls.length = 0;
   hero.resolve.mockReset().mockResolvedValue(null);
 });
