@@ -11,7 +11,7 @@
         "@modelcontextprotocol/sdk": "^1.32.2",
         "@profullstack/affiliates": "^0.3.0",
         "@profullstack/ai-providers": "0.1.0",
-        "@profullstack/autoblog": "github:profullstack/autoblog#75e54af",
+        "@profullstack/autoblog": "^0.5.0",
         "@profullstack/coinpay": "^0.25.0",
         "@profullstack/coinpay-onboard": "0.4.0",
         "@profullstack/fleetbar": "0.2.0",
@@ -319,7 +319,7 @@
 
     "@profullstack/ai-providers": ["@profullstack/ai-providers@0.1.0", "", { "bin": { "ai-providers": "src/cli.js" } }, "sha512-vc7aFjozyiwIhREWLhB3xWpUPeGggM348ng5W6j4IA+gxYF3S7TNLoGWrF/ax2NttsK40C801CRkD9JSVA4aOg=="],
 
-    "@profullstack/autoblog": ["@profullstack/autoblog@github:profullstack/autoblog#75e54af", {}, "profullstack-autoblog-75e54af", "sha512-f/YwwiVTzKz659+6RHgeGueSdUrWAnon5OHT1YfOI5TdLZPDrLFGE88051fzQXAlsBrkDK1jrm216OIrKygnRA=="],
+    "@profullstack/autoblog": ["@profullstack/autoblog@0.5.0", "", { "dependencies": { "@profullstack/ai-providers": "0.1.0" } }, "sha512-KewpX0rM55o+7TMYeU35gqZceQFNF6zmo8zDoZRP5zoPU+XqTRcBlv6bZvl9oQHUXKXAsePJVNZKtDNhTrNEfw=="],
 
     "@profullstack/coinpay": ["@profullstack/coinpay@0.25.0", "", { "dependencies": { "@inquirer/prompts": "^8.3.0", "@noble/curves": "^1.6.0", "@noble/hashes": "^1.5.0", "@profullstack/hqtui": "^0.6.3", "@scure/bip32": "^1.5.0", "@scure/bip39": "^1.4.0" }, "bin": { "coinpay": "bin/coinpay.js" } }, "sha512-ZoK8COqBCdJXvr0fO5UWw9HPh88CdMBLycc/dU6kXwAyeIrwZ4WkBApisuDgs4leXNN+SMjwex2etgrEvlICTQ=="],
 
