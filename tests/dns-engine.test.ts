@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const generate = vi.hoisted(() => vi.fn());
+const calls = vi.hoisted(() => ({ args: [] as any[], answer: null as null | (() => unknown) }));
 
 vi.mock("@/lib/lx/backendAi", () => ({
   hasBackendAiTextProvider: () => true,
-  generateStructuredOutput: generate,
+  generateStructuredOutput: async (args: unknown) => {
+    calls.args.push(args);
+    return calls.answer!();
+  },
 }));
 vi.mock("@/lib/env", () => ({ env: { anthropicApiKey: "", openaiApiKey: "" } }));
 vi.mock("@/lib/audit/dns", () => ({
@@ -17,10 +20,12 @@ vi.mock("@/lib/audit/dns", () => ({
 import { dnsAudit } from "@/lib/audit/dns-engine";
 
 describe("dnsAudit AI step", () => {
-  beforeEach(() => generate.mockReset());
+  beforeEach(() => {
+    calls.args = [];
+  });
 
   it("runs with no paid key and takes c0mpute's answer", async () => {
-    generate.mockResolvedValue({
+    calls.answer = () => ({
       provider: "c0mpute",
       output: {
         score: 80,
@@ -29,14 +34,16 @@ describe("dnsAudit AI step", () => {
       },
     });
     const result = await dnsAudit("https://example.com");
-    expect(generate).toHaveBeenCalledOnce();
-    expect(generate.mock.calls[0][0].anthropic).toBeNull();
+    expect(calls.args).toHaveLength(1);
+    expect(calls.args[0].anthropic).toBeNull();
     expect(result.score).toBe(80);
     expect(result.findings.map((f) => f.check_key)).toEqual(["dns.inventory", "dns.spf"]);
   });
 
   it("keeps the deterministic baseline when every provider fails", async () => {
-    generate.mockRejectedValue(new Error("Backend AI generation failed"));
+    calls.answer = () => {
+      throw new Error("Backend AI generation failed");
+    };
     const result = await dnsAudit("https://example.com");
     expect(result.findings.map((f) => f.check_key)).toEqual(["dns.inventory"]);
   });
