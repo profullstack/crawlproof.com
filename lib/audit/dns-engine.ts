@@ -1,9 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-// zod/v4 — the SDK's zodOutputFormat calls z.toJSONSchema(), a v4-only API.
+// zod/v4: backendAi and the SDK both call z.toJSONSchema(), a v4-only API.
 // See the note in claude-engine.ts.
 import { z } from "zod/v4";
 import { env } from "../env";
+import { generateStructuredOutput, hasBackendAiTextProvider } from "../lx/backendAi";
 import { collectDnsRecords, dnsBaselineFindings, type DnsRecords } from "./dns";
 import { scoreFindings } from "./score";
 import type { ClaudeAuditResult } from "./claude-engine";
@@ -97,26 +97,19 @@ export async function dnsAudit(targetUrl: string): Promise<ClaudeAuditResult> {
 
   // AI step — best effort. Fall back to the deterministic baseline on any
   // failure so this free scan never hard-fails the worker.
-  if (env.anthropicApiKey) {
+  if (hasBackendAiTextProvider({ anthropicApiKey: env.anthropicApiKey, openaiApiKey: env.openaiApiKey })) {
     try {
-      const client = new Anthropic({ apiKey: env.anthropicApiKey });
-      const stream = client.messages.stream({
-        model: "claude-sonnet-4-6",
-        max_tokens: 16000,
-        thinking: { type: "disabled" },
-        output_config: {
-          effort: "medium",
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          format: zodOutputFormat(ResultSchema as any),
-        },
-        system: [
-          { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-        ],
-        messages: [{ role: "user", content: buildUserPrompt(records) }],
-      });
-      const response = await stream.finalMessage();
-      const parsed = response.parsed_output;
-      if (!parsed) throw new Error(`no parsed output (stop_reason=${response.stop_reason})`);
+      const { output: parsed } = await generateStructuredOutput({
+        name: "dns_audit",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        schema: ResultSchema as any,
+        system: SYSTEM_PROMPT,
+        user: buildUserPrompt(records),
+        maxTokens: 16000,
+        anthropicModel: "claude-sonnet-4-6",
+        anthropic: env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null,
+        anthropicCacheSystemPrompt: true,
+      }) as { output: z.infer<typeof ResultSchema> };
 
       const aiFindings: Finding[] = parsed.findings.map(
         (f: z.infer<typeof FindingSchema>) => ({
