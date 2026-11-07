@@ -2,13 +2,16 @@
 
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { previewAds, saveCampaign, uploadAdAsset } from "@/app/actions/ads";
+import { draftAds, saveCampaign, uploadAdAsset, type previewAds } from "@/app/actions/ads";
+import { PAGE_COPY_PROVIDER } from "@/lib/ads/agent";
 import { DESIGN_FORMATS, paletteFor, type AdCreative, type AdFormatId } from "@/lib/ads/formats";
 import type { SiteBrand } from "@/lib/ads/brand";
 import { AdPreview } from "@/components/ads/ad-preview";
 import { ColorField } from "@/components/ads/color-field";
 import type { AdTheme } from "@/lib/ads/theme";
 import { originalHeroPngDownloadUrl } from "@/lib/ads/heroImageUrl";
+
+type Preview = Extract<Awaited<ReturnType<typeof previewAds>>, { ok: true }>;
 
 function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -28,6 +31,12 @@ export function NewAdForm() {
   const [creatives, setCreatives] = useState<AdCreative[]>([]);
   const [active, setActive] = useState<AdFormatId>("banner_300x250");
   const [provider, setProvider] = useState<string | null>(null);
+  // The model's copy arrives a minute or two after the draft.
+  const [improving, setImproving] = useState(false);
+  // Held back instead of applied, because the advertiser edited the draft.
+  const [readyCopy, setReadyCopy] = useState<Preview | null>(null);
+  const editedRef = useRef(false);
+  const improveRef = useRef<AbortController | null>(null);
 
   const [generating, startGenerate] = useTransition();
   const [saving, startSave] = useTransition();
@@ -47,23 +56,61 @@ export function NewAdForm() {
     e.preventDefault();
     setError(null);
     startGenerate(async () => {
-      const res = await previewAds({ url });
+      const res = await draftAds({ url });
       if (!res.ok) {
         setError(res.error);
         return;
       }
       setBrand(res.brand);
       setCreatives(res.creatives);
-      setProvider(res.provider);
+      setProvider(PAGE_COPY_PROVIDER);
+      setReadyCopy(null);
+      editedRef.current = false;
       if (!name) setName(res.suggestedName);
+      void improve(url);
     });
+  }
+
+  function applyCopy(res: Preview) {
+    setBrand(res.brand);
+    setCreatives(res.creatives);
+    setProvider(res.provider);
+    setReadyCopy(null);
+    editedRef.current = false;
+  }
+
+  // A failure here is not an error on the page: the draft is a working ad and
+  // stays, under the label that says it was written from the page.
+  async function improve(target: string) {
+    improveRef.current?.abort();
+    const controller = new AbortController();
+    improveRef.current = controller;
+    setImproving(true);
+    try {
+      const res = await fetch("/api/ads/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: target }),
+        signal: controller.signal,
+      });
+      const out = (await res.json()) as Awaited<ReturnType<typeof previewAds>>;
+      if (controller.signal.aborted || !out.ok || out.provider === PAGE_COPY_PROVIDER) return;
+      if (editedRef.current) setReadyCopy(out);
+      else applyCopy(out);
+    } catch {
+      // Aborted by a newer run or a save, or the connection dropped.
+    } finally {
+      if (improveRef.current === controller) setImproving(false);
+    }
   }
 
   // copy edits touch only the active format; colours/assets are shared brand-level
   function patchActive(patch: Partial<AdCreative>) {
+    editedRef.current = true;
     setCreatives((cs) => cs.map((c) => (c.format === active ? { ...c, ...patch } : c)));
   }
   function patchAll(patch: Partial<AdCreative>) {
+    editedRef.current = true;
     setCreatives((cs) => cs.map((c) => ({ ...c, ...patch })));
   }
 
@@ -75,6 +122,7 @@ export function NewAdForm() {
       const field = key === "bg" ? "bgColor" : key === "fg" ? "fgColor" : "accentColor";
       return patchAll({ [field]: v } as Partial<AdCreative>);
     }
+    editedRef.current = true;
     setCreatives((cs) =>
       cs.map((c) => {
         const seed = paletteFor(c, "light");
@@ -108,6 +156,7 @@ export function NewAdForm() {
 
   function save() {
     setError(null);
+    improveRef.current?.abort();
     startSave(async () => {
       const res = await saveCampaign({
         name,
@@ -217,7 +266,11 @@ export function NewAdForm() {
               <h2 className="font-semibold">Preview</h2>
               {provider && (
                 <span className="text-xs text-[var(--color-muted)]">
-                  Generated with {provider}
+                  {improving
+                    ? "Draft from your page. AI copy is on the way, usually a minute or two; you can edit or save now."
+                    : provider === PAGE_COPY_PROVIDER
+                      ? "AI unavailable, written from your page. Edit before saving."
+                      : `Generated with ${provider}`}
                 </span>
               )}
             </div>
@@ -230,6 +283,19 @@ export function NewAdForm() {
               A five-second streaming pre-roll is rendered from this design when you
               save. It appears on the campaign page, with an MP4 download, once ready.
             </div>
+            {readyCopy && (
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span>AI copy is ready. Using it replaces your edits.</span>
+                <span className="flex gap-2">
+                  <button type="button" className="btn" onClick={() => applyCopy(readyCopy)}>
+                    Use AI copy
+                  </button>
+                  <button type="button" className="btn" onClick={() => setReadyCopy(null)}>
+                    Keep mine
+                  </button>
+                </span>
+              </div>
+            )}
             <div className="flex flex-wrap items-start gap-6">
               {DESIGN_FORMATS.map((f) => {
                 const c = creatives.find((x) => x.format === f.id);
