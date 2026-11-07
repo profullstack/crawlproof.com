@@ -30,7 +30,25 @@ function updated(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+type VotedSearch = { phrase: string; votes: number };
+
+// Searches people voted on at pit.world. An extra, so any failure just hides it.
+async function votedSearches(): Promise<VotedSearch[]> {
+  try {
+    const res = await fetch("https://pit.world/api/voted-searches?limit=20", {
+      next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { topics?: VotedSearch[] };
+    return Array.isArray(body.topics) ? body.topics : [];
+  } catch {
+    return [];
+  }
+}
+
 export default async function TrendingPage() {
+  const voted = await votedSearches();
   const topics = await currentTrends(serviceClient(), { limit: LIMIT, includeStale: true });
   const newest = topics.reduce<string | null>(
     (latest, topic) => (!latest || (topic.ingestedAt ?? "") > latest ? (topic.ingestedAt ?? latest) : latest),
@@ -92,6 +110,23 @@ export default async function TrendingPage() {
             and the <code>list_trending_topics</code> MCP tool.
           </p>
         </div>
+      )}
+
+      {voted.length > 0 && (
+        <section className="mt-10">
+          <h2 className="font-semibold">Most voted searches on pit.world</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Searches people cared enough about to vote on their results, this week.
+          </p>
+          <ul className="mt-3 space-y-1 text-sm">
+            {voted.map((search) => (
+              <li key={search.phrase} className="flex justify-between border-b border-[var(--color-border)] py-1">
+                <span>{search.phrase}</span>
+                <span className="tabular-nums text-[var(--color-muted)]">{search.votes}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <div className="card mt-10 p-5">
