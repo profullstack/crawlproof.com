@@ -16,6 +16,7 @@ import {
   stateMatches,
   supabaseCoinpayStore,
 } from "@/lib/coinpay-signin";
+import { applyCoinpayPass, supabasePassStore } from "@/lib/coinpay-pass";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +75,16 @@ export async function GET(req: NextRequest) {
     return back(failPath, "CoinPay sign-in failed. Try again.");
   }
   if (!resolved.ok) return back(failPath, resolved.error);
+  // Profullstack Pass: free credits once per pass. Never blocks the sign-in.
+  if (claims.pass) {
+    try {
+      if (await applyCoinpayPass(supabasePassStore(sb), resolved.userId, claims.sub, claims.pass)) {
+        console.log("[coinpay-signin] Profullstack Pass credits granted", resolved.userId);
+      }
+    } catch (e) {
+      console.error("[coinpay-signin] pass grant", e instanceof Error ? e.message : e);
+    }
+  }
   if (pending.mode === "connect" && claims.openprofile_url) {
     try { await saveOpenProfileContact(profileStore(), resolved.userId, claims.openprofile_url); }
     catch { console.warn("[coinpay-signin] OpenProfile import skipped"); }

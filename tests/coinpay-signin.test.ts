@@ -229,8 +229,18 @@ describe("ID token checks", () => {
         : Response.json({ sub: "s1", email: "a@b.co", name: "Ann" })) as unknown as typeof fetch;
     expect(await fetchCoinpayClaims(CFG, { code: "c", verifier: "v", nonce: "n1" }, fake)).toEqual({
       ok: true,
-      claims: { sub: "s1", email: "a@b.co", name: "Ann" },
+      claims: { sub: "s1", email: "a@b.co", name: "Ann", pass: { active: false, expiresAt: null } },
     });
+  });
+
+  it("fetchCoinpayClaims carries an active Profullstack Pass from userinfo", async () => {
+    const expires = new Date(Date.now() + 86_400_000).toISOString();
+    const fake = (async (url: string) =>
+      String(url).endsWith("/token")
+        ? Response.json({ access_token: "at", id_token: jwt(good) })
+        : Response.json({ sub: "s1", pass: { active: true, expires_at: expires } })) as unknown as typeof fetch;
+    const r = await fetchCoinpayClaims(CFG, { code: "c", verifier: "v", nonce: "n1" }, fake);
+    expect(r.ok && r.claims.pass).toEqual({ active: true, expiresAt: new Date(expires) });
   });
 });
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PASS_CREDITS } from "@/lib/coinpay-pass";
 import {
   ANON_DAILY_SCANS,
   CREDIT_PACKS,
@@ -71,6 +72,11 @@ export default function PricingPage() {
         <h2 className="text-center text-2xl font-bold">What else credits buy</h2>
         <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-[var(--color-muted)]">
           One balance across the whole platform. No module has its own plan.
+        </p>
+        <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-[var(--color-muted)]">
+          Deposit $99 in your CoinPay wallet and get a free month:{" "}
+          <a href="https://coinpayportal.com/pass" className="underline">CoinPay Pass</a>{" "}
+          ({PASS_CREDITS} free credits when you sign in with CoinPay).
         </p>
         <div className="mx-auto mt-6 grid max-w-4xl gap-4 sm:grid-cols-3">
           <div className="card p-5">
