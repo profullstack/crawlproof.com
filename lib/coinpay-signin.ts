@@ -17,6 +17,7 @@
 // memory; supabaseCoinpayStore() is the real one.
 import { fetchGlobalCoinpayWallets, type GlobalCoinpayWallet } from "./coinpay-wallet-data";
 import { resolveCoinPayAccountLink } from "@profullstack/coinpay-onboard/identity";
+import { passFromUserinfo, type CoinpayPass } from "@profullstack/coinpay-onboard/pass";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -119,7 +120,7 @@ export function stateMatches(expected: string | null | undefined, got: string | 
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export type CoinpayClaims = { sub: string; email: string | null; name: string | null; openprofile_url?: string };
+export type CoinpayClaims = { sub: string; email: string | null; name: string | null; openprofile_url?: string; pass?: CoinpayPass };
 
 /**
  * Check the ID token that came straight back from the token endpoint over TLS
@@ -188,6 +189,8 @@ export async function fetchCoinpayClaims(
       email: typeof info.email === "string" && info.email.includes("@") ? info.email.slice(0, 320) : null,
       name: typeof info.name === "string" && info.name.trim() ? info.name.trim().slice(0, 200) : null,
       ...(typeof info.openprofile_url === "string" ? { openprofile_url: info.openprofile_url } : {}),
+      // Profullstack Pass; clamps a stale or malformed claim to no pass.
+      pass: passFromUserinfo(info),
     },
   };
 }
