@@ -267,7 +267,7 @@ export function NewAdForm() {
               {provider && (
                 <span className="text-xs text-[var(--color-muted)]">
                   {improving
-                    ? "Draft from your page. AI copy is on the way, usually a minute or two; you can edit or save now."
+                    ? "Draft from your page. AI copy is on the way and can take a few minutes; you can edit or save now."
                     : provider === PAGE_COPY_PROVIDER
                       ? "AI unavailable, written from your page. Edit before saving."
                       : `Generated with ${provider}`}
