@@ -22,6 +22,9 @@
 
 export const AD_GENERATOR_AGENT = "ad-generator-agent";
 
+/** The `provider` of ads written from the page because no model answered. */
+export const PAGE_COPY_PROVIDER = "page text";
+
 type Env = Record<string, string | undefined>;
 
 // Read through a variable so nothing here can be inlined at build time.

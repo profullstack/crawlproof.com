@@ -28,6 +28,13 @@ type StructuredOutputArgs<T> = {
   anthropicEffort?: "low" | "medium" | "high" | false;
   openaiStructuredOutputs?: boolean;
   openaiJsonSchema?: Record<string, unknown>;
+  /**
+   * Replaces `schema` when checking a c0mpute answer. OpenAI and Anthropic are
+   * held to the schema by their structured-output modes; a small open model is
+   * not, and for some callers a near miss is worth keeping rather than failing.
+   * Throw to reject the answer (it gets a repair round, then the next provider).
+   */
+  c0mputeParse?: (value: unknown) => T;
 };
 
 export function normalizeBackendAiPreference(
@@ -175,7 +182,7 @@ async function generateWithC0mpute<T>(
     (z.toJSONSchema(args.schema as any) as Record<string, unknown>);
   const out = await generateObjectOn<T>(provider, {
     name: args.name,
-    schema: args.schema,
+    schema: args.c0mputeParse ?? args.schema,
     jsonSchema,
     system: args.system,
     user: args.user,

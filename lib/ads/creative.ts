@@ -7,7 +7,7 @@ import { env } from "@/lib/env";
 import { generateStructuredOutput } from "@/lib/lx/backendAi";
 import { extractSiteBrand, type SiteBrand } from "./brand";
 import { resolveAdHeroImage } from "./heroImage";
-import { agentProviderLabel, paidHeroImagesAllowed } from "./agent";
+import { agentProviderLabel, paidHeroImagesAllowed, PAGE_COPY_PROVIDER } from "./agent";
 import { renderCreativeText, renderTerminalHtml } from "./terminal";
 import { renderFeedHtml } from "./feeditem";
 import { NO_MEDIA, type AdMediaKind, type MediaAssets } from "./media";
@@ -74,25 +74,28 @@ function safeHex(v: string | undefined, fallback: string): string {
   return v && HEX.test(v.trim()) ? v.trim().toLowerCase() : fallback;
 }
 
+// Hard caps on the display copy: what the units have room for.
+const COPY_MAX = { headline: 48, shortHeadline: 28, body: 130, ctaText: 18, summaryShort: 1200, summaryLong: 6000 };
+
 const CopySchema = z.object({
   headline: z
     .string()
-    .max(48)
+    .max(COPY_MAX.headline)
     .describe("Punchy ad headline in the brand's voice — max ~6 words, no period."),
   shortHeadline: z
     .string()
-    .max(28)
+    .max(COPY_MAX.shortHeadline)
     .describe("A tighter version for tiny mobile banners — max ~4 words."),
   // Structured-output SDKs strip maxLength and validate client-side, so a tight
   // cap makes the whole generation throw when copy runs a few chars long. Keep
   // the prompt guidance short but the hard cap generous (creatives re-truncate).
   body: z
     .string()
-    .max(130)
+    .max(COPY_MAX.body)
     .describe("One concrete benefit line, ~12 words max. No hype, no exclamation spam."),
   ctaText: z
     .string()
-    .max(18)
+    .max(COPY_MAX.ctaText)
     .describe("Button label, e.g. 'Try it free', 'Get started', 'Learn more'."),
   bgColor: z.string().describe("DARK-mode background hex like #0b0d10 — on-brand, good contrast with fgColor."),
   fgColor: z.string().describe("DARK-mode text hex with strong contrast against bgColor."),
@@ -120,14 +123,14 @@ const CopySchema = z.object({
   // error. Length guidance stays in the description, which is advisory.
   summaryShort: z
     .string()
-    .max(1200)
+    .max(COPY_MAX.summaryShort)
     .describe(
       "One or two plain sentences saying what this is and who it is for, in third person. " +
         "Reads as an editorial note, not a slogan — no exclamation marks, no second person, no CTA.",
     ),
   summaryLong: z
     .string()
-    .max(6000)
+    .max(COPY_MAX.summaryLong)
     .describe(
       "Two or three short paragraphs, separated by a blank line, for a sponsored section of a " +
         "blog post. Third person, factual, specific to this product. Describe what it does, who " +
@@ -136,6 +139,48 @@ const CopySchema = z.object({
     ),
 });
 type AdCopy = z.infer<typeof CopySchema>;
+
+/** Shortens to the last whole sentence that fits, else the last whole word. */
+function fitCopy(text: string, max: number, ellipsis = ""): string {
+  if (text.length <= max) return text;
+  const room = text.slice(0, max);
+  const sentence = /^[\s\S]*[.!?](?=\s)/.exec(text.slice(0, max + 1))?.[0];
+  if (sentence && sentence.length >= max / 3) return sentence;
+  const words = room.slice(0, room.length - ellipsis.length).replace(/\s+\S*$/, "");
+  return `${words.replace(/[\s,;:.-]+$/, "")}${ellipsis}`;
+}
+
+/**
+ * What to keep from a c0mpute answer.
+ *
+ * The strict CopySchema makes all twelve fields fail together, and the models
+ * we run on c0mpute miss it in small ways: `body` came back 160 to 180
+ * characters on most live runs against a cap of 130. Only a headline and a
+ * benefit line make an ad, so those are all that is required. Long copy is
+ * shortened here, and a missing colour or summary stays empty: copyToCreatives
+ * derives colours from the brand, and an empty summary means no prose.
+ */
+export function readC0mputeCopy(value: unknown): AdCopy {
+  const raw = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
+  const text = (key: keyof AdCopy) => (typeof raw[key] === "string" ? (raw[key] as string).trim() : "");
+  const headline = fitCopy(text("headline"), COPY_MAX.headline);
+  const body = fitCopy(text("body"), COPY_MAX.body, "…");
+  if (!headline || !body) throw new Error("headline and body are required");
+  return {
+    headline,
+    shortHeadline: fitCopy(text("shortHeadline") || headline, COPY_MAX.shortHeadline),
+    body,
+    ctaText: fitCopy(text("ctaText"), COPY_MAX.ctaText) || "Learn more",
+    bgColor: text("bgColor"),
+    fgColor: text("fgColor"),
+    accentColor: text("accentColor"),
+    lightBgColor: text("lightBgColor"),
+    lightFgColor: text("lightFgColor"),
+    lightAccentColor: text("lightAccentColor"),
+    summaryShort: fitCopy(text("summaryShort"), COPY_MAX.summaryShort),
+    summaryLong: fitCopy(text("summaryLong"), COPY_MAX.summaryLong),
+  };
+}
 
 /**
  * The summary half of CopySchema on its own, derived from it rather than
@@ -308,7 +353,11 @@ function copyToCreatives(brand: SiteBrand, copy: AdCopy, heroUrl: string | null)
     // tiny banner uses the short headline; others use the full one
     headline: format === "banner_320x50" ? copy.shortHeadline || copy.headline : copy.headline,
     ...base,
-  }));
+  })).filter(hasWords); // A format with nothing to say is left out, not shipped blank.
+}
+
+function hasWords(creative: Pick<AdCreative, "headline" | "body">): boolean {
+  return !!creative.headline?.trim() && !!creative.body?.trim();
 }
 
 /**
@@ -487,9 +536,28 @@ function describesTheFetch(text: string): boolean {
   );
 }
 
+/**
+ * An ad written from the page alone, in the time it takes to fetch the page.
+ * The form shows this at once and swaps in the model's copy when it arrives,
+ * which on c0mpute is a minute or two later.
+ */
+export async function draftAdCreatives(rawUrl: string): Promise<{ brand: SiteBrand; creatives: AdCreative[] }> {
+  const brand = await extractSiteBrand(rawUrl);
+  return { brand, creatives: creativesFromCopy(brand, templateCopy(brand), brand.ogImage) };
+}
+
 export async function generateAdCreatives(
   rawUrl: string,
-  opts: { supabase?: SupabaseClient; variation?: AdVariationRequest } = {},
+  opts: {
+    supabase?: SupabaseClient;
+    variation?: AdVariationRequest;
+    /**
+     * When every provider fails, write the copy from the page instead of
+     * throwing. Only for a first draft the advertiser reviews: regenerating a
+     * campaign would overwrite their copy with it, and A/B arms would all match.
+     */
+    pageCopyOnFailure?: boolean;
+  } = {},
 ): Promise<{
   brand: SiteBrand;
   creatives: AdCreative[];
@@ -501,9 +569,10 @@ export async function generateAdCreatives(
   const anthropic = env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
   const openai = env.openaiApiKey ? new OpenAI({ apiKey: env.openaiApiKey }) : null;
 
-  const { provider, output } = await generateStructuredOutput<AdCopy>({
+  const copy = generateStructuredOutput<AdCopy>({
     name: "ad_copy",
     schema: CopySchema,
+    c0mputeParse: readC0mputeCopy,
     system: opts.variation
       ? [
           SYSTEM_PROMPT,
@@ -519,7 +588,12 @@ export async function generateAdCreatives(
     anthropic,
     openai,
     anthropicEffort: "low",
+  }).catch((err: unknown) => {
+    if (!opts.pageCopyOnFailure) throw err;
+    console.warn(`[ads] ${brand.domain}: using page copy: ${err instanceof Error ? err.message : String(err)}`);
+    return { provider: PAGE_COPY_PROVIDER, output: templateCopy(brand) };
   });
+  const { provider, output } = await copy;
 
   // Hero image: the advertiser's og:image when it exists, else a gpt-image-2.5
   // fallback (only when we have a Supabase client to host the upload). Best-
@@ -552,7 +626,7 @@ export async function generateAdCreatives(
   return {
     brand,
     creatives: copyToCreatives(brand, output, heroUrl),
-    provider: agentProviderLabel(provider),
+    provider: provider === PAGE_COPY_PROVIDER ? provider : agentProviderLabel(provider),
     summary,
   };
 }

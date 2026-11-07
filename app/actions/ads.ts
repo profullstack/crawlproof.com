@@ -16,6 +16,7 @@ import {
   type RenderState,
 } from "@/lib/ads/video/jobs";
 import {
+  draftAdCreatives,
   generateAdCreatives,
   DESIGN_FORMAT_IDS,
   cleanSummary,
@@ -81,6 +82,30 @@ function summaryPayload(
   };
 }
 
+// The instant first draft for /dashboard/ads/new: the page's own words, no
+// model. The form then asks POST /api/ads/preview for the generated version.
+export async function draftAds(input: { url: string }): Promise<
+  | { ok: true; brand: SiteBrand; creatives: AdCreative[]; suggestedName: string }
+  | { ok: false; error: string }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+
+  const check = isAllowedTargetUrl(input.url);
+  if (!check.ok) return { ok: false, error: check.reason };
+
+  try {
+    const { brand, creatives } = await draftAdCreatives(check.url);
+    if (creatives.length === 0) return { ok: false, error: "Nothing on that page to write an ad from." };
+    return { ok: true, brand, creatives, suggestedName: brand.title?.slice(0, 60) || domainOf(check.url) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Could not read that URL." };
+  }
+}
+
 // Auto-generate ad creatives from a destination URL. No DB write — the client
 // holds the result, lets the user edit/replace, then calls saveCampaign.
 export async function previewAds(input: { url: string }): Promise<
@@ -106,7 +131,9 @@ export async function previewAds(input: { url: string }): Promise<
   try {
     const { brand, creatives, provider, summary } = await generateAdCreatives(check.url, {
       supabase,
+      pageCopyOnFailure: true,
     });
+    if (creatives.length === 0) return { ok: false, error: "Nothing on that page to write an ad from." };
     return {
       ok: true,
       brand,
