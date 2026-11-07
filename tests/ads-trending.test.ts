@@ -287,3 +287,10 @@ describe("asking for trending targeting", () => {
     expect(promoLine(null)).toBe("");
   });
 });
+
+describe("unsafe topics", () => {
+  it("are dropped before they can be shown or targeted", () => {
+    const parsed = parseTrendPayload({ topics: [{ topic: "abuse material", score: 9 }, { topic: "midterm results", score: 5 }] });
+    expect(parsed.ok && parsed.signals.map((s) => s.label)).toEqual(["midterm results"]);
+  });
+});

@@ -84,7 +84,13 @@ export default async function TrendingPage() {
               ))}
             </tbody>
           </table>
-          {newest && <p className="mt-3 text-xs text-[var(--color-muted)]">Updated {updated(newest)}.</p>}
+          <p className="mt-3 text-xs text-[var(--color-muted)]">
+            {newest && `Updated ${updated(newest)}. `}Also as{" "}
+            <a href="/api/trending" className="underline">
+              JSON
+            </a>{" "}
+            and the <code>list_trending_topics</code> MCP tool.
+          </p>
         </div>
       )}
 
