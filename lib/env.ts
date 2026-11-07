@@ -63,6 +63,7 @@ export const env = {
   torSocksUrl: process.env.TOR_SOCKS_URL ?? "",
   // Where the trending subjects come from. Public, so no key.
   trendUrl: process.env.TREND_URL ?? "https://rssamp.com",
+  votedSearchesUrl: process.env.VOTED_SEARCHES_URL ?? "https://pit.world/api/voted-searches",
   workerUrl: process.env.WORKER_URL ?? "",
   workerSecret: process.env.WORKER_SHARED_SECRET ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",
