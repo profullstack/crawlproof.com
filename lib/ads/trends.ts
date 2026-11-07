@@ -80,6 +80,8 @@ export function parseTrendPayload(
 export type TrendSourceConfig = {
   /** Base URL of the trend source, e.g. https://rssamp.com */
   url: string;
+  /** Searches people voted on, mixed into the list. Optional: see votedSignals. */
+  votedUrl?: string;
   windowDays?: number;
   limit?: number;
 };
@@ -184,6 +186,47 @@ export async function storeTrends(
   return { stored: rows.length, removed };
 }
 
+/** A voted search outranks a headline: three votes lands it mid-list. */
+export const VOTE_SCORE = 50;
+
+/** The list pit.world publishes, as signals. Any failure is simply no extra signal. */
+async function votedSignals(url: string, fetchImpl: typeof fetch): Promise<TrendSignal[]> {
+  try {
+    const response = await fetchImpl(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) return [];
+    const body = (await response.json()) as { topics?: Array<{ phrase?: unknown; votes?: unknown; prior_votes?: unknown }> };
+    const topics = (body.topics ?? []).map((row) => ({
+      topic: row.phrase,
+      score: Number(row.votes) * VOTE_SCORE,
+      count: row.votes,
+      prior_count: row.prior_votes,
+    }));
+    const parsed = parseTrendPayload({ source: TREND_SOURCE, topics }, { limit: 200 });
+    return parsed.ok ? parsed.signals : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * One ranking from what is being written and what is being searched. A subject
+ * in both adds up, which is the strongest signal either list can give.
+ */
+export function mixTrends(written: TrendSignal[], searched: TrendSignal[], limit = 50): TrendSignal[] {
+  const merged = new Map(written.map((signal) => [signal.topic, { ...signal }]));
+  for (const signal of searched) {
+    const same = merged.get(signal.topic);
+    if (!same) {
+      merged.set(signal.topic, { ...signal, windowDays: written[0]?.windowDays ?? signal.windowDays });
+      continue;
+    }
+    same.score += signal.score;
+    same.mentions += signal.mentions;
+    same.priorMentions += signal.priorMentions;
+  }
+  return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
 /** Pull and store in one call. What the cron route and the CLI both run. */
 export async function ingestTrends(
   sb: SupabaseClient,
@@ -194,7 +237,9 @@ export async function ingestTrends(
   if (!fetched.ok) return fetched;
   const windowDays = Math.round(clampNumber(config.windowDays, 1, 90, TREND_WINDOW_DAYS));
   try {
-    const { stored, removed } = await storeTrends(sb, fetched.signals, { windowDays });
+    const searched = config.votedUrl ? await votedSignals(config.votedUrl, fetchImpl) : [];
+    const signals = mixTrends(fetched.signals, searched, config.limit ?? 50);
+    const { stored, removed } = await storeTrends(sb, signals, { windowDays });
     return {
       ok: true,
       source: fetched.signals[0]?.source ?? TREND_SOURCE,

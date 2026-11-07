@@ -34,6 +34,7 @@ export async function POST(req: Request) {
   const windowDays = Number(new URL(req.url).searchParams.get("window")) || TREND_WINDOW_DAYS;
   const result = await ingestTrends(serviceClient(), {
     url: env.trendUrl,
+    votedUrl: env.votedSearchesUrl,
     windowDays,
   });
   if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });

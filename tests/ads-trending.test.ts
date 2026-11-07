@@ -17,7 +17,7 @@ import {
   trendsAreStale,
   type TrendSignal,
 } from "@/lib/ads/trending";
-import { parseTrendPayload } from "@/lib/ads/trends";
+import { ingestTrends, mixTrends, parseTrendPayload } from "@/lib/ads/trends";
 import { parseCampaignPatch, parseCampaignRequest } from "@/lib/ads/campaign-request";
 import { TRENDING_CPC_CENTS, CREDIT_CENTS, trendingCpcCredits } from "@/lib/ads/pricing";
 import { campaignBodyFromArgs, promoLine, parseArgs } from "@/cli/index";
@@ -292,5 +292,36 @@ describe("unsafe topics", () => {
   it("are dropped before they can be shown or targeted", () => {
     const parsed = parseTrendPayload({ topics: [{ topic: "abuse material", score: 9 }, { topic: "midterm results", score: 5 }] });
     expect(parsed.ok && parsed.signals.map((s) => s.label)).toEqual(["midterm results"]);
+  });
+});
+
+describe("mixing written and searched trends", () => {
+  const signal = (topic: string, score: number, mentions: number) => ({
+    source: "rssamp", topic, label: topic, score, mentions, priorMentions: 1, windowDays: 7, generatedAt: null, ingestedAt: null,
+  });
+
+  it("adds up a subject in both lists and ranks the result", () => {
+    const out = mixTrends([signal("blue wave", 100, 60), signal("learjet", 300, 80)], [signal("blue wave", 250, 5), signal("zelda", 150, 3)]);
+    expect(out.map((s) => s.topic)).toEqual(["blue wave", "learjet", "zelda"]);
+    expect(out[0]).toMatchObject({ score: 350, mentions: 65, priorMentions: 2 });
+  });
+
+  it("keeps the written list when there are no votes", () => {
+    expect(mixTrends([signal("a", 1, 1)], []).map((s) => s.topic)).toEqual(["a"]);
+  });
+
+  it("survives the vote source being down", async () => {
+    const stored: unknown[][] = [];
+    const sb = {
+      from: () => ({
+        upsert: async (rows: unknown[]) => { stored.push(rows); return { error: null }; },
+        delete: () => ({ eq: () => ({ eq: () => ({ not: () => ({ select: async () => ({ data: [] }) }) }) }) }),
+      }),
+    } as never;
+    const fetchImpl = (async (url: string) =>
+      String(url).includes("voted") ? new Response("nope", { status: 503 }) : Response.json({ topics: [{ topic: "learjet", score: 5, count: 9 }] })) as typeof fetch;
+    const out = await ingestTrends(sb, { url: "https://rss.test", votedUrl: "https://pit.test/voted" }, fetchImpl);
+    expect(out.ok).toBe(true);
+    expect(stored[0]).toHaveLength(1);
   });
 });

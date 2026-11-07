@@ -42,12 +42,16 @@ export default async function TrendingPage() {
     <div className="mx-auto max-w-3xl px-6 py-14">
       <h1 className="text-3xl font-bold tracking-tight">Trending topics</h1>
       <p className="mt-3 text-[var(--color-muted)]">
-        What English blogs and news sites are writing about more than they were last week, by how many
-        feeds used the subject in a headline. It comes from{" "}
+        What people are writing and searching for more than they were last week: subjects in the
+        headlines of a sample of{" "}
         <a href="https://rssamp.com" className="underline">
           RSSAmp
         </a>
-        , a sample of its feeds, so read it as movement rather than a census.
+        &apos;s English blogs and news sites, mixed with searches people voted on at{" "}
+        <a href="https://pit.world" className="underline">
+          pit.world
+        </a>
+        . Read it as movement rather than a census.
       </p>
 
       {stale && newest && (
@@ -67,7 +71,7 @@ export default async function TrendingPage() {
               <tr className="border-b border-[var(--color-border)] text-left text-xs uppercase tracking-wider text-[var(--color-muted)]">
                 <th className="py-2 pr-3 font-medium">#</th>
                 <th className="py-2 pr-3 font-medium">Subject</th>
-                <th className="py-2 pr-3 text-right font-medium">Feeds, {TREND_WINDOW_DAYS}d</th>
+                <th className="py-2 pr-3 text-right font-medium">Mentions, {TREND_WINDOW_DAYS}d</th>
                 <th className="py-2 pr-3 text-right font-medium">Week before</th>
                 <th className="py-2 text-right font-medium">Change</th>
               </tr>
