@@ -29,7 +29,14 @@ describe("publicTrendList", () => {
     const list = await publicTrendList(client([row("midterm result", "midterm results", "2026-11-07T11:00:00Z")]), { now: NOW });
     expect(list.stale).toBe(false);
     expect(list.topics).toEqual([
-      { topic: "midterm results", match_key: "midterm result", score: 40, feeds: 60, prior_feeds: 2 },
+      {
+        topic: "midterm results",
+        match_key: "midterm result",
+        score: 40,
+        feeds: 60,
+        prior_feeds: 2,
+        search_url: "https://pit.world/search?q=midterm%20results",
+      },
     ]);
   });
 
