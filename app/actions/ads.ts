@@ -334,7 +334,10 @@ export async function saveCampaign(input: {
   // normally, which the detail page shows by having no promo line at all.
   let promoDays: number | undefined;
   if (input.trendingTopics) {
-    const granted = await grantTrendingPromo(supabase, { userId: user.id, campaignId: campaign.data.id, note: "trending targeting enabled in the dashboard" });
+    // The service client: ad_promos is written by us, never by its owner (it
+    // has no insert policy), so under the user's session this failed silently
+    // and the promised ninety days never started.
+    const granted = await grantTrendingPromo(serviceClient(), { userId: user.id, campaignId: campaign.data.id, note: "trending targeting enabled in the dashboard" });
     promoDays = granted.state.active ? granted.state.daysRemaining : undefined;
   }
 

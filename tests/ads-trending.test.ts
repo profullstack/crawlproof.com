@@ -25,7 +25,7 @@ import { campaignBodyFromArgs, promoLine, parseArgs } from "@/cli/index";
 const DAY = 24 * 60 * 60 * 1000;
 
 const signal = (topic: string, score = 10): TrendSignal => ({
-  source: "samebrain",
+  source: "rssamp",
   topic,
   score,
   mentions: 5,
@@ -119,7 +119,7 @@ describe("matching a campaign to a page", () => {
 describe("the trend payload another service sends", () => {
   it("keeps what it can use and drops the rest", () => {
     const parsed = parseTrendPayload({
-      source: "samebrain",
+      source: "rssamp",
       window_days: 7,
       generated_at: 1_757_500_000_000,
       topics: [

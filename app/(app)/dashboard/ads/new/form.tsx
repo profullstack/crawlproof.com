@@ -245,6 +245,9 @@ export function NewAdForm() {
           />
           <span>
             <span className="font-medium">Target trending topics</span>
+            <a href="/trending" target="_blank" className="ml-2 text-xs underline">
+              See what is trending
+            </a>
             <span className="block text-xs text-[var(--color-muted)]">
               Show this campaign where its subject is what people are asking about right now, on
               pages about that subject. Includes 90 days of premium delivery with every click

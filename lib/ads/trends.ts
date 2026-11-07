@@ -1,13 +1,9 @@
 // Pulling the trend list in, and reading it back out.
 //
-// chovy.com's SameBrain endpoint answers "what are founders trying to build
-// this week" as a list of subjects with a score. This module fetches that over
-// a shared secret, normalises it, and stores it as targeting signals. Serving
-// reads `currentTrends`; nothing on the serving path ever reaches chovy.com.
-//
-// The secret lives in the vault (logicsrc team `crawlproof-com--prod`) as
-// SAMEBRAIN_SECRET and is set as an environment variable on the Railway
-// service — never in a committed .env file.
+// RSSAmp answers "what is the open web writing about more than last week" as a
+// list of subjects with a score (rssamp.com/api/trending, public, no key). This
+// module fetches that, normalises it, and stores it as targeting signals.
+// Serving reads `currentTrends`; nothing on the serving path ever reaches RSSAmp.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -65,6 +61,7 @@ export function parseTrendPayload(
     signals.push({
       source,
       topic,
+      label: String(row.topic ?? "").trim().slice(0, 80) || topic,
       score: clampNumber(row.score, 0, 1_000_000, 0),
       mentions: Math.round(clampNumber(row.count ?? row.mentions, 0, 1_000_000, 0)),
       priorMentions: Math.round(clampNumber(row.prior_count ?? row.priorMentions, 0, 1_000_000, 0)),
@@ -78,9 +75,8 @@ export function parseTrendPayload(
 }
 
 export type TrendSourceConfig = {
-  /** Base URL of the trend source, e.g. https://chovy.com */
+  /** Base URL of the trend source, e.g. https://rssamp.com */
   url: string;
-  secret: string;
   windowDays?: number;
   limit?: number;
 };
@@ -88,7 +84,7 @@ export type TrendSourceConfig = {
 /**
  * Ask the source what is trending.
  *
- * Server to server, bearer secret, short timeout: this runs on a schedule and
+ * Server to server, short timeout: this runs on a schedule and
  * a trend list is never worth holding a request open for. A failure here is
  * not an outage — serving falls back to the stored list, and past
  * TREND_MAX_AGE_HOURS to no trend targeting at all.
@@ -97,18 +93,17 @@ export async function fetchTrends(
   config: TrendSourceConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; signals: TrendSignal[]; generatedAt: string | null } | { ok: false; status: number; error: string }> {
-  if (!config.url) return { ok: false, status: 503, error: "No trend source configured (SAMEBRAIN_URL)." };
-  if (!config.secret) return { ok: false, status: 503, error: "No trend source secret configured (SAMEBRAIN_SECRET)." };
+  if (!config.url) return { ok: false, status: 503, error: "No trend source configured (TREND_URL)." };
 
   const windowDays = Math.round(clampNumber(config.windowDays, 1, 90, TREND_WINDOW_DAYS));
   const limit = Math.round(clampNumber(config.limit, 1, 200, 50));
   const base = config.url.replace(/\/$/, "");
-  const url = `${base}/api/samebrain/trending?window=${windowDays}&limit=${limit}`;
+  const url = `${base}/api/trending?window=${windowDays}&limit=${limit}`;
 
   let response: Response;
   try {
     response = await fetchImpl(url, {
-      headers: { authorization: `Bearer ${config.secret}`, accept: "application/json" },
+      headers: { accept: "application/json" },
       signal: AbortSignal.timeout(15_000),
     });
   } catch (error) {
@@ -149,6 +144,7 @@ export async function storeTrends(
   const rows = signals.map((signal) => ({
     source,
     topic: signal.topic,
+    label: signal.label ?? signal.topic,
     mentions: signal.mentions,
     prior_mentions: signal.priorMentions,
     score: signal.score,
@@ -212,6 +208,7 @@ export async function ingestTrends(
 type TrendRow = {
   source: string;
   topic: string;
+  label: string | null;
   mentions: number | null;
   prior_mentions: number | null;
   score: number | null;
@@ -223,6 +220,7 @@ type TrendRow = {
 const rowToSignal = (row: TrendRow): TrendSignal => ({
   source: row.source,
   topic: row.topic,
+  label: row.label ?? row.topic,
   score: Number(row.score) || 0,
   mentions: Number(row.mentions) || 0,
   priorMentions: Number(row.prior_mentions) || 0,
@@ -250,7 +248,7 @@ export async function currentTrends(
   try {
     const { data, error } = await sb
       .from("ad_trend_topics")
-      .select("source, topic, mentions, prior_mentions, score, window_days, generated_at, ingested_at")
+      .select("source, topic, label, mentions, prior_mentions, score, window_days, generated_at, ingested_at")
       .eq("source", source)
       .eq("window_days", windowDays)
       .order("score", { ascending: false })
