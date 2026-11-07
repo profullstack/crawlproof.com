@@ -18,6 +18,9 @@ export type IngestResult =
   | { ok: true; source: string; windowDays: number; stored: number; removed: number; generatedAt: string | null }
   | { ok: false; status: number; error: string };
 
+// Real news, but nothing to publish on a sales page or sell an ad against.
+const UNSAFE_TOPIC = /\b(abuse|assault|rape\w*|sexual\w*|sex|porn\w*|nude\w*|child|children|minor|minors|murder\w*|suicide|massacre|shooting|stabbing|beheaded|terror\w*)\b/i;
+
 const clampNumber = (value: unknown, min: number, max: number, fallback: number): number => {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -56,7 +59,7 @@ export function parseTrendPayload(
   for (const item of rawTopics) {
     const row = (item ?? {}) as Record<string, unknown>;
     const topic = normalizeTopic(String(row.topic ?? ""));
-    if (!topic || seen.has(topic)) continue;
+    if (!topic || seen.has(topic) || UNSAFE_TOPIC.test(String(row.topic))) continue;
     seen.add(topic);
     signals.push({
       source,
