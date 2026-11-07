@@ -17,6 +17,7 @@ import { registerAffiliateTools } from "@/lib/mcp/affiliate";
 import { registerActorTools } from "@/lib/mcp/actors";
 import { registerCreditTools } from "@/lib/mcp/credits";
 import { registerWebhookTools } from "@/lib/mcp/webhooks";
+import { registerTrendTools } from "@/lib/mcp/trends";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +33,7 @@ const handler = createMcpHandler(
     registerActorTools(server);
     registerCreditTools(server);
     registerWebhookTools(server);
+    registerTrendTools(server);
   },
   {},
   // The route is mounted at /api/mcp, so mcp-handler must derive its endpoint
