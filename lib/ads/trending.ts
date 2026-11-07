@@ -15,8 +15,8 @@
 
 import { DEFAULT_BID_CREDITS } from "./pricing";
 
-/** The only trend source today: chovy.com's SameBrain read on what founders are building. */
-export const TREND_SOURCE = "samebrain";
+/** RSSAmp's weekly read of what its blogs and news sites write about more than last week. */
+export const TREND_SOURCE = "rssamp";
 
 /** Default window to target on, matching what the source ranks over. */
 export const TREND_WINDOW_DAYS = 7;
@@ -45,7 +45,10 @@ export const TREND_MATCH_MULTIPLIER = 4;
 
 export type TrendSignal = {
   source: string;
+  /** Stemmed for matching ("midterm result"). Compare on this. */
   topic: string;
+  /** The subject as it was written ("midterm results"). Show this. */
+  label?: string;
   score: number;
   mentions: number;
   priorMentions: number;

@@ -1,10 +1,8 @@
 // Pull the trend list in. Run it hourly.
 //
-// Server to server in both directions: this route is gated on CRON_SECRET the
-// same way every other cron route is, and it presents SAMEBRAIN_SECRET to the
-// source. Neither secret belongs in a committed .env file — both are set on
-// the Railway service and kept in the vault (logicsrc team
-// `crawlproof-com--prod`).
+// Gated on CRON_SECRET the same way every other cron route is. The caller is the
+// `crawlproof ad-trends` line in anthony's crontab on dev2: nothing else runs
+// this, and for eight weeks nothing did.
 //
 // A failed pull is not an outage. Serving keeps using the stored list until it
 // ages out (TREND_MAX_AGE_HOURS), and after that every campaign simply falls
@@ -35,8 +33,7 @@ export async function POST(req: Request) {
 
   const windowDays = Number(new URL(req.url).searchParams.get("window")) || TREND_WINDOW_DAYS;
   const result = await ingestTrends(serviceClient(), {
-    url: env.samebrainUrl,
-    secret: env.samebrainSecret,
+    url: env.trendUrl,
     windowDays,
   });
   if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
