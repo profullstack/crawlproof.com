@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { serviceClient } from "@/lib/supabase/service";
 import { currentTrends } from "@/lib/ads/trends";
+import { pitSearchUrl } from "@/lib/ads/trendList";
 import { TREND_WINDOW_DAYS, trendsAreStale } from "@/lib/ads/trending";
 
 export const metadata = {
@@ -80,7 +81,11 @@ export default async function TrendingPage() {
               {topics.map((topic, index) => (
                 <tr key={topic.topic} className="border-b border-[var(--color-border)]">
                   <td className="py-2 pr-3 text-[var(--color-muted)]">{index + 1}</td>
-                  <td className="py-2 pr-3 font-medium">{topic.label ?? topic.topic}</td>
+                  <td className="py-2 pr-3 font-medium">
+                    <a href={pitSearchUrl(topic.label ?? topic.topic)} className="underline-offset-2 hover:underline">
+                      {topic.label ?? topic.topic}
+                    </a>
+                  </td>
                   <td className="py-2 pr-3 text-right tabular-nums">{topic.mentions}</td>
                   <td className="py-2 pr-3 text-right tabular-nums">{topic.priorMentions}</td>
                   <td className="py-2 text-right tabular-nums">{change(topic.mentions, topic.priorMentions)}</td>

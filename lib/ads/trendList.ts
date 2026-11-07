@@ -5,6 +5,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { currentTrends } from "./trends";
 import { TREND_MAX_AGE_HOURS, TREND_SOURCE, TREND_WINDOW_DAYS, trendsAreStale } from "./trending";
 
+/** Where a subject can be searched. */
+export function pitSearchUrl(subject: string): string {
+  return `https://pit.world/search?q=${encodeURIComponent(subject)}`;
+}
+
 export async function publicTrendList(sb: SupabaseClient, options: { limit?: number; now?: number } = {}) {
   const now = options.now ?? Date.now();
   const limit = Math.min(200, Math.max(1, Math.round(Number(options.limit)) || 50));
@@ -26,6 +31,7 @@ export async function publicTrendList(sb: SupabaseClient, options: { limit?: num
       score: signal.score,
       feeds: signal.mentions,
       prior_feeds: signal.priorMentions,
+      search_url: pitSearchUrl(signal.label ?? signal.topic),
     })),
   };
 }
