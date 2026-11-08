@@ -34,7 +34,9 @@ export function c0mputeImageTarget(env: Env = runtimeEnv()): C0mputeImageTarget 
 }
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const GENERATE_TIMEOUT_MS = 6 * 60 * 1000;
+// The gateway runs the auction and retries other workers itself; a 6-core
+// worker can need ~5 minutes per image.
+const GENERATE_TIMEOUT_MS = 14 * 60 * 1000;
 
 export class C0mputeImageError extends Error {
   constructor(message: string, readonly status: number) {
