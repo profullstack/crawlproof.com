@@ -63,11 +63,11 @@ describe("product ads are kept", () => {
       "https://moshcoding.com/",
       "https://outreachgraph.com/",
       "https://bl0ggers.com/",
-      "https://weedforcrypto.com/",
+      "https://weedforcrypto.pwa.pit.world/",
       "https://profullstack.com/pricing",
       "https://openmcp.logicsrc.com/",
       "https://tronbrowser.dev/store/extension.html?slug=coinpay-wallet",
-      "https://c0upons.com/coupons/647",
+      "https://c0upons.pwa.pit.world/coupons/647",
     ]) {
       expect(classifyCampaign(u), u).toBe("product");
     }
@@ -78,7 +78,7 @@ describe("product ads are kept", () => {
       "https://m.do.co/c/f8b2890dc9d1",
       "https://www.amazon.com/Red-Bull-Energy-Drink-Pack/dp/B006O3ASKE?th=1",
       "https://goldclubhosting.xyz/aff.php?aff=362",
-      "https://aiornot.vote/r/BAB9HME",
+      "https://aiornot.pwa.pit.world/r/BAB9HME",
       "https://www.netcup.com/de/",
     ]) {
       expect(classifyCampaign(u), u).toBe("product");
