@@ -12,6 +12,8 @@
 // this is the free tier that runs when nothing else drew one.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { buildPrompt, uploadHero } from "./heroImage";
 
 type Env = Record<string, string | undefined>;
@@ -44,27 +46,57 @@ export class C0mputeImageError extends Error {
   }
 }
 
+type Poster = (
+  url: string,
+  token: string,
+  body: string,
+  timeoutMs: number,
+) => Promise<{ status: number; body: Buffer }>;
+
+/**
+ * POST over node:http. Not fetch: Bun 1.4's fetch gave up on a c0mpute image
+ * after ~6 minutes even with `timeout: false` (seen live 2026-11-08), and
+ * Node's fetch stops waiting for headers at 300 s. This waits `timeoutMs`.
+ */
+export const postLong: Poster = (url, token, body, timeoutMs) =>
+  new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const send = u.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = send(
+      u,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks) }));
+        res.on("error", reject);
+      },
+    );
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`c0mpute image: no answer in ${Math.round(timeoutMs / 1000)}s`)));
+    req.on("error", reject);
+    req.end(body);
+  });
+
 /** One 768x512 (3:2, the hero's shape) image from a c0mpute CPU worker. */
 export async function generateC0mputeImage(
   prompt: string,
   target: C0mputeImageTarget,
-  fetchImpl: typeof fetch = fetch,
+  post: Poster = postLong,
 ): Promise<Buffer> {
-  const res = await fetchImpl(target.url, {
-    method: "POST",
-    headers: { authorization: `Bearer ${target.token}`, "content-type": "application/json" },
-    body: JSON.stringify({ prompt: prompt.slice(0, 2000), width: 768, height: 512 }),
-    signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
-    // The worker runs on Bun, whose fetch has its own default timeout; ours
-    // above is the one that should apply (a CPU image can pass 5 minutes).
-    // Node's fetch ignores this key.
-    timeout: false,
-  } as RequestInit);
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => "")).slice(0, 200);
+  const payload = JSON.stringify({ prompt: prompt.slice(0, 2000), width: 768, height: 512 });
+  const res = await post(target.url, target.token, payload, GENERATE_TIMEOUT_MS);
+  if (res.status !== 200) {
+    const detail = res.body.toString("utf8").slice(0, 200);
     throw new C0mputeImageError(`c0mpute image ${res.status}: ${detail}`, res.status);
   }
-  const bytes = Buffer.from(await res.arrayBuffer());
+  const bytes = res.body;
   if (bytes.length < 1000 || !bytes.subarray(0, 8).equals(PNG_MAGIC)) {
     throw new C0mputeImageError("c0mpute image: not a PNG", 502);
   }
@@ -109,7 +141,7 @@ export type HeroBackfillResult = {
  */
 export async function backfillAdHeroes(
   supabase: SupabaseClient,
-  opts: { env?: Env; now?: number; fetchImpl?: typeof fetch } = {},
+  opts: { env?: Env; now?: number; post?: Poster } = {},
 ): Promise<HeroBackfillResult> {
   const target = c0mputeImageTarget(opts.env);
   if (!target) return { skipped: "not_configured" };
@@ -146,7 +178,7 @@ export async function backfillAdHeroes(
 
   let bytes: Buffer;
   try {
-    bytes = await generateC0mputeImage(prompt, target, opts.fetchImpl);
+    bytes = await generateC0mputeImage(prompt, target, opts.post);
   } catch (err) {
     const status = err instanceof C0mputeImageError ? err.status : 0;
     // 503 = no worker free / none online: back off the whole sweep, not this campaign.
