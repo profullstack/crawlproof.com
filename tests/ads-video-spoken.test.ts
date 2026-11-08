@@ -12,7 +12,9 @@ describe("spoken domains and names", () => {
     expect(spokenDomain("nichedb.dev")).toBe("niche d b dot dev");
     expect(spokenDomain("pit.world")).toBe("pit dot world");
     expect(spokenDomain("moshcode.sh")).toBe("mosh code dot S H");
-    expect(spokenDomain("brisk.pwa.pit.world")).toBe("brisk dot news");
+    // Retired apps live on <name>.pwa.pit.world: the brand, then the host, read in full so a listener can type it.
+    expect(spokenDomain("brisk.pwa.pit.world")).toBe("brisk dot P W A dot pit dot world");
+    expect(spokenDomain("c0upons.pwa.pit.world")).toBe("coupons dot P W A dot pit dot world");
   });
 
   test("names nobody listed still come out readable", () => {
