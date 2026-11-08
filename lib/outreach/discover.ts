@@ -27,6 +27,7 @@ import { looksLikeLoginWall } from "./loginWall";
 import { extractPerson, type ExtractedPerson } from "./person";
 import { findNextPageUrl } from "./pagination";
 import type { SeedCredentials } from "./seedLogin";
+import { crawlSignal } from "@/lib/crawl/policy";
 
 /** A person found on a page, with where they were found. */
 export type DiscoveredPerson = ExtractedPerson & { sourceUrl: string };
@@ -288,7 +289,7 @@ async function fetchHtml(
   try {
     const res = await fetch(url, {
       headers: { "user-agent": SEED_UA },
-      signal: AbortSignal.timeout(15_000),
+      signal: crawlSignal(),
       redirect: "follow",
     });
     if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` };

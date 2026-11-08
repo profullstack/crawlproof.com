@@ -12,16 +12,27 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseFeed, type ParsedFeedItem } from "@/lib/promote/feedParse";
 import { canonicalizeUrl, normalizeUrlForIdentity, urlHash } from "@/lib/promote/normalizeUrl";
+import {
+  CRAWL_FETCH_TIMEOUT_MS,
+  CRAWL_RECHECK_MS,
+  CrawlHttpError,
+  classifyCrawlError,
+  nextCheckAfterFailure,
+} from "@/lib/crawl/policy";
 
 const USER_AGENT = "CrawlProofPromote/1.0 (+https://crawlproof.com)";
-const FETCH_TIMEOUT_MS = 15_000;
 const MAX_ITEMS_PER_FEED = 50;
 const MAX_BODY_BYTES = 5_000_000;
 
 // A failing feed backs off geometrically instead of being polled every 15
 // minutes forever. Capped so a feed that comes back is noticed within a day.
+// That daily cap only applies to "soft" failures (a 4xx, a page that is not a
+// feed); a slow or broken feed (timeout, DNS/TLS/connection error, 5xx) is
+// parked for 30 days by the fleet crawler policy (lib/crawl/policy.ts).
 const MAX_BACKOFF_MULTIPLIER = 32;
 const MAX_BACKOFF_SECONDS = 86_400;
+/** Soft failures in a row before the feed stops being polled daily and is parked too. */
+const PARK_SOFT_FAILURES_AFTER = 8;
 
 export type FetchLike = (
   url: string,
@@ -183,14 +194,26 @@ async function ingestOneFeed(
   if (feed.etag) headers["if-none-match"] = feed.etag;
   if (feed.last_modified) headers["if-modified-since"] = feed.last_modified;
 
+  // One budget for connect + headers + body: the timer stays armed until the
+  // body has been read, so a server that trickles bytes cannot hold the pass.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let response: Awaited<ReturnType<FetchLike>>;
+  const timer = setTimeout(() => controller.abort(), CRAWL_FETCH_TIMEOUT_MS);
   try {
-    response = await doFetch(feed.feed_url, { headers, signal: controller.signal });
+    return await ingestFetched(supabase, feed, now, doFetch, headers, controller.signal);
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function ingestFetched(
+  supabase: SupabaseClient<any>,
+  feed: FeedRow,
+  now: Date,
+  doFetch: FetchLike,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<{ unchanged: boolean; failed: boolean; itemsStored: number; linksCreated: number }> {
+  const response = await doFetch(feed.feed_url, { headers, signal });
 
   // Unchanged since last time: the common case, and the cheap one.
   if (response.status === 304) {
@@ -208,7 +231,16 @@ async function ingestOneFeed(
   }
 
   if (!response.ok) {
-    await recordFailure(supabase, feed, now, new Error(`Feed returned HTTP ${response.status}`));
+    await recordFailure(
+      supabase,
+      feed,
+      now,
+      new CrawlHttpError(
+        response.status,
+        response.headers.get("retry-after"),
+        `Feed returned HTTP ${response.status}`,
+      ),
+    );
     return { unchanged: false, failed: true, itemsStored: 0, linksCreated: 0 };
   }
 
@@ -375,9 +407,34 @@ async function recordFailure(
       last_fetched_at: now.toISOString(),
       consecutive_failures: failures,
       last_error: err instanceof Error ? err.message : String(err),
-      next_fetch_at: nextFetchAt({ ...feed, consecutive_failures: failures }, now, true),
+      next_fetch_at: failureNextFetchAt(feed, now, err),
     })
     .eq("id", feed.id);
+}
+
+/**
+ * When a feed that just failed is fetched next.
+ *
+ * Slow or broken (timeout, DNS/TLS/connection error, 5xx): 30 days out, then
+ * exactly one recheck; success clears it, failure parks it another 30 days.
+ * 429: its Retry-After, capped at 30 days. Anything else keeps the geometric
+ * backoff, until PARK_SOFT_FAILURES_AFTER in a row, so a feed that 404s is
+ * not polled daily for ever.
+ */
+export function failureNextFetchAt(
+  feed: Pick<FeedRow, "fetch_interval_seconds" | "consecutive_failures">,
+  now: Date,
+  err: unknown,
+): string {
+  const failures = (feed.consecutive_failures ?? 0) + 1;
+  const kind = classifyCrawlError(err);
+  const retryAfter = err instanceof CrawlHttpError ? err.retryAfter : null;
+  const flagged = nextCheckAfterFailure(kind, now, retryAfter);
+  if (flagged) return flagged.toISOString();
+  if (failures >= PARK_SOFT_FAILURES_AFTER) {
+    return new Date(now.getTime() + CRAWL_RECHECK_MS).toISOString();
+  }
+  return nextFetchAt({ ...feed, consecutive_failures: failures }, now, true);
 }
 
 /** Geometric backoff while a feed is failing, plain interval while it is healthy. */

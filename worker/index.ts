@@ -27,7 +27,7 @@ import { quoteFromFindings, type Quote } from "../lib/audit/quote";
 import type { Finding } from "../lib/audit/types";
 import { auditStuckAfterMinutes, auditStuckAfterMs } from "../lib/audit/timeouts";
 import OpenAI from "openai";
-import { crawlSitemap } from "../lib/lx/sitemapCrawl";
+import { claimDueSitemapRechecks, crawlSitemap } from "../lib/lx/sitemapCrawl";
 import { DataForSeoClient } from "../lib/lx/dataforseo";
 import { researchKeywords } from "../lib/lx/keywordsResearch";
 import Anthropic from "@anthropic-ai/sdk";
@@ -1593,6 +1593,31 @@ setInterval(
   FEED_CRAWL_TICK_MS,
 );
 
+// Sitemap rechecks (fleet crawler policy, lib/crawl/policy.ts).
+//
+// A failed link-exchange sitemap crawl is flagged with sitemap_next_check_at
+// 30 days out. This hands each one its single recheck when the date comes up;
+// the crawl itself clears the flag on success or sets another 30 days.
+const SITEMAP_RECHECK_TICK_MS = 60 * 60 * 1000; // 1h
+let sitemapRecheckRunning = false;
+async function sitemapRecheckSweep() {
+  if (sitemapRecheckRunning) return;
+  sitemapRecheckRunning = true;
+  try {
+    const ids = await claimDueSitemapRechecks(supabase);
+    for (const id of ids) {
+      console.log(`[worker] lx sitemap 30-day recheck ${id}`);
+      await processLxSitemap(id);
+    }
+  } finally {
+    sitemapRecheckRunning = false;
+  }
+}
+setInterval(
+  () => sitemapRecheckSweep().catch((e) => console.error("[worker] sitemap recheck sweep", e)),
+  SITEMAP_RECHECK_TICK_MS,
+);
+
 // Ad autobid.
 //
 // Every live campaign with autobid on (the default) gets its bid recomputed by
@@ -1677,6 +1702,7 @@ server.listen(port, bindHost, () => {
   promoteIngestSweep().catch((e) => console.error("[worker] promote ingest", e));
   sessionRefreshSweep().catch((e) => console.error("[worker] session refresh sweep", e));
   feedCrawlSweep().catch((e) => console.error("[worker] feed crawl sweep", e));
+  sitemapRecheckSweep().catch((e) => console.error("[worker] sitemap recheck sweep", e));
   autobidSweep().catch((e) => console.error("[worker] autobid sweep", e));
   adLinkSweep().catch((e) => console.error("[worker] ad link sweep", e));
   // Long-lived BullMQ consumer rather than an interval sweep: a render takes

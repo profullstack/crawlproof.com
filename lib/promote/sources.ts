@@ -9,6 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseFeed } from "@/lib/promote/feedParse";
 import { topicFeedUrl, type KeywordInput } from "@/lib/promote/keywords";
 import type { FetchLike } from "@/lib/promote/ingest";
+import { CRAWL_FETCH_TIMEOUT_MS } from "@/lib/crawl/policy";
 
 // Same guard the audit engine applies to user-supplied targets: a feed URL is
 // fetched by our server, so it must not be able to point at our own network.
@@ -16,7 +17,7 @@ import type { FetchLike } from "@/lib/promote/ingest";
 const PRIVATE_HOSTS =
   /^(localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc00:|fd00:|.*\.local)$/i;
 
-const VALIDATE_TIMEOUT_MS = 15_000;
+const VALIDATE_TIMEOUT_MS = CRAWL_FETCH_TIMEOUT_MS;
 
 export type FeedKind = "rssamplifier_topic" | "custom_feed" | "project_feed";
 

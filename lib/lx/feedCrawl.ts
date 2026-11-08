@@ -19,11 +19,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { itemEntries } from "./feedTopics";
 import { resolveMasters, tokens } from "./topicPlan";
+import { CRAWL_FETCH_TIMEOUT_MS, CRAWL_RECHECK_MS } from "@/lib/crawl/policy";
 
 const RSSAMPLIFIER = "https://rssamplifier.com";
 
-/** Per-feed budget. Generous next to delivery's, because nothing waits on it. */
-const FETCH_TIMEOUT_MS = 12_000;
+/** Per-feed budget: the fleet crawl budget (lib/crawl/policy.ts). */
+const FETCH_TIMEOUT_MS = CRAWL_FETCH_TIMEOUT_MS;
 
 /** Feeds read per sweep. Bounded so one tick cannot run for an hour. */
 const PER_SWEEP = 25;
@@ -40,6 +41,17 @@ export const REFRESH_AFTER_MS = 6 * 60 * 60 * 1000; // 6h
  * can say "this topic has no feed, here is why".
  */
 const GIVE_UP_AFTER = 8;
+
+/**
+ * Parked is not dead for ever: a given_up source gets one recheck every
+ * CRAWL_RECHECK_MS (30 days) after its last attempt. Success puts it back to
+ * active with a clean failure count; failure leaves it parked and stamps
+ * last_fetch_at, which starts the next 30 days.
+ */
+export const GIVEN_UP_RECHECK_MS = CRAWL_RECHECK_MS;
+
+/** Parked sources rechecked per sweep, so a mass give-up cannot crowd out live feeds. */
+const RECHECKS_PER_SWEEP = 5;
 
 /** Items kept per source. Older ones are pruned so the table stays bounded. */
 const KEEP_PER_SOURCE = 40;
@@ -132,6 +144,15 @@ export async function crawlFeeds(
     .order("last_fetch_at", { ascending: true, nullsFirst: true })
     .limit(PER_SWEEP);
 
+  const recheckBefore = new Date(Date.now() - GIVEN_UP_RECHECK_MS).toISOString();
+  const { data: parked } = await supabase
+    .from("lx_feed_source")
+    .select("id, topic, url, consecutive_failures")
+    .eq("status", "given_up")
+    .lt("last_fetch_at", recheckBefore)
+    .order("last_fetch_at", { ascending: true })
+    .limit(RECHECKS_PER_SWEEP);
+
   const result: FeedSweepResult = {
     sources,
     fetched: 0,
@@ -140,7 +161,7 @@ export async function crawlFeeds(
     gaveUp: 0,
   };
 
-  for (const source of (batch ?? []) as Array<{
+  for (const source of [...(batch ?? []), ...(parked ?? [])] as Array<{
     id: string;
     topic: string;
     url: string;

@@ -1,14 +1,16 @@
 import type { FetchedPage } from "./types";
 import { smartFetch } from "../onion";
+import { fetchBudgetMs } from "../crawl/policy";
 
 const UA = "CrawlProofBot/1.0 (+https://crawlproof.com/bot)";
-const TIMEOUT_MS = 15_000;
 const MAX_BYTES = 4 * 1024 * 1024;
 
 export async function fetchPage(url: string): Promise<FetchedPage> {
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  // 10 s clearnet, the separate Tor budget for .onion (lib/crawl/policy.ts);
+  // the timer covers the body read below too.
+  const timer = setTimeout(() => controller.abort(), fetchBudgetMs(url));
   try {
     // smartFetch routes .onion targets through Tor (TOR_SOCKS_URL); everything
     // else is a normal fetch.

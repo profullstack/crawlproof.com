@@ -249,6 +249,47 @@ describe("ingestDueFeeds", () => {
       expect(result.feedsFailed).toBe(1);
       expect(db.promo_feed[0].consecutive_failures).toBe(1);
       expect(db.promo_feed[0].last_error).toContain("500");
+      // A 5xx is a broken target: parked 30 days (lib/crawl/policy.ts).
+      expect(db.promo_feed[0].next_fetch_at).toBe("2026-09-17T12:00:00.000Z");
+    });
+
+    it("parks a feed that times out for 30 days", async () => {
+      const { client, db } = makeFakeSupabase(seed(), CONSTRAINTS);
+      const fetchImpl: FetchLike = async () => {
+        throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+      };
+
+      await ingestDueFeeds(client, { fetchImpl, now: NOW });
+
+      expect(db.promo_feed[0].next_fetch_at).toBe("2026-09-17T12:00:00.000Z");
+    });
+
+    it("clears the flag when the recheck succeeds", async () => {
+      const { client, db } = makeFakeSupabase(
+        seed({
+          promo_feed: [
+            {
+              id: "feed-bitcoin",
+              feed_url: "https://rssamplifier.com/topics/bitcoin.rss",
+              kind: "rssamplifier_topic",
+              etag: null,
+              last_modified: null,
+              fetch_interval_seconds: 900,
+              consecutive_failures: 3,
+              last_error: "The operation was aborted due to timeout",
+              next_fetch_at: "2026-08-18T11:00:00.000Z",
+            },
+          ],
+        }),
+        CONSTRAINTS,
+      );
+      const fetchImpl: FetchLike = async () => response(bitcoinFeed);
+
+      await ingestDueFeeds(client, { fetchImpl, now: NOW });
+
+      expect(db.promo_feed[0].consecutive_failures).toBe(0);
+      expect(db.promo_feed[0].last_error).toBeNull();
+      expect(db.promo_feed[0].next_fetch_at).toBe("2026-08-18T12:15:00.000Z");
     });
 
     it("treats a page that is not a feed as a failure", async () => {

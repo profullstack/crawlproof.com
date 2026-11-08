@@ -38,6 +38,8 @@ function torDispatcher(): Dispatcher {
       command: "connect",
       // host is the .onion — SOCKS5 sends it to Tor to resolve (socks5h).
       destination: { host: opts.hostname, port: destPort },
+      // Circuit build only; the whole request is bounded by TOR_FETCH_TIMEOUT_MS
+      // (lib/crawl/policy.ts) in the caller.
       timeout: 20_000,
     })
       .then(({ socket }) => {
