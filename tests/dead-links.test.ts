@@ -3,7 +3,7 @@ import { isDeadExternalUrl, stripDeadLinks } from "@/lib/dead-links";
 
 describe("stripDeadLinks", () => {
   it("unwraps dead anchors and keeps the text", () => {
-    const html = '<p>See <a href="https://c0upons.com/blog/walgreens-coupon-code-workflow">this</a>.</p>';
+    const html = '<p>See <a href="https://c0upons.pwa.pit.world/blog/walgreens-coupon-code-workflow">this</a>.</p>';
     expect(stripDeadLinks(html)).toBe("<p>See this.</p>");
   });
   it("matches bare origins with or without a trailing slash", () => {

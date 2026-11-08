@@ -12,7 +12,7 @@
 
 import { Resolver } from "node:dns/promises";
 
-const DEFAULT_DOMAINS = ["crawlproof.com", "saasrow.com"];
+const DEFAULT_DOMAINS = ["crawlproof.com", "saasrow.pwa.pit.world"];
 
 // Use public resolvers and bypass any local/stale caching.
 const resolver = new Resolver();

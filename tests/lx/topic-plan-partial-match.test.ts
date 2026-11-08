@@ -66,7 +66,7 @@ const CASES: Case[] = [
     ],
   },
   {
-    domain: "c0upons.com",
+    domain: "c0upons.pwa.pit.world",
     site: {
       master_keywords: [
         "coupon codes", "promo codes", "deals", "discount codes",
