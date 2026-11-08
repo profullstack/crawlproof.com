@@ -73,35 +73,38 @@ describe("ad hero backfill on c0mpute", () => {
   it("draws one hero and writes it to the campaign's image-less creatives", async () => {
     const { client, updates } = fakeSupabase([row]);
     uploadHero.mockResolvedValue("https://cdn/heroes/1.webp");
-    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
-      const body = JSON.parse(String(init.body));
+    const post = vi.fn(async (url: string, token: string, raw: string, timeoutMs: number) => {
+      expect(url).toBe("http://gw:8787/v1/images");
+      expect(token).toBe(ENV.C0MPUTE_SPEECH_TOKEN);
+      expect(timeoutMs).toBe(14 * 60 * 1000);
+      const body = JSON.parse(raw);
       expect(body).toMatchObject({ width: 768, height: 512 });
       expect(body.prompt).toContain("Ship faster");
       expect(body.prompt).toContain("example.dev");
-      return new Response(PNG, { status: 200, headers: { "content-type": "image/png" } });
+      return { status: 200, body: PNG };
     });
-    const r = await backfillAdHeroes(client, { env: ENV, fetchImpl: fetchImpl as never });
+    const r = await backfillAdHeroes(client, { env: ENV, post });
     expect(r).toEqual({ campaignId: "c1", heroUrl: "https://cdn/heroes/1.webp", creativesUpdated: 2 });
     expect(updates).toEqual([{ values: { image_url: "https://cdn/heroes/1.webp" }, campaign: "c1" }]);
   });
 
   it("backs the whole sweep off when no worker is free (503)", async () => {
     const { client } = fakeSupabase([row]);
-    const fetchImpl = vi.fn(async () => new Response("no worker", { status: 503 }));
+    const post = vi.fn(async () => ({ status: 503, body: Buffer.from("no worker") }));
     const now = 1_000_000;
-    const first = await backfillAdHeroes(client, { env: ENV, fetchImpl: fetchImpl as never, now });
+    const first = await backfillAdHeroes(client, { env: ENV, post, now });
     expect(first.error).toMatch(/503/);
-    const second = await backfillAdHeroes(client, { env: ENV, fetchImpl: fetchImpl as never, now: now + 60_000 });
+    const second = await backfillAdHeroes(client, { env: ENV, post, now: now + 60_000 });
     expect(second).toEqual({ skipped: "network_backoff" });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it("skips a campaign that failed on its own, and rejects non-PNG bytes", async () => {
     const { client } = fakeSupabase([row]);
-    const fetchImpl = vi.fn(async () => new Response("<html>", { status: 200 }));
+    const post = vi.fn(async () => ({ status: 200, body: Buffer.from("<html>") }));
     const now = 5_000_000;
-    expect((await backfillAdHeroes(client, { env: ENV, fetchImpl: fetchImpl as never, now })).error).toMatch(/not a PNG/);
-    expect(await backfillAdHeroes(client, { env: ENV, fetchImpl: fetchImpl as never, now: now + 1 })).toEqual({
+    expect((await backfillAdHeroes(client, { env: ENV, post, now })).error).toMatch(/not a PNG/);
+    expect(await backfillAdHeroes(client, { env: ENV, post, now: now + 1 })).toEqual({
       skipped: "nothing_to_do",
     });
   });
@@ -109,5 +112,30 @@ describe("ad hero backfill on c0mpute", () => {
   it("does nothing without a gateway", async () => {
     const { client } = fakeSupabase([row]);
     expect(await backfillAdHeroes(client, { env: {} })).toEqual({ skipped: "not_configured" });
+  });
+});
+
+import { createServer } from "node:http";
+import { postLong } from "@/lib/ads/heroBackfill";
+
+describe("postLong", () => {
+  it("POSTs to a real server and returns the body", async () => {
+    const server = createServer((req, res) => {
+      let b = "";
+      req.on("data", (c) => (b += c));
+      req.on("end", () => {
+        res.writeHead(200, { "x-auth": String(req.headers.authorization) });
+        res.end(`ok:${b}`);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const { port } = server.address() as { port: number };
+    try {
+      const r = await postLong(`http://127.0.0.1:${port}/v1/images`, "tok", '{"a":1}', 5000);
+      expect(r.status).toBe(200);
+      expect(r.body.toString()).toBe('ok:{"a":1}');
+    } finally {
+      server.close();
+    }
   });
 });
