@@ -18,6 +18,12 @@ import {
   shouldAttachImage,
   type ImageStylePref,
 } from "@/lib/sp/imageGen";
+import {
+  CRAWL_FETCH_TIMEOUT_MS,
+  CrawlHttpError,
+  classifyCrawlError,
+  nextCheckAfterFailure,
+} from "@/lib/crawl/policy";
 
 export type FeedAutopostClients = {
   anthropic?: Anthropic | null;
@@ -25,10 +31,29 @@ export type FeedAutopostClients = {
 };
 
 const USER_AGENT = "CrawlProofSocialFeed/1.0";
-const FETCH_TIMEOUT_MS = 12_000;
+const FETCH_TIMEOUT_MS = CRAWL_FETCH_TIMEOUT_MS;
 const MAX_RSS_ITEMS = 50;
 const MAX_SITEMAP_URLS = 500;
 const FEED_POLL_EVERY_MS = 15 * 60 * 1000;
+/** A feed URL answering 4xx is a config problem, not an outage: look again daily, not every 15 min. */
+const FEED_4XX_RECHECK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The next_check_at a failed feed check earns, or null to keep the plain
+ * 15-minute cadence (our own failures: locked keys, DB, rendering, posting).
+ *
+ * Fleet crawler policy (lib/crawl/policy.ts): timeout, DNS/TLS/connection
+ * error or 5xx parks the feed for 30 days, then one recheck; 429 honours
+ * Retry-After (capped); a 4xx is retried daily instead of every 15 minutes.
+ */
+export function feedFailureNextCheck(err: unknown, now: Date): Date | null {
+  const kind = classifyCrawlError(err);
+  const retryAfter = err instanceof CrawlHttpError ? err.retryAfter : null;
+  const flagged = nextCheckAfterFailure(kind, now, retryAfter);
+  if (flagged) return flagged;
+  if (err instanceof CrawlHttpError) return new Date(now.getTime() + FEED_4XX_RECHECK_MS);
+  return null;
+}
 
 // Per-(user, platform) cap on autoposted feed items, across every project
 // that user owns. Manual posts are not counted. When the gate fires the
@@ -133,11 +158,15 @@ export async function processDueSocialFeeds(
 ): Promise<FeedProcessResult[]> {
   const now = opts.now ?? new Date();
   const cutoff = new Date(now.getTime() - FEED_POLL_EVERY_MS).toISOString();
+  const nowIso = now.toISOString();
   const { data, error } = await supabase
     .from("sp_feed_config")
     .select("id, user_id, project_id, feed_type, feed_url, ignore_paths, last_checked_at")
     .eq("enabled", true)
-    .or(`last_checked_at.is.null,last_checked_at.lt.${cutoff}`)
+    // Due by cadence AND not parked by a failure (next_check_at in the future).
+    .or(
+      `and(or(last_checked_at.is.null,last_checked_at.lt.${cutoff}),or(next_check_at.is.null,next_check_at.lte.${nowIso}))`,
+    )
     .order("last_checked_at", { ascending: true, nullsFirst: true })
     .limit(opts.limit ?? 10);
 
@@ -283,6 +312,8 @@ async function processSocialFeedConfig(
         last_success_at: nowIso,
         last_item_at: newestTimestamp(items) ?? null,
         last_error: null,
+        failed_at: null,
+        next_check_at: null,
       })
       .eq("id", config.id);
 
@@ -298,9 +329,15 @@ async function processSocialFeedConfig(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[sp] feed check ${config.id} (${config.feed_url ?? "auto"}) failed: ${message}`);
+    const nextCheck = feedFailureNextCheck(err, opts.now);
     await supabase
       .from("sp_feed_config")
-      .update({ status: "error", last_error: message })
+      .update({
+        status: "error",
+        last_error: nextCheck ? `${message} (next check ${nextCheck.toISOString().slice(0, 10)})` : message,
+        failed_at: nowIso,
+        next_check_at: nextCheck ? nextCheck.toISOString() : null,
+      })
       .eq("id", config.id);
     return { ok: false, configId: config.id, error: message };
   }
@@ -711,8 +748,17 @@ async function fetchText(url: string): Promise<string> {
       },
       signal: ac.signal,
     });
-    if (!res.ok) throw new Error(`Feed returned HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new CrawlHttpError(res.status, res.headers.get("retry-after"), `Feed returned HTTP ${res.status}`);
+    }
     return await res.text();
+  } catch (err) {
+    if (ac.signal.aborted) {
+      const timeout = new Error(`Feed timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+      timeout.name = "TimeoutError";
+      throw timeout;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }

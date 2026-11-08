@@ -18,8 +18,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
+import { CRAWL_FETCH_TIMEOUT_MS, CrawlHttpError, crawlRecheckAt } from "@/lib/crawl/policy";
 
-const FETCH_TIMEOUT_MS = 8000;
+const FETCH_TIMEOUT_MS = CRAWL_FETCH_TIMEOUT_MS;
 const UA = "Crawlproof-LinkExchange/1.0 (+https://crawlproof.com)";
 const MAX_PAGES = 200;
 const HTML_CONCURRENCY = 5;
@@ -50,6 +51,88 @@ async function fetchText(url: string): Promise<string | null> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// The root sitemap, or a thrown error saying why not. Unlike fetchText this
+// does not swallow the failure: a sitemap that times out or 5xxs used to be
+// recorded as "empty", which reads as "this site has no pages" and is never
+// retried.
+async function fetchRoot(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: { "user-agent": UA },
+    });
+    if (!res.ok) throw new CrawlHttpError(res.status, res.headers.get("retry-after"));
+    return await res.text();
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error(`timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Columns for a failed crawl: flag it and schedule the one recheck 30 days out
+ * (fleet crawler policy, lib/crawl/policy.ts). Covers our own failures
+ * (embedding quota, DB) too: before this an errored sitemap was never crawled
+ * again unless somebody pressed refresh.
+ */
+export function sitemapFailureFields(status: string, now: Date) {
+  return {
+    sitemap_status: status,
+    last_sitemap_fetch_at: now.toISOString(),
+    sitemap_failed_at: now.toISOString(),
+    sitemap_next_check_at: crawlRecheckAt(now).toISOString(),
+  };
+}
+
+/** Columns for a crawl that finished: clears any flag. */
+export function sitemapSuccessFields(status: string, now: Date) {
+  return {
+    sitemap_status: status,
+    last_sitemap_fetch_at: now.toISOString(),
+    sitemap_failed_at: null,
+    sitemap_next_check_at: null,
+  };
+}
+
+/** A recheck claim holds the row this long, so a crash mid-crawl is retried rather than lost. */
+const RECHECK_CLAIM_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Sites whose failed sitemap is owed its 30-day recheck, claimed (next check
+ * pushed a day out) so an overlapping sweep cannot crawl them twice. The crawl
+ * itself then writes the real outcome.
+ */
+export async function claimDueSitemapRechecks(
+  supabase: SupabaseClient<any>,
+  now: Date = new Date(),
+  limit = 5,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("lx_site")
+    .select("id")
+    .lte("sitemap_next_check_at", now.toISOString())
+    .order("sitemap_next_check_at", { ascending: true })
+    .limit(limit);
+  const ids: string[] = [];
+  for (const row of (data ?? []) as Array<{ id: string }>) {
+    const { data: claimed } = await supabase
+      .from("lx_site")
+      .update({ sitemap_next_check_at: new Date(now.getTime() + RECHECK_CLAIM_MS).toISOString() })
+      .eq("id", row.id)
+      .lte("sitemap_next_check_at", now.toISOString())
+      .select("id")
+      .maybeSingle();
+    if (claimed) ids.push(row.id);
+  }
+  return ids;
 }
 
 // Extract <loc>...</loc> values. Works for both urlset and sitemapindex.
@@ -135,8 +218,7 @@ async function collectUrls(xml: string, depth: number, acc: string[]): Promise<v
 }
 
 async function discoverUrls(sitemapUrl: string): Promise<string[]> {
-  const root = await fetchText(sitemapUrl);
-  if (!root) return [];
+  const root = await fetchRoot(sitemapUrl);
   const acc: string[] = [];
   await collectUrls(root, 0, acc);
   return acc;
@@ -263,10 +345,9 @@ export async function crawlSitemap(
   } catch (err) {
     await supabase
       .from("lx_site")
-      .update({
-        sitemap_status: `error: ${err instanceof Error ? err.message : "fetch failed"}`,
-        last_sitemap_fetch_at: new Date().toISOString(),
-      })
+      .update(
+        sitemapFailureFields(`error: ${err instanceof Error ? err.message : "fetch failed"}`, new Date()),
+      )
       .eq("id", site.id);
     return {
       ok: false,
@@ -280,10 +361,7 @@ export async function crawlSitemap(
   if (urls.length === 0) {
     await supabase
       .from("lx_site")
-      .update({
-        sitemap_status: "empty",
-        last_sitemap_fetch_at: new Date().toISOString(),
-      })
+      .update(sitemapSuccessFields("empty", new Date()))
       .eq("id", site.id);
     return { ok: true, discovered: 0, fetched: 0, embedded: 0 };
   }
@@ -308,10 +386,12 @@ export async function crawlSitemap(
     } catch (err) {
       await supabase
         .from("lx_site")
-        .update({
-          sitemap_status: `error: embedding ${err instanceof Error ? err.message : "failed"}`,
-          last_sitemap_fetch_at: new Date().toISOString(),
-        })
+        .update(
+          sitemapFailureFields(
+            `error: embedding ${err instanceof Error ? err.message : "failed"}`,
+            new Date(),
+          ),
+        )
         .eq("id", site.id);
       return {
         ok: false,
@@ -345,10 +425,7 @@ export async function crawlSitemap(
     if (error) {
       await supabase
         .from("lx_site")
-        .update({
-          sitemap_status: `error: ${error.message}`,
-          last_sitemap_fetch_at: new Date().toISOString(),
-        })
+        .update(sitemapFailureFields(`error: ${error.message}`, new Date()))
         .eq("id", site.id);
       return {
         ok: false,
@@ -362,10 +439,7 @@ export async function crawlSitemap(
 
   await supabase
     .from("lx_site")
-    .update({
-      sitemap_status: `ok (${rows.length} pages)`,
-      last_sitemap_fetch_at: now,
-    })
+    .update(sitemapSuccessFields(`ok (${rows.length} pages)`, new Date(now)))
     .eq("id", site.id);
 
   return {

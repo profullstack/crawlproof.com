@@ -30,9 +30,12 @@ import type { SeedCredentials } from "./seedLogin";
 import type { CodeWaiter } from "@/lib/sp/verificationChallenge";
 import dns from "node:dns/promises";
 import net from "node:net";
+import { CRAWL_BROWSER_SETTLE_MS, CRAWL_BROWSER_TIMEOUT_MS } from "@/lib/crawl/policy";
 
-const NAV_TIMEOUT_MS = 25_000;
-const SETTLE_MS = 2_500;
+// Fleet crawler policy (lib/crawl/policy.ts): one 30 s budget per navigation
+// covering load, settle and scrolling, and a settle of at most 2 s.
+const NAV_TIMEOUT_MS = CRAWL_BROWSER_TIMEOUT_MS;
+const SETTLE_MS = CRAWL_BROWSER_SETTLE_MS;
 const IDLE_SHUTDOWN_MS = 60_000;
 const MAX_HTML_BYTES = 3 * 1024 * 1024;
 /** Bounded so an infinite feed cannot hold a render open forever. */
@@ -113,6 +116,12 @@ export type RenderResult =
       loginRequired?: boolean;
     };
 
+/** Wait for network quiet, but never longer than `ms`; a page that never goes quiet just moves on. */
+async function settle(page: import("playwright").Page, ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await page.waitForLoadState("networkidle", { timeout: ms }).catch(() => {});
+}
+
 /** Page titles a bot-protection interstitial serves instead of the real page. */
 const CHALLENGE_RE = /just a moment|attention required|verifying you are human|checking your browser/i;
 
@@ -165,6 +174,9 @@ export async function renderPage(
     const page = await context.newPage();
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
 
+    let deadline = Date.now() + NAV_TIMEOUT_MS;
+    const left = () => Math.max(0, deadline - Date.now());
+
     const response = await page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: NAV_TIMEOUT_MS,
@@ -174,9 +186,7 @@ export async function renderPage(
     // Let XHR-driven listings arrive. networkidle is the obvious choice but
     // never fires on pages that poll or hold a socket open, so this waits for
     // quiet with a hard ceiling instead.
-    await page
-      .waitForLoadState("networkidle", { timeout: SETTLE_MS * 2 })
-      .catch(() => page.waitForTimeout(SETTLE_MS));
+    await settle(page, Math.min(SETTLE_MS, left()));
 
     // Directories commonly load a first page of entries and fetch the rest on
     // scroll. Rendering without scrolling therefore sees a third of a list and
@@ -185,13 +195,13 @@ export async function renderPage(
     // static page costs one measurement rather than the full budget.
     let previousHeight = 0;
     for (let i = 0; i < MAX_SCROLLS; i++) {
+      // The scroll pass spends whatever the navigation left of the budget.
+      if (left() < SCROLL_SETTLE_MS) break;
       const height = await page.evaluate(() => document.body.scrollHeight).catch(() => 0);
       if (!height || height === previousHeight) break;
       previousHeight = height;
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-      await page
-        .waitForLoadState("networkidle", { timeout: SCROLL_SETTLE_MS })
-        .catch(() => page.waitForTimeout(SCROLL_SETTLE_MS));
+      await settle(page, Math.min(SCROLL_SETTLE_MS, left()));
     }
 
     const title = await page.title().catch(() => "");
@@ -226,10 +236,10 @@ export async function renderPage(
         };
       }
 
+      // A fresh navigation after sign-in gets a fresh budget.
+      deadline = Date.now() + NAV_TIMEOUT_MS;
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
-      await page
-        .waitForLoadState("networkidle", { timeout: SETTLE_MS * 2 })
-        .catch(() => page.waitForTimeout(SETTLE_MS));
+      await settle(page, Math.min(SETTLE_MS, left()));
 
       html = await page.content();
       finalUrl = page.url();

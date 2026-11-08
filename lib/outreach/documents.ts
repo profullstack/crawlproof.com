@@ -11,10 +11,11 @@
 
 import { extractText, getDocumentProxy } from "unpdf";
 import { discoverContactEmails, normalizeHost, type ContactCandidate } from "./cold";
+import { CRAWL_FETCH_TIMEOUT_MS } from "@/lib/crawl/policy";
 
 const MAX_PDF_BYTES = 12 * 1024 * 1024;
 const MAX_PDF_PAGES = 25;
-const FETCH_TIMEOUT_MS = 20_000;
+const FETCH_TIMEOUT_MS = CRAWL_FETCH_TIMEOUT_MS;
 
 /** Filenames that suggest a document naming humans, best first. */
 const PROMISING_NAME =

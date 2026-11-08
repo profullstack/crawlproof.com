@@ -549,6 +549,9 @@ export async function saveFeedAutopostSettings(
         ignore_paths: ignorePaths,
         status: "idle",
         last_error: null,
+        // A saved config is a fresh start: drop any 30-day crawl flag.
+        failed_at: null,
+        next_check_at: null,
       },
       { onConflict: "project_id" },
     );

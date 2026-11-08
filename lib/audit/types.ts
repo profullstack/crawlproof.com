@@ -23,6 +23,8 @@ export type FetchedPage = {
   renderedText?: string;
   renderedHtml?: string;
   renderedBytes?: number;
+  /** Why the headless render failed (timeout, navigation error); unset when it worked. */
+  renderError?: string;
   error?: string;
 };
 
