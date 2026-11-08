@@ -36,6 +36,7 @@ import { deliverArticle } from "../lib/lx/webhookDeliver";
 import { getHub } from "../lib/webhooks/hub";
 import { repairStuckLxJobs } from "../lib/lx/repair";
 import { repairMissingArticleImages } from "../lib/lx/repairImages";
+import { backfillAdHeroes } from "../lib/ads/heroBackfill";
 import { processDueSocialFeeds } from "../lib/sp/feedAutopost";
 import { processBrowserPost } from "../lib/sp/browserPost";
 import { getOrMintInstallationToken } from "../lib/github/installations";
@@ -1432,6 +1433,22 @@ console.log("[worker] webhooks drainer started");
 setInterval(() => sweep().catch(() => {}), 60_000);
 setInterval(() => browserPostSweep().catch((e) => console.error("[worker] browser post sweep", e)), 60_000);
 setInterval(() => lxSweep().catch((e) => console.error("[worker] lx sweep", e)), 60_000);
+// Free ad heroes from c0mpute CPU workers for campaigns that shipped without
+// one (lib/ads/heroBackfill). One image takes ~2 minutes, so a run never
+// overlaps the next.
+let heroBackfillRunning = false;
+setInterval(() => {
+  if (heroBackfillRunning) return;
+  heroBackfillRunning = true;
+  backfillAdHeroes(supabase)
+    .then((r) => {
+      if (r.heroUrl || r.error) console.log("[worker] ad hero backfill", r);
+    })
+    .catch((e) => console.error("[worker] ad hero backfill crashed", e))
+    .finally(() => {
+      heroBackfillRunning = false;
+    });
+}, 5 * 60_000);
 setInterval(
   () => socialFeedSweep().catch((e) => console.error("[worker] social feed sweep", e)),
   60_000,
