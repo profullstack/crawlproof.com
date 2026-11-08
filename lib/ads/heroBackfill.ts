@@ -55,7 +55,11 @@ export async function generateC0mputeImage(
     headers: { authorization: `Bearer ${target.token}`, "content-type": "application/json" },
     body: JSON.stringify({ prompt: prompt.slice(0, 2000), width: 768, height: 512 }),
     signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
-  });
+    // The worker runs on Bun, whose fetch has its own default timeout; ours
+    // above is the one that should apply (a CPU image can pass 5 minutes).
+    // Node's fetch ignores this key.
+    timeout: false,
+  } as RequestInit);
   if (!res.ok) {
     const detail = (await res.text().catch(() => "")).slice(0, 200);
     throw new C0mputeImageError(`c0mpute image ${res.status}: ${detail}`, res.status);
