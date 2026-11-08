@@ -158,7 +158,7 @@ export function looksLikeIcon(url: string): boolean {
 // prefix, so a user-scoped client can't write to `heroes/` (it fails with "new
 // row violates row-level security policy"). Upload with the service-role client,
 // which bypasses RLS.
-async function uploadHero(bytes: Buffer): Promise<string | null> {
+export async function uploadHero(bytes: Buffer): Promise<string | null> {
   const svc = serviceClient();
   const id = crypto.randomUUID();
   const originalPath = `heroes/${id}.png`;
