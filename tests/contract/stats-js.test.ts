@@ -44,6 +44,23 @@ describe("/stats.js", () => {
     expect(script).toContain("prev && prev.q");
   });
 
+  it("loads the WebMCP plugin only when opted in and only where WebMCP exists", async () => {
+    const response = await GET();
+    const script = await response.text();
+
+    expect(script).toContain("d.webmcp === undefined");
+    expect(script).toContain("document.modelContext || navigator.modelContext");
+    expect(script).toContain("https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js");
+    expect(script).toContain("ws.type = 'module'");
+    // Never loaded twice when the page carries its own embed.
+    expect(script).toContain("window.ProfullstackWebMCP");
+    // Agent tool calls are counted by name, without inputs or results.
+    expect(script).toContain("'webmcp:call'");
+    expect(script).toContain("send('webmcp_tool'");
+    expect(script).not.toContain("c.input");
+    expect(script).not.toContain("c.result");
+  });
+
   it("does not collect identity, consent, or lead-capture PII", async () => {
     const response = await GET();
     const script = await response.text();

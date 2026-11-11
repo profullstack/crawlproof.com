@@ -7,6 +7,10 @@
 import { env } from "@/lib/env";
 import { VISITOR_SNIPPET } from "@/lib/tracker/visitorSnippet";
 
+// The opt-in WebMCP plugin (data-webmcp) loads this. @0 follows every 0.x
+// release of github.com/profullstack/webmcp, the same way sites tag it.
+const WEBMCP_EMBED = "https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js";
+
 const snippet = `(function(){
   try {
     var s = document.currentScript;
@@ -48,6 +52,42 @@ const snippet = `(function(){
         } else {
           maybeLoad();
         }
+      } catch (_) {}
+    })();
+
+    // WebMCP plugin. Opt in with data-webmcp on this tag: it loads the
+    // @profullstack/webmcp embed (site_info, open_page, search, forms as tools,
+    // and the site's own MCP server via data-webmcp-mcp) so an AI agent in the
+    // visitor's browser can use the site through tools instead of clicks. It
+    // is only fetched in browsers that ship WebMCP; everyone else pays one
+    // property check. Skipped when the page already loads the embed itself.
+    (function(){
+      try {
+        var d = s.dataset;
+        if (d.webmcp === undefined || d.webmcp === 'off' || d.webmcp === 'false') return;
+        var mc = null;
+        try { mc = document.modelContext || navigator.modelContext; } catch (_) {}
+        if (!mc || typeof mc.registerTool !== 'function') return;
+        if (window.ProfullstackWebMCP || document.querySelector('script[src*="@profullstack/webmcp"]')) return;
+        var cfg = window.webmcpConfig || {};
+        function put(key, value) { if (value != null && value !== '' && cfg[key] == null) cfg[key] = value; }
+        put('mcp', d.webmcpMcp);
+        put('mcpPrefix', d.webmcpMcpPrefix);
+        if (d.webmcpMcpExclude) put('mcpExclude', d.webmcpMcpExclude.split(',').map(function(x){ return x.trim(); }));
+        put('search', d.webmcpSearch);
+        put('searchApi', d.webmcpSearchApi);
+        put('searchDescription', d.webmcpSearchDescription);
+        put('name', d.webmcpName);
+        put('description', d.webmcpDescription);
+        if (d.webmcpPages) { try { put('pages', JSON.parse(d.webmcpPages)); } catch (_) {} }
+        if (d.webmcpForms === 'false') put('forms', false);
+        if (d.webmcpLlmsTxt) put('llmsTxt', d.webmcpLlmsTxt === 'false' ? false : d.webmcpLlmsTxt);
+        window.webmcpConfig = cfg;
+        var ws = document.createElement('script');
+        ws.type = 'module';
+        ws.src = ${JSON.stringify(WEBMCP_EMBED)};
+        ws.async = true;
+        (document.head || document.documentElement).appendChild(ws);
       } catch (_) {}
     })();
 
@@ -192,6 +232,18 @@ ${VISITOR_SNIPPET}
         send('button_click', labelFor(el));
       } catch (_) {}
     }, true);
+
+    // Agent tool calls. The WebMCP embed (the plugin above, or the site's own
+    // copy) fires webmcp:call after every call an in-browser agent makes, with
+    // the tool name and outcome only, never its input or result. Each one is a
+    // webmcp_tool event: target "search_site", or "search_site:error".
+    document.addEventListener('webmcp:call', function(e){
+      try {
+        var c = (e && e.detail) || {};
+        if (!c.name) return;
+        send('webmcp_tool', String(c.name).slice(0, 64) + (c.ok === false ? ':' + (c.error === 'aborted' ? 'aborted' : 'error') : ''));
+      } catch (_) {}
+    });
 
     document.addEventListener('submit', function(e){
       var form = e.target;

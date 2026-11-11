@@ -208,6 +208,47 @@ chromium --load-extension=./crawlproof-declare --disable-extensions-except=./cra
         </p>
       </section>
 
+      <section id="webmcp" className="mt-10 space-y-3">
+        <h2 className="text-2xl font-bold">WebMCP plugin (optional)</h2>
+        <p className="text-sm leading-relaxed">
+          WebMCP lets the AI agent in a visitor&apos;s browser use your site
+          through tools instead of screenshots and clicks. Add{" "}
+          <code className="font-mono">data-webmcp</code> to the tag and stats.js
+          loads{" "}
+          <a className="underline" href="https://github.com/profullstack/webmcp">
+            @profullstack/webmcp
+          </a>
+          : <span className="font-mono">site_info</span> (with your llms.txt),{" "}
+          <span className="font-mono">open_page</span>, a{" "}
+          <span className="font-mono">search_site</span> tool when you give it a
+          search URL, every form marked with{" "}
+          <span className="font-mono">toolname</span>, and every tool of your own
+          MCP server, called with the visitor&apos;s session.
+        </p>
+        <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[#0b0d10] p-3 font-mono text-xs leading-relaxed">{`<script data-site="<project_id>" src="https://crawlproof.com/stats.js" async
+  data-webmcp
+  data-webmcp-mcp="/mcp"
+  data-webmcp-search="/search?q={query}"
+  data-webmcp-pages='{"pricing":"/pricing","docs":"/docs"}'></script>`}</pre>
+        <p className="text-sm leading-relaxed">
+          Other keys: <span className="font-mono">data-webmcp-search-api</span>{" "}
+          (a JSON search endpoint),{" "}
+          <span className="font-mono">data-webmcp-mcp-exclude</span> (comma
+          list of tools to hide), <span className="font-mono">data-webmcp-mcp-prefix</span>,{" "}
+          <span className="font-mono">data-webmcp-name</span>,{" "}
+          <span className="font-mono">data-webmcp-forms=&quot;false&quot;</span>.
+          The module is only fetched in browsers that ship WebMCP, so it costs
+          other visitors nothing.
+        </p>
+        <p className="text-sm leading-relaxed">
+          Every tool an agent runs shows up in your stats as a{" "}
+          <span className="font-mono">webmcp_tool</span> event whose target is
+          the tool name (or <span className="font-mono">name:error</span>), with
+          or without the plugin, as long as the page runs the embed. Inputs and
+          results are never sent.
+        </p>
+      </section>
+
       <section id="server-side" className="mt-10 space-y-3">
         <h2 className="text-2xl font-bold">Server-side, CLI, and programmatic</h2>
         <p className="text-sm leading-relaxed">
