@@ -1,4 +1,5 @@
 import { createEmailer, type Emailer } from "@profullstack/stack/email";
+import { promoBlock } from "@profullstack/cross-promo";
 import { env } from "./env";
 import type { SenderMailbox } from "./outreach/senderMailbox";
 
@@ -252,7 +253,14 @@ export function purchaseReceiptEmailHtml(input: {
   currency: string;
   paymentId: string;
   txHash?: string | null;
+  /** Cross-promo block (receiptPromo().html), shown after the receipt, above the footer. */
+  promoHtml?: string;
 }): string {
+  const promoRow = input.promoHtml
+    ? `<tr>
+            <td style="padding:0 32px 24px;">${input.promoHtml}</td>
+          </tr>`
+    : "";
   const txRow = input.txHash
     ? `<tr>
         <td style="padding:6px 0;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.1em;">Tx</td>
@@ -307,7 +315,8 @@ export function purchaseReceiptEmailHtml(input: {
                 A PDF copy of this receipt is attached for your records.
               </p>
             </td>
-          </tr>`;
+          </tr>
+          ${promoRow}`;
   return emailShell({
     title: `Your CrawlProof receipt`,
     innerHtml,
@@ -445,6 +454,24 @@ export async function sendMarketingEmail(input: {
   return { sent: true };
 }
 
+// The "more from the network" block for a credits buyer: a publisher. crawlproof.com is the
+// sender, so it never promotes itself. Themed to the dark email shell. Never throws.
+export function receiptPromo(to: string) {
+  return promoBlock({
+    site: "crawlproof.com",
+    audience: "publishers",
+    seed: to,
+    theme: {
+      accent: "#6ee7b7",
+      text: "#9aa3b2",
+      muted: "#64748b",
+      bg: "#0b0d10",
+      border: "#1f2630",
+      heading: "#e7e9ee",
+    },
+  });
+}
+
 export async function sendPurchaseReceiptEmail(input: {
   to: string;
   paymentId: string;
@@ -463,6 +490,7 @@ export async function sendPurchaseReceiptEmail(input: {
     minimumFractionDigits: input.amountCents % 100 === 0 ? 0 : 2,
   })}`;
   const filename = `crawlproof-receipt-${input.paymentId.slice(0, 12)}.pdf`;
+  const promo = await receiptPromo(input.to);
 
   const res = await c.send({
     from: env.resendFrom,
@@ -475,6 +503,7 @@ export async function sendPurchaseReceiptEmail(input: {
       currency: input.currency,
       paymentId: input.paymentId,
       txHash: input.txHash,
+      promoHtml: promo.html,
     }),
     attachments: [{ filename, content: input.pdf.toString("base64") }],
   });
