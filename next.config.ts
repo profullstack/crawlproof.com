@@ -50,6 +50,14 @@ const nextConfig: NextConfig = {
         source: "/install.sh",
         headers: [{ key: "Content-Type", value: "text/plain; charset=utf-8" }],
       },
+      // The OAuth consent page must never be framed (clickjacking an Allow).
+      {
+        source: "/oauth/authorize",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        ],
+      },
     ];
   },
   // Permanent redirect: www.crawlproof.com → crawlproof.com (308 preserves

@@ -2,6 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ApiTokensClient } from "./client";
+import { ConnectedApps, type Grant } from "./connected-apps";
+import { listGrants } from "@/lib/mcp-oauth";
+import { serviceClient } from "@/lib/supabase/service";
 
 export const metadata = { title: "Social · API tokens" };
 
@@ -32,6 +35,7 @@ export default async function ApiTokensPage({
     .select("id, name, prefix, last_used_at, revoked_at, created_at, scope")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
+  const grants = (await listGrants(serviceClient(), user.id)) as Grant[];
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -70,6 +74,19 @@ export default async function ApiTokensPage({
       <ApiTokensClient tokens={(tokens ?? []) as TokenRow[]} />
 
       <McpServerSection />
+
+      <section className="card space-y-3 p-5">
+        <div>
+          <h2 className="text-lg font-semibold">Connected apps</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            ChatGPT, claude.ai and Claude Code need no token: add{" "}
+            <code>{`${process.env.NEXT_PUBLIC_SITE_URL ?? "https://crawlproof.com"}/api/mcp`}</code> as a
+            connector and sign in when asked (OAuth 2.1). Apps you allowed are listed here; disconnecting one stops
+            its access at once.
+          </p>
+        </div>
+        <ConnectedApps grants={grants} />
+      </section>
     </div>
   );
 }
