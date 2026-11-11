@@ -121,6 +121,16 @@ const JSON_LD = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        {/* WebMCP (@profullstack/webmcp): site_info and open_page for the AI agent in the
+            visitor's browser. /api/mcp takes a crp_ Bearer token only, so it is not bridged. */}
+        <script
+          type="module"
+          data-webmcp=""
+          src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js"
+          data-pages='{"pricing":"/pricing","docs":"/docs","ads":"/ads","tools":"/tools","trending":"/trending","blog":"/blog","about":"/about"}'
+        />
+      </head>
       <body>
         <ReferralProvider>
         <script
