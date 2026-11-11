@@ -33,6 +33,7 @@
     "@profullstack/autoblog": "^0.5.0",
     "@profullstack/coinpay": "^0.25.0",
     "@profullstack/coinpay-onboard": "^0.5.0",
+    "@profullstack/cross-promo": "^0.1.0",
     "@profullstack/fleetbar": "0.2.0",
     "@profullstack/footer": "latest",
     "@profullstack/hqtui": "^0.11.0",
