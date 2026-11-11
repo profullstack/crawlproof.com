@@ -53,7 +53,9 @@ describe("/stats.js", () => {
     // Dashboard opt-in is only asked for when the tag says nothing.
     expect(script).toContain("/api/tracker/v1/webmcp?site=");
     expect(script).toContain("window.__crawlproofWebMCP");
-    expect(script).toContain("https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js");
+    // Same-origin mirror: sites already allow crawlproof.com in their CSP.
+    expect(script).toContain("/npm/@profullstack/webmcp@0/src/embed.js");
+    expect(script).not.toContain("cdn.jsdelivr.net");
     expect(script).toContain("ws.type = 'module'");
     // Never loaded twice when the page carries its own embed.
     expect(script).toContain("window.ProfullstackWebMCP");
