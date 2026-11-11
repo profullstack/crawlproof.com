@@ -7,9 +7,12 @@
 import { env } from "@/lib/env";
 import { VISITOR_SNIPPET } from "@/lib/tracker/visitorSnippet";
 
-// The opt-in WebMCP plugin (data-webmcp) loads this. @0 follows every 0.x
-// release of github.com/profullstack/webmcp, the same way sites tag it.
-const WEBMCP_EMBED = "https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js";
+// The WebMCP plugin loads this. It is served from crawlproof.com itself
+// (app/npm/[...path], proxying jsDelivr @0) because every site that runs
+// stats.js already allows crawlproof.com in its CSP, while many do not allow
+// cdn.jsdelivr.net. The path keeps "@profullstack/webmcp" so the load-once
+// check below still recognises it.
+const WEBMCP_EMBED = `${env.siteUrl}/npm/@profullstack/webmcp@0/src/embed.js`;
 
 const snippet = `(function(){
   try {

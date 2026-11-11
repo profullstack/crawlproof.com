@@ -1,5 +1,5 @@
 import { gate } from "@/lib/crawl-gateway";
-import { isAdClickPath, isEmailTrackingPath } from "@/lib/crawl-policy";
+import { isAdClickPath, isEmailTrackingPath, isTrackerAssetPath } from "@/lib/crawl-policy";
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { trackReferralCode } from "@profullstack/stack/referrals";
@@ -17,6 +17,9 @@ export async function proxy(request: NextRequest) {
   // proxies, link scanners and the sender's CLI. None of them should meet the
   // crawl gateway's 402, and none of them carry a session worth refreshing.
   if (isEmailTrackingPath(request.nextUrl.pathname)) return NextResponse.next();
+  // Tracker scripts embedded on customers' pages (stats.js, careers.js, the
+  // WebMCP plugin): public static assets, no session, never a 402.
+  if (isTrackerAssetPath(request.nextUrl.pathname)) return NextResponse.next();
   // Crawl gateway first: AI training crawlers get 402 Payment Required (or the
   // sales page at /crawl) unless they present a paid pass. People, Googlebot
   // and retrieval crawlers fall through to everything below.

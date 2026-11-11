@@ -23,3 +23,14 @@ export const isAdClickPath = (path: string) => path.startsWith("/a/") || path ==
 /** Email tracking endpoints: /t/<id>/(o.png|c|u) and /api/v1/tracking/<id>/events. */
 export const isEmailTrackingPath = (path: string) =>
   path.startsWith("/t/") || path.startsWith("/api/v1/tracking/");
+/**
+ * The tracker's own embeddable scripts and the WebMCP plugin they load:
+ * /stats.js, /careers.js, /npm/@profullstack/webmcp@…, /api/tracker/v1/webmcp.
+ * Static, public, and fetched by customers' pages (including cloud-hosted
+ * agent browsers, the visitors WebMCP is for), so never the crawl gateway's 402.
+ */
+export const isTrackerAssetPath = (path: string) =>
+  path === "/stats.js" ||
+  path === "/careers.js" ||
+  path.startsWith("/npm/@profullstack/webmcp@") ||
+  path === "/api/tracker/v1/webmcp";
