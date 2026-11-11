@@ -22,6 +22,12 @@ const snippet = `(function(){
     }
     var siteId = s && s.dataset && s.dataset.site;
     if (!siteId) return;
+    // Load once per site per page. A second copy of the tag (a template and a
+    // plugin both adding it, or a SPA re-inserting it) would double every
+    // pageview, click and module load, so it stops here.
+    var loaded = window.__crawlproofStats = window.__crawlproofStats || {};
+    if (loaded[siteId]) return;
+    loaded[siteId] = true;
     var endpoint = ${JSON.stringify(env.siteUrl)} + '/api/track';
 
     // Careers module. Opt-in per project in the dashboard, but we only pay to
@@ -55,20 +61,36 @@ const snippet = `(function(){
       } catch (_) {}
     })();
 
-    // WebMCP plugin. Opt in with data-webmcp on this tag: it loads the
-    // @profullstack/webmcp embed (site_info, open_page, search, forms as tools,
-    // and the site's own MCP server via data-webmcp-mcp) so an AI agent in the
-    // visitor's browser can use the site through tools instead of clicks. It
-    // is only fetched in browsers that ship WebMCP; everyone else pays one
-    // property check. Skipped when the page already loads the embed itself.
+    // WebMCP plugin. Loads the @profullstack/webmcp embed (site_info, open_page,
+    // search, forms as tools, and the site's own MCP server) so an AI agent in
+    // the visitor's browser can use the site through tools instead of clicks.
+    // On when the tag has data-webmcp, or when the project switched it on in
+    // the dashboard (asked only if the tag says nothing); data-webmcp="off"
+    // always wins. Only browsers that ship WebMCP ever fetch anything; everyone
+    // else pays one property check. Loaded at most once per page: skipped when
+    // the page already has the embed or another copy of this tag injected it.
     (function(){
       try {
         var d = s.dataset;
-        if (d.webmcp === undefined || d.webmcp === 'off' || d.webmcp === 'false') return;
+        if (d.webmcp === 'off' || d.webmcp === 'false') return;
         var mc = null;
         try { mc = document.modelContext || navigator.modelContext; } catch (_) {}
         if (!mc || typeof mc.registerTool !== 'function') return;
-        if (window.ProfullstackWebMCP || document.querySelector('script[src*="@profullstack/webmcp"]')) return;
+        function present() {
+          return window.__crawlproofWebMCP || window.ProfullstackWebMCP
+            // The site's own tag may not have run yet (module scripts are
+            // deferred, this one is not), so look for the element too.
+            || document.querySelector('script[src*="@profullstack/webmcp"],script[type="module"][data-webmcp]');
+        }
+        if (present()) return;
+        if (d.webmcp !== undefined) return inject({});
+        fetch(${JSON.stringify(env.siteUrl)} + '/api/tracker/v1/webmcp?site=' + encodeURIComponent(siteId), { credentials: 'omit', mode: 'cors' })
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(j){ if (j && j.enabled && !present()) inject(j.config || {}); })
+          .catch(function(){});
+      } catch (_) {}
+      function inject(server) {
+        window.__crawlproofWebMCP = true;
         var cfg = window.webmcpConfig || {};
         function put(key, value) { if (value != null && value !== '' && cfg[key] == null) cfg[key] = value; }
         put('mcp', d.webmcpMcp);
@@ -82,13 +104,15 @@ const snippet = `(function(){
         if (d.webmcpPages) { try { put('pages', JSON.parse(d.webmcpPages)); } catch (_) {} }
         if (d.webmcpForms === 'false') put('forms', false);
         if (d.webmcpLlmsTxt) put('llmsTxt', d.webmcpLlmsTxt === 'false' ? false : d.webmcpLlmsTxt);
+        // Tag attributes first, then the dashboard config for anything unset.
+        for (var k in server) put(k, server[k]);
         window.webmcpConfig = cfg;
         var ws = document.createElement('script');
         ws.type = 'module';
         ws.src = ${JSON.stringify(WEBMCP_EMBED)};
         ws.async = true;
         (document.head || document.documentElement).appendChild(ws);
-      } catch (_) {}
+      }
     })();
 
     function pageUrl() { return location.origin + location.pathname + location.search; }

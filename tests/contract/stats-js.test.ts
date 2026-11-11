@@ -48,8 +48,11 @@ describe("/stats.js", () => {
     const response = await GET();
     const script = await response.text();
 
-    expect(script).toContain("d.webmcp === undefined");
+    expect(script).toContain("d.webmcp === 'off'");
     expect(script).toContain("document.modelContext || navigator.modelContext");
+    // Dashboard opt-in is only asked for when the tag says nothing.
+    expect(script).toContain("/api/tracker/v1/webmcp?site=");
+    expect(script).toContain("window.__crawlproofWebMCP");
     expect(script).toContain("https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js");
     expect(script).toContain("ws.type = 'module'");
     // Never loaded twice when the page carries its own embed.
@@ -59,6 +62,14 @@ describe("/stats.js", () => {
     expect(script).toContain("send('webmcp_tool'");
     expect(script).not.toContain("c.input");
     expect(script).not.toContain("c.result");
+  });
+
+  it("runs once per site per page even when the tag is included twice", async () => {
+    const response = await GET();
+    const script = await response.text();
+
+    expect(script).toContain("window.__crawlproofStats = window.__crawlproofStats || {}");
+    expect(script).toContain("if (loaded[siteId]) return;");
   });
 
   it("does not collect identity, consent, or lead-capture PII", async () => {
