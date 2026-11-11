@@ -19,6 +19,7 @@ import {
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { CareersToggle } from "./careers-toggle";
+import { WebmcpToggle } from "./webmcp-toggle";
 import { AutoInstall } from "./auto-install";
 import { LiveVisitors } from "./live-visitors";
 import { StatsSubnav } from "./stats-subnav";
@@ -121,6 +122,8 @@ export default async function ProjectStatsPage({
     .tracker_enabled;
   const careersEnabled = !!(project as { careers_enabled?: boolean })
     .careers_enabled;
+  const webmcpEnabled = !!(project as { webmcp_enabled?: boolean })
+    .webmcp_enabled;
 
   // GitHub auto-install: best-effort. If env is missing or the user has
   // no connected installations, we just hide the button.
@@ -272,6 +275,25 @@ export default async function ProjectStatsPage({
                 </p>
               </div>
               <CareersToggle projectId={id} initialEnabled={careersEnabled} />
+            </div>
+          </section>
+        )}
+
+        {trackerEnabled && (
+          <section className="card p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 className="text-lg font-semibold">WebMCP plugin</h2>
+                <p className="text-sm text-[var(--color-muted)]">
+                  {webmcpEnabled
+                    ? "On. In browsers with WebMCP, your snippet gives AI agents tools for this site (site info, pages, search, forms, and your MCP server), and each tool an agent runs shows up here as a webmcp_tool event."
+                    : "Optional module. Let AI agents in your visitors' browsers use your site through tools instead of clicks. Only loads in browsers that ship WebMCP."}{" "}
+                  <a href="/docs/statistics#webmcp" className="underline hover:text-[var(--color-foreground)]">
+                    How it works
+                  </a>
+                </p>
+              </div>
+              <WebmcpToggle projectId={id} initialEnabled={webmcpEnabled} />
             </div>
           </section>
         )}

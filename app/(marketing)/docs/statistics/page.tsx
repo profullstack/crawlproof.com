@@ -241,6 +241,15 @@ chromium --load-extension=./crawlproof-declare --disable-extensions-except=./cra
           other visitors nothing.
         </p>
         <p className="text-sm leading-relaxed">
+          No attribute? Switch it on per project under{" "}
+          <span className="font-mono">Stats → WebMCP plugin</span> instead and
+          the snippet you already installed picks it up.{" "}
+          <span className="font-mono">data-webmcp=&quot;off&quot;</span> on the
+          tag always wins. It never loads twice: not when the page includes
+          stats.js twice, and not when the page already carries its own copy of
+          the embed.
+        </p>
+        <p className="text-sm leading-relaxed">
           Every tool an agent runs shows up in your stats as a{" "}
           <span className="font-mono">webmcp_tool</span> event whose target is
           the tool name (or <span className="font-mono">name:error</span>), with
