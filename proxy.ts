@@ -10,6 +10,10 @@ type Cookie = { name: string; value: string; options?: CookieOptions };
 export async function proxy(request: NextRequest) {
   // The status page's health probe: no gateway, no session refresh.
   if (request.nextUrl.pathname === "/api/health") return NextResponse.next();
+  // OAuth discovery, registration, token and revoke (lib/mcp-oauth.ts) are
+  // called by ChatGPT/Claude backends with no session and a 10 s budget: no
+  // crawl gateway, no Supabase session refresh.
+  if (isOAuthMachinePath(request.nextUrl.pathname)) return NextResponse.next();
   // Ad routes enforce their gate themselves, before DB work. Avoid counting a
   // request twice or making an unrelated Supabase Auth call for each click.
   if (isAdClickPath(request.nextUrl.pathname)) return NextResponse.next();
@@ -101,6 +105,15 @@ export async function proxy(request: NextRequest) {
   }
 
   return trackReferralCode(request, response as any);
+}
+
+function isOAuthMachinePath(path: string): boolean {
+  return (
+    path.startsWith("/.well-known/oauth-") ||
+    path === "/api/oauth/register" ||
+    path === "/api/oauth/token" ||
+    path === "/api/oauth/revoke"
+  );
 }
 
 export const config = {
