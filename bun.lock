@@ -10,8 +10,8 @@
         "@libsql/client": "^0.18.0",
         "@modelcontextprotocol/sdk": "^1.32.2",
         "@profullstack/affiliates": "^0.3.0",
-        "@profullstack/ai-providers": "0.1.1",
-        "@profullstack/autoblog": "^0.5.0",
+        "@profullstack/ai-providers": "^0.3.1",
+        "@profullstack/autoblog": "^0.5.1",
         "@profullstack/coinpay": "^0.25.0",
         "@profullstack/coinpay-onboard": "^0.5.0",
         "@profullstack/cross-promo": "^0.1.0",
@@ -318,9 +318,9 @@
 
     "@profullstack/affiliates": ["@profullstack/affiliates@0.3.0", "", { "dependencies": { "@profullstack/referrals": "^0.1.0" }, "bin": { "affiliates": "dist/cli.js" } }, "sha512-bp0iREciWetDWrQYOsa6SJRTzviekKwgJQuATT7vql+4equu7pN76q8tb3SP1oBMczydsv6rYUMvPpS6+QT7yQ=="],
 
-    "@profullstack/ai-providers": ["@profullstack/ai-providers@0.1.1", "", { "bin": { "ai-providers": "src/cli.js" } }, "sha512-Roqan30yN6AqOu7cXUGZTGGkn5DYzVaWuR0Iw/k04pFPFwwF9lAk/OmGfc0fH94/f0t+wwm+HsdY8mx1wBJQAA=="],
+    "@profullstack/ai-providers": ["@profullstack/ai-providers@0.3.1", "", { "bin": { "ai-providers": "src/cli.js" } }, "sha512-mihwPJnGfBW52GRloG74bhmSokAdXBrMj/wDqOSxCcoj55n6nhe1c2/498BRuq/D0CyXXdVPe1VmHviWd4jMoA=="],
 
-    "@profullstack/autoblog": ["@profullstack/autoblog@0.5.0", "", { "dependencies": { "@profullstack/ai-providers": "0.1.0" } }, "sha512-KewpX0rM55o+7TMYeU35gqZceQFNF6zmo8zDoZRP5zoPU+XqTRcBlv6bZvl9oQHUXKXAsePJVNZKtDNhTrNEfw=="],
+    "@profullstack/autoblog": ["@profullstack/autoblog@0.5.1", "", { "dependencies": { "@profullstack/ai-providers": "^0.3.1" } }, "sha512-d29ENKNPf5KyWpCek5LPn3RBTuuuAjN1XwxzEC96Hb0dL/7q0EoP0efDOIGtgZMHW/DieTqu06itaMmLai2j/g=="],
 
     "@profullstack/coinpay": ["@profullstack/coinpay@0.25.0", "", { "dependencies": { "@inquirer/prompts": "^8.3.0", "@noble/curves": "^1.6.0", "@noble/hashes": "^1.5.0", "@profullstack/hqtui": "^0.6.3", "@scure/bip32": "^1.5.0", "@scure/bip39": "^1.4.0" }, "bin": { "coinpay": "bin/coinpay.js" } }, "sha512-ZoK8COqBCdJXvr0fO5UWw9HPh88CdMBLycc/dU6kXwAyeIrwZ4WkBApisuDgs4leXNN+SMjwex2etgrEvlICTQ=="],
 
@@ -1215,8 +1215,6 @@
     "zod": ["zod@4.6.7", "", {}, "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
-
-    "@profullstack/autoblog/@profullstack/ai-providers": ["@profullstack/ai-providers@0.1.0", "", { "bin": { "ai-providers": "src/cli.js" } }, "sha512-vc7aFjozyiwIhREWLhB3xWpUPeGggM348ng5W6j4IA+gxYF3S7TNLoGWrF/ax2NttsK40C801CRkD9JSVA4aOg=="],
 
     "@profullstack/coinpay/@profullstack/hqtui": ["@profullstack/hqtui@0.6.3", "", { "bin": { "hqtui": "bin/hqtui.mjs" } }, "sha512-RQmULiyNt6Qcz+M0x7Hn3sGN+2C766STHA8AZv4olcYpoMeQFzUW0NnOSXtbqgaUTZCeJLZPU4NHx6NQffVvkw=="],
 
