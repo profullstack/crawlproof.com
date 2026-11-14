@@ -38,3 +38,12 @@ describe("parseBotHits", () => {
     expect(r.ok && r.hits).toEqual([{ bucket: "bot:swarm", path: "/", count: 2 }]);
   });
 });
+
+describe("siteHost", async () => {
+  const { siteHost } = await import("@/lib/tracker/botHits");
+  it("normalises hostnames and URLs", () => {
+    expect(siteHost("nichedb.dev")).toBe("nichedb.dev");
+    expect(siteHost("https://www.RSSamp.com/x")).toBe("rssamp.com");
+    expect(siteHost("")).toBe(null);
+  });
+});

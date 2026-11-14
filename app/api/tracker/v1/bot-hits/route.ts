@@ -2,24 +2,24 @@
 //
 //   POST { site, hits: [{ bucket: "bot:swarm", path: "/i/123", count: 40 }] }
 //
-// Full-access tokens only (a read-only stats token cannot write), and only
-// into the token owner's own projects. Only `bot:` buckets are accepted, so
-// this can move numbers onto the bot side and never invent people.
+// With a full-access bearer token, `site` is any of the owner's projects (id,
+// hostname or name). Without one it is like the beacon, which is anonymous
+// too: `site` must be a tracker-enabled project's id or hostname, and a call
+// carries at most ANON_MAX_TOTAL hits. Either way only `bot:` buckets are
+// accepted, so the worst a forged call can do is what a forged beacon with a
+// GPTBot user agent already does: add to a bot count. It cannot invent people.
 
 import { NextResponse, type NextRequest } from "next/server";
 
 import { serviceClient } from "@/lib/supabase/service";
 import { authenticateBearer } from "@/lib/sp/apiAuth";
 import { resolveProject } from "@/lib/tracker/apiStats";
-import { parseBotHits } from "@/lib/tracker/botHits";
+import { ANON_MAX_TOTAL, parseBotHits, resolveTrackedSite } from "@/lib/tracker/botHits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const auth = await authenticateBearer(req);
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-
   let body: unknown;
   try {
     body = await req.json();
@@ -30,9 +30,22 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
   const sb = serviceClient();
-  const resolved = await resolveProject(sb, auth.userId, parsed.site);
-  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
-  const site = resolved.project.id;
+  let site: string;
+  if (req.headers.get("authorization")) {
+    const auth = await authenticateBearer(req);
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const resolved = await resolveProject(sb, auth.userId, parsed.site);
+    if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+    site = resolved.project.id;
+  } else {
+    const sum = parsed.hits.reduce((a, h) => a + h.count, 0);
+    if (sum > ANON_MAX_TOTAL) {
+      return NextResponse.json({ error: `At most ${ANON_MAX_TOTAL} hits per call without a token.` }, { status: 413 });
+    }
+    const found = parsed.site ? await resolveTrackedSite(sb, parsed.site) : null;
+    if (!found) return NextResponse.json({ error: "Unknown or untracked site." }, { status: 404 });
+    site = found;
+  }
   const today = new Date().toISOString().slice(0, 10);
 
   const buckets = new Map<string, number>();

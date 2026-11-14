@@ -6,6 +6,8 @@
 export const BOT_HIT_BUCKET = /^bot:[a-z0-9_]{1,40}$/;
 export const MAX_PER_ROW = 1_000_000;
 export const MAX_ROWS = 200;
+/** The most hits one unauthenticated call may add: a minute of a big swarm. */
+export const ANON_MAX_TOTAL = 20_000;
 
 export type BotHit = { bucket: string; path: string; count: number };
 
@@ -30,4 +32,45 @@ export function parseBotHits(body: unknown): { ok: true; site: string | null; hi
   }
   const site = typeof b.site === "string" && b.site.trim() ? b.site.trim() : null;
   return { ok: true, site, hits: [...merged.values()] };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The bare hostname a site string names, lowercased, without www. */
+export function siteHost(site: string): string | null {
+  try {
+    const u = new URL(site.includes("://") ? site : `https://${site}`);
+    return u.hostname.toLowerCase().replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+type Sb = { from: (t: string) => any };
+
+/**
+ * A tracker-enabled project by id or hostname, for unauthenticated calls.
+ * Several projects can share a hostname (an empty duplicate shadowing the
+ * real one has happened), so the one with an organization and the oldest
+ * creation wins.
+ */
+export async function resolveTrackedSite(sb: Sb, site: string): Promise<string | null> {
+  if (UUID.test(site)) {
+    const { data } = await sb.from("projects").select("id, tracker_enabled").eq("id", site).maybeSingle();
+    return data?.tracker_enabled ? (data.id as string) : null;
+  }
+  const host = siteHost(site);
+  if (!host) return null;
+  const { data } = await sb
+    .from("projects")
+    .select("id, url, organization_id, created_at, tracker_enabled")
+    .eq("tracker_enabled", true)
+    .or(`url.ilike.%//${host}%,url.ilike.%//www.${host}%`)
+    .order("created_at", { ascending: true })
+    .limit(20);
+  const rows = ((data ?? []) as { id: string; url: string | null; organization_id: string | null }[]).filter(
+    (p) => siteHost(p.url ?? "") === host,
+  );
+  const pick = rows.find((p) => p.organization_id) ?? rows[0];
+  return pick?.id ?? null;
 }
