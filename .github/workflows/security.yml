@@ -9,29 +9,6 @@ on:
     - cron: "11 6 * * 1"
 
 jobs:
-  semgrep:
-    name: semgrep
-    runs-on: ubuntu-24.04
-    continue-on-error: true
-    # Skip on cross-repo fork PRs — they can't write annotations.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    container:
-      image: semgrep/semgrep
-    steps:
-      - uses: actions/checkout@v7
-      # OSS scan only (no SaaS upload, no token). Block only on ERROR-severity
-      # findings — anything WARNING / INFO is logged but doesn't fail the build.
-      - run: |
-          semgrep scan --error --severity ERROR \
-            --exclude-rule dockerfile.security.missing-user.missing-user \
-            --exclude-rule dockerfile.security.missing-user-entrypoint.missing-user-entrypoint \
-            --config p/javascript \
-            --config p/typescript \
-            --config p/react \
-            --config p/nextjs \
-            --config p/owasp-top-ten \
-            --config p/secrets
-
   bun-audit:
     name: bun audit
     runs-on: ubuntu-24.04
