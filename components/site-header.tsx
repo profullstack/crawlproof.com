@@ -15,24 +15,35 @@ export async function SiteHeader() {
           <img src="/logo.svg" alt="CrawlProof" className="h-16 w-auto" />
         </Link>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--color-muted)]">
-          {/* Validation test (prd/validation-30d.md): the nav sells the audit and
-              monitoring only. Hire, Ads, Guide and the rest still answer at
-              their own URLs. */}
+          <Link
+            href="/hire"
+            className="font-semibold text-[var(--color-accent)]"
+          >
+            Hire us
+          </Link>
           <Link href="/monitor">Monitoring</Link>
-          <Link href="/recent" className="hidden sm:inline">
-            Recent audits
+          <Link href="/pricing">Pricing</Link>
+          <Link href="/ads">Ads</Link>
+          <Link href="/get-guide">Guide</Link>
+          <Link href="/recent">Recent</Link>
+          <Link href="/about" className="hidden sm:inline">
+            About
           </Link>
           <Link href="/blog" className="hidden sm:inline">
             Blog
           </Link>
           {user ? (
-            <Link href="/dashboard">Dashboard</Link>
+            <Link href="/dashboard" className="btn btn-primary px-3 py-1.5 text-sm">
+              Dashboard
+            </Link>
           ) : (
-            <Link href="/login">Sign in</Link>
+            <>
+              <Link href="/login">Sign in</Link>
+              <Link href="/signup" className="btn btn-primary px-3 py-1.5 text-sm">
+                Get started
+              </Link>
+            </>
           )}
-          <Link href="/#audit" className="btn btn-primary px-3 py-1.5 text-sm">
-            Run a free audit
-          </Link>
         </nav>
       </div>
     </header>
