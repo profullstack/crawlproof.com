@@ -6,6 +6,7 @@ import { sendWatchChangeEmail } from "@/lib/email";
 import { getProspectsOrgId } from "@/lib/orgs";
 import { nextRunAt, watchSubject, watchVerdict, type WatchCadence } from "@/lib/watches";
 import { env } from "@/lib/env";
+import { sweepMonitorSubscriptions } from "@/lib/monitoring";
 
 export const runtime = "nodejs";
 
@@ -201,5 +202,13 @@ export async function POST(req: Request) {
     enqueued++;
   }
 
-  return NextResponse.json({ ok: true, delivered, unchanged, scan_failed, enqueued });
+  // ---- 3. Paid monitoring: renewal reminders and lapses -------------------
+  let monitor = { reminded: 0, ended: 0 };
+  try {
+    monitor = await sweepMonitorSubscriptions(svc, now);
+  } catch (err) {
+    console.error("[scan-watches] monitor sweep failed", err);
+  }
+
+  return NextResponse.json({ ok: true, delivered, unchanged, scan_failed, enqueued, monitor });
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PASS_CREDITS } from "@/lib/coinpay-pass";
+import { MonitorPlans, MONITOR_PAYMENT_NOTE } from "@/components/monitor-plans";
 import {
   ANON_DAILY_SCANS,
   CREDIT_PACKS,
@@ -32,11 +33,21 @@ export const metadata = {
 export default function PricingPage() {
   return (
     <main className="mx-auto max-w-6xl px-4 sm:px-6 py-16">
-      <h1 className="text-center text-4xl font-extrabold">Pay per scan</h1>
+      <h1 className="text-center text-4xl font-extrabold">Pricing</h1>
+      <p className="mx-auto mt-2 max-w-2xl text-center text-[var(--color-muted)]">
+        The AI-visibility audit is free. Weekly monitoring re-runs it on your sites and emails
+        you when a score moves.
+      </p>
+      <div className="mx-auto mt-8 max-w-4xl">
+        <MonitorPlans />
+        <p className="mt-4 text-center text-sm text-[var(--color-muted)]">{MONITOR_PAYMENT_NOTE}</p>
+      </div>
+
+      <h2 className="mt-20 text-center text-3xl font-extrabold">Or pay per scan</h2>
       <p className="mx-auto mt-2 max-w-2xl text-center text-[var(--color-muted)]">
         Rule-based scans are free up to the daily limit. AI-model scans cost{" "}
-        <strong>{SCAN_CREDITS} credits ({dollars(SCAN_RACK_CENTS)} before volume discounts) each</strong>. Buy credits with card or crypto via CoinPay;
-        no subscription, no expiry.
+        <strong>{SCAN_CREDITS} credits ({dollars(SCAN_RACK_CENTS)} before volume discounts) each</strong>. Buy credits with card (via PayPal) or crypto via CoinPay;
+        credits never expire.
       </p>
       <div className="mx-auto mt-8 grid max-w-6xl gap-4 md:grid-cols-2 lg:grid-cols-3">
         {(Object.keys(ENGINES) as Array<keyof typeof ENGINES>).map((k) => {

@@ -1425,3 +1425,49 @@ export async function sendCareersApplicationEmail(input: {
   if (!res.sent) return { sent: false, error: res.error };
   return { sent: true };
 }
+
+/** Weekly-monitoring renewal or lapse notice (CoinPay has no card on file, so each month is a fresh pay link). */
+export async function sendMonitorRenewalEmail(input: {
+  to: string;
+  planLabel: string;
+  amountLabel: string;
+  periodEnd: string;
+  renewUrl: string;
+  lapsed: boolean;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  const date = new Date(input.periodEnd).toUTCString().slice(0, 16);
+  const heading = input.lapsed
+    ? `Your ${escapeHtml(input.planLabel)} monitoring has stopped`
+    : `Your ${escapeHtml(input.planLabel)} monitoring renews ${escapeHtml(date)}`;
+  const body = input.lapsed
+    ? `The month you paid for ended on ${escapeHtml(date)}, so the weekly re-scans are paused. Renew and they pick up again with the same sites.`
+    : `Your weekly re-scans run until ${escapeHtml(date)}. Pay ${escapeHtml(input.amountLabel)} for the next month (any coin, or a card through PayPal) to keep them going. Nothing is charged automatically.`;
+  const innerHtml = `<tr>
+            <td style="padding:24px 32px 0;">
+              <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;color:#e7e9ee;">${heading}</h1>
+              <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#9aa3b2;">${body}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 32px 24px;">
+              <a href="${input.renewUrl}"
+                 style="display:inline-block;padding:12px 22px;background:#6ee7b7;color:#042f1a;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;">
+                ${input.lapsed ? "Restart monitoring" : "Renew for another month"} →
+              </a>
+            </td>
+          </tr>`;
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: input.lapsed ? "Weekly monitoring stopped: renew to restart" : `Renew weekly monitoring before ${date}`,
+    html: emailShell({
+      title: "Weekly monitoring",
+      innerHtml,
+      footerNote: "You get this because you subscribed to CrawlProof weekly monitoring. Cancel any time from your dashboard.",
+    }),
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}

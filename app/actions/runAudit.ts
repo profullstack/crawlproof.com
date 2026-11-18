@@ -25,6 +25,7 @@ import { newShareToken } from "@/lib/shareToken";
 import { env } from "@/lib/env";
 import { recordMarketingConsent, recordLead } from "@/lib/marketing";
 import { getProspectsOrgId } from "@/lib/orgs";
+import { funnelContext, recordFunnelEvent } from "@/lib/funnel";
 
 type ScanOk = {
   ok: true;
@@ -101,6 +102,7 @@ export async function startAuditFromForm(input: {
     hdrs.get("x-real-ip") ||
     "unknown";
   const ipH = hashIp(ip);
+  const funnel = funnelContext(hdrs.get("cookie"));
 
   const supabase = await createClient();
   const {
@@ -156,6 +158,7 @@ export async function startAuditFromForm(input: {
     phone: input.phone?.trim() || null,
     estimated_monthly_sales: salesParsed,
     listed_public: !!input.listPublic,
+    funnel_source: funnel.source,
   };
   if (!user && prospectsOrgId) {
     insertPayload.organization_id = prospectsOrgId;
@@ -167,8 +170,10 @@ export async function startAuditFromForm(input: {
     .single();
   if (
     error &&
-    /listed_public|organization_id|schema cache|column/i.test(error.message ?? "")
+    /listed_public|organization_id|funnel_source|schema cache|column/i.test(error.message ?? "")
   ) {
+    // Running ahead of the 20261118 migration: drop the funnel column, keep the audit.
+    delete insertPayload.funnel_source;
     if (/listed_public/i.test(error.message ?? "")) {
       delete insertPayload.listed_public;
     }
@@ -219,6 +224,15 @@ export async function startAuditFromForm(input: {
       console.warn("[runAudit] lead/consent record failed", err);
     }
   }
+
+  await recordFunnelEvent({
+    event: "audit_started",
+    source: funnel.source,
+    visitorId: funnel.visitorId,
+    auditId: row.id,
+    userId: user?.id ?? null,
+    meta: { engine: firstEngine },
+  });
 
   await notifyWorker(row.id, email || undefined);
   return { ok: true, id: row.id, token: row.share_token!, engines: [firstEngine] };
