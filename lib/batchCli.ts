@@ -1,7 +1,7 @@
 // `crawlproof batch` and `crawlproof ranking` (R4, R5 of the validation test).
 //
 //   crawlproof batch domains.csv [--source outreach|ranking] [--out results.csv]
-//                    [--batch <id>] [--timeout 30]
+//                    [--batch <id>] [--timeout 30] [--concurrency 6]
 //   crawlproof batch status <batch_id> [--out results.csv]
 //   crawlproof ranking publish --slug <slug> --title "..." --list "..." \
 //                    --method "..." --batch <batch_id> [--draft]
@@ -16,6 +16,8 @@ type ApiCall = (
 ) => Promise<{ status: number; json: Record<string, unknown> }>;
 
 type Out = { write: (line: string) => void; error: (line: string) => void };
+
+export const DEFAULT_CONCURRENCY = 6;
 
 /** First column of each non-empty line, header and comments skipped. Pure. */
 export function parseDomainsCsv(text: string): string[] {
@@ -112,11 +114,17 @@ export async function runBatch(
     return 2;
   }
   const timeout = Number(flags.timeout ?? 30) || 30;
+  // The audit worker shares the site's container: 80 at once took
+  // crawlproof.com down (OOM, 2026-11-18). Queue a small group, let it finish,
+  // then the next.
+  const concurrency = Math.min(Math.max(Number(flags.concurrency ?? DEFAULT_CONCURRENCY) || DEFAULT_CONCURRENCY, 1), 20);
+  const deadline = Date.now() + timeout * 60 * 1000;
 
   let batchId = typeof flags.batch === "string" ? flags.batch : undefined;
-  for (let i = 0; i < domains.length; i += 100) {
+  let rows: ResultRow[] = [];
+  for (let i = 0; i < domains.length; i += concurrency) {
     const res = await api("POST", "/api/admin/batch-audits", {
-      domains: domains.slice(i, i + 100),
+      domains: domains.slice(i, i + concurrency),
       source,
       ...(batchId ? { batch_id: batchId } : {}),
     });
@@ -128,9 +136,12 @@ export async function runBatch(
     for (const r of (res.json.rejected ?? []) as { domain: string; reason: string }[]) {
       out.error(`[batch] skipped ${r.domain}: ${r.reason}`);
     }
+    out.error(`[batch] queued ${Math.min(i + concurrency, domains.length)}/${domains.length} into batch ${batchId} (source ${source})`);
+    const minutesLeft = Math.max((deadline - Date.now()) / 60000, 0);
+    rows = await poll(api, batchId, minutesLeft, out);
+    if (Date.now() > deadline) break;
   }
-  out.error(`[batch] ${domains.length} domains queued as batch ${batchId} (source ${source})`);
-  emit(await poll(api, batchId!, timeout, out));
+  emit(rows);
   return 0;
 }
 

@@ -13,7 +13,9 @@ import { topFixes } from "@/lib/audit/top-fixes";
 import type { Finding } from "@/lib/audit/types";
 import { env } from "@/lib/env";
 
-export const BATCH_MAX = 100;
+// Per request. The audit worker shares the site's container and runs every
+// queued audit at once: 80 in one go OOM-killed crawlproof.com (2026-11-18).
+export const BATCH_MAX = 20;
 export type BatchSource = "outreach" | "ranking";
 
 export function isBatchSource(v: unknown): v is BatchSource {

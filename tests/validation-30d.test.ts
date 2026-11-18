@@ -181,6 +181,31 @@ describe("batch CSV", () => {
     expect(written["out.csv"]).toContain("acme.com,70,No llms.txt,u1");
   });
 
+  it("runBatch queues a few at a time and waits for each group", async () => {
+    const posted: number[] = [];
+    let created = 0;
+    const api = vi.fn(async (method: "GET" | "POST", _path: string, body?: Record<string, unknown>) => {
+      if (method === "POST") {
+        const n = (body!.domains as string[]).length;
+        posted.push(n);
+        created += n;
+        return { status: 200, json: { batch_id: "b-2", created: [], rejected: [] } };
+      }
+      return { status: 200, json: { done: created, total: created, rows: [] } };
+    });
+    const domains = Array.from({ length: 13 }, (_, i) => `site${i}.com`).join("\n");
+    const code = await runBatch(
+      ["in.csv"],
+      { concurrency: "6" },
+      api,
+      { write: () => {}, error: () => {} },
+      { read: () => `domain\n${domains}\n`, write: () => {} },
+    );
+    expect(code).toBe(0);
+    expect(posted).toEqual([6, 6, 1]);
+    expect(api.mock.calls.map((c) => c[0])).toEqual(["POST", "GET", "POST", "GET", "POST", "GET"]);
+  });
+
   it("runRanking refuses without the required flags", async () => {
     const api = vi.fn();
     const errors: string[] = [];
