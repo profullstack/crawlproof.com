@@ -1,6 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// Webhook delivery is quick, so a row left in "publishing" for 10 minutes
+// really is stuck.
 export const LX_STUCK_AFTER_MS = 10 * 60 * 1000;
+
+// Generation is not. Text runs on c0mpute open models (~2 tok/s), one call may
+// take up to C0MPUTE_TIMEOUT_MS (15 min in prod) and an article makes several,
+// so a 10-minute cutoff requeued every article mid-write (2026-11-18: all 15
+// house sites at once). Only call a generation stuck well past its own budget.
+export const LX_GENERATING_STUCK_AFTER_MS = 2 * 60 * 60 * 1000;
 
 export type LxRepairResult = {
   publishingArticles: number;
@@ -15,6 +23,9 @@ export async function repairStuckLxJobs(
 ): Promise<LxRepairResult> {
   const cutoff = new Date(
     (opts.now ?? new Date()).getTime() - LX_STUCK_AFTER_MS,
+  ).toISOString();
+  const generatingCutoff = new Date(
+    (opts.now ?? new Date()).getTime() - LX_GENERATING_STUCK_AFTER_MS,
   ).toISOString();
 
   let articleQuery = supabase
@@ -44,7 +55,7 @@ export async function repairStuckLxJobs(
     .update({ status: "queued" })
     .eq("status", "generating")
     .is("article_id", null)
-    .lt("updated_at", cutoff);
+    .lt("updated_at", generatingCutoff);
   if (opts.siteId) requeueKeywordQuery = requeueKeywordQuery.eq("site_id", opts.siteId);
   const { data: stuckKeywords, error: kwErr } = await requeueKeywordQuery.select("id");
   if (kwErr) console.warn("[lx repair] keywords", kwErr.message);
@@ -53,7 +64,7 @@ export async function repairStuckLxJobs(
     .from("lx_guest_post_request")
     .update({ status: "queued", error_text: null })
     .eq("status", "generating")
-    .lt("updated_at", cutoff);
+    .lt("updated_at", generatingCutoff);
   if (opts.siteId) guestQuery = guestQuery.eq("author_site_id", opts.siteId);
   const { data: stuckGuestRequests, error: guestErr } = await guestQuery.select("id");
   if (guestErr) console.warn("[lx repair] guest requests", guestErr.message);
