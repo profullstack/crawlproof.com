@@ -880,6 +880,14 @@ COMMANDS
       --engine=claude  Claude Sonnet 4.6 with web_search + web_fetch
       --format         markdown (default) or json
 
+  batch <domains.csv> [--source outreach|ranking] [--out results.csv] [--timeout 30]
+      Admin: audit every domain in the CSV's first column and write
+      domain,score,top_issue,report_url. Report links carry ?src=<source>.
+  batch status <batch_id> [--out results.csv]
+      Admin: re-read a batch's results.
+  ranking publish --slug <slug> --title "..." --list "..." --method "..." --batch <id>
+      Admin: publish a batch as a public ranking at /rankings/<slug>.
+
   report <share-token>
       Fetch a public report by share-token from production.
       Override with CRAWLPROOF_SITE_URL.
@@ -1111,6 +1119,20 @@ async function main() {
           write: (line: string) => process.stdout.write(`${line}\n`),
           error: (line: string) => console.error(line),
         });
+      }
+      case "batch":
+      case "ranking": {
+        const { runBatch, runRanking } = await import("../lib/batchCli");
+        const { writeFileSync } = await import("node:fs");
+        const api = (method: "GET" | "POST", path: string, body?: Record<string, unknown>) => apiCall(args, method, path, body);
+        const out = { write: (line: string) => process.stdout.write(`${line}\n`), error: (line: string) => console.error(line) };
+        const flags = args.flags as Record<string, string | boolean>;
+        return args.command === "batch"
+          ? await runBatch(args.positional, flags, api, out, {
+              read: (p) => readFileSync(p, "utf8"),
+              write: (p, s) => writeFileSync(p, s),
+            })
+          : await runRanking(args.positional, flags, api, out);
       }
       case "dashboard":
       case "roi":

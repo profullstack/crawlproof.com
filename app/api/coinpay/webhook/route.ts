@@ -6,6 +6,7 @@ import { sendPurchaseReceiptEmail } from "@/lib/email";
 import { env } from "@/lib/env";
 import { findPack } from "@/lib/credits";
 import { recordPurchaseConversion } from "@/lib/affiliate/attribution";
+import { handleMonitorWebhook } from "@/lib/monitoring";
 
 export const runtime = "nodejs";
 
@@ -114,6 +115,10 @@ export async function POST(req: Request) {
 
   const match = await resolvePurchaseRef(svc, evt);
   if (!match) {
+    // Weekly-monitoring months are their own ledger (monitor_payments).
+    if (await handleMonitorWebhook(svc, evt, payload as unknown as Record<string, unknown>, isComplete ? "complete" : "fail")) {
+      return NextResponse.json({ ok: true, monitor: true });
+    }
     console.warn("[coinpay] no purchase for event", eventType, evt.paymentId, evt.sessionId);
     return NextResponse.json({ ok: true, settled: false, reason: "unknown payment" });
   }

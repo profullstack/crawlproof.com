@@ -4,6 +4,8 @@ import { env } from "@/lib/env";
 import { attributeUser } from "@/lib/affiliate/attribution";
 import { cookieFromHeader } from "@/lib/affiliate/cookie";
 import { INVITE_COOKIE, onSignedIn } from "@/lib/creditCodes";
+import { serviceClient } from "@/lib/supabase/service";
+import { funnelContext, recordFunnelEvent } from "@/lib/funnel";
 
 // Resolve the URL Supabase should send users back to. Inside the Railway
 // container Next.js's `request.url` carries the bind address (e.g.
@@ -45,6 +47,9 @@ export async function GET(request: Request) {
     } catch (err) {
       console.error("[affiliate] attribute at sign-in", err);
     }
+    // Funnel (R6): this is the email-confirmation landing, so a just-created
+    // account's first pass through here is its signup.
+    if (user) await recordSignupIfNew(user, request.headers.get("cookie"));
     // Invites: this is also the email-confirmation landing, so accept a pending
     // invite (cookie, or the code saved at signup) and pay any bonus now due.
     if (user) {
@@ -61,6 +66,28 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.redirect(new URL(next, origin));
+}
+
+const SIGNUP_WINDOW_MS = 30 * 60 * 1000;
+
+async function recordSignupIfNew(
+  user: { id: string; created_at?: string },
+  cookieHeader: string | null,
+): Promise<void> {
+  try {
+    const created = user.created_at ? Date.parse(user.created_at) : NaN;
+    if (!Number.isFinite(created) || Date.now() - created > SIGNUP_WINDOW_MS) return;
+    const { count } = await serviceClient()
+      .from("funnel_events")
+      .select("id", { count: "exact", head: true })
+      .eq("event", "signup")
+      .eq("user_id", user.id);
+    if ((count ?? 0) > 0) return;
+    const ctx = funnelContext(cookieHeader);
+    await recordFunnelEvent({ event: "signup", source: ctx.source, visitorId: ctx.visitorId, userId: user.id });
+  } catch (err) {
+    console.warn("[funnel] signup record failed", err);
+  }
 }
 
 function readCookie(header: string | null, name: string): string | null {

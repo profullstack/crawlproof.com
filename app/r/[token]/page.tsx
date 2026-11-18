@@ -23,6 +23,9 @@ import { loadConsolidatedOrSoloMarkdown } from "@/lib/audit/summary-markdown";
 import { buildShareCard } from "@/lib/audit/share-card";
 import { env } from "@/lib/env";
 import { createSeoAeoMetadata, serializeJsonLd } from "@/lib/seo/seo-aeo-meta";
+import { reportIndexable, topFixes } from "@/lib/audit/top-fixes";
+import { TopFixesCard } from "@/components/report/top-fixes-card";
+import { FunnelBeacon } from "@/components/funnel-beacon";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +40,7 @@ type SeoAudit = {
   owner_id: string | null;
   engine: string | null;
   summary: Record<string, unknown> | null;
+  funnel_source?: string | null;
 };
 
 function hostOf(url: string): string {
@@ -49,11 +53,20 @@ function hostOf(url: string): string {
 
 async function loadSeoAudit(token: string): Promise<SeoAudit | null> {
   const svc = serviceClient();
-  const { data } = await svc
+  const { data, error } = await svc
     .from("audits")
-    .select("target_url, status, score, completed_at, created_at, owner_id, engine, summary")
+    .select("target_url, status, score, completed_at, created_at, owner_id, engine, summary, funnel_source")
     .eq("share_token", token)
     .maybeSingle();
+  if (error && /funnel_source/.test(error.message)) {
+    // Running ahead of the 20261118 migration.
+    const retry = await svc
+      .from("audits")
+      .select("target_url, status, score, completed_at, created_at, owner_id, engine, summary")
+      .eq("share_token", token)
+      .maybeSingle();
+    return (retry.data as SeoAudit | null) ?? null;
+  }
   return (data as SeoAudit | null) ?? null;
 }
 
@@ -72,12 +85,12 @@ export async function generateMetadata({
   }
 
   const host = hostOf(audit.target_url);
-  const isAnonymous = !audit.owner_id;
   const url = `${env.siteUrl.replace(/\/$/, "")}/r/${token}`;
 
   // Anonymous free scans → indexable, full SEO. Owner-attributed (paid)
-  // reports may contain customer info — keep them off the index.
-  const robots: Metadata["robots"] = isAnonymous
+  // reports may contain customer info, and reports made for outreach were
+  // run without the site owner asking: keep both off the index.
+  const robots: Metadata["robots"] = reportIndexable(audit)
     ? { index: true, follow: true, googleBot: { index: true, follow: true } }
     : { index: false, follow: false, googleBot: { index: false, follow: false } };
 
@@ -264,6 +277,7 @@ export default async function PublicReportPage({
   return (
     <>
       {seo && <ReportJsonLd url={canonicalUrl} audit={seo} />}
+      <FunnelBeacon token={token} />
       <SiteHeader />
       <main className="mx-auto max-w-6xl px-4 sm:px-6 py-10">
         <ShareBanner
@@ -282,6 +296,15 @@ export default async function PublicReportPage({
           <div className="card mb-6 p-5 text-[var(--color-fail)]">
             Audit failed. Please try again.
           </div>
+        )}
+
+        {audit.status === "complete" && watchCard.kind !== "slop" && (
+          <TopFixesCard
+            host={watchCard.host}
+            score={watchCard.score}
+            fixes={topFixes(findings)}
+            token={token}
+          />
         )}
 
         {audit.status === "complete" && audit.report_markdown ? (

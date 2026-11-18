@@ -1,63 +1,67 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { HeroAuditForm } from "@/components/hero-audit-form";
-import { ANON_DAILY_SCANS, ENGINES, SCAN_CREDITS, SIGNUP_CREDITS, SCAN_RACK_CENTS, SCAN_MIN_CENTS, dollars } from "@/lib/credits";
+import { ANON_DAILY_SCANS } from "@/lib/credits";
 import { OrganizationJsonLd, SoftwareApplicationJsonLd, FaqJsonLd } from "@/components/json-ld";
-import { PerformancePreview } from "@/components/report/performance-preview";
-import { UptimePreview } from "@/components/report/uptime-preview";
-import { SecurityPreview } from "@/components/report/security-preview";
+import { MonitorPlans, MONITOR_PAYMENT_NOTE } from "@/components/monitor-plans";
 import { env } from "@/lib/env";
 
-// The AI-model engines are the paid ones; derive the list so the copy never
-// drifts from what the scan dialog actually offers.
-const aiModels = Object.values(ENGINES).filter((e) => e.available && e.cost > 0);
-const aiModelNames = aiModels.map((e) => e.label);
-const engineCount = Object.values(ENGINES).filter((e) => e.available).length;
+// The homepage sells one thing during the 30-day validation test
+// (prd/validation-30d.md): the free AI-visibility audit, and weekly
+// monitoring as the paid next step. Every other product still works at its
+// own URL; it is just not pitched here.
 
 const faqs = [
   {
-    q: "Does CrawlProof ask real AI models, or just read robots.txt?",
-    a: `It asks the models. Each AI scan sends your site to live models — ${aiModelNames.join(", ")} — with the same brief: pretend you've never heard of this company, find out everything you can from the public web, and say exactly where you found each fact and what you couldn't find. The models with live search (Claude, GPT, Gemini, Perplexity) search the web as they go. robots.txt and AI-crawler access are one check among ${engineCount} engines, not the whole product.`,
+    q: "What does the audit check?",
+    a: "Whether AI crawlers can read the site (GPTBot, ClaudeBot, PerplexityBot, Google-Extended and others), what the raw HTML shows before JavaScript runs, structured data, robots.txt and sitemap, llms.txt, knowledge-graph links and how clearly the homepage says what the business does. Every finding is ranked so the top fixes come first.",
   },
   {
-    q: "How does the ad network work?",
-    a: "It's two-sided and crypto-settled. Advertisers give a landing-page URL and CrawlProof auto-designs on-brand display ads (edit the copy/colours or upload your own), then run them across the network for a daily budget paid from credits. Publishers opt a verified project in as an ad slot, drop one tag (or open an install PR), and earn a share of every click — paid on-chain to their wallet via CoinPay. Bot and duplicate clicks are filtered so they never bill.",
+    q: "Is the audit really free?",
+    a: `Yes. No account, no card: ${ANON_DAILY_SCANS} audits a day per visitor. Every audit gets a permanent link you can forward to a developer or a client.`,
   },
   {
-    q: "What does CrawlProof actually check?",
-    a: "We audit three pillars: SEO (crawlability, performance, meta), AEO (AI-bot access, structured data, content snippet-readiness), and GEO (llms.txt quality, knowledge graph sameAs links, AI agent integration, brand entity clarity). You get a single prioritized to-do list covering all three.",
+    q: "What does weekly monitoring add?",
+    a: "The same audit re-run every week on each site you add, and an email when a score moves, with a link to the new report. A deploy that blocks GPTBot or breaks the schema shows up in days instead of months.",
   },
   {
-    q: "Which AI crawlers do you check for?",
-    a: "GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, and CCBot — and we flag any that your robots.txt blocks or fails to address.",
+    q: "Who is the Agency plan for?",
+    a: "SEO and marketing agencies managing client sites. $199 a month covers up to 20 sites, and every run has a shareable report you can send the client.",
+  },
+  {
+    q: "How do I pay, and how do I cancel?",
+    a: "By card through PayPal, or in crypto, on CoinPay's checkout page. Each month is paid up front and nothing renews by itself: you get a link a few days before the month ends. Cancel from your dashboard at any time.",
   },
   {
     q: "Do you respect robots.txt?",
-    a: "Yes. CrawlProofBot identifies itself and honors robots.txt directives that block it. We never log in, never submit forms, never POST.",
-  },
-  {
-    q: "What can CrawlProof monitor for uptime?",
-    a: "HTTP(S) status and response time, a keyword that must appear (or not) in the page body, SSL-certificate expiry, and raw TCP ports. We confirm failures across multiple checks before alerting (no flapping), then email you on both downtime and recovery — with the exact outage duration.",
-  },
-  {
-    q: "How does the exposed-services security scan work?",
-    a: "For hosts you've verified you own, CrawlProof runs a full 65,535-port TCP scan from a dedicated scanner, baselines the ports you expect to be open, and alerts you when a new one appears — e.g. a database or admin port suddenly reachable from the public internet. It's attack-surface drift detection, only ever against your own verified hosts.",
-  },
-  {
-    q: "Is the free tier really free?",
-    a: `Yes — anonymous visitors get ${ANON_DAILY_SCANS} audits per day per IP with no signup, and signing up unlocks ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan). Paid scans cost ${SCAN_CREDITS} credits (${dollars(SCAN_RACK_CENTS)} at standard price) with volume discounts down to ${dollars(SCAN_MIN_CENTS)}/scan at the 100-scan pack. No subscription, credits never expire.`,
+    a: "Yes. CrawlProofBot identifies itself and honours robots.txt rules that block it. It never logs in, never submits forms and never POSTs.",
   },
 ];
 
-const backlinkPricePoints = [
-  { label: "Entry", value: "$445", width: 11 },
-  { label: "Alt", value: "$445", width: 11 },
-  { label: "Low", value: "$506", width: 12 },
-  { label: "Mid", value: "$631", width: 15 },
-  { label: "Plus", value: "$1,105", width: 27 },
-  { label: "High", value: "$1,331", width: 33 },
-  { label: "Upper", value: "$1,981", width: 48 },
-  { label: "Peak", value: "$4,090", width: 100 },
+const checks = [
+  {
+    title: "AI-bot access",
+    body: "Whether GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended and CCBot can read the site.",
+  },
+  {
+    title: "Crawlability",
+    body: "Raw HTML against the JavaScript-rendered page, sitemap coverage, robots rules, fetch time and broken links.",
+  },
+  {
+    title: "Structured data",
+    body: "JSON-LD presence and validity for Organization, Product, FAQ, Article, Breadcrumb and more.",
+  },
+  {
+    title: "llms.txt and agent files",
+    body: "llms.txt depth and links, plus ai-plugin.json, agent-card.json and skill.md for AI agents.",
+  },
+  {
+    title: "Knowledge graph",
+    body: "sameAs links to Wikipedia, Wikidata or LinkedIn, which AI needs to recognise the brand as a known entity.",
+  },
+  {
+    title: "Positioning",
+    body: "Does the homepage say what the business does? H1, value proposition, pricing, contact.",
+  },
 ];
 
 // ad.network verifies the site by fetching this page's raw HTML for the code.
@@ -74,38 +78,22 @@ export default function HomePage() {
       <SoftwareApplicationJsonLd />
       <FaqJsonLd faqs={faqs} />
 
-      <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-12 pt-12 sm:pb-16 sm:pt-20 text-center">
+      <section id="audit" className="mx-auto max-w-4xl scroll-mt-24 px-4 pb-12 pt-12 text-center sm:px-6 sm:pb-16 sm:pt-20">
         <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
-          Audits · Uptime · Security · Content — one platform for your site
+          Free AI-visibility audit
         </p>
         <h1 className="text-balance text-4xl font-extrabold leading-tight sm:text-5xl md:text-6xl">
-          Get found by AI. Stay online. Stay secure.
+          Can ChatGPT, Claude and Perplexity find your site?
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-lg text-[var(--color-muted)]">
-          CrawlProof started by showing you your site the way{" "}
-          <strong className="font-semibold text-[var(--color-text)]">
-            AI crawlers
-          </strong>{" "}
-          do — SEO, AEO &amp; GEO audits for ChatGPT, Claude, Perplexity, and
-          Google AI Overviews — and{" "}
-          <strong className="font-semibold text-[var(--color-text)]">
-            asks {aiModels.length} live AI models
-          </strong>{" "}
-          what they can actually find out about you. Now it&apos;s a full platform: <strong className="font-semibold text-[var(--color-text)]">uptime
-          monitoring</strong> with downtime alerts, <strong className="font-semibold text-[var(--color-text)]">exposed-services
-          security scans</strong>, automated content, backlinks, and analytics —
-          all from one dashboard. Start with a free audit:
+          Enter a URL. In under a minute you get a score out of 100, the fixes that matter most,
+          and a report link you can send to whoever makes the changes. No signup.
         </p>
         <div className="mx-auto mt-8 max-w-xl">
           <HeroAuditForm />
         </div>
-        <div className="mx-auto mt-4 flex max-w-xl flex-col items-center gap-3 text-xs text-[var(--color-muted)]">
-          <p className="leading-relaxed">
-            Every scan checks crawlability (HTML vs. JS-rendered), schema /
-            JSON-LD, robots.txt &amp; sitemap, AI-bot access, llms.txt &amp;
-            skill.md, and positioning — then hands you a priority to-do list.
-          </p>
-          {env.selfAuditUrl && (
+        {env.selfAuditUrl && (
+          <p className="mt-4 text-xs">
             <a
               href={env.selfAuditUrl}
               target="_blank"
@@ -114,253 +102,43 @@ export default function HomePage() {
             >
               See a sample report →
             </a>
-          )}
-        </div>
+          </p>
+        )}
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <h2 className="mb-2 text-center text-2xl font-bold">One platform, every angle</h2>
+      <section className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
+        <h2 className="mb-2 text-center text-2xl font-bold">What the audit checks</h2>
         <p className="mx-auto mb-8 max-w-2xl text-center text-sm text-[var(--color-muted)]">
-          Everything you need to get discovered, stay online, and stay secure — no
-          separate subscriptions for monitoring, security, and content.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <ModuleCard emoji="🔍" title="SEO · AEO · GEO Audits" body={`Ask ${aiModels.length} live AI models what they can find about you, and see your site the way their crawlers do — with a priority to-do list.`} />
-          <ModuleCard emoji="📈" title="Uptime Monitoring" body="HTTP, keyword, SSL &amp; TCP checks with instant down/recovery alerts to email, Slack, and Discord." />
-          <ModuleCard emoji="🛡️" title="Exposed Services" body="Full-port security scans of your verified hosts — get alerted the moment a database or admin port is exposed." />
-          <ModuleCard emoji="✍️" title="Autoblog" body={`Research, draft, illustrate, and publish long-form SEO posts to your CMS on a schedule — ${dollars(SCAN_RACK_CENTS)} each before volume discounts.`} />
-          <ModuleCard emoji="🎯" title="Lead Generation" body="Find the companies, the people and the addresses from any directory or search — then send grounded cold email from your own mailbox." href="/lead-generation" />
-          <ModuleCard emoji="🔗" title="Link Exchange" body="Verified backlink matching with a real ledger — quality links without four-figure marketplace prices." />
-          <ModuleCard emoji="📊" title="Analytics Tracker" body="A drop-in tracker for AI referrals, bot crawls, human traffic, pages, and geo — see who (and what) visits." />
-          <ModuleCard emoji="📣" title="Social Posting" body="Draft and schedule social posts and feed autoposts alongside your content pipeline." />
-          <ModuleCard emoji="🐙" title="GitHub Fixes" body="Bind a repo and turn audit findings into ready-to-merge pull requests." />
-          <ModuleCard emoji="🪧" title="Ad Network" body="Promote your site across the network for a daily budget, or show ads and earn crypto — auto-designed, on-brand creatives from just a URL." />
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <h2 className="mb-2 text-center text-2xl font-bold">What we check</h2>
-        <p className="mx-auto mb-8 max-w-2xl text-center text-sm text-[var(--color-muted)]">
-          Three pillars — SEO (blue-link search), AEO (answer engines), and GEO (generative AI
-          citation) — unified in a single audit and priority to-do list.
+          Everything an AI crawler needs to read, understand and cite a site, in one ranked list.
         </p>
         <div className="grid gap-4 md:grid-cols-3">
-          <FeatureCard
-            title="Live AI answers (AEO · GEO)"
-            body={`We ask ${aiModels.length} real models — ${aiModelNames.join(", ")} — to research your company from scratch, and report what each one found, missed, and where it looked.`}
-          />
-          <FeatureCard
-            title="Crawlability (SEO)"
-            body="Raw HTML vs. JS-rendered diff, sitemap coverage, robots rules, fetch-time, broken links."
-          />
-          <FeatureCard
-            title="Structured data (AEO)"
-            body="JSON-LD presence and validity for Organization, Product, FAQ, Article, Breadcrumb, and more."
-          />
-          <FeatureCard
-            title="AI-bot access (AEO)"
-            body="Whether GPTBot, ClaudeBot, PerplexityBot, Google-Extended, OAI-SearchBot, Applebot-Extended, and CCBot can read you."
-          />
-          <FeatureCard
-            title="llms.txt quality (GEO)"
-            body="Existence is not enough — we check depth, sections, and linked resources so generative AI has rich context to cite."
-          />
-          <FeatureCard
-            title="Knowledge graph (GEO)"
-            body="Does your Organization schema have sameAs links to Wikipedia, Wikidata, or LinkedIn? AI needs these to resolve your brand as a known entity."
-          />
-          <FeatureCard
-            title="Agent integration (GEO)"
-            body="ai-plugin.json, agent-card.json, and skill.md let AI agents interact with your site. We check all three."
-          />
-          <FeatureCard
-            title="Positioning clarity"
-            body="Does your homepage actually say what you do? H1, value prop, pricing, contact, team."
-          />
-          <FeatureCard
-            title="Priority to-do list"
-            body="Every finding ranked 1–5 with copy you can hand straight to your dev or LLM."
-          />
+          {checks.map((c) => (
+            <div key={c.title} className="card p-5">
+              <h3 className="font-semibold">{c.title}</h3>
+              <p className="mt-2 text-sm text-[var(--color-muted)]">{c.body}</p>
+            </div>
+          ))}
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <h2 className="mb-2 text-center text-2xl font-bold">What you get when you sign up</h2>
-        <p className="mx-auto mb-8 max-w-2xl text-center text-sm text-[var(--color-muted)]">
-          Save URLs as projects and CrawlProof tracks SEO + AEO + GEO score, finding mix,
-          section health, and priority backlog across every re-audit — the same dashboard
-          you&apos;ll see on any paid report.
+      <section id="monitoring" className="mx-auto max-w-4xl scroll-mt-24 px-4 pb-16 sm:px-6">
+        <h2 className="mb-2 text-center text-2xl font-bold">Then keep it that way: weekly monitoring</h2>
+        <p className="mx-auto mb-8 max-w-2xl text-center text-[var(--color-muted)]">
+          A deploy, a new robots.txt rule or a broken schema block can hide a site from AI answers
+          without anyone noticing. Monitoring re-runs the audit every week and emails you when
+          the score moves. Agencies can watch every client site and send each client its report.
         </p>
-        <PerformancePreview variant="home" />
+        <MonitorPlans />
+        <p className="mt-4 text-center text-sm text-[var(--color-muted)]">{MONITOR_PAYMENT_NOTE}</p>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <div className="grid items-center gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-          <div>
-            <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
-              Uptime Monitoring
-            </p>
-            <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
-              Know before your customers do.
-            </h2>
-            <p className="mt-4 text-[var(--color-muted)]">
-              Add a monitor in one click — we prefill your domain and URL. CrawlProof
-              checks it on your interval and emails you the instant it goes down,
-              then again when it recovers, with the exact downtime. HTTP status,
-              body keywords, SSL-cert expiry, and raw TCP ports.
-            </p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <LaunchStat label="Checks" value="HTTP · SSL · TCP" />
-              <LaunchStat label="Alerts" value="Email · Slack" />
-              <LaunchStat label="Confirm" value="No flapping" />
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/signup" className="btn btn-primary">
-                Start monitoring free
-              </Link>
-            </div>
-          </div>
-          <UptimePreview />
-        </div>
+      <section className="mx-auto max-w-4xl px-4 pb-16 text-center sm:px-6">
+        <a href="#audit" className="btn btn-primary">
+          Run a free audit
+        </a>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <div className="grid items-center gap-8 lg:grid-cols-[0.95fr_1.05fr]">
-          <SecurityPreview />
-          <div>
-            <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
-              Exposed Services — Security
-            </p>
-            <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
-              Catch the port you forgot to close.
-            </h2>
-            <p className="mt-4 text-[var(--color-muted)]">
-              CrawlProof runs a full 65,535-port scan of your owner-verified hosts,
-              baselines what&apos;s expected, and alerts you the moment something{" "}
-              <em>new</em> gets exposed — a Redis, a Postgres, an admin panel facing
-              the public internet. Attack-surface monitoring, not a one-off scan.
-            </p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <LaunchStat label="Coverage" value="All 65,535" />
-              <LaunchStat label="Scope" value="Owned hosts" />
-              <LaunchStat label="Alerts on" value="Port drift" />
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/signup" className="btn btn-primary">
-                Scan my services
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <div className="grid items-center gap-8 lg:grid-cols-[0.95fr_1.05fr]">
-          <div>
-            <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
-              Newly Launched Feature
-            </p>
-            <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
-              Autoblog support turns credits into published SEO posts.
-            </h2>
-            <p className="mt-4 text-[var(--color-muted)]">
-              Connect a webhook once and CrawlProof can research topics, draft long-form
-              posts, attach a hero image, and deliver articles to your CMS on schedule.
-              Each published post uses {SCAN_CREDITS} credits ({dollars(SCAN_RACK_CENTS)} before volume discounts).
-            </p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <LaunchStat label="Cost model" value="20 credits" />
-              <LaunchStat label="Delivery" value="Webhook" />
-              <LaunchStat label="Cadence" value="Scheduled" />
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/signup" className="btn btn-primary">
-                Start autoblogging
-              </Link>
-              <Link href="/docs/autoblog-webhook" className="btn">
-                View webhook docs
-              </Link>
-            </div>
-          </div>
-
-          <AutoblogLaunchGraphic />
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-4 sm:px-6 pb-16">
-        <div className="mx-auto max-w-3xl text-center">
-          <p className="mb-3 text-sm font-medium uppercase tracking-wider text-[var(--color-accent)]">
-            Newly Launched Feature
-          </p>
-          <h2 className="text-balance text-3xl font-extrabold leading-tight sm:text-4xl">
-            A crypto-settled ad network for indie sites.
-          </h2>
-          <p className="mt-4 text-[var(--color-muted)]">
-            Two sides, one dashboard. Advertisers drop in a landing-page URL and CrawlProof
-            auto-designs on-brand display ads — edit the copy and colours, or upload your own —
-            then set a daily budget. Publishers flip a switch, drop one tag, and earn crypto for
-            every click, paid straight to their wallet via CoinPay. No fiat, no middlemen.
-          </p>
-        </div>
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
-          <div className="card p-6">
-            <div className="text-2xl">📣</div>
-            <h3 className="mt-2 text-xl font-bold">Advertise your site</h3>
-            <p className="mt-2 text-sm text-[var(--color-muted)]">
-              Paste your URL, get instant on-brand banners, fund a daily budget from credits.
-              Every click is attributed with your own <code>?ref=</code> tag and metered fairly —
-              bots and duplicate clicks never bill.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-3">
-              <Link href="/dashboard/ads/new" className="btn btn-primary">
-                Create an ad
-              </Link>
-            </div>
-          </div>
-          <div className="card p-6">
-            <div className="text-2xl">🪧</div>
-            <h3 className="mt-2 text-xl font-bold">Monetize your site</h3>
-            <p className="mt-2 text-sm text-[var(--color-muted)]">
-              Opt a verified project in as an ad slot, paste one snippet (or open a PR to install
-              it), and pick your payout coin. Earnings accrue per click and withdraw on-chain to
-              your wallet — one-click connect on tronbrowser.dev.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-3">
-              <Link href="/dashboard/ads/slots" className="btn btn-primary">
-                Monetize a site
-              </Link>
-            </div>
-          </div>
-        </div>
-        <div className="mt-6 grid gap-3 sm:grid-cols-3">
-          <LaunchStat label="Creatives" value="Auto · on-brand" />
-          <LaunchStat label="Settlement" value="Crypto · CoinPay" />
-          <LaunchStat label="Billing" value="Bot/dupe-filtered" />
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-4xl px-4 sm:px-6 pb-16">
-        <div className="card p-6 sm:p-8">
-          <h2 className="text-2xl font-bold">Built to be audited in public.</h2>
-          <p className="mt-2 text-[var(--color-muted)]">
-            CrawlProof.com ships server-rendered pages, rich schema, clean robots rules,
-            llms.txt, and skill.md at the root. Public scans can vary by model and timing,
-            so the product shows the report details instead of hiding behind a single claim.
-          </p>
-          {env.selfAuditUrl && (
-            <a
-              href={env.selfAuditUrl}
-              className="btn mt-4"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              View current self-audit
-            </a>
-          )}
-        </div>
-      </section>
-
-      <section id="faq" className="mx-auto max-w-3xl px-4 sm:px-6 pb-24">
+      <section id="faq" className="mx-auto max-w-3xl px-4 pb-24 sm:px-6">
         <h2 className="mb-8 text-center text-2xl font-bold">FAQ</h2>
         <div className="space-y-3">
           {faqs.map((f) => (
@@ -372,116 +150,5 @@ export default function HomePage() {
         </div>
       </section>
     </main>
-  );
-}
-
-function LaunchStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[rgba(18,22,28,0.72)] p-4">
-      <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
-      <div className="mt-1 text-lg font-bold">{value}</div>
-    </div>
-  );
-}
-
-function AutoblogLaunchGraphic() {
-  return (
-    <div
-      className="rounded-xl border border-[var(--color-border)] bg-[#101820] p-5 shadow-2xl shadow-black/20 sm:p-6"
-      aria-label={`Backlink marketplace examples ranged from $445 to $4,090, compared with CrawlProof Autoblog at ${SCAN_CREDITS} credits (${dollars(SCAN_RACK_CENTS)} before volume discounts) per post.`}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
-            Generic market spread
-          </div>
-          <div className="mt-1 text-xl font-extrabold">Backlink prices found in research</div>
-        </div>
-        <div className="rounded-lg border border-[rgba(110,231,183,0.35)] bg-[rgba(110,231,183,0.12)] px-3 py-2 text-right">
-          <div className="text-xs text-[var(--color-muted)]">Autoblog</div>
-          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">{dollars(SCAN_RACK_CENTS)}</div>
-        </div>
-      </div>
-
-      <div className="mt-6 space-y-3">
-        {backlinkPricePoints.map((point) => (
-          <div key={`${point.label}-${point.value}`} className="grid grid-cols-[3.4rem_1fr_4.4rem] items-center gap-3">
-            <div className="text-xs text-[var(--color-muted)]">{point.label}</div>
-            <div className="h-3 rounded-full bg-[#1d2630]">
-              <div
-                className="h-3 rounded-full bg-[linear-gradient(90deg,#6ee7b7,#fbbf24)]"
-                style={{ width: `${point.width}%` }}
-              />
-            </div>
-            <div className="text-right font-mono text-sm font-semibold">{point.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-6 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg bg-[#17202a] p-3">
-          <div className="text-xs text-[var(--color-muted)]">Min observed</div>
-          <div className="font-mono text-lg font-bold">$445</div>
-        </div>
-        <div className="rounded-lg bg-[#17202a] p-3">
-          <div className="text-xs text-[var(--color-muted)]">Max observed</div>
-          <div className="font-mono text-lg font-bold">$4,090</div>
-        </div>
-        <div className="rounded-lg bg-[#17202a] p-3">
-          <div className="text-xs text-[var(--color-muted)]">CrawlProof</div>
-          <div className="font-mono text-lg font-bold text-[var(--color-accent)]">{dollars(SCAN_RACK_CENTS)}</div>
-        </div>
-      </div>
-
-      <p className="mt-4 text-xs leading-relaxed text-[var(--color-muted)]">
-        Price examples are redrawn from internal reference research as an abstract comparison,
-        not a copied marketplace interface.
-      </p>
-    </div>
-  );
-}
-
-function FeatureCard({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="card p-5">
-      <h3 className="font-semibold">{title}</h3>
-      <p className="mt-2 text-sm text-[var(--color-muted)]">{body}</p>
-    </div>
-  );
-}
-
-function ModuleCard({
-  emoji,
-  title,
-  body,
-  href,
-}: {
-  emoji: string;
-  title: string;
-  body: string;
-  /** Set only for modules that have a page of their own to go on to. */
-  href?: string;
-}) {
-  const inner = (
-    <>
-      <div className="text-2xl" aria-hidden>
-        {emoji}
-      </div>
-      <h3 className="mt-2 font-semibold">{title}</h3>
-      <p className="mt-1 text-sm text-[var(--color-muted)]">{body}</p>
-      {href && <p className="mt-3 text-sm font-medium">Learn more →</p>}
-    </>
-  );
-  // A card without somewhere to go stays a card. Wrapping every one in a link
-  // to nowhere would make eight of the nine look clickable and do nothing.
-  return href ? (
-    <Link
-      href={href}
-      className="card flex flex-col p-5 transition hover:border-[var(--color-fg)]"
-    >
-      {inner}
-    </Link>
-  ) : (
-    <div className="card flex flex-col p-5">{inner}</div>
   );
 }
