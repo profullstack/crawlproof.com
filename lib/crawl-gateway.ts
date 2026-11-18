@@ -2,6 +2,7 @@ import { createGateway, readPass, renderPage, type Sale } from "@profullstack/x4
 import { x402Proxy } from "@profullstack/x402-gateway/next";
 import { crawlerFamily, isAdClickPath, isPaidCrawler, PAID_CRAWLERS } from "./crawl-policy";
 import { aboutHtml, CRAWL_DOCS_PATH, explainOffer } from "./crawl-offer";
+import { authenticateMember } from "./crawl-member";
 import { limitCrawlRequest, recordCrawlerOutcome, CRAWLER_IP_PER_MINUTE, CRAWLER_FAMILY_PER_HOUR } from "./crawl-limits";
 
 /**
@@ -57,6 +58,10 @@ export const gateway = createGateway({
   isPaidAgent: isPaidCrawler,
   // A refused crawler must be able to read what it is being asked to buy.
   openPaths: [CRAWL_DOCS_PATH],
+  // A verified paying member (admin, pro/team, Profullstack Pass, or a credit
+  // buyer) is never charged, including while the swarm gate is tripped. See
+  // lib/crawl-member.ts.
+  authenticate: (request: Request) => authenticateMember(request),
   benefits: [
     "Every public page on crawlproof.com for 24 hours per $1 (up to 30 days in one payment)",
     "A JSON receipt with a signed pass token; send it as x-crawl-pass or Authorization: Bearer",
