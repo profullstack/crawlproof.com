@@ -1,5 +1,6 @@
 import { SCAN_CREDITS, SIGNUP_CREDITS, SCAN_RACK_CENTS, SCAN_MIN_CENTS, dollars } from "@/lib/credits";
 import { env } from "@/lib/env";
+import { MONITOR_PLANS, priceLabel } from "@/lib/monitoring";
 
 const body = `# CrawlProof
 
@@ -7,13 +8,16 @@ const body = `# CrawlProof
 
 ## Product
 - Free single-URL AEO audit, 10 per day per IP, no signup required.
-- Signed-in users get ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan); each AI-model scan costs ${SCAN_CREDITS} credits (${dollars(SCAN_RACK_CENTS)} before volume discounts, down to ${dollars(SCAN_MIN_CENTS)}/scan at the 100-scan pack). No subscription — credits never expire.
+- Signed-in users get ${SIGNUP_CREDITS} free credits (${SIGNUP_CREDITS / SCAN_CREDITS} AI-model scan); each AI-model scan costs ${SCAN_CREDITS} credits (${dollars(SCAN_RACK_CENTS)} before volume discounts, down to ${dollars(SCAN_MIN_CENTS)}/scan at the 100-scan pack). Scan credits never expire.
+- Weekly monitoring is available as a separate monthly plan, paid up front with no automatic renewal: Solo (${priceLabel(MONITOR_PLANS.solo.amountCents)}/month for 1 site) or Agency (${priceLabel(MONITOR_PLANS.agency.amountCents)}/month for up to 20 sites).
 - Saved projects, scheduled re-audits, multi-engine LLM scans (Claude Sonnet 4.6, OpenAI GPT-5 Mini, Gemini 2.5 Pro, Perplexity Sonar Pro, Qwen Plus, Kimi v2.6, DeepSeek V4, Z.AI GLM-5.2), consolidated PDF reports, and diff view.
 - Identifies as CrawlProofBot/1.0 (+https://crawlproof.com/bot).
 
 ## Key pages
 - ${env.siteUrl}/ — homepage with free audit input
 - ${env.siteUrl}/pricing — pricing
+- ${env.siteUrl}/monitor — weekly AI-visibility monitoring
+- ${env.siteUrl}/rankings/yc-fall-2026-ai-visibility — YC Fall 2026 AI-visibility ranking
 - ${env.siteUrl}/about — about
 - ${env.siteUrl}/blog — blog / AEO notes
 - ${env.siteUrl}/bot — info about CrawlProofBot

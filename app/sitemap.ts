@@ -13,6 +13,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticEntries: MetadataRoute.Sitemap = [
     { url: `${base}/`, changeFrequency: "weekly", priority: 1.0 },
     { url: `${base}/pricing`, changeFrequency: "monthly", priority: 0.9 },
+    { url: `${base}/monitor`, changeFrequency: "monthly", priority: 0.8 },
+    { url: `${base}/rankings/yc-fall-2026-ai-visibility`, changeFrequency: "weekly", priority: 0.8 },
     { url: `${base}/hire`, changeFrequency: "monthly", priority: 0.9 },
     { url: `${base}/slop`, changeFrequency: "monthly", priority: 0.9 },
     // Hub for the six free scanners — the four that need an account had no

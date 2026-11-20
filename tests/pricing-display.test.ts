@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import PricingPage, { metadata } from "@/app/(marketing)/pricing/page";
 import { SoftwareApplicationJsonLd } from "@/components/json-ld";
 import { GET } from "@/app/llms.txt/route";
+import { env } from "@/lib/env";
 
 describe("published pricing", () => {
   it("renders all four new pack totals and the exact credit prices", () => {
@@ -30,5 +31,15 @@ describe("published pricing", () => {
     const text = await (await GET()).text();
     expect(text).toContain("20 credits ($6 before volume discounts, down to $3/scan");
     expect(text).not.toContain("$0.50/scan");
+  });
+
+  it("describes monitoring separately and lists the current public pages", async () => {
+    const text = await (await GET()).text();
+    expect(text).toContain("Scan credits never expire.");
+    expect(text).toContain("Weekly monitoring is available as a separate monthly plan");
+    expect(text).toContain("Solo ($49/month for 1 site) or Agency ($199/month for up to 20 sites)");
+    expect(text).toContain(`${env.siteUrl}/monitor`);
+    expect(text).toContain(`${env.siteUrl}/rankings/yc-fall-2026-ai-visibility`);
+    expect(text).not.toContain("No subscription — credits never expire.");
   });
 });
