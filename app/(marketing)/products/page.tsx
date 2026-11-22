@@ -191,7 +191,7 @@ const PRODUCTS: Product[] = [
     pricing: "free",
     price: "Free, no account",
     headline: "Scanners you can run right now",
-    body: "AEO audit, Slop Score, DNS analyzer, link checker, the specification.website checklist and the Vu1nz security scan.",
+    body: "AEO audit, Slop Score, DNS analyzer, link checker and the specification.website checklist.",
     bullets: ["No signup", "No LLM guesswork in the rule-based ones", "Shareable results"],
     href: "/tools",
     cta: "Open the tools",

@@ -8,8 +8,6 @@ import { SLOP_SECTION } from "@/lib/audit/checks/slop";
 import type { Finding } from "@/lib/audit/types";
 import { ENGINES, type Engine } from "@/lib/credits";
 
-const VU1NZ_REPORT_SECTION = "Vu1nz Security Assessment";
-
 export type AuditRow = {
   id: string;
   target_url: string;
@@ -337,9 +335,6 @@ export function reportSections(findings: Finding[], engine?: string | null): str
     if (!out.includes(section as (typeof SECTIONS)[number])) {
       out.push(section as (typeof SECTIONS)[number]);
     }
-  }
-  if (engine === "vu1nz" && !out.includes(VU1NZ_REPORT_SECTION as (typeof SECTIONS)[number])) {
-    out.push(VU1NZ_REPORT_SECTION as (typeof SECTIONS)[number]);
   }
   return out;
 }

@@ -36,7 +36,7 @@ const CASES: Case[] = [
     // case that forced anchors to exclude subject words: "security" is both a
     // subject word and a niche word, so before that fix "adt home security"
     // satisfied both halves of the gate using the single token "security".
-    domain: "vu1nz.com",
+    domain: "cicd-security.example",
     site: {
       master_keywords: [
         "ci/cd security", "supply chain security", "github actions security",

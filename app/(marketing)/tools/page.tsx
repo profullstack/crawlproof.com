@@ -18,7 +18,7 @@ import { ANON_DAILY_SCANS, ENGINES, SIGNUP_CREDITS, type Engine } from "@/lib/cr
 export const metadata = {
   title: "Free website scanners",
   description:
-    "Every free CrawlProof scanner: AEO audit, Slop Score, DNS analyzer, link checker, specification.website checklist and the Vu1nz security scan.",
+    "Every free CrawlProof scanner: AEO audit, Slop Score, DNS analyzer, link checker and the specification.website checklist.",
   alternates: { canonical: "/tools" },
 };
 

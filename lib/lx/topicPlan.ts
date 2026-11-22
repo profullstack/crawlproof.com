@@ -152,7 +152,7 @@ export function resolveMasters(site: SiteTopicFields): string[] {
  *
  * A last-resort vocabulary, used when a site has no modifiers column and its
  * niche says nothing the subjects do not already say. That case is common and
- * it is where the worst output came from: vu1nz.com covers "ci/cd security"
+ * it is where the worst output came from: a CI/CD security blog covering "ci/cd security"
  * and "supply chain security" under the niche "CI/CD and supply chain
  * security", so mining the niche yields only words the subjects already
  * contain — and a gate built from those admits "adt home security" and
@@ -217,7 +217,7 @@ export function resolveModifiers(
  * subject".
  *
  * Master tokens are excluded, and that exclusion is the fix for the sharpest
- * version of the original bug. On vu1nz.com the subject "devops security" and
+ * version of the original bug. On a CI/CD security blog the subject "devops security" and
  * the niche both contain "security"; without the subtraction, "adt home
  * security" matches the subject on `security` and then matches the anchor on
  * the very same word, satisfying a two-part test with one token. The anchor

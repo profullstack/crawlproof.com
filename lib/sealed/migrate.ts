@@ -145,22 +145,5 @@ export async function migrateOwnerSecrets(ownerId: string, publicKey: string): P
     );
   }
 
-  // Operator integrations saved by this admin (vu1nz token, in a jsonb field).
-  const { data: integ } = await sb.from("integrations").select("id, encrypted_credentials").eq("user_id", ownerId).is("org_id", null);
-  for (const row of (integ as { id: string; encrypted_credentials: Record<string, unknown> | null }[] | null) ?? []) {
-    const tok = row.encrypted_credentials?.api_token;
-    if (typeof tok !== "string" || !tok || isSealedValue(tok) || !open) continue;
-    try {
-      const sealed = await sealToPublicKey(publicKey, open(tok), ownerId, "integrations.vu1nz.api_token");
-      const { error } = await sb
-        .from("integrations")
-        .update({ encrypted_credentials: { ...row.encrypted_credentials, api_token: sealed } })
-        .eq("id", row.id);
-      if (error) report.failed++;
-      else report.migrated++;
-    } catch {
-      report.failed++;
-    }
-  }
   return report;
 }

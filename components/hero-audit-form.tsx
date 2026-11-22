@@ -136,9 +136,9 @@ export function HeroAuditForm({ defaultScan = "rule" }: { defaultScan?: HeroScan
       <p className="text-xs leading-relaxed text-[var(--color-muted)]">
         No email, no signup, no card. The report opens on-page in seconds — you
         can email yourself a PDF copy from the report once it&apos;s ready.{" "}
-        {/* Only two of the six free scanners can run anonymously, so the other
-            four were invisible from here — real, free, and reachable by nobody.
-            A link rather than four more radio buttons: the rest genuinely
+        {/* Only two of the five free scanners can run anonymously, so the other
+            three were invisible from here — real, free, and reachable by nobody.
+            A link rather than three more radio buttons: the rest genuinely
             require an account, and offering them in this selector would mean
             submitting a form that cannot succeed. */}
         <Link href="/tools" className="underline">
