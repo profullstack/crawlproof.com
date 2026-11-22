@@ -19,12 +19,19 @@ afterEach(() => vi.unstubAllGlobals());
 describe("sweepNative", () => {
   it("searches HN, Stack Overflow and GitHub and scores the results", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(respond(url)), { status: 200 })));
-    const r = await sweepNative({ terms: ["AEO audit"], keywords: ["AEO audit"], days: 7, minIntent: 1, now });
+    const r = await sweepNative({ terms: ["AEO audit"], keywords: ["AEO audit"], sources: ["forums", "github"], days: 7, minIntent: 1, now });
     expect(r.calls).toBe(3);
     const sources = r.hits.map((h) => h.source);
     expect(sources).toContain("hn");
     expect(sources).toContain("stackoverflow");
     expect(r.hits.find((h) => h.source === "hn")!.url).toBe("https://news.ycombinator.com/item?id=1");
+  });
+
+  it("leaves GitHub out unless the watch opts in", async () => {
+    const f = vi.fn(async (url: string) => new Response(JSON.stringify(respond(url)), { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    await sweepNative({ terms: ["x"], keywords: ["x"], days: 7, minIntent: 0, now });
+    expect(f.mock.calls.some((c) => String(c[0]).includes("api.github.com"))).toBe(false);
   });
 
   it("respects the watch's source selection", async () => {
