@@ -39,12 +39,15 @@ async function getJson(url: string, headers: Record<string, string> = {}): Promi
   return res.json();
 }
 
-type Raw = { source: string; url: string; title: string; snippet: string; postedAt: Date | null };
+type Raw = { source: string; url: string; title: string; snippet: string; postedAt: Date | null; body?: string };
 
 async function searchHN(term: string, sinceSec: number): Promise<Raw[]> {
-  const q = encodeURIComponent(term);
+  // Exact phrase, no typo tolerance: Algolia's default fuzzy/prefix matching
+  // returned 30 of 30 posts that never contained the term ("CRM" matched
+  // 26,593 posts in a week), and the scorer rightly dropped every one.
+  const q = encodeURIComponent(`"${term.replace(/"/g, "")}"`);
   const d = (await getJson(
-    `https://hn.algolia.com/api/v1/search_by_date?query=${q}&tags=(story,comment,ask_hn)&numericFilters=created_at_i>${sinceSec}&hitsPerPage=30`,
+    `https://hn.algolia.com/api/v1/search_by_date?query=${q}&tags=(story,comment,ask_hn)&numericFilters=created_at_i>${sinceSec}&hitsPerPage=50&typoTolerance=false&advancedSyntax=true`,
   )) as { hits?: Array<Record<string, unknown>> };
   return (d.hits ?? []).map((h) => {
     const id = String(h.objectID);
@@ -55,6 +58,7 @@ async function searchHN(term: string, sinceSec: number): Promise<Raw[]> {
       url: `https://news.ycombinator.com/item?id=${id}`,
       title: strip(title),
       snippet: body.slice(0, 600),
+      body: body.slice(0, 8000),
       postedAt: typeof h.created_at_i === "number" ? new Date(h.created_at_i * 1000) : null,
     };
   });
@@ -73,6 +77,7 @@ async function searchStackOverflow(term: string, sinceSec: number): Promise<Raw[
         : `https://stackoverflow.com/q/${String(i.question_id)}`,
     title: strip(i.title as string),
     snippet: strip((i.excerpt as string) ?? (i.body as string)).slice(0, 600),
+    body: strip((i.body as string) ?? (i.excerpt as string)).slice(0, 8000),
     postedAt: typeof i.creation_date === "number" ? new Date(i.creation_date * 1000) : null,
   }));
 }
@@ -87,6 +92,7 @@ async function searchGitHub(term: string, since: Date): Promise<Raw[]> {
     url: String(i.html_url),
     title: String(i.title ?? ""),
     snippet: strip(i.body as string).slice(0, 600),
+    body: strip(i.body as string).slice(0, 8000),
     postedAt: i.created_at ? new Date(String(i.created_at)) : null,
   }));
 }
@@ -133,7 +139,8 @@ export async function sweepNative(input: {
       if (!raw.url || seen.has(raw.url)) continue;
       seen.add(raw.url);
       const signal = scoreIntent({
-        text: `${raw.title}\n${raw.snippet}`,
+        // Score the whole post: the buying phrase is often past the snippet.
+        text: `${raw.title}\n${raw.body ?? raw.snippet}`,
         postedAt: raw.postedAt,
         keywords: input.keywords,
         negativeKeywords: input.negativeKeywords,
