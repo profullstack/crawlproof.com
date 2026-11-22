@@ -21,6 +21,7 @@ export async function SiteHeader() {
           >
             Hire us
           </Link>
+          <Link href="/products">Products</Link>
           <Link href="/monitor">Monitoring</Link>
           <Link href="/pricing">Pricing</Link>
           <Link href="/ads">Ads</Link>

@@ -48,6 +48,8 @@ export type MonitorSubscription = {
   plan: MonitorPlanId;
   site_limit: number;
   status: "pending" | "active" | "canceled" | "expired";
+  /** A free-trial row: active, never paid, ends with the account trial. */
+  is_trial?: boolean;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   funnel_source: FunnelSource;
@@ -211,6 +213,46 @@ function newWatchSecret(): string {
 }
 
 /** Put one site on a subscription: create or take over the matching watch, pre-verified, weekly. */
+/**
+ * Free-trial monitoring: an active Solo subscription nobody paid for, ending
+ * with the account's 30-day trial. One per account, no card. Paying during the
+ * trial extends it (nextPeriodEnd counts from current_period_end), and the
+ * usual renewal reminder goes out five days before the trial ends.
+ */
+export async function startMonitorTrial(
+  svc: Svc,
+  user: { id: string; email: string },
+  now = new Date(),
+): Promise<{ ok: true; subscriptionId: string } | { ok: false; error: string }> {
+  const { data: prof } = await svc.from("profiles").select("trial_ends_at").eq("id", user.id).maybeSingle();
+  const endsAt = (prof?.trial_ends_at as string | null | undefined) ?? null;
+  if (!endsAt || Date.parse(endsAt) <= now.getTime()) return { ok: false, error: "Your free trial has ended." };
+  const { data: existing } = await svc
+    .from("monitor_subscriptions")
+    .select("id, status, is_trial")
+    .eq("owner_id", user.id)
+    .or("is_trial.eq.true,status.eq.active")
+    .limit(1);
+  if (existing?.length) return { ok: false, error: "You already have monitoring (or used the trial)." };
+  const plan = MONITOR_PLANS.solo;
+  const { data, error } = await svc
+    .from("monitor_subscriptions")
+    .insert({
+      owner_id: user.id,
+      email: user.email,
+      plan: plan.id,
+      site_limit: plan.siteLimit,
+      status: "active",
+      is_trial: true,
+      current_period_end: endsAt,
+      funnel_source: "organic",
+    })
+    .select("id")
+    .single();
+  if (error || !data) return { ok: false, error: error?.message ?? "Could not start the trial." };
+  return { ok: true, subscriptionId: data.id as string };
+}
+
 export async function addMonitorSite(
   svc: Svc,
   sub: Pick<MonitorSubscription, "id" | "email" | "site_limit">,

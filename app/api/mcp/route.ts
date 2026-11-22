@@ -24,6 +24,7 @@ import { registerActorTools } from "@/lib/mcp/actors";
 import { registerCreditTools } from "@/lib/mcp/credits";
 import { registerWebhookTools } from "@/lib/mcp/webhooks";
 import { registerTrendTools } from "@/lib/mcp/trends";
+import { registerIntentTools } from "@/lib/mcp/intent";
 import { withToolHints } from "@/lib/mcp/annotations";
 
 export const runtime = "nodejs";
@@ -43,6 +44,7 @@ const handler = createMcpHandler(
     registerCreditTools(server);
     registerWebhookTools(server);
     registerTrendTools(server);
+    registerIntentTools(server);
     addListCacheFields(server);
   },
   {},

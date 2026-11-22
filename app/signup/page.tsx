@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TRIAL_CREDITS, TRIAL_DAYS } from "@/lib/trial";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { INVITE_BONUS_CREDITS, INVITE_COOKIE } from "@/lib/creditCodes";
@@ -8,11 +9,11 @@ import { SignupForm } from "./form";
 export const metadata = {
   title: "Sign up",
   description:
-    "Create a free CrawlProof account — get 20 free credits to run AEO audits across LLM engines.",
+    "Create a free CrawlProof account: every paid feature free for 30 days, no card required.",
   alternates: { canonical: "/signup" },
   openGraph: {
     title: "Sign up for CrawlProof",
-    description: "Create a free CrawlProof account — get 20 free credits to start.",
+    description: "Every paid CrawlProof feature free for 30 days. No card required.",
     url: "/signup",
   },
 };
@@ -41,7 +42,11 @@ export default async function SignupPage({
       </Link>
       <h1 className="mt-6 text-3xl font-bold">Create your account</h1>
       <p className="mt-2 text-[var(--color-muted)]">
-        Free tier: 10 audits/day per IP, no card required.
+        Every paid feature free for {TRIAL_DAYS} days: {TRIAL_CREDITS} trial credits for Buyer Intent, AI scans,
+        lead generation and autoblog, plus Solo monitoring. No card required, nothing renews.{" "}
+        <Link href="/products" className="underline">
+          See what is included
+        </Link>
       </p>
       {invite && (
         <div className="card mt-4 p-3 text-sm">

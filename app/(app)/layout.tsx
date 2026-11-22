@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { SiteFooter } from "@/components/site-footer";
+import { trialStatus } from "@/lib/trial";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -12,9 +13,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, email, credits_balance, is_admin")
+    .select("display_name, email, credits_balance, trial_credits, trial_ends_at, is_admin")
     .eq("id", user.id)
     .maybeSingle();
+
+  const trial = trialStatus(profile);
 
   return (
     <div>
@@ -43,6 +46,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/recent">Recent</Link>
             <Link href="/dashboard/projects/new">New</Link>
             <Link href="/dashboard/ads">Ads</Link>
+            <Link href="/dashboard/intent">Buyer intent</Link>
             <Link href="/dashboard/promote">Promote</Link>
             <Link href="/dashboard/affiliate">Affiliate</Link>
             <Link href="/dashboard/invites">Invites</Link>
@@ -52,6 +56,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <a href="/blog" target="_blank" rel="noreferrer">Blog ↗</a>
             {profile?.is_admin && <Link href="/dashboard/admin">Admin</Link>}
             <Link href="/dashboard/settings">Settings</Link>
+            {trial.active && (
+              <Link
+                href="/products"
+                className="badge badge-warn font-mono"
+                title={`Free trial: every paid feature, no card. ${trial.creditsLeft} trial credits left, spent before your own.`}
+              >
+                Trial · {trial.daysLeft}d · {trial.creditsLeft} cr
+              </Link>
+            )}
             <Link
               href="/dashboard/settings/billing"
               className="badge badge-pass font-mono"

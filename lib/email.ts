@@ -616,6 +616,43 @@ export async function sendHireInquiryEmail(input: {
   return { sent: true };
 }
 
+/** Buyer Intent digest: the new leads one watch run found, best first. */
+export async function sendIntentDigestEmail(input: {
+  to: string;
+  watchName: string;
+  leads: Array<{ title: string; url: string; source: string; score: number; tierLabel: string; snippet: string }>;
+  inboxUrl: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  const c = client();
+  if (!c) return { sent: false, error: "RESEND_API_KEY not set" };
+  const promo = await receiptPromo(input.to);
+  const rows = input.leads
+    .slice(0, 20)
+    .map(
+      (l) => `<tr><td style="padding:10px 32px;border-top:1px solid #1f2630;">
+  <div style="font-size:12px;color:#64748b;">${escapeHtml(l.source)} · ${escapeHtml(l.tierLabel)} · ${l.score}</div>
+  <a href="${escapeHtml(l.url)}" style="color:#6ee7b7;font-weight:600;">${escapeHtml(l.title || l.url)}</a>
+  <div style="font-size:13px;color:#9aa3b2;margin-top:4px;">${escapeHtml(l.snippet.slice(0, 220))}</div>
+</td></tr>`,
+    )
+    .join("");
+  const res = await c.send({
+    from: env.resendFrom,
+    to: input.to,
+    subject: `${input.leads.length} new buyer-intent lead${input.leads.length === 1 ? "" : "s"} for ${input.watchName}`,
+    html: emailShell({
+      title: "New buyer-intent leads",
+      innerHtml: `<tr><td style="padding:20px 32px 8px;"><h1 style="margin:0;font-size:20px;">New leads for ${escapeHtml(input.watchName)}</h1>
+<p style="color:#9aa3b2;font-size:14px;">Ranked by buying intent. Open the thread and reply yourself; CrawlProof never posts for you.</p>
+<p><a href="${escapeHtml(input.inboxUrl)}" style="color:#6ee7b7;">Open your inbox and draft replies</a></p></td></tr>${rows}
+<tr><td style="padding:16px 32px;">${promo.html}</td></tr>`,
+      footerNote: "You get this because email digests are on for this watch. Turn them off in Buyer intent settings.",
+    }),
+  });
+  if (!res.sent) return { sent: false, error: res.error };
+  return { sent: true };
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")

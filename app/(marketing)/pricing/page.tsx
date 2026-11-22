@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PASS_CREDITS } from "@/lib/coinpay-pass";
+import { TRIAL_CREDITS, TRIAL_DAYS } from "@/lib/trial";
 import { MonitorPlans, MONITOR_PAYMENT_NOTE } from "@/components/monitor-plans";
 import {
   ANON_DAILY_SCANS,
@@ -38,6 +39,23 @@ export default function PricingPage() {
         The AI-visibility audit is free. Weekly monitoring re-runs it on your sites and emails
         you when a score moves.
       </p>
+      <div className="card mx-auto mt-8 flex max-w-4xl flex-wrap items-center justify-between gap-4 p-5 ring-2 ring-[var(--color-accent)]">
+        <div>
+          <div className="font-bold">Every paid feature free for {TRIAL_DAYS} days. No card required.</div>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            {TRIAL_CREDITS} trial credits (spent before your own) for Buyer Intent, AI-model scans, lead generation,
+            outreach and autoblog, plus Solo monitoring until the trial ends. Nothing renews.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Link href="/signup" className="btn btn-primary">
+            Start free trial
+          </Link>
+          <Link href="/products" className="btn">
+            All products
+          </Link>
+        </div>
+      </div>
       <div className="mx-auto mt-8 max-w-4xl">
         <MonitorPlans />
         <p className="mt-4 text-center text-sm text-[var(--color-muted)]">{MONITOR_PAYMENT_NOTE}</p>

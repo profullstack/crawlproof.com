@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { SCAN_CREDITS } from "@/lib/credits";
+import { CREDIT_COLUMNS, spendableCredits, type TrialProfile } from "@/lib/trial";
 
 export type ArticleChargeSource = "entitlement" | "credit" | "none";
 
@@ -132,11 +133,11 @@ export async function getArticleGenerationCapacity(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("credits_balance")
+    .select(CREDIT_COLUMNS)
     .eq("id", ownerId)
     .maybeSingle();
-  const creditsBalance =
-    (profile?.credits_balance as number | null | undefined) ?? 0;
+  // Trial credits count: consume_credit spends them first.
+  const creditsBalance = spendableCredits(profile as TrialProfile | null);
   return {
     ok: creditsBalance >= SCAN_CREDITS,
     source: creditsBalance >= SCAN_CREDITS ? "credit" : "none",
