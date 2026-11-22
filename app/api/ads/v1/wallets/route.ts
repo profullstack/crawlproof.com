@@ -4,6 +4,7 @@ import { serviceClient } from "@/lib/supabase/service";
 import { coinpayConfig, COINPAY_ISSUER, resolveCoinpayUser, supabaseCoinpayStore } from "@/lib/coinpay-signin";
 import { fetchGlobalCoinpayWallets } from "@/lib/coinpay-wallet-data";
 import { globalWalletProfile, saveGlobalWalletProfile } from "@/lib/coinpay-wallets";
+import { COINPAY_UA } from "@/lib/coinpay-ua";
 export const runtime="nodejs";
 export async function GET(req: NextRequest) {
   const auth=await authenticateBearer(req);if(!auth.ok)return NextResponse.json({error:auth.error},{status:auth.status});
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
   if(typeof token!=="string" || !token || token.length>16384)return NextResponse.json({error:"Sign in with the CoinPay CLI first."},{status:400});
   const issuer=coinpayConfig()?.issuer??COINPAY_ISSUER;
   try {
-    const headers={authorization:`Bearer ${token}`,accept:"application/json"};
+    const headers={authorization:`Bearer ${token}`,accept:"application/json","user-agent":COINPAY_UA};
     let response=await fetch(issuer+"/api/oauth/userinfo",{headers,signal:AbortSignal.timeout(15000),cache:"no-store"});
     let claims: {sub:string; email:null;name:null};
     if(response.ok){const info=await response.json();if(typeof info.sub!=="string"||!info.sub)throw Error();claims={sub:info.sub,email:null,name:null};}

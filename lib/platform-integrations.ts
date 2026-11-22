@@ -8,6 +8,7 @@ import {
   operatorStatus,
   saveOperatorSecret,
 } from "@/lib/sealed/operator";
+import { COINPAY_UA } from "./coinpay-ua";
 
 const VU1NZ_PROVIDER = "vu1nz";
 const VU1NZ_NAME = "website-scanner";
@@ -386,7 +387,7 @@ export async function saveCoinPayPortalConnection(input: {
   if (!merchantId) throw new Error("CoinPay Portal business ID is required.");
   if (apiKey) {
     const probe = await fetch(`${COINPAY_ENDPOINT}/api/supported-coins?active_only=true`, {
-      headers: { authorization: `Bearer ${apiKey}` },
+      headers: { authorization: `Bearer ${apiKey}`, "user-agent": COINPAY_UA },
       cache: "no-store",
     });
     if (!probe.ok) throw new Error(`CoinPay Portal rejected this key (HTTP ${probe.status}).`);

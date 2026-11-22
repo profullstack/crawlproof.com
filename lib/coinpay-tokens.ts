@@ -1,5 +1,6 @@
 import { coinPayApiBase } from "@/lib/coinpay";
 import { getCoinPayPortalConnection } from "@/lib/platform-integrations";
+import { COINPAY_UA } from "./coinpay-ua";
 
 // CoinPay returns wallets the merchant has configured for the business.
 // Upstream endpoint: GET {COINPAY_API_URL}/api/supported-coins
@@ -58,7 +59,7 @@ export async function fetchSupportedTokens(opts?: {
   const url = `${base}/api/supported-coins?active_only=true`;
   try {
     const res = await fetch(url, {
-      headers: { authorization: `Bearer ${coinpay.apiKey}` },
+      headers: { authorization: `Bearer ${coinpay.apiKey}`, "user-agent": COINPAY_UA },
       cache: "no-store",
     });
     if (!res.ok) {

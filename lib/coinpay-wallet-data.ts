@@ -1,3 +1,4 @@
+import { COINPAY_UA } from "./coinpay-ua";
 /** Public receive-address metadata only. No keys or bearer tokens are stored. */
 export type GlobalCoinpayWallet = { id: string; address: string; currency: string; label: string | null };
 const PRIORITY = ["usdc_pol", "usdc_eth", "usdc_sol", "usdt_pol", "usdt_eth", "sol", "eth", "btc"];
@@ -20,7 +21,7 @@ export function normalizeGlobalWallets(raw: unknown): GlobalCoinpayWallet[] {
 }
 export async function fetchGlobalCoinpayWallets(issuer: string, token: string, doFetch: typeof fetch = fetch): Promise<GlobalCoinpayWallet[]> {
   const r = await doFetch(issuer.replace(/\/+$/, "") + "/api/wallets?source=all", {
-    headers: { authorization: `Bearer ${token}`, accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15_000),
+    headers: { authorization: `Bearer ${token}`, "user-agent": COINPAY_UA, accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15_000),
   });
   if (!r.ok) throw new Error(r.status === 403 ? "CoinPay wallet permission is needed. Connect CoinPay wallets again." : "CoinPay wallets are unavailable. Try again.");
   const j = await r.json();
