@@ -3,6 +3,7 @@
 import { createHmac } from "node:crypto";
 import { LEAD_RUN_CREDITS } from "@/lib/credits";
 import { INTENT_SOURCES } from "@/lib/outreach/intentSources";
+import { NATIVE_SOURCES } from "./native";
 
 export type LeadTier = "hot" | "engage" | "monitor";
 export type Cadence = "daily" | "4h" | "hourly";
@@ -40,9 +41,10 @@ export const KEYWORD_CALL_BUDGET = 8;
 export const COMPETITOR_CALL_BUDGET = 4;
 export const MAX_WATCHES_PER_OWNER = 10;
 
-export const SOURCE_IDS = INTENT_SOURCES.map((s) => s.id);
+/** Ids a watch may select: the SERP groups plus GitHub, which only the native path searches. */
+export const SOURCE_IDS = [...INTENT_SOURCES.map((s) => s.id), "github"];
 export function sourceLabel(id: string): string {
-  return INTENT_SOURCES.find((s) => s.id === id)?.label ?? id;
+  return INTENT_SOURCES.find((s) => s.id === id)?.label ?? NATIVE_SOURCES.find((s) => s.id === id)?.label ?? id;
 }
 
 export function isCadence(v: unknown): v is Cadence {

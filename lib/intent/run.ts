@@ -4,7 +4,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sweepIntent, type IntentHit } from "@/lib/outreach/intentSources";
-import { refundCredit } from "@/lib/rateLimit";
+import { spendableCredits, CREDIT_COLUMNS, type TrialProfile } from "@/lib/trial";
+import { sweepNative } from "./native";
 import { deliverLeads, type DeliveryResult } from "./deliver";
 import {
   COMPETITOR_CALL_BUDGET,
@@ -56,11 +57,10 @@ export async function runIntentWatch(svc: Svc, watch: IntentWatch, now = new Dat
     return { ok: false, error: "Add at least one keyword or competitor.", status: 400 };
   }
 
-  const { data: paid, error: payErr } = await svc.rpc("consume_credit", {
-    p_owner: watch.owner_id,
-    p_count: INTENT_SWEEP_CREDITS,
-  });
-  if (payErr || !paid) {
+  // Check the balance up front, but charge only after a search actually ran:
+  // a sweep that could not reach any source must not cost anything.
+  const { data: prof } = await svc.from("profiles").select(CREDIT_COLUMNS).eq("id", watch.owner_id).maybeSingle();
+  if (spendableCredits(prof as TrialProfile | null) < INTENT_SWEEP_CREDITS) {
     const msg = `Out of credits: a sweep costs ${INTENT_SWEEP_CREDITS}. Buy credits to resume this watch.`;
     await svc.from("intent_watches").update({ last_error: msg }).eq("id", watch.id);
     return { ok: false, error: msg, status: 402 };
@@ -71,6 +71,18 @@ export async function runIntentWatch(svc: Svc, watch: IntentWatch, now = new Dat
   let calls = 0;
   const hits: IntentHit[] = [];
   try {
+    const native = await sweepNative({
+      terms: [...watch.keywords.slice(0, 4), ...watch.competitors.slice(0, 2)],
+      keywords: [...watch.keywords, ...watch.competitors],
+      negativeKeywords: watch.negative_keywords,
+      sources: watch.sources,
+      days: cadence === "daily" ? 7 : 2,
+      minIntent: watch.min_score,
+      now,
+    });
+    calls += native.calls;
+    hits.push(...native.hits);
+    notes.push(...native.notes);
     if (watch.keywords.length) {
       const r = await sweepIntent({
         topic: watch.keywords.slice(0, 3).join(" OR "),
@@ -106,10 +118,24 @@ export async function runIntentWatch(svc: Svc, watch: IntentWatch, now = new Dat
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Search failed outright: give the credits back, nothing was delivered.
-    await refundCredit(watch.owner_id, INTENT_SWEEP_CREDITS).catch(() => null);
+    // Search failed outright: nothing was charged yet.
     await svc.from("intent_watches").update({ last_error: msg.slice(0, 500) }).eq("id", watch.id);
     return { ok: false, error: msg, status: 502 };
+  }
+
+  if (calls === 0) {
+    const msg = "No source could be searched this run (search providers unavailable). Nothing was charged.";
+    await svc.from("intent_watches").update({ last_error: msg }).eq("id", watch.id);
+    return { ok: false, error: msg, status: 503 };
+  }
+  const { data: paid, error: payErr } = await svc.rpc("consume_credit", {
+    p_owner: watch.owner_id,
+    p_count: INTENT_SWEEP_CREDITS,
+  });
+  if (payErr || !paid) {
+    const msg = `Out of credits: a sweep costs ${INTENT_SWEEP_CREDITS}. Buy credits to resume this watch.`;
+    await svc.from("intent_watches").update({ last_error: msg }).eq("id", watch.id);
+    return { ok: false, error: msg, status: 402 };
   }
 
   const byUrl = new Map<string, IntentHit>();
