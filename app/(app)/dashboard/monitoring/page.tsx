@@ -10,7 +10,8 @@ import {
   reconcilePendingMonitorPayments,
   type MonitorSubscription,
 } from "@/lib/monitoring";
-import { addSiteAction, removeSiteAction, setCancelAction } from "@/app/actions/monitoring";
+import { addSiteAction, removeSiteAction, setCancelAction, startTrialAction } from "@/app/actions/monitoring";
+import { trialStatus } from "@/lib/trial";
 
 export const metadata = { title: "Weekly monitoring" };
 export const dynamic = "force-dynamic";
@@ -60,6 +61,14 @@ export default async function MonitoringPage({
         .order("created_at", { ascending: true })
     : { data: [] };
   const watches = (watchRows ?? []) as Watch[];
+  const { data: prof } = await svc.from("profiles").select("trial_ends_at, trial_credits").eq("id", user!.id).maybeSingle();
+  const trial = trialStatus(prof);
+  const { count: trialRows } = await svc
+    .from("monitor_subscriptions")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", user!.id)
+    .eq("is_trial", true);
+  const canTrial = trial.active && !trialRows && !subs.some((s) => s.status === "active");
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-4 py-8 sm:px-6">
@@ -78,6 +87,20 @@ export default async function MonitoringPage({
       )}
       {sp.canceled && <div className="card p-4 text-sm">Checkout was cancelled. Nothing was charged.</div>}
 
+      {canTrial && (
+        <form action={startTrialAction} className="card space-y-3 border-[var(--color-accent)] p-6">
+          <h2 className="text-xl font-bold">Try Solo monitoring free for {trial.daysLeft} days</h2>
+          <p className="text-sm text-[var(--color-muted)]">
+            Part of your free trial. No card, nothing renews: one site re-audited every week until your trial ends,
+            then pay for a month only if you want to keep it.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <input name="url" className="input flex-1" placeholder="https://yoursite.com" />
+            <button className="btn btn-primary">Start free trial</button>
+          </div>
+        </form>
+      )}
+
       {subs.length === 0 && (
         <>
           <MonitorPlans />
@@ -95,13 +118,15 @@ export default async function MonitoringPage({
           <section key={sub.id} className="card space-y-5 p-6">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <h2 className="text-xl font-bold">
-                {plan.label} · {priceLabel(plan.amountCents)}/month
+                {plan.label} · {sub.is_trial ? "free trial" : `${priceLabel(plan.amountCents)}/month`}
               </h2>
               <span className="text-sm text-[var(--color-muted)]">
                 {active
                   ? sub.cancel_at_period_end
                     ? `Cancelled: runs until ${day(sub.current_period_end)}`
-                    : `Paid through ${day(sub.current_period_end)}`
+                    : sub.is_trial
+                      ? `Free until ${day(sub.current_period_end)}`
+                      : `Paid through ${day(sub.current_period_end)}`
                   : sub.status === "canceled"
                     ? "Cancelled"
                     : "Expired"}

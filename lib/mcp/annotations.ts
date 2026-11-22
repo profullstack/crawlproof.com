@@ -23,6 +23,12 @@ export interface ToolHints {
 }
 
 export const TOOL_HINTS: Record<string, ToolHints> = {
+  list_intent_watches: { title: "List buyer-intent watches", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  create_intent_watch: { title: "Create buyer-intent watch", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  run_intent_watch: { title: "Sweep buyer-intent watch", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  list_intent_leads: { title: "List buyer-intent leads", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  draft_intent_reply: { title: "Draft reply to a lead", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  set_intent_lead_status: { title: "Set lead status", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   list_actors: { title: "List declared actors", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   add_actor: { title: "Add declared actor", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   mint_actor_token: { title: "Mint actor token", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

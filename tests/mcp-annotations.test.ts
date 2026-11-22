@@ -17,13 +17,14 @@ import { registerActorTools } from "@/lib/mcp/actors";
 import { registerCreditTools } from "@/lib/mcp/credits";
 import { registerWebhookTools } from "@/lib/mcp/webhooks";
 import { registerTrendTools } from "@/lib/mcp/trends";
+import { registerIntentTools } from "@/lib/mcp/intent";
 
 async function listTools() {
   const server = new McpServer({ name: "crawlproof-test", version: "0" });
   withToolHints(server);
   for (const register of [
     registerPromoteTools, registerStatsTools, registerAuditTools, registerLeadTools, registerAutoblogTools,
-    registerAffiliateTools, registerActorTools, registerCreditTools, registerWebhookTools, registerTrendTools,
+    registerAffiliateTools, registerActorTools, registerCreditTools, registerWebhookTools, registerTrendTools, registerIntentTools,
   ]) register(server);
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
@@ -37,7 +38,7 @@ async function listTools() {
 describe("MCP tool annotations", () => {
   it("every listed tool has a title and readOnly/destructive/idempotent/openWorld hints", async () => {
     const tools = await listTools();
-    expect(tools.length).toBe(51);
+    expect(tools.length).toBe(57);
     expect(tools.map((t) => t.name).sort()).toEqual(Object.keys(TOOL_HINTS).sort());
     for (const t of tools) {
       expect(t.title, t.name).toBeTruthy();

@@ -1018,6 +1018,12 @@ ${ACTORS_USAGE}
       A component with no data is dropped, not counted as zero; ~ marks a
       sample under 25 human visits.
 
+  intent [watches|create|run|leads|reply|status] [--json]
+      Buyer intent: people asking for what you sell on Reddit, HN, Stack
+      Exchange, X, LinkedIn and review sites, ranked hot / worth engaging /
+      monitor. 'leads --csv' exports; 'reply <lead>' drafts a reply you post
+      yourself. Needs an API token.
+
   redeem <CR-XXXX-XXXX-XXXX-XXXX> [--json]
       Redeem a credit code someone gave you; the scan credits land on your
       balance. Needs an API token.
@@ -1100,6 +1106,24 @@ async function main() {
           write: (line: string) => process.stdout.write(`${line}\n`),
           error: (line: string) => console.error(line),
         });
+      case "intent": {
+        const { runIntent } = await import("../lib/intent/cli");
+        return await runIntent(
+          args.positional,
+          args.flags as Record<string, string | boolean>,
+          (method, path, body) => apiCall(args, method, path, body),
+          {
+            write: (line: string) => process.stdout.write(`${line}\n`),
+            error: (line: string) => console.error(line),
+          },
+          async (path) => {
+            const token = apiToken(args);
+            if (!token) throw new Error("No API token. Set CRAWLPROOF_TOKEN or pass --token.");
+            const res = await fetch(`${apiBase(args)}${path}`, { headers: { authorization: `Bearer ${token}` } });
+            return { status: res.status, text: await res.text() };
+          },
+        );
+      }
       case "invites":
         return await runInvites(args.positional, args.flags as Record<string, string | boolean>, (method, path, body) => apiCall(args, method, path, body), {
           write: (line: string) => process.stdout.write(`${line}\n`),

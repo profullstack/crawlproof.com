@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { enqueueGuestPostGenerate } from "@/lib/lx/workerClient";
 import { getProjectById } from "@/lib/lx/currentSite";
 import { serviceClient } from "@/lib/supabase/service";
+import { CREDIT_COLUMNS, spendableCredits, type TrialProfile } from "@/lib/trial";
 import { SCAN_CREDITS } from "@/lib/credits";
 
 export const runtime = "nodejs";
@@ -67,10 +68,10 @@ export async function POST(req: NextRequest) {
   // consume_credit before doing any LLM work.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("credits_balance")
+    .select(CREDIT_COLUMNS)
     .eq("id", user.id)
     .maybeSingle();
-  const balance = (profile?.credits_balance as number | null | undefined) ?? 0;
+  const balance = spendableCredits(profile as TrialProfile | null);
   if (balance < SCAN_CREDITS) {
     return NextResponse.json(
       {

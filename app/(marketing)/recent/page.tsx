@@ -6,6 +6,7 @@ import { env } from "@/lib/env";
 import { createSeoAeoMetadata } from "@/lib/seo/seo-aeo-meta";
 import { listUserOrgs } from "@/lib/orgs";
 import { RecentOutreachForm, type OutreachHistoryItem } from "./outreach-form";
+import { CREDIT_COLUMNS, spendableCredits, type TrialProfile } from "@/lib/trial";
 import { deriveOutreachStatus, type OutreachSocialPost } from "@/lib/sp/outreachStatus";
 
 export const dynamic = "force-dynamic";
@@ -293,11 +294,10 @@ async function firstOwnedOrg(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("credits_balance")
+    .select(CREDIT_COLUMNS)
     .eq("id", userId)
     .maybeSingle();
-  const creditsBalance =
-    (profile?.credits_balance as number | null | undefined) ?? 0;
+  const creditsBalance = spendableCredits(profile as TrialProfile | null);
   return { org: owned, creditsBalance };
 }
 
