@@ -1,6 +1,7 @@
 import { verifyCoinPayWebhook } from "@profullstack/stack/coinpay";
 import { env } from "./env";
 import { getCoinPayPortalConnection } from "@/lib/platform-integrations";
+import { COINPAY_UA } from "./coinpay-ua";
 
 // CoinPay HTTP client.
 //
@@ -93,6 +94,7 @@ export async function createCheckoutSession(input: CreateSessionInput): Promise<
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${connection.apiKey}`,
+      "user-agent": COINPAY_UA,
     },
     body: JSON.stringify(checkoutSessionBody(input)),
   });
@@ -136,7 +138,7 @@ export async function selectSessionMethod(sessionId: string, method: string): Pr
     if (!connection.apiUrl) return null;
     const res = await fetch(`${coinpayBase(connection.apiUrl)}/api/checkout/sessions/${sessionId}/select`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "user-agent": COINPAY_UA },
       body: JSON.stringify({ method: method.toUpperCase() }),
     });
     if (!res.ok) return null;
@@ -160,7 +162,7 @@ export async function getCheckoutSession(sessionId: string): Promise<SessionStat
   const connection = await getCoinPayPortalConnection();
   if (!connection.apiUrl) return null;
   const res = await fetch(`${coinpayBase(connection.apiUrl)}/api/checkout/sessions/${sessionId}`, {
-    headers: connection.apiKey ? { authorization: `Bearer ${connection.apiKey}` } : {},
+    headers: connection.apiKey ? { authorization: `Bearer ${connection.apiKey}`, "user-agent": COINPAY_UA } : { "user-agent": COINPAY_UA },
     cache: "no-store",
   });
   if (!res.ok) return null;
@@ -239,7 +241,7 @@ export async function getPaymentStatus(
 ): Promise<PaymentStatusResult | null> {
   const connection = await getCoinPayPortalConnection();
   if (!connection.apiUrl) return null;
-  const res = await fetch(`${coinpayBase(connection.apiUrl)}/api/payments/${encodeURIComponent(paymentId)}`, { cache: "no-store" });
+  const res = await fetch(`${coinpayBase(connection.apiUrl)}/api/payments/${encodeURIComponent(paymentId)}`, { headers: { "user-agent": COINPAY_UA }, cache: "no-store" });
   if (!res.ok) return null;
   const json = (await res.json()) as { payment?: CoinPayPayment };
   const p = json.payment;
@@ -301,6 +303,7 @@ export async function createCryptoPayout(
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${connection.apiKey}`,
+        "user-agent": COINPAY_UA,
       },
       body: JSON.stringify({
         recipient_email: input.recipientEmail,

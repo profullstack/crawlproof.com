@@ -20,6 +20,7 @@ import { resolveCoinPayAccountLink } from "@profullstack/coinpay-onboard/identit
 import { passFromUserinfo, type CoinpayPass } from "@profullstack/coinpay-onboard/pass";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { COINPAY_UA } from "./coinpay-ua";
 
 export const COINPAY_ISSUER = "https://coinpayportal.com";
 export const COINPAY_SCOPES = "openid profile email";
@@ -159,7 +160,7 @@ export async function fetchCoinpayClaims(
 ): Promise<{ ok: true; claims: CoinpayClaims; wallets?: GlobalCoinpayWallet[] } | { ok: false; error: string }> {
   const tokenRes = await doFetch(cfg.issuer + "/api/oauth/token", {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", "user-agent": COINPAY_UA },
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code: input.code,
@@ -173,7 +174,7 @@ export async function fetchCoinpayClaims(
   const tok = (await tokenRes.json().catch(() => ({}))) as Record<string, unknown>;
   if (!tokenRes.ok || typeof tok.access_token !== "string") return { ok: false, error: "CoinPay refused the code" };
   const infoRes = await doFetch(cfg.issuer + "/api/oauth/userinfo", {
-    headers: { authorization: `Bearer ${tok.access_token}`, accept: "application/json" },
+    headers: { authorization: `Bearer ${tok.access_token}`, "user-agent": COINPAY_UA, accept: "application/json" },
     signal: AbortSignal.timeout(20_000),
   });
   const info = (await infoRes.json().catch(() => ({}))) as Record<string, unknown>;

@@ -13,7 +13,7 @@
         "@profullstack/ai-providers": "^0.3.1",
         "@profullstack/autoblog": "^0.5.1",
         "@profullstack/coinpay": "^0.25.0",
-        "@profullstack/coinpay-onboard": "^0.5.0",
+        "@profullstack/coinpay-onboard": "^0.5.1",
         "@profullstack/cross-promo": "^0.1.0",
         "@profullstack/fleetbar": "0.2.0",
         "@profullstack/footer": "latest",
@@ -24,7 +24,7 @@
         "@profullstack/stack": "^0.5.0",
         "@profullstack/webhooks": "0.2.1",
         "@profullstack/x402-client": "^0.3.0",
-        "@profullstack/x402-gateway": "^0.18.1",
+        "@profullstack/x402-gateway": "^0.18.2",
         "@supabase/ssr": "^0.12.7",
         "@supabase/supabase-js": "^2.118.0",
         "@types/nodemailer": "^8.0.2",
@@ -324,7 +324,7 @@
 
     "@profullstack/coinpay": ["@profullstack/coinpay@0.25.0", "", { "dependencies": { "@inquirer/prompts": "^8.3.0", "@noble/curves": "^1.6.0", "@noble/hashes": "^1.5.0", "@profullstack/hqtui": "^0.6.3", "@scure/bip32": "^1.5.0", "@scure/bip39": "^1.4.0" }, "bin": { "coinpay": "bin/coinpay.js" } }, "sha512-ZoK8COqBCdJXvr0fO5UWw9HPh88CdMBLycc/dU6kXwAyeIrwZ4WkBApisuDgs4leXNN+SMjwex2etgrEvlICTQ=="],
 
-    "@profullstack/coinpay-onboard": ["@profullstack/coinpay-onboard@0.5.0", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.32.2", "zod": "^4.6.7" }, "bin": { "coinpay-onboard": "bin/coinpay-onboard" } }, "sha512-yqSx3pgJLP521Km+XNNn9fyjbbHppgozuGTtzTln9yy+2I0h0bjqXSpsFPwoSgVb5QcyBx+Wzv5170Qb7va1iQ=="],
+    "@profullstack/coinpay-onboard": ["@profullstack/coinpay-onboard@0.5.1", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.32.2", "zod": "^4.6.7" }, "bin": { "coinpay-onboard": "bin/coinpay-onboard" } }, "sha512-vuM/1vYvkXP2E/tBcTBZ8JY4K49qtSPPY1N9XRQvIlcy0Sezr+spOf6vYBkRPhasKcFqda44MRLgxPseG9Kvdg=="],
 
     "@profullstack/cross-promo": ["@profullstack/cross-promo@0.1.0", "", { "bin": { "cross-promo": "bin/cross-promo.js" } }, "sha512-LQMxZSvApH1T+8WmMu/Nj1LqojXeTw6wAtpLfhuKFwx9eR36hQG/7vVIDkKpmU5zKw7UwARe20MOfFCak2+ejA=="],
 
@@ -354,7 +354,7 @@
 
     "@profullstack/x402-client": ["@profullstack/x402-client@0.3.0", "", { "dependencies": { "@noble/curves": "^2.4.0", "@noble/hashes": "^2.4.0" }, "bin": { "x402": "bin/x402.js" } }, "sha512-ytKhBrnjXFef2X2vgORw6d25tZfmo1qinxk/1mXlpeVticHP5UxidElFtjdjSt1LcHVlAEQR6m/+p4obmxDzJQ=="],
 
-    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.18.1", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-zc2JGLXMX8eCk7Mp4X91E175enOTNcWPZncKf3LXzoGE+XEhHDJHM1LRZkkY3x2pjLYX3AB11Vx/TP3cobSQ/g=="],
+    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.18.2", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-PM0S2ADXPKPvPLLlWVbEqMq+EhKxiNxg1wp0jeGf9S5tz2ZGaNIFqun69cO5lJGZgfh03ST4UkJZGr8CmvCWyg=="],
 
     "@redis/bloom": ["@redis/bloom@1.2.0", "", { "peerDependencies": { "@redis/client": "^1.0.0" } }, "sha512-HG2DFjYKbpNmVXsa0keLHp/3leGJz1mjh09f2RLGGLQZzSHpkmZWuwJbAvo3QcRY8p80m5+ZdXZdYOSBLlp7Cg=="],
 
