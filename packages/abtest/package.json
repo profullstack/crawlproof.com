@@ -1,0 +1,46 @@
+{
+  "name": "@profullstack/abtest",
+  "version": "0.1.0",
+  "description": "A/B tests for the Profullstack fleet: sticky deterministic arm assignment, conversion stats (Wilson CI, two-proportion z test, Bayesian probability to beat control, sample size per arm, plain-language verdict) and a client for the CrawlProof A/B test API.",
+  "license": "MIT",
+  "type": "module",
+  "homepage": "https://crawlproof.com/dashboard/experiments",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/profullstack/crawlproof.com.git",
+    "directory": "packages/abtest"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "abtest": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "node build.mjs"
+  },
+  "keywords": [
+    "ab testing",
+    "a/b test",
+    "experiments",
+    "split test",
+    "statistics",
+    "crawlproof"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
