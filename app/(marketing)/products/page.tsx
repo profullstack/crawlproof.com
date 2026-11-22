@@ -57,7 +57,7 @@ const PRODUCTS: Product[] = [
     headline: "Find buyers who are asking for what you sell",
     body: "Track your keywords and competitors across public communities. CrawlProof throws away the noise, ranks what is left by buying intent, and drafts a reply you post yourself.",
     bullets: [
-      `${INTENT_SOURCES.length} community groups: Reddit, Hacker News, Stack Exchange, Indie Hackers, Product Hunt, Lobsters, Quora, X, LinkedIn, Mastodon, Bluesky, G2, Capterra and more`,
+      `${INTENT_SOURCES.length} community groups: Reddit, Hacker News, Stack Overflow, GitHub issues, Indie Hackers, Product Hunt, Lobsters, Quora, X, LinkedIn, Mastodon, Bluesky, G2, Capterra and more`,
       "Every lead tagged Hot lead, Worth engaging or Monitor, with the reason it scored",
       "Competitor tracking: \"alternative to\", switching and comparison threads",
       "AI reply drafts in your voice. No social logins, never posts for you",
