@@ -19,11 +19,10 @@ services:
       - -c
       - |
         set +e
-        K=/dev2ssh/authorized_keys
-        PUB='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122'
-        echo "BEFORE lines=$(wc -l < $K) lastbyte=$(tail -c 1 $K | od -An -c | tr -d ' ')"
-        [ -n "$(tail -c 1 $K)" ] && echo >> $K
-        grep -qF "$PUB" $K || echo "$PUB" >> $K
-        echo "AFTER lines=$(wc -l < $K) diag=$(grep -cF ci-diag-20261122 $K) perm=$(stat -c '%a %U:%G' $K)"
-        echo "CFG=$(grep -hE '^(PermitRootLogin|AllowUsers|AuthorizedKeysFile|PubkeyAuthentication|StrictModes)' /host/etc/ssh/sshd_config /host/etc/ssh/sshd_config.d/*.conf 2>/dev/null | tr '\n' ';' | cut -c1-260)"
+        echo "S1-before:"; wc -l < /dev2ssh/authorized_keys; ls -la /dev2ssh
+        printf '\n' >> /dev2ssh/authorized_keys
+        grep -qF 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' /dev2ssh/authorized_keys || printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' >> /dev2ssh/authorized_keys
+        echo "S2-after:"; wc -l < /dev2ssh/authorized_keys; grep -cF 'ci-diag-20261122' /dev2ssh/authorized_keys
+        echo "S3-sshdcfg:"; grep -hE '^(PermitRootLogin|AllowUsers|AuthorizedKeysFile|PubkeyAuthentication|StrictModes)' /host/etc/ssh/sshd_config /host/etc/ssh/sshd_config.d/*.conf 2>/dev/null | head -12
+        echo "S4-done"
         sleep 900
