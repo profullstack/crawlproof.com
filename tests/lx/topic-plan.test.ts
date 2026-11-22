@@ -82,7 +82,7 @@ describe("resolveModifiers", () => {
   });
 
   it("subtracts the subjects from the niche-derived terms", () => {
-    // vu1nz.com: niche "CI/CD and supply chain security" says nothing its
+    // A CI/CD security blog: niche "CI/CD and supply chain security" says nothing its
     // own subjects do not already say. A term that is also a subject cannot
     // narrow anything, and keeping it is what admits "adt home security".
     const derived = resolveModifiers(

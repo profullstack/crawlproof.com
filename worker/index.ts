@@ -6,7 +6,6 @@ import { specAudit } from "../lib/audit/spec-engine";
 import { dnsAudit } from "../lib/audit/dns-engine";
 import { linksAudit } from "../lib/audit/links-engine";
 import { slopAudit } from "../lib/audit/slop-engine";
-import { vu1nzAudit } from "../lib/audit/vu1nz-engine";
 import { claudeAudit } from "../lib/audit/claude-engine";
 import { openaiAudit } from "../lib/audit/openai-engine";
 import { geminiAudit } from "../lib/audit/gemini-engine";
@@ -281,43 +280,6 @@ async function recordKeywordResearchFailure(siteId: string, error: string) {
 
 type Job = { auditId: string; pdfEmail?: string };
 
-async function vu1nzRepoTargets(projectId: string | null | undefined): Promise<string[]> {
-  if (!projectId) return [];
-  const { data, error } = await supabase
-    .from("project_repos")
-    .select("installation_id, repo_owner, repo_name")
-    .eq("project_id", projectId)
-    .order("added_at", { ascending: false });
-  if (error) {
-    console.warn(`[worker] vu1nz repo lookup failed project=${projectId}: ${error.message}`);
-    return [];
-  }
-
-  const rows = (data ?? []) as Array<{
-    installation_id: number;
-    repo_owner: string;
-    repo_name: string;
-  }>;
-  const targets: string[] = [];
-  for (const row of rows) {
-    const fullName = `${row.repo_owner}/${row.repo_name}`;
-    if (!/^[^/\s]+\/[^/\s]+$/.test(fullName)) continue;
-    try {
-      const token = await getOrMintInstallationToken(row.installation_id);
-      const repos = await listInstallationRepos(token);
-      const repo = repos.find((r) => r.full_name.toLowerCase() === fullName.toLowerCase());
-      if (repo && !repo.private) targets.push(repo.full_name);
-    } catch (error) {
-      console.warn(
-        `[worker] vu1nz repo visibility check failed repo=${fullName}: ${
-          error instanceof Error ? error.message : error
-        }`,
-      );
-    }
-  }
-  return targets;
-}
-
 async function processJob(job: Job) {
   const { auditId } = job;
   console.log(`[worker] running audit ${auditId}`);
@@ -361,7 +323,6 @@ async function processJob(job: Job) {
         | "dns"
         | "links"
         | "slop"
-        | "vu1nz"
         | "claude"
         | "openai"
         | "gemini"
@@ -415,14 +376,6 @@ async function processJob(job: Job) {
       markdown = r.markdown;
     } else if (engine === "slop") {
       const r = await slopAudit(audit.target_url);
-      score = r.score;
-      summary = r.summary;
-      findings = r.findings;
-      markdown = r.markdown;
-    } else if (engine === "vu1nz") {
-      const repoTargets = await vu1nzRepoTargets(audit.project_id as string | null);
-      const callbackUrl = `${siteUrl.replace(/\/$/, "")}/api/webhooks/vu1nz?audit_id=${encodeURIComponent(audit.id as string)}`;
-      const r = await vu1nzAudit(audit.target_url, { repoTargets, callbackUrl });
       score = r.score;
       summary = r.summary;
       findings = r.findings;

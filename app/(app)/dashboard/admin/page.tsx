@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/supabase/service";
 import Link from "next/link";
-import { GrantCreditsForm, Vu1nzIntegrationForm } from "./form";
+import { GrantCreditsForm } from "./form";
 import {
   CoinPayPortalConnectionForm,
   SmsHubConnectionForm,
@@ -13,7 +13,6 @@ import { env } from "@/lib/env";
 import {
   getCoinPayPortalConnectionStatus,
   getSmsHubConnectionStatus,
-  getVu1nzIntegrationStatus,
 } from "@/lib/platform-integrations";
 import { ProviderCostsPanel } from "./provider-costs-panel";
 
@@ -53,7 +52,6 @@ export default async function AdminPage() {
   const [
     { data: recentRaw },
     { data: integrationsRaw },
-    vu1nzIntegration,
     smsHubIntegration,
     coinPayPortalIntegration,
   ] = await Promise.all([
@@ -70,7 +68,6 @@ export default async function AdminPage() {
         "id, name, kind, access_token, created_at, last_used_at, request_count",
       )
       .order("created_at", { ascending: false }),
-    getVu1nzIntegrationStatus(),
     getSmsHubConnectionStatus(),
     getCoinPayPortalConnectionStatus(),
   ]);
@@ -164,15 +161,6 @@ export default async function AdminPage() {
             Compose &amp; send →
           </Link>
         </div>
-      </section>
-
-      <section className="card p-5">
-        <h2 className="text-lg font-semibold">Vu1nz scanner</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Platform API token for the Vu1nz website scanner engine. The token is
-          sealed under your key passphrase; background scans use it only while you are unlocked.
-        </p>
-        <Vu1nzIntegrationForm {...vu1nzIntegration} />
       </section>
 
       <section className="card p-5">

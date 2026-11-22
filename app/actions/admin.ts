@@ -6,14 +6,11 @@ import { serviceClient } from "@/lib/supabase/service";
 import {
   clearCoinPayPortalConnection as disableCoinPayPortalConnection,
   clearSmsHubConnection as disableSmsHubConnection,
-  clearVu1nzApiToken,
   getCoinPayPortalConnection,
   getSmsHubConnection,
   listSmsHubSenderNumbers,
-  getVu1nzApiToken,
   saveCoinPayPortalConnection as persistCoinPayPortalConnection,
   saveSmsHubConnection as persistSmsHubConnection,
-  saveVu1nzApiToken,
 } from "@/lib/platform-integrations";
 
 type Ok<T = undefined> = { ok: true } & (T extends undefined ? {} : T);
@@ -124,57 +121,6 @@ export async function grantCredits(input: {
 
   revalidatePath("/dashboard/admin");
   return { ok: true, recipientId: recipient.id, newBalance };
-}
-
-export async function saveVu1nzIntegration(input: {
-  apiToken?: string;
-  clear?: boolean;
-}): Promise<Ok | Err> {
-  const adminCheck = await assertAdmin();
-  if (!adminCheck.ok) return adminCheck;
-
-  try {
-    if (input.clear) {
-      await clearVu1nzApiToken(adminCheck.userId);
-    } else {
-      const apiToken = (input.apiToken ?? "").trim();
-      if (!apiToken) {
-        return { ok: false, error: "Paste the Vu1nz API token first." };
-      }
-      await saveVu1nzApiToken({ apiToken, userId: adminCheck.userId });
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Could not save Vu1nz integration.",
-    };
-  }
-
-  revalidatePath("/dashboard/admin");
-  return { ok: true };
-}
-
-export async function revealVu1nzIntegrationToken(): Promise<
-  Ok<{ apiToken: string }> | Err
-> {
-  const adminCheck = await assertAdmin();
-  if (!adminCheck.ok) return adminCheck;
-
-  try {
-    const apiToken = await getVu1nzApiToken();
-    if (!apiToken) {
-      return { ok: false, error: "Vu1nz API token is not configured." };
-    }
-    return { ok: true, apiToken };
-  } catch (error) {
-    return {
-      ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not reveal Vu1nz API token.",
-    };
-  }
 }
 
 export async function saveSmsHubPlatformIntegration(input: {

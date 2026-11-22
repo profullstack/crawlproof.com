@@ -18,7 +18,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/rankings/yc-fall-2026-ai-visibility`, changeFrequency: "weekly", priority: 0.8 },
     { url: `${base}/hire`, changeFrequency: "monthly", priority: 0.9 },
     { url: `${base}/slop`, changeFrequency: "monthly", priority: 0.9 },
-    // Hub for the six free scanners — the four that need an account had no
+    // Hub for the five free scanners — the three that need an account had no
     // inbound link anywhere before this page existed.
     { url: `${base}/tools`, changeFrequency: "monthly", priority: 0.9 },
     { url: `${base}/get-guide`, changeFrequency: "monthly", priority: 0.9 },

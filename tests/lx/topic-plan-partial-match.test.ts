@@ -50,7 +50,7 @@ const CASES: Case[] = [
     ],
   },
   {
-    domain: "vu1nz.com",
+    domain: "cicd-security.example",
     site: {
       master_keywords: [
         "ci/cd security", "supply chain security", "github actions security",

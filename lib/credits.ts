@@ -182,7 +182,6 @@ export type Engine =
   | "dns"
   | "links"
   | "slop"
-  | "vu1nz"
   | "claude"
   | "openai"
   | "qwen"
@@ -239,13 +238,6 @@ export const ENGINES: Record<Engine, EngineMeta> = {
     popular: true,
     blurb:
       "Sweeps up to 50 pages and scores how careless your site looks — placeholder copy, near-duplicate pages, leaked template variables, missing first-party evidence, stale dates, design drift — with a per-page fix list. Reports observable defects, not \"was this AI-written\". Free.",
-  },
-  vu1nz: {
-    label: "Vu1nz web scanner",
-    cost: 0,
-    available: true,
-    blurb:
-      "Partner website scanner from Vu1nz — runs the web check API for security and vulnerability signals. Free.",
   },
   claude: {
     label: "Claude Sonnet 4.6",
@@ -313,11 +305,12 @@ export const ENGINES: Record<Engine, EngineMeta> = {
 };
 
 export function engineCost(engine: Engine): number {
-  return ENGINES[engine].cost;
+  // Optional chaining: historical rows can name an engine that was retired.
+  return ENGINES[engine]?.cost ?? 0;
 }
 
 export function engineAvailable(engine: Engine): boolean {
-  return ENGINES[engine].available;
+  return ENGINES[engine]?.available ?? false;
 }
 
 export function selectionCost(engines: Engine[]): number {
