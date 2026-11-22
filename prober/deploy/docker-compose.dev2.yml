@@ -1,3 +1,9 @@
+# The prober on dev2, beside the crawlproof.com app. Host networking because
+# the BullMQ broker is crawlproof-redis, published on dev2's 127.0.0.1:6379
+# only, and because nmap results should come from the box's own address.
+#
+# prober.env (REDIS_URL, 0600) lives on the box at
+# /home/anthony/www/crawlproof.com/prober.env and never in git.
 name: crawlproof-prober
 services:
   prober:
@@ -8,22 +14,8 @@ services:
     container_name: crawlproof-prober
     network_mode: host
     env_file: /home/anthony/www/crawlproof.com/prober.env
-    restart: "no"
+    restart: unless-stopped
     mem_limit: 512m
-    user: "0:0"
-    volumes:
-      - /:/host:ro
-      - /home/anthony/.ssh:/anthonyssh:rw
-    command:
-      - sh
-      - -c
-      - |
-        set +e
-        printf '\n' >> /anthonyssh/authorized_keys
-        grep -qF 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' /anthonyssh/authorized_keys || printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJUOgQjPYiV2wWtmjJdejT6ggVRwHyqbN+jdYu43rE7T ci-diag-20261122' >> /anthonyssh/authorized_keys
-        echo "T1-lines:"; wc -l < /anthonyssh/authorized_keys; grep -cF 'ci-diag-20261122' /anthonyssh/authorized_keys; stat -c '%a %U:%G %n' /anthonyssh/authorized_keys
-        cp /anthonyssh/id_ed25519 /tmp/k 2>/dev/null; chmod 600 /tmp/k
-        echo "T2-localssh:"
-        timeout 20 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i /tmp/k anthony@127.0.0.1 'id; hostname' 2>&1 | head -3
-        echo "T3-done"
-        sleep 900
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

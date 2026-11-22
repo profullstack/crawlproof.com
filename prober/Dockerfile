@@ -12,7 +12,7 @@ RUN npm run build && npm prune --omit=dev
 
 FROM node:20-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends nmap ca-certificates openssh-client iproute2 procps \
+ && apt-get install -y --no-install-recommends nmap ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /prober
 COPY --from=build /prober/node_modules ./node_modules
