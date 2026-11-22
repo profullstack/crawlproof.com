@@ -14,6 +14,9 @@ export async function proxy(request: NextRequest) {
   // called by ChatGPT/Claude backends with no session and a 10 s budget: no
   // crawl gateway, no Supabase session refresh.
   if (isOAuthMachinePath(request.nextUrl.pathname)) return NextResponse.next();
+  // A/B test API: server-to-server calls from products, crp_ bearer only, no
+  // session to refresh, and a product's assign call must never meet a 402.
+  if (request.nextUrl.pathname.startsWith("/api/abtest/")) return NextResponse.next();
   // Ad routes enforce their gate themselves, before DB work. Avoid counting a
   // request twice or making an unrelated Supabase Auth call for each click.
   if (isAdClickPath(request.nextUrl.pathname)) return NextResponse.next();
