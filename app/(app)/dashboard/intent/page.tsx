@@ -294,7 +294,7 @@ function WatchForm({
   watch?: WatchLike;
 }) {
   const on = (s: string) =>
-    watch?.sources.length ? watch.sources.includes(s) : s === "github" || INTENT_SOURCES.find((x) => x.id === s)?.defaultOn;
+    watch?.sources.length ? watch.sources.includes(s) : INTENT_SOURCES.find((x) => x.id === s)?.defaultOn;
   return (
     <form id={id} action={action} className="card mt-10 grid gap-4 p-6 sm:grid-cols-2">
       <h2 className="text-xl font-bold sm:col-span-2">{title}</h2>
@@ -336,7 +336,7 @@ function WatchForm({
       <fieldset className="text-sm sm:col-span-2">
         <legend>Communities</legend>
         <div className="mt-2 flex flex-wrap gap-3">
-          {[...INTENT_SOURCES, { id: "github", label: "GitHub issues", defaultOn: true }].map((s) => (
+          {[...INTENT_SOURCES, { id: "github", label: "GitHub issues (feature requests)", defaultOn: false }].map((s) => (
             <label key={s.id} className="flex items-center gap-1">
               <input type="checkbox" name="sources" value={s.id} defaultChecked={on(s.id)} /> {s.label}
             </label>

@@ -16,6 +16,8 @@ The person replying sells something that may help the author. Write the reply th
 
 Rules:
 - Answer the author's actual question first, with something genuinely useful even if they never buy.
+- The first two sentences must be concrete help (a step, a check, a tool category, a pitfall) and must not name the product.
+- Never write "this is the right fit" or any sales line; one plain disclosure ("I build X, which does Y") at the end is the most allowed.
 - Mention the product at most once, plainly, and say you make it ("I build X"), never pretend to be a neutral user.
 - If the product is not a good fit for what they asked, do not mention it at all; just help.
 - 40 to 120 words. Plain text. No hashtags, no emoji, no bullet lists, no greeting like "Great question".

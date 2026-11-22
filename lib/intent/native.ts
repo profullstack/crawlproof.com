@@ -58,7 +58,7 @@ async function searchHN(term: string, sinceSec: number): Promise<Raw[]> {
       url: `https://news.ycombinator.com/item?id=${id}`,
       title: strip(title),
       snippet: body.slice(0, 600),
-      body: body.slice(0, 8000),
+      body: body.slice(0, 2000),
       postedAt: typeof h.created_at_i === "number" ? new Date(h.created_at_i * 1000) : null,
     };
   });
@@ -77,7 +77,7 @@ async function searchStackOverflow(term: string, sinceSec: number): Promise<Raw[
         : `https://stackoverflow.com/q/${String(i.question_id)}`,
     title: strip(i.title as string),
     snippet: strip((i.excerpt as string) ?? (i.body as string)).slice(0, 600),
-    body: strip((i.body as string) ?? (i.excerpt as string)).slice(0, 8000),
+    body: strip((i.body as string) ?? (i.excerpt as string)).slice(0, 2000),
     postedAt: typeof i.creation_date === "number" ? new Date(i.creation_date * 1000) : null,
   }));
 }
@@ -92,7 +92,7 @@ async function searchGitHub(term: string, since: Date): Promise<Raw[]> {
     url: String(i.html_url),
     title: String(i.title ?? ""),
     snippet: strip(i.body as string).slice(0, 600),
-    body: strip(i.body as string).slice(0, 8000),
+    body: strip(i.body as string).slice(0, 2000),
     postedAt: i.created_at ? new Date(String(i.created_at)) : null,
   }));
 }
@@ -117,10 +117,14 @@ export async function sweepNative(input: {
   const sinceSec = Math.floor(since.getTime() / 1000);
   const want = (id: string, group: string) =>
     !input.sources?.length || input.sources.includes(id) || input.sources.includes(group);
+  // GitHub is opt-in: most issues are maintainers' own to-do lists and reports,
+  // and the first live sweep scored one of those "Hot" (an internal docs review
+  // that named two competitors). Only search it when the watch picks it.
+  const wantGitHub = !!input.sources?.includes("github");
   const searches: Array<[string, (t: string) => Promise<Raw[]>]> = [];
   if (want("hn", "forums")) searches.push(["Hacker News", (t) => searchHN(t, sinceSec)]);
   if (want("stackoverflow", "forums")) searches.push(["Stack Overflow", (t) => searchStackOverflow(t, sinceSec)]);
-  if (want("github", "github")) searches.push(["GitHub", (t) => searchGitHub(t, since)]);
+  if (wantGitHub) searches.push(["GitHub", (t) => searchGitHub(t, since)]);
 
   const notes: string[] = [];
   const seen = new Set<string>();
