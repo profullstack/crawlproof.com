@@ -21,10 +21,16 @@ services:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}
+    # Prebuilt mode: deploy-app.sh sets APP_IMAGE=ghcr.io/profullstack/crawlproof-web:<sha>
+    # (built on GitHub Actions); the build section is only for an emergency hand build.
+    image: ${APP_IMAGE:-crawlproofcom-app:latest}
     restart: unless-stopped
+    mem_limit: 3g
+    memswap_limit: 3g
     env_file:
       - ./app.env
     environment:
+      NODE_OPTIONS: "--max-old-space-size=1024"  # dev2-site limits
       PORT: 3000
       WORKER_PORT: 9080
       WORKER_URL: http://127.0.0.1:9080
@@ -32,6 +38,11 @@ services:
       NODE_ENV: production
     ports:
       - "127.0.0.1:${APP_PORT:-3100}:3000"
+    networks:
+      - default
+      # ad-generator-agent: narration via the c0mpute speech gateway
+      # (alias c0mpute-speech-gateway:8787 on the Infernet network).
+      - infernet
     extra_hosts:
       # Lets the app reach the Supabase gateway and Redis on the host without
       # putting both compose projects on one network.
@@ -50,6 +61,8 @@ services:
     container_name: crawlproof-redis
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
     volumes:
       - ./volumes/redis:/data
@@ -67,3 +80,8 @@ services:
     logging:
       driver: json-file
       options: { max-size: "50m", max-file: "3" }
+
+networks:
+  infernet:
+    external: true
+    name: infernetprotocolcom_default

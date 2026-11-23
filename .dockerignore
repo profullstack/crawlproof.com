@@ -8,3 +8,5 @@ worker/dist
 *.log
 .DS_Store
 README.md
+.env.*
+!.env.example
