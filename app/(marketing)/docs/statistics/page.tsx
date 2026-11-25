@@ -98,6 +98,14 @@ export default function Layout({ children }) {
           <li>Button clicks and elements marked with tracking attributes.</li>
           <li>Form submits.</li>
           <li>Scroll milestones at 25%, 50%, 75%, and 100%.</li>
+          <li>
+            One <code className="font-mono">engaged</code> event per page
+            view once a person shows they are there (a real click, tap, key
+            press or wheel scroll, or 10 seconds with the page visible and
+            focused). Never sent when{" "}
+            <code className="font-mono">navigator.webdriver</code> is set. It
+            powers the Active users figure.
+          </li>
         </ul>
         <p className="text-sm leading-relaxed">
           Each request includes the project id, event name, current URL,

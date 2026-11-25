@@ -19,6 +19,7 @@ import { enqueuePostHogEvent } from "@/lib/posthog/events";
 import { pruneExitSessions, updateExitRollup } from "@/lib/tracker/exit";
 import { gateAgent } from "@/lib/tracker/agent-gate";
 import { refuse } from "@/lib/tracker/agent-response";
+import { engagedFromBeacon } from "@/lib/tracker/engaged";
 import { actorTokenFrom, applyDeclaration, resolveActor, type ResolvedActor } from "@/lib/tracker/actors";
 
 export const runtime = "nodejs";
@@ -226,6 +227,9 @@ async function ingest(request: NextRequest, parseBody: boolean) {
         p_pageview: event === "pageview",
         p_cap_events: SCRIPTED_CAP_EVENTS,
         p_cap_pageviews: SCRIPTED_CAP_PAGEVIEWS,
+        // Only the `engaged` beacon from the human side may mark the visitor;
+        // the RPC also refuses it for a row that is, or becomes, a bot.
+        p_engaged: engagedFromBeacon(event, declared.kind),
       });
       touch = parseVisitorTouch(data);
     } catch {

@@ -36,6 +36,8 @@ import {
   ALL_EVENTS_DEFINITION,
   BOTS_DEFINITION,
   BOTS_LABEL,
+  ACTIVE_USERS_DEFINITION,
+  ACTIVE_USERS_LABEL,
   HUMANS_DEFINITION,
   HUMANS_LABEL,
   VISITORS_DEFINITION,
@@ -49,6 +51,7 @@ import {
   visitorsPartial,
   type VisitorTotals,
 } from "@/lib/tracker/visitors";
+import { ENGAGED_CAPTION, engagedPartial, engagedRate, engagedRateLabel } from "@/lib/tracker/engaged";
 import {
   TrackerAnalytics,
   type TrackerListItem,
@@ -255,11 +258,20 @@ export default async function PortfolioAnalyticsPage({
   const visitorsTrend = portfolioVisitors
     ? computeTrend(portfolioVisitors.visitors, portfolioVisitors.prevVisitors)
     : null;
+  // Active users: the visitors whose browser showed a person was there
+  // (lib/tracker/engaged.ts). The tile carries the active rate under it.
+  const activeTrend = portfolioVisitors
+    ? computeTrend(portfolioVisitors.engaged, portfolioVisitors.prevEngaged)
+    : null;
+  const activeRate = portfolioVisitors
+    ? engagedRateLabel(portfolioVisitors.engaged, portfolioVisitors.visitors)
+    : null;
   const visitorsCaption = !visitorsByProject
     ? "Visitor counts are unavailable right now; the figures below count events."
-    : visitorsPartial(days)
-      ? VISITORS_CAPTION
-      : null;
+    : [
+        visitorsPartial(days) ? VISITORS_CAPTION : null,
+        engagedPartial(days) ? ENGAGED_CAPTION : null,
+      ].filter(Boolean).join(" ") || null;
 
   // Ranked by current-window HUMAN volume: the biggest properties get the
   // chart bands, and the daily-detail budget is spent on them first. Ranking
@@ -309,7 +321,7 @@ export default async function PortfolioAnalyticsPage({
       project,
       totals,
       visitors: visitorsByProject
-        ? (visitorsByProject.get(project.id) ?? { visitors: 0, prevVisitors: 0, pageviews: 0, prevPageviews: 0 })
+        ? (visitorsByProject.get(project.id) ?? { visitors: 0, prevVisitors: 0, pageviews: 0, prevPageviews: 0, engaged: 0, prevEngaged: 0 })
         : null,
       trend: computeTrend(totals.humans, totals.prevHumans),
       samples: byDay ? axis.map((day) => byDay.get(day) ?? 0) : null,
@@ -506,13 +518,22 @@ export default async function PortfolioAnalyticsPage({
         </p>
       </section>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {visitorsTrend && (
           <TrendMetric
             label={VISITORS_LABEL}
             trend={visitorsTrend}
             tone="accent"
             hint={VISITORS_DEFINITION}
+          />
+        )}
+        {activeTrend && (
+          <TrendMetric
+            label={ACTIVE_USERS_LABEL}
+            trend={activeTrend}
+            tone="pass"
+            hint={ACTIVE_USERS_DEFINITION}
+            sub={activeRate ?? undefined}
           />
         )}
         <TrendMetric
@@ -567,6 +588,10 @@ export default async function PortfolioAnalyticsPage({
                   <>
                     <span title={VISITORS_DEFINITION}>
                       {portfolioVisitors.visitors.toLocaleString()} human visitors
+                    </span>
+                    {" · "}
+                    <span title={ACTIVE_USERS_DEFINITION}>
+                      {portfolioVisitors.engaged.toLocaleString()} active users
                     </span>
                     {" · "}
                   </>
@@ -731,6 +756,9 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
             <th className="py-2 pr-3 text-right font-medium" title={VISITORS_DEFINITION}>
               Visitors
             </th>
+            <th className="py-2 pr-3 text-right font-medium" title={ACTIVE_USERS_DEFINITION}>
+              Active users
+            </th>
             <th className="py-2 pr-3 text-right font-medium" title={HUMANS_DEFINITION}>
               Events
             </th>
@@ -778,6 +806,14 @@ function ProjectTrendTable({ rows }: { rows: ProjectRow[] }) {
               </td>
               <td className="py-2 pr-3 text-right tabular-nums" title={VISITORS_DEFINITION}>
                 {visitors ? visitors.visitors.toLocaleString() : "—"}
+              </td>
+              <td className="py-2 pr-3 text-right tabular-nums" title={ACTIVE_USERS_DEFINITION}>
+                {visitors ? visitors.engaged.toLocaleString() : "—"}
+                {visitors && engagedRate(visitors.engaged, visitors.visitors) !== null && (
+                  <span className="ml-1 text-xs text-[var(--color-muted)]">
+                    ({engagedRate(visitors.engaged, visitors.visitors)}%)
+                  </span>
+                )}
               </td>
               <td className="py-2 pr-3 text-right tabular-nums" title={HUMANS_DEFINITION}>
                 {totals.humans.toLocaleString()}
@@ -831,12 +867,15 @@ function TrendMetric({
   trend,
   tone,
   hint,
+  sub,
 }: {
   label: string;
   trend: Trend;
   tone: "accent" | "pass" | "warn" | "muted";
   /** What this number counts; shown on hover and under the figure. */
   hint?: string;
+  /** A short second line under the figure, e.g. the active rate. */
+  sub?: string;
 }) {
   const color =
     tone === "pass"
@@ -856,6 +895,7 @@ function TrendMetric({
         <TrendChip trend={trend} />
         <span>from {trend.previous.toLocaleString()}</span>
       </p>
+      {sub && <p className="mt-1 text-xs font-medium text-[var(--color-muted)]">{sub}</p>}
       {hint && (
         <p className="mt-1 text-[11px] leading-snug text-[var(--color-muted)]">
           {hint}

@@ -91,7 +91,7 @@ describe("the nightly email", () => {
     expect(html).toContain("No traffic recorded");
   });
 
-  it("leads with engaged visitors once the visitor rollup is readable", () => {
+  it("leads with active users once the visitor rollup is readable", () => {
     const { subject, html } = renderPerfReportEmail(
       report({
         traffic: {
@@ -106,9 +106,9 @@ describe("the nightly email", () => {
         },
       }),
     );
-    expect(subject).toBe("CrawlProof nightly — 18 engaged visitors of 37,409, 42 bot hits");
-    expect(html).toContain("18 engaged of 37,409 visitors · 60,516 human hits · 42 bot (0%)");
-    expect(html).toContain("Engaged");
+    expect(subject).toBe("CrawlProof nightly — 18 active users of 37,409, 42 bot hits");
+    expect(html).toContain("18 active of 37,409 visitors · 60,516 human hits · 42 bot (0%)");
+    expect(html).toContain("Active users");
   });
 
   it("keeps the weekly subject unchanged", () => {

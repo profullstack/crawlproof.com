@@ -16,6 +16,7 @@ import {
   fetchVisitorTotals,
   visitorsPartial,
 } from "@/lib/tracker/visitors";
+import { ENGAGED_CAPTION, engagedPartial } from "@/lib/tracker/engaged";
 import { InstallSnippet } from "./install-snippet";
 import { TrackerToggle } from "./tracker-toggle";
 import { CareersToggle } from "./careers-toggle";
@@ -97,19 +98,21 @@ export default async function ProjectStatsPage({
   const totalHuman = points.reduce((s, p) => s + p.humans, 0);
   const grandTotal = points.reduce((s, p) => s + p.events, 0);
   const eventTotal = points.reduce((s, p) => s + p.pageviews + p.interactions, 0);
-  const visitors = visitorTotals?.get(id) ?? (visitorTotals ? { visitors: 0, pageviews: 0 } : null);
+  const visitors = visitorTotals?.get(id) ?? (visitorTotals ? { visitors: 0, pageviews: 0, engaged: 0 } : null);
   const tiles = headlineTiles(who, {
     visitors: visitors ? visitors.visitors : null,
     pageviews: visitors ? visitors.pageviews : null,
+    engaged: visitors ? visitors.engaged : null,
     humans: totalHuman,
     ai: totalAi,
     bots: totalBot,
   });
   const visitorsCaption = visitors === null
     ? "Visitor counts are unavailable right now; the figures below count events."
-    : visitorsPartial(visitorDays)
-      ? VISITORS_CAPTION
-      : null;
+    : [
+        visitorsPartial(visitorDays) ? VISITORS_CAPTION : null,
+        who !== "bots" && engagedPartial(visitorDays) ? ENGAGED_CAPTION : null,
+      ].filter(Boolean).join(" ") || null;
 
   // Older projects have rollup rows in tracker_daily_stats but nothing in
   // tracker_event_daily_stats, which would leave Event mix empty on a page
@@ -314,7 +317,7 @@ export default async function ProjectStatsPage({
           <WhoToggle value={who} />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {tiles.map((tile) => (
             <Metric
               key={tile.key}
@@ -322,6 +325,7 @@ export default async function ProjectStatsPage({
               value={tile.value}
               tone={tile.tone}
               hint={tile.hint}
+              sub={tile.sub}
             />
           ))}
         </div>
@@ -411,12 +415,15 @@ function Metric({
   value,
   tone,
   hint,
+  sub,
 }: {
   label: string;
   value: number;
   tone: "accent" | "pass" | "warn" | "muted";
   /** What this number counts; shown on hover and under the figure. */
   hint?: string;
+  /** A short second line under the figure, e.g. the active rate. */
+  sub?: string;
 }) {
   const color =
     tone === "pass"
@@ -430,6 +437,7 @@ function Metric({
       <p className={`mt-1 text-2xl font-bold ${color}`}>
         {value.toLocaleString()}
       </p>
+      {sub && <p className="mt-1 text-xs font-medium text-[var(--color-muted)]">{sub}</p>}
       {hint && (
         <p className="mt-1 text-[11px] leading-snug text-[var(--color-muted)]">
           {hint}

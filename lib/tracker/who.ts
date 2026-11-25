@@ -15,6 +15,8 @@ import {
   ALL_EVENTS_DEFINITION,
   BOTS_DEFINITION,
   BOTS_LABEL,
+  ACTIVE_USERS_DEFINITION,
+  ACTIVE_USERS_LABEL,
   HUMANS_DEFINITION,
   HUMANS_LABEL,
   PAGEVIEWS_DEFINITION,
@@ -23,6 +25,7 @@ import {
   VISITORS_LABEL,
   type TrackerKind,
 } from "@/lib/tracker/humans";
+import { engagedRateLabel } from "@/lib/tracker/engaged";
 
 export type Who = "humans" | "bots" | "all";
 
@@ -90,6 +93,11 @@ export type HeadlineTotals = {
   visitors?: number | null;
   /** Page views those visitors produced; drawn only beside `visitors`. */
   pageviews?: number | null;
+  /**
+   * Active users, i.e. engaged visitors (lib/tracker/engaged.ts), drawn only beside `visitors`
+   * and never on the Bots view: a bot is never engaged.
+   */
+  engaged?: number | null;
   /** Events, not people: every beacon on the human side. */
   humans: number;
   ai: number;
@@ -97,11 +105,13 @@ export type HeadlineTotals = {
 };
 
 export type HeadlineTile = {
-  key: "visitors" | "pageviews" | "humans" | "ai" | "bots";
+  key: "visitors" | "engaged" | "pageviews" | "humans" | "ai" | "bots";
   label: string;
   value: number;
   tone: "accent" | "pass" | "warn" | "muted";
   hint: string;
+  /** A short second line under the figure, e.g. the active rate. */
+  sub?: string;
 };
 
 /**
@@ -127,6 +137,18 @@ export function headlineTiles(who: Who, t: HeadlineTotals): HeadlineTile[] {
                 ? "Distinct visitor ids on the bot side: crawlers that ran the script, and scripted browsers caught by volume."
                 : VISITORS_DEFINITION,
           },
+          ...(who !== "bots" && t.engaged !== null && t.engaged !== undefined
+            ? [
+                {
+                  key: "engaged" as const,
+                  label: ACTIVE_USERS_LABEL,
+                  value: t.engaged,
+                  tone: "pass" as const,
+                  hint: ACTIVE_USERS_DEFINITION,
+                  sub: engagedRateLabel(t.engaged, t.visitors) ?? undefined,
+                },
+              ]
+            : []),
           {
             key: "pageviews",
             label: PAGEVIEWS_LABEL,

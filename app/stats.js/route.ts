@@ -238,8 +238,45 @@ ${VISITOR_SNIPPET}
       }
     } catch (_) {}
 
-    if (document.readyState === 'complete') send('pageview');
-    else window.addEventListener('load', function(){ send('pageview'); }, { once: true });
+    // Engaged (shown as "Active users"): at most one beacon per page view once
+    // a person shows they are there, a trusted pointerdown / keydown /
+    // touchstart / wheel, or 10s visible and focused in total. Never from a
+    // browser that says it is automated (navigator.webdriver). Waits for the
+    // page view so the two arrive in order. See lib/tracker/engaged.ts.
+    var pvSent = false, engSent = false, engWant = false, engMs = 0, engTimer = 0;
+    function engaged() {
+      try {
+        if (engSent || navigator.webdriver) return;
+        if (!pvSent) { engWant = true; return; }
+        engSent = true; engWant = false;
+        if (engTimer) { clearInterval(engTimer); engTimer = 0; }
+        send('engaged');
+      } catch (_) {}
+    }
+    function engInput(e) { if (e && e.isTrusted) engaged(); }
+    var engEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel'];
+    for (var ei = 0; ei < engEvents.length; ei++) {
+      window.addEventListener(engEvents[ei], engInput, { capture: true, passive: true });
+    }
+    function engWatch() {
+      engSent = false; engWant = false; engMs = 0;
+      if (engTimer) clearInterval(engTimer);
+      engTimer = setInterval(function(){
+        try {
+          if (document.visibilityState === 'visible' && (!document.hasFocus || document.hasFocus())) engMs += 1000;
+          if (engMs >= 10000) engaged();
+        } catch (_) {}
+      }, 1000);
+    }
+    function pageview() {
+      send('pageview');
+      pvSent = true;
+      if (engWant) engaged();
+    }
+    engWatch();
+
+    if (document.readyState === 'complete') pageview();
+    else window.addEventListener('load', pageview, { once: true });
 
     document.addEventListener('click', function(e) {
       try {
@@ -301,7 +338,8 @@ ${VISITOR_SNIPPET}
       if (p === lastPath) return;
       lastPath = p;
       scrollMarks = {};
-      send('pageview');
+      engWatch();
+      pageview();
     }
     var ps = history.pushState;
     history.pushState = function(){ var r = ps.apply(this, arguments); onNav(); return r; };

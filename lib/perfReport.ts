@@ -384,7 +384,7 @@ export function renderPerfReportEmail(r: PerfReport): {
   const subject =
     r.cadence === "daily"
       ? r.traffic.engaged != null && r.traffic.visitors != null
-        ? `CrawlProof nightly — ${fmt(r.traffic.engaged)} engaged visitor${r.traffic.engaged === 1 ? "" : "s"} of ${fmt(r.traffic.visitors)}, ${fmt(r.traffic.bots)} bot hits`
+        ? `CrawlProof nightly — ${fmt(r.traffic.engaged)} active user${r.traffic.engaged === 1 ? "" : "s"} of ${fmt(r.traffic.visitors)}, ${fmt(r.traffic.bots)} bot hits`
         : `CrawlProof nightly — ${fmt(r.traffic.humans)} human hit${r.traffic.humans === 1 ? "" : "s"}, ${fmt(r.traffic.bots)} bot`
       : r.projects.length === 0 && !r.autoblog
         ? `Your CrawlProof ${r.cadence} digest`
@@ -450,7 +450,7 @@ export function renderPerfReportEmail(r: PerfReport): {
                 <tr>
                   <td style="vertical-align:top;">
                     <div style="color:#e7e9ee;font-size:14px;font-weight:600;">${escapeHtml(row.name)}</div>
-                    <div style="color:#94a3b8;font-size:12px;margin-top:4px;">${row.engaged != null && row.visitors != null ? `${fmt(row.engaged)} engaged of ${fmt(row.visitors)} visitors · ` : ""}${fmt(row.humans)} human hits · ${fmt(row.bots)} bot (${share}%)</div>
+                    <div style="color:#94a3b8;font-size:12px;margin-top:4px;">${row.engaged != null && row.visitors != null ? `${fmt(row.engaged)} active of ${fmt(row.visitors)} visitors · ` : ""}${fmt(row.humans)} human hits · ${fmt(row.bots)} bot (${share}%)</div>
                   </td>
                   <td align="right" style="vertical-align:top;white-space:nowrap;padding-left:12px;color:#e7e9ee;font-size:16px;font-weight:700;">
                     ${fmt(row.total)}
@@ -473,7 +473,7 @@ export function renderPerfReportEmail(r: PerfReport): {
             <tr>
               ${
                 r.traffic.engaged != null && r.traffic.visitors != null
-                  ? `${statCell("Engaged", r.traffic.engaged, "#6ee7b7")}
+                  ? `${statCell("Active users", r.traffic.engaged, "#6ee7b7")}
               ${statCell("Visitors", r.traffic.visitors)}`
                   : statCell("Human hits", r.traffic.humans, "#6ee7b7")
               }

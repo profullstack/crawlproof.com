@@ -33,6 +33,8 @@ export type VisitorTouch = {
   kind: TrackerKind;
   events: number;
   pageviews: number;
+  /** Engaged that day (lib/tracker/engaged.ts); false before the migration. */
+  engaged: boolean;
 };
 
 /**
@@ -58,7 +60,7 @@ export function applyScriptedDemotion(
 /** Coerce one RPC row; null when the shape is not what the migration returns. */
 export function parseVisitorTouch(row: unknown): VisitorTouch | null {
   const r = (Array.isArray(row) ? row[0] : row) as
-    | { kind?: unknown; events?: unknown; pageviews?: unknown }
+    | { kind?: unknown; events?: unknown; pageviews?: unknown; engaged?: unknown }
     | null
     | undefined;
   if (!r || typeof r !== "object") return null;
@@ -70,5 +72,6 @@ export function parseVisitorTouch(row: unknown): VisitorTouch | null {
     kind,
     events: Number.isFinite(events) ? events : 0,
     pageviews: Number.isFinite(pageviews) ? pageviews : 0,
+    engaged: kind === "human" && r.engaged === true,
   };
 }

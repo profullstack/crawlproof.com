@@ -30,10 +30,13 @@ export type VisitorTotals = {
   /** Page views those visitors produced. */
   pageviews: number;
   prevPageviews: number;
+  /** Distinct visitors in the window marked engaged (lib/tracker/engaged.ts). */
+  engaged: number;
+  prevEngaged: number;
 };
 
 export function emptyVisitorTotals(): VisitorTotals {
-  return { visitors: 0, prevVisitors: 0, pageviews: 0, prevPageviews: 0 };
+  return { visitors: 0, prevVisitors: 0, pageviews: 0, prevPageviews: 0, engaged: 0, prevEngaged: 0 };
 }
 
 const num = (v: unknown) => {
@@ -48,6 +51,9 @@ export type VisitorTotalsRow = {
   prev_visitors: number | string;
   pageviews: number | string;
   prev_pageviews: number | string;
+  /** Absent before 20261125120000_tracker_engaged_visitors.sql; reads as 0. */
+  engaged?: number | string | null;
+  prev_engaged?: number | string | null;
 };
 
 export function toVisitorTotals(row: VisitorTotalsRow): VisitorTotals {
@@ -56,6 +62,8 @@ export function toVisitorTotals(row: VisitorTotalsRow): VisitorTotals {
     prevVisitors: num(row.prev_visitors),
     pageviews: num(row.pageviews),
     prevPageviews: num(row.prev_pageviews),
+    engaged: num(row.engaged),
+    prevEngaged: num(row.prev_engaged),
   };
 }
 
@@ -66,6 +74,8 @@ export function sumVisitorTotals(all: Iterable<VisitorTotals>): VisitorTotals {
     out.prevVisitors += t.prevVisitors;
     out.pageviews += t.pageviews;
     out.prevPageviews += t.prevPageviews;
+    out.engaged += t.engaged;
+    out.prevEngaged += t.prevEngaged;
   }
   return out;
 }
