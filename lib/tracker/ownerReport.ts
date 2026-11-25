@@ -26,6 +26,8 @@ export type SiteReport = {
   /** Distinct human visitors; null when the visitor rollup could not be read. */
   visitors: number | null;
   pageviews: number | null;
+  /** Human visitors who showed a person was there (lib/tracker/engaged.ts); null with visitors. */
+  engaged: number | null;
   /** Unfiltered beacon mix over the window. */
   hits: { humans: number; bots: number; ai: number };
   top_pages: ListItem[];
@@ -40,7 +42,7 @@ export type OwnerReport = {
   sites: SiteReport[];
   /** Sites past REPORT_MAX_SITES that were left out. */
   truncated: number;
-  totals: { visitors: number; pageviews: number; humans: number; bots: number; ai: number };
+  totals: { visitors: number; pageviews: number; engaged: number; humans: number; bots: number; ai: number };
 };
 
 export function parseReportRange(raw: string | null): TrackerRangeKey | null {
@@ -69,6 +71,7 @@ export function siteReport(stats: StatsAnswer): SiteReport {
     url: stats.project.url,
     visitors: stats.totals.visitors,
     pageviews: stats.totals.pageviews,
+    engaged: stats.totals.engaged ?? null,
     hits: { humans: mix.humans, bots: mix.bots, ai: mix.ai },
     top_pages: stats.pages.slice(0, TOP_N),
     top_sources: stats.sources.slice(0, TOP_N),
@@ -100,10 +103,11 @@ export async function ownerReport(
     for (const r of results) if (r) sites.push(r);
   }
 
-  const totals = { visitors: 0, pageviews: 0, humans: 0, bots: 0, ai: 0 };
+  const totals = { visitors: 0, pageviews: 0, engaged: 0, humans: 0, bots: 0, ai: 0 };
   for (const s of sites) {
     totals.visitors += s.visitors ?? 0;
     totals.pageviews += s.pageviews ?? 0;
+    totals.engaged += s.engaged ?? 0;
     totals.humans += s.hits.humans;
     totals.bots += s.hits.bots;
     totals.ai += s.hits.ai;

@@ -135,7 +135,7 @@ export type StatsAnswer = {
    * read, never 0: a caller computing cost per visitor must not divide by a
    * failure.
    */
-  totals: { visitors: number | null; pageviews: number | null; events: number };
+  totals: { visitors: number | null; pageviews: number | null; engaged: number | null; events: number };
   sources: ListItem[];
   referrers: ListItem[];
   pages: ListItem[];
@@ -219,11 +219,13 @@ export function totalsFromSeries(payload: PanelPayload | undefined): { events: n
 /** The totals block: people from the rollup, events from the series. */
 export function mergeTotals(
   fromSeries: { events: number; pageviews: number },
-  visitors: { visitors: number; pageviews: number } | null | undefined,
+  visitors: { visitors: number; pageviews: number; engaged?: number } | null | undefined,
 ): StatsAnswer["totals"] {
   return {
     visitors: visitors ? visitors.visitors : null,
     pageviews: visitors ? visitors.pageviews : null,
+    // Engaged visitors (lib/tracker/engaged.ts): null with the rollup, never 0.
+    engaged: visitors ? (visitors.engaged ?? 0) : null,
     events: fromSeries.events,
   };
 }
@@ -255,7 +257,7 @@ export async function projectStats(
     who,
     totals: mergeTotals(
       totalsFromSeries(panels.series),
-      visitorTotals ? (visitorTotals.get(project.id) ?? { visitors: 0, pageviews: 0 }) : null,
+      visitorTotals ? (visitorTotals.get(project.id) ?? { visitors: 0, pageviews: 0, engaged: 0 }) : null,
     ),
     sources: asList(panels.sources),
     referrers: asList(panels.referrers),

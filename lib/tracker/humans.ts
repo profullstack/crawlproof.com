@@ -25,9 +25,14 @@ export const VISITORS_LABEL = "Human visitors";
 export const HUMANS_LABEL = "Human events";
 export const BOTS_LABEL = "Bot crawls";
 export const PAGEVIEWS_LABEL = "Page views";
+export const ACTIVE_USERS_LABEL = "Active users";
+export const ACTIVE_RATE_LABEL = "Active rate";
 
 export const VISITORS_DEFINITION =
   "Distinct people, counted once per site per day by the visitor id the tracker stores in the browser. Crawlers and scripted browsers are excluded.";
+
+export const ACTIVE_USERS_DEFINITION =
+  "Human visitors whose browser showed a person was there: a real click, tap, key press or scroll, or the page kept visible and focused for 10 seconds. Automated browsers that announce themselves (navigator.webdriver) never count, and neither do crawlers or scripted browsers.";
 
 export const HUMANS_DEFINITION =
   "Every tracked event from a visitor not identified as a crawler: the page view plus each scroll depth, click and form submit. Several per page view, so this is not a count of people. Includes visits referred by AI assistants such as ChatGPT or Perplexity.";

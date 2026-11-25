@@ -32,12 +32,12 @@ import { renderStats } from "@/lib/dashboard/stats-text";
 
 describe("applyScriptedDemotion", () => {
   it("leaves a user-agent bot alone, whatever the rollup says", () => {
-    const out = applyScriptedDemotion("bot:gptbot", { kind: "bot", events: 1, pageviews: 1 });
+    const out = applyScriptedDemotion("bot:gptbot", { kind: "bot", events: 1, pageviews: 1, engaged: false });
     expect(out).toEqual({ bucket: "bot:gptbot", kind: "bot", demoted: false });
   });
 
   it("keeps a human hit human while the rollup still calls the visitor human", () => {
-    const out = applyScriptedDemotion("search:google", { kind: "human", events: 40, pageviews: 12 });
+    const out = applyScriptedDemotion("search:google", { kind: "human", events: 40, pageviews: 12, engaged: false });
     expect(out).toEqual({ bucket: "search:google", kind: "human", demoted: false });
   });
 
@@ -46,6 +46,7 @@ describe("applyScriptedDemotion", () => {
       kind: "bot",
       events: SCRIPTED_CAP_EVENTS + 1,
       pageviews: 4,
+      engaged: false,
     });
     expect(out).toEqual({ bucket: SCRIPTED_BUCKET, kind: "bot", demoted: true });
     expect(kindFromBucket(out.bucket)).toBe("bot");
@@ -71,11 +72,13 @@ describe("parseVisitorTouch", () => {
       kind: "human",
       events: 3,
       pageviews: 1,
+      engaged: false,
     });
     expect(parseVisitorTouch({ kind: "bot", events: 501, pageviews: 4 })).toEqual({
       kind: "bot",
       events: 501,
       pageviews: 4,
+      engaged: false,
     });
   });
 
@@ -151,6 +154,8 @@ describe("visitor totals", () => {
       prevVisitors: 4,
       pageviews: 1542,
       prevPageviews: 9,
+      engaged: 0,
+      prevEngaged: 0,
     });
   });
 
@@ -181,6 +186,7 @@ describe("API totals", () => {
     expect(mergeTotals({ events: 5796, pageviews: 1585 }, { visitors: 420, pageviews: 1469 })).toEqual({
       visitors: 420,
       pageviews: 1469,
+      engaged: 0,
       events: 5796,
     });
   });
@@ -189,6 +195,7 @@ describe("API totals", () => {
     expect(mergeTotals({ events: 5796, pageviews: 1585 }, null)).toEqual({
       visitors: null,
       pageviews: null,
+      engaged: null,
       events: 5796,
     });
   });
