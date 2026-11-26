@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import { serviceClient } from "../supabase/service";
 import { env } from "../env";
-import { hashAffiliateToken, mintAffiliateToken } from "./tokens";
+import { affiliateTokenLookupHashes, mintAffiliateToken } from "./tokens";
 import { fetchProfile } from "./client";
 import { PAYS, PROGRAM_ID, WINDOW_DAYS, CURRENCY } from "./program";
 import { codeFromProfile, isAffiliateCode, slugify, type JoinRequest, type Pays } from "./spec";
@@ -75,12 +75,20 @@ export async function membershipByCode(code: string): Promise<Membership | null>
 }
 
 export async function membershipByToken(plaintext: string): Promise<Membership | null> {
-  const { data } = await serviceClient()
+  const hashes = affiliateTokenLookupHashes(plaintext);
+  const sb = serviceClient();
+  const { data } = await sb
     .from("affiliate_memberships")
-    .select(COLUMNS)
-    .eq("token_hash", hashAffiliateToken(plaintext))
+    .select(`${COLUMNS}, token_hash`)
+    .in("token_hash", hashes.all)
     .maybeSingle();
-  return data ? toMembership(data) : null;
+  if (!data) return null;
+  // Mid pepper rotation: move a token found under the previous pepper.
+  const row = data as unknown as { id: string; token_hash: string };
+  if (row.token_hash !== hashes.current) {
+    void sb.from("affiliate_memberships").update({ token_hash: hashes.current }).eq("id", row.id).then(() => undefined);
+  }
+  return toMembership(data);
 }
 
 export async function membershipForUser(userId: string): Promise<Membership | null> {

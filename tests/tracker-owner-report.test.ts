@@ -14,6 +14,7 @@ const db = vi.hoisted(() => ({
 vi.mock("@/lib/sp/apiToken", () => ({
   isApiTokenShape: (t: string) => t.startsWith("crp_"),
   hashApiToken: (t: string) => `h:${t}`,
+  apiTokenLookupHashes: (t: string) => ({ current: `h:${t}`, all: [`h:${t}`] }),
 }));
 
 const PROJECTS: Record<string, { id: string; name: string; url: string; owner_id: string }[]> = {
@@ -29,6 +30,10 @@ vi.mock("@/lib/supabase/service", () => ({
         select: () => b,
         update: () => ({ eq: () => ({ then: (f: () => void) => f() }) }),
         eq: (col: string, v: unknown) => {
+          filters[col] = v;
+          return b;
+        },
+        in: (col: string, v: unknown) => {
           filters[col] = v;
           return b;
         },

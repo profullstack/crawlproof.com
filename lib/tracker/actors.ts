@@ -23,6 +23,7 @@
 
 import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { currentPepper, lookupHashes, pepperedHash, type LookupHashes } from "@/lib/sp/pepper";
 import { env } from "@/lib/env";
 import { kindFromBucket, type TrackerKind } from "@/lib/tracker/humans";
 
@@ -58,11 +59,12 @@ export function mintActorToken(): MintedActorToken {
  * token hash from ever colliding with an API token hash under the same pepper.
  */
 export function hashActorToken(plaintext: string): string {
-  if (!env.spTokenPepper) throw new Error("SP_TOKEN_PEPPER not set.");
-  return crypto
-    .createHash("sha256")
-    .update(`actor:${plaintext}${env.spTokenPepper}`, "utf8")
-    .digest("hex");
+  return pepperedHash(`actor:${plaintext}`, currentPepper());
+}
+
+/** Current hash plus, mid pepper rotation, the previous one (lib/sp/pepper.ts). */
+export function actorTokenLookupHashes(plaintext: string): LookupHashes {
+  return lookupHashes(`actor:${plaintext}`);
 }
 
 export function isActorTokenShape(s: string | null | undefined): s is string {
@@ -126,12 +128,13 @@ export function clearActorCache() {
  * whose owner revoked it. Never throws: a failed lookup is "undeclared".
  */
 export async function resolveActor(sb: SupabaseClient, token: string): Promise<ResolvedActor | null> {
-  let hash: string;
+  let hashes: LookupHashes;
   try {
-    hash = hashActorToken(token);
+    hashes = actorTokenLookupHashes(token);
   } catch {
     return null;
   }
+  const hash = hashes.current;
   const hit = cache.get(hash);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
 
@@ -139,20 +142,22 @@ export async function resolveActor(sb: SupabaseClient, token: string): Promise<R
   try {
     const { data } = await sb
       .from("tracker_actor_tokens")
-      .select("id, revoked_at, actor:tracker_actors!inner(id, kind, revoked_at)")
-      .eq("token_hash", hash)
+      .select("id, token_hash, revoked_at, actor:tracker_actors!inner(id, kind, revoked_at)")
+      .in("token_hash", hashes.all)
       .maybeSingle();
     const row = data as
-      | { id: string; revoked_at: string | null; actor: { id: string; kind: string; revoked_at: string | null } | null }
+      | { id: string; token_hash: string; revoked_at: string | null; actor: { id: string; kind: string; revoked_at: string | null } | null }
       | null;
     if (row && !row.revoked_at && row.actor && !row.actor.revoked_at) {
       const kind = row.actor.kind === "agent" ? "agent" : row.actor.kind === "human" ? "human" : null;
       if (kind) value = { actorId: row.actor.id, tokenId: row.id, kind };
     }
     if (value) {
+      const touch: Record<string, string> = { last_used_at: new Date().toISOString() };
+      if (row && row.token_hash !== hash) touch.token_hash = hash; // pepper rotation
       void sb
         .from("tracker_actor_tokens")
-        .update({ last_used_at: new Date().toISOString() })
+        .update(touch)
         .eq("id", value.tokenId)
         .then(() => undefined);
     }

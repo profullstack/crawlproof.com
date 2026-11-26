@@ -4,6 +4,9 @@ node_modules
 # broad: the old list named each variant explicitly, so `.env.bak-2026-07-28`
 # matched none of them and a full production environment landed in git.
 .env*
+# dev2 names them app.env / deploy.env / prober.env (+ .bak-* copies).
+*.env
+*.env.*
 !.env.example
 *.log
 *.mmdb

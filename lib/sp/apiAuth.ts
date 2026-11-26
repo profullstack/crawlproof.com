@@ -16,7 +16,8 @@
 
 import type { NextRequest } from "next/server";
 import { serviceClient } from "@/lib/supabase/service";
-import { hashApiToken, isApiTokenShape } from "@/lib/sp/apiToken";
+import { apiTokenLookupHashes, isApiTokenShape } from "@/lib/sp/apiToken";
+import type { LookupHashes } from "@/lib/sp/pepper";
 
 /** The only scope there is: read the tracker numbers, nothing else. */
 export const STATS_READ = "stats:read";
@@ -57,9 +58,9 @@ export async function authenticateToken(
     return { ok: false, status: 401, error: "Malformed token." };
   }
 
-  let tokenHash: string;
+  let hashes: LookupHashes;
   try {
-    tokenHash = hashApiToken(token);
+    hashes = apiTokenLookupHashes(token);
   } catch (err) {
     // SP_TOKEN_PEPPER not configured — 500, not 401: this is our bug.
     return {
@@ -72,8 +73,8 @@ export async function authenticateToken(
   const service = serviceClient();
   const { data: row, error } = await service
     .from("sp_api_token")
-    .select("id, user_id, revoked_at, scope")
-    .eq("token_hash", tokenHash)
+    .select("id, user_id, revoked_at, scope, token_hash")
+    .in("token_hash", hashes.all)
     .maybeSingle();
   if (error) {
     return { ok: false, status: 500, error: error.message };
@@ -86,10 +87,13 @@ export async function authenticateToken(
     return { ok: false, status: 403, error: `This token is read-only (${scope}) and cannot use this endpoint.` };
   }
 
-  // Fire-and-forget last_used_at update; don't await.
+  // Fire-and-forget last_used_at update (plus, mid pepper rotation, the move to
+  // the current pepper's hash); don't await.
+  const touch: Record<string, string> = { last_used_at: new Date().toISOString() };
+  if (row.token_hash !== hashes.current) touch.token_hash = hashes.current;
   void service
     .from("sp_api_token")
-    .update({ last_used_at: new Date().toISOString() })
+    .update(touch)
     .eq("id", row.id)
     .then(() => undefined);
 
