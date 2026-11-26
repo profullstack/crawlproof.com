@@ -16,6 +16,7 @@
 
 import crypto from "node:crypto";
 import { env } from "../env";
+import { currentPepper, lookupHashes, pepperedHash, type LookupHashes } from "./pepper";
 
 const PREFIX = "crp_";
 const PREFIX_DISPLAY_LEN = 8; // including the "crp_" prefix
@@ -42,13 +43,12 @@ export function mintApiToken(): MintedToken {
 }
 
 export function hashApiToken(plaintext: string): string {
-  if (!env.spTokenPepper) {
-    throw new Error("SP_TOKEN_PEPPER not set.");
-  }
-  return crypto
-    .createHash("sha256")
-    .update(plaintext + env.spTokenPepper, "utf8")
-    .digest("hex");
+  return pepperedHash(plaintext, currentPepper());
+}
+
+/** Current hash plus, mid pepper rotation, the previous one (lib/sp/pepper.ts). */
+export function apiTokenLookupHashes(plaintext: string): LookupHashes {
+  return lookupHashes(plaintext);
 }
 
 // Reject obviously-malformed tokens before doing a DB roundtrip. Real

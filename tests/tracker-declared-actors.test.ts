@@ -102,7 +102,7 @@ describe("resolveActor", () => {
 
   function fakeSb(row: unknown) {
     const maybeSingle = vi.fn(async () => ({ data: row, error: null }));
-    const chain = { select: () => chain, eq: () => chain, maybeSingle, update: () => ({ eq: () => ({ then: (f: () => void) => f() }) }) };
+    const chain = { select: () => chain, eq: () => chain, in: () => chain, maybeSingle, update: () => ({ eq: () => ({ then: (f: () => void) => f() }) }) };
     return { sb: { from: () => chain } as never, maybeSingle };
   }
 

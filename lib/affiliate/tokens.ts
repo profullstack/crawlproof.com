@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import { env } from "../env";
 import { TOKEN_PREFIX } from "./spec";
+import { currentPepper, lookupHashes, pepperedHash, type LookupHashes } from "../sp/pepper";
 
 export type MintedAffiliateToken = { plaintext: string; prefix: string; hash: string };
 
@@ -15,8 +16,12 @@ export function mintAffiliateToken(): MintedAffiliateToken {
 }
 
 export function hashAffiliateToken(plaintext: string): string {
-  if (!env.spTokenPepper) throw new Error("SP_TOKEN_PEPPER not set.");
-  return crypto.createHash("sha256").update(plaintext + env.spTokenPepper, "utf8").digest("hex");
+  return pepperedHash(plaintext, currentPepper());
+}
+
+/** Current hash plus, mid pepper rotation, the previous one (lib/sp/pepper.ts). */
+export function affiliateTokenLookupHashes(plaintext: string): LookupHashes {
+  return lookupHashes(plaintext);
 }
 
 export function isAffiliateTokenShape(s: string | null | undefined): boolean {

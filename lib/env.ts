@@ -183,6 +183,10 @@ export const env = {
   // alone cannot exploit any token without this server-side value.
   // Generate with `openssl rand -base64 32`.
   spTokenPepper: process.env.SP_TOKEN_PEPPER ?? "",
+  // The pepper being rotated out. While set, a token hashed under it still
+  // verifies and is re-hashed under SP_TOKEN_PEPPER on its next use, so a
+  // rotation logs nobody out. See lib/sp/pepper.ts.
+  spTokenPepperPrevious: process.env.SP_TOKEN_PEPPER_PREVIOUS ?? "",
   // OpenAffiliate webhook signing key: 32 random bytes, base64url, the seed
   // of an Ed25519 key. The public half is served at
   // /.well-known/openaffiliate-jwks.json. Unset means webhooks go unsigned,

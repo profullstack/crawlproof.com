@@ -12,6 +12,7 @@ import type { TrackerRange } from "@/lib/tracker/ranges";
 import {
   type DeclaredKind,
   type DeclaredTotals,
+  actorTokenLookupHashes,
   hashActorToken,
   mintActorToken,
   normalizeEmail,
@@ -329,8 +330,11 @@ export async function verifyActorEmail(sb: Sb, actorId: string, token: string): 
   if (!row || row.revoked_at) return { ok: false, status: 404, error: "This actor no longer exists." };
   if (row.email_verified_at) return { ok: true, value: { email: row.email } };
   const expected = row.verify_token_hash ?? "";
-  const got = hashActorToken(`v_${token}`);
-  if (expected.length !== got.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(got))) {
+  // Either pepper during a rotation (lib/sp/pepper.ts); the hash is cleared on success.
+  const matches = actorTokenLookupHashes(`v_${token}`).all.some(
+    (got) => expected.length === got.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(got)),
+  );
+  if (!matches) {
     return { ok: false, status: 400, error: "This link is not valid." };
   }
   const { error } = await sb
